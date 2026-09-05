@@ -44,7 +44,7 @@ services:
     networks: [mailbox_dns]
 
   ithute-auth:
-    image: ${ITHUTE_AUTH_IMAGE:-ghcr.io/lelefe-dc/ithute-auth}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+    image: ${ITHUTE_AUTH_IMAGE:-ghcr.io/ithute-stak/ithute-auth}:${MAILBOX_DNS_IMAGE_TAG:-latest}
     command: ["api"]
     restart: always
     environment:
@@ -127,7 +127,7 @@ services:
     networks: [mailbox_dns]
 
   ithute-push:
-    image: ${ITHUTE_PUSH_IMAGE:-ghcr.io/lelefe-dc/ithute-push}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+    image: ${ITHUTE_PUSH_IMAGE:-ghcr.io/ithute-stak/ithute-push}:${MAILBOX_DNS_IMAGE_TAG:-latest}
     command: ["api"]
     restart: always
     environment: *ithute-push-environment
@@ -147,7 +147,7 @@ services:
     networks: [mailbox_dns]
 
   ithute-auth-push-event-worker:
-    image: ${ITHUTE_AUTH_IMAGE:-ghcr.io/lelefe-dc/ithute-auth}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+    image: ${ITHUTE_AUTH_IMAGE:-ghcr.io/ithute-stak/ithute-auth}:${MAILBOX_DNS_IMAGE_TAG:-latest}
     command: ["push-event-worker"]
     restart: always
     environment:
@@ -172,7 +172,7 @@ services:
     networks: [mailbox_dns]
 
   ithute-push-worker:
-    image: ${ITHUTE_PUSH_IMAGE:-ghcr.io/lelefe-dc/ithute-push}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+    image: ${ITHUTE_PUSH_IMAGE:-ghcr.io/ithute-stak/ithute-push}:${MAILBOX_DNS_IMAGE_TAG:-latest}
     command: ["worker"]
     restart: always
     environment: *ithute-push-environment
@@ -213,7 +213,7 @@ services:
     networks: [mailbox_dns]
 
   ithute-realtime:
-    image: ${ITHUTE_REALTIME_IMAGE:-ghcr.io/lelefe-dc/ithute-realtime}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+    image: ${ITHUTE_REALTIME_IMAGE:-ghcr.io/ithute-stak/ithute-realtime}:${MAILBOX_DNS_IMAGE_TAG:-latest}
     restart: always
     environment:
       REALTIME_DATABASE_URL: postgresql+psycopg://${ITHUTE_REALTIME_DB_USER:-ithute_realtime}:${ITHUTE_REALTIME_DB_PASSWORD}@ithute-realtime-db:5432/${ITHUTE_REALTIME_DB_NAME:-ithute_realtime}
