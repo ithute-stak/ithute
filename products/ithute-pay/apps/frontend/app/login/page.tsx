@@ -30,8 +30,11 @@ export default function LoginPage() {
   const [centralError, setCentralError] = useState("");
 
   useEffect(() => {
-    const code = new URLSearchParams(window.location.search).get("error") || "";
-    setCentralError(CENTRAL_ERRORS[code] || (code ? "Central sign-in could not be completed." : ""));
+    const timeout = window.setTimeout(() => {
+      const code = new URLSearchParams(window.location.search).get("error") || "";
+      setCentralError(CENTRAL_ERRORS[code] || (code ? "Central sign-in could not be completed." : ""));
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, []);
 
   async function submit(event: FormEvent) {
@@ -43,6 +46,10 @@ export default function LoginPage() {
     } catch (err) {
       setError(apiError(err));
     }
+  }
+
+  function startCentralSignIn() {
+    window.location.assign("/api/v1/auth/ithute/start");
   }
 
   return (
@@ -75,8 +82,8 @@ export default function LoginPage() {
 
               {centralError && <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-800">{centralError}</div>}
 
-              <Button asChild className="w-full" size="lg">
-                <a href="/api/v1/auth/ithute/start"><ShieldCheck className="h-4 w-4" />Continue with !thute<ExternalLink className="ml-auto h-4 w-4 opacity-70" /></a>
+              <Button className="w-full" size="lg" type="button" onClick={startCentralSignIn}>
+                <ShieldCheck className="h-4 w-4" />Continue with !thute<ExternalLink className="ml-auto h-4 w-4 opacity-70" />
               </Button>
               <p className="mt-2 text-center text-xs leading-5 text-slate-400">The password, MFA and passkey flow stays on auth.ithute.co.ls.</p>
 
