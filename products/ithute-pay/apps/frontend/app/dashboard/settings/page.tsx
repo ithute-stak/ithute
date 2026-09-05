@@ -34,7 +34,7 @@ function csrfToken() {
     .join("=") || "";
 }
 
-function csrfHeaders() {
+function csrfHeaders(): Record<string, string> {
   const raw = csrfToken();
   return raw ? { "X-CSRF-Token": decodeURIComponent(raw) } : {};
 }
