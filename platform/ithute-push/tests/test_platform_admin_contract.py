@@ -75,7 +75,7 @@ def test_push_admin_token_lifetime_is_strictly_capped() -> None:
 
 
 def test_production_server_registers_privileged_routes() -> None:
-    paths = {route.path for route in app.routes}
+    paths = {path for route in app.routes if (path := getattr(route, "path", None)) is not None}
     assert "/v1/admin/overview" in paths
     assert "/v1/admin/applications" in paths
     assert "/v1/admin/messages" in paths
