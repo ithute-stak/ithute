@@ -39,6 +39,18 @@ function csrfHeaders(): Record<string, string> {
   return raw ? { "X-CSRF-Token": decodeURIComponent(raw) } : {};
 }
 
+async function fetchPlatformStatus(): Promise<[AuthStatus | null, PushStatus | null]> {
+  const [authResponse, pushResponse] = await Promise.all([
+    fetch("/api/v1/auth/ithute/status", { credentials: "include", cache: "no-store" }),
+    fetch("/api/v1/notifications/status", { credentials: "include", cache: "no-store" }),
+  ]);
+  const [authStatus, pushStatus] = await Promise.all([
+    authResponse.ok ? authResponse.json() as Promise<AuthStatus> : Promise.resolve(null),
+    pushResponse.ok ? pushResponse.json() as Promise<PushStatus> : Promise.resolve(null),
+  ]);
+  return [authStatus, pushStatus];
+}
+
 export default function Page() {
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [push, setPush] = useState<PushStatus | null>(null);
@@ -47,15 +59,20 @@ export default function Page() {
   const [linkingAuth, setLinkingAuth] = useState(false);
 
   async function load() {
-    const [authResponse, pushResponse] = await Promise.all([
-      fetch("/api/v1/auth/ithute/status", { credentials: "include", cache: "no-store" }),
-      fetch("/api/v1/notifications/status", { credentials: "include", cache: "no-store" }),
-    ]);
-    if (authResponse.ok) setAuth(await authResponse.json());
-    if (pushResponse.ok) setPush(await pushResponse.json());
+    const [nextAuth, nextPush] = await fetchPlatformStatus();
+    setAuth(nextAuth);
+    setPush(nextPush);
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    let active = true;
+    void fetchPlatformStatus().then(([nextAuth, nextPush]) => {
+      if (!active) return;
+      setAuth(nextAuth);
+      setPush(nextPush);
+    });
+    return () => { active = false; };
+  }, []);
 
   async function linkCentralAccount() {
     setLinkingAuth(true);
