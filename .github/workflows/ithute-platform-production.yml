@@ -72,6 +72,7 @@ jobs:
       - name: Validate composed production topology
         env:
           ITHUTE_AUTH_DB_PASSWORD: ci-auth-db-password-only
+          ITHUTE_AUTH_TOTP_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
           ITHUTE_PUSH_DB_PASSWORD: ci-push-db-password-only
           ITHUTE_REALTIME_DB_PASSWORD: ci-realtime-db-password-only
           ITHUTE_SERVICE_REALTIME_SECRET: ci-realtime-service-secret-long-enough
