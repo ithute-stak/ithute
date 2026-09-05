@@ -1,0 +1,277 @@
+name: Deploy Ithute Pay Production
+
+on:
+  workflow_run:
+    workflows: ["Ithute Pay"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ithute-pay-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/lelefe-dc/ithute-pay-bridge
+  GHCR_USERNAME: Lelefe-dc
+  VPS_HOST: 204.12.205.224
+  VPS_USER: administrator
+  VPS_APP_DIR: /home/administrator/mailbox-dns
+  BOOTSTRAP_ADMIN_EMAIL: thekoetlisi@gmail.com
+
+jobs:
+  build-and-publish:
+    name: Build immutable Ithute Pay image
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          persist-credentials: false
+
+      - name: Authenticate GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin
+
+      - name: Initialize Docker Buildx
+        run: |
+          set -eu
+          docker buildx create --name ithute-pay-builder --use
+          docker buildx inspect --bootstrap
+
+      - name: Build and publish Ithute Pay
+        run: |
+          set -eu
+          docker buildx build --platform linux/amd64 --pull --push \
+            --build-arg NEXT_PUBLIC_API_BASE=/api/v1 \
+            --build-arg NEXT_PUBLIC_PARTNER_API_BASE=https://api.pay.ithute.co.ls/api/v1 \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${DEPLOY_SHA}" \
+            -t "${IMAGE}:${DEPLOY_SHA}" -t "${IMAGE}:latest" \
+            ./products/ithute-pay
+
+  deploy:
+    name: Deploy Ithute Pay into the shared production stack
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    env:
+      DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+      BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          persist-credentials: false
+
+      - name: Validate deployment credentials
+        run: |
+          set -eu
+          for name in VPS_SSH_KEY BOOTSTRAP_ADMIN_PASSWORD; do
+            eval "value=\${$name:-}"
+            [ -n "$value" ] || { echo "::error::$name is required"; exit 1; }
+          done
+
+      - name: Configure SSH identity
+        run: |
+          set -eu
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_pay_deploy"
+          chmod 600 "$HOME/.ssh/ithute_pay_deploy"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/ithute-pay-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/ithute-pay-askpass.sh
+            SSH_ASKPASS=/tmp/ithute-pay-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+              setsid -w ssh-add "$HOME/.ssh/ithute_pay_deploy" </dev/null
+            rm -f /tmp/ithute-pay-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/ithute_pay_deploy" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Stage Ithute Pay manifests
+        run: |
+          set -eu
+          tar -czf "/tmp/ithute-pay-${DEPLOY_SHA}.tgz" \
+            docker-compose.ithute-pay.yml \
+            docker-compose.ithute-platform.yml \
+            infrastructure/nginx/default.conf
+          umask 077
+          {
+            printf 'ITHUTE_PAY_IMAGE_TAG=%s\n' "$DEPLOY_SHA"
+            printf 'ITHUTE_PAY_BOOTSTRAP_ADMIN_EMAIL=%s\n' "$BOOTSTRAP_ADMIN_EMAIL"
+            printf 'ITHUTE_PAY_BOOTSTRAP_ADMIN_PASSWORD=%s\n' "$BOOTSTRAP_ADMIN_PASSWORD"
+          } > "/tmp/ithute-pay-overrides-${DEPLOY_SHA}.env"
+          remote="${VPS_USER}@${VPS_HOST}"
+          scp "/tmp/ithute-pay-${DEPLOY_SHA}.tgz" "$remote:/tmp/ithute-pay-${DEPLOY_SHA}.tgz"
+          scp "/tmp/ithute-pay-overrides-${DEPLOY_SHA}.env" "$remote:/tmp/ithute-pay-overrides-${DEPLOY_SHA}.env"
+
+      - name: Configure product identity and deploy
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          printf '%s' "$GHCR_TOKEN" | ssh "$remote" "docker login '$REGISTRY' -u '$GHCR_USERNAME' --password-stdin"
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' sh -s" <<'REMOTE'
+          set -eu
+          cd "$APP_DIR"
+          tar -xzf "/tmp/ithute-pay-${DEPLOY_SHA}.tgz" -C "$APP_DIR"
+          overrides="/tmp/ithute-pay-overrides-${DEPLOY_SHA}.env"
+          [ -f .env ] || { echo "Mailbox-DNS production .env is missing" >&2; exit 1; }
+          chmod 600 .env
+
+          upsert_env() {
+            key="$1"; value="$2"; tmp="$(mktemp)"
+            awk -v k="$key" 'index($0, k "=") != 1 { print }' .env > "$tmp"
+            printf '%s=%s\n' "$key" "$value" >> "$tmp"
+            cat "$tmp" > .env
+            rm -f "$tmp"
+          }
+          env_value() {
+            key="$1"
+            awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' .env
+          }
+          ensure_random_hex() {
+            key="$1"; value="$(env_value "$key")"
+            case "$value" in
+              ""|*replace-with*|*replace-this*|*ChangeMe*|*changeme*) upsert_env "$key" "$(openssl rand -hex 32)" ;;
+            esac
+          }
+          ensure_csv_entry() {
+            key="$1"; entry="$2"; value="$(env_value "$key")"
+            case ",$value," in
+              *",$entry,"*) return 0 ;;
+            esac
+            if [ -n "$value" ]; then value="$value,$entry"; else value="$entry"; fi
+            upsert_env "$key" "$value"
+          }
+
+          while IFS='=' read -r key value; do
+            [ -n "$key" ] || continue
+            upsert_env "$key" "$value"
+          done < "$overrides"
+
+          ensure_random_hex ITHUTE_PAY_DB_PASSWORD
+          ensure_random_hex ITHUTE_PAY_SECRET_KEY
+          ensure_random_hex ITHUTE_PAY_DATA_ENCRYPTION_KEY
+          ensure_random_hex ITHUTE_SERVICE_ITHUTE_PAY_SECRET
+          ensure_random_hex ITHUTE_SERVICE_LOANHUB_SECRET
+          ensure_random_hex ITHUTE_SERVICE_RSL_POS_SECRET
+          ensure_random_hex ITHUTE_SERVICE_MAILBOX_DNS_SECRET
+          ensure_random_hex ITHUTE_SERVICE_ACCOUNT_SECRET
+
+          ensure_csv_entry ITHUTE_AUTH_FIRST_PARTY_CLIENTS 'ithute-pay:Ithute Pay'
+          ensure_csv_entry ITHUTE_PUSH_ALLOWED_USER_CLIENTS 'ithute-pay'
+          ensure_csv_entry ITHUTE_PUSH_ALLOWED_SERVICE_CLIENTS 'ithute-pay'
+          ensure_csv_entry ITHUTE_AUTH_CORS_ORIGINS 'https://pay.ithute.co.ls'
+
+          redirects="$(env_value ITHUTE_AUTH_REDIRECT_URIS_JSON)"
+          callback='https://pay.ithute.co.ls/api/v1/auth/ithute/callback'
+          case "$redirects" in
+            ""|'{}') redirects="{\"ithute-pay\":[\"${callback}\"]}" ;;
+            *'"ithute-pay"'*) : ;;
+            \{*\}) redirects="${redirects%?},\"ithute-pay\":[\"${callback}\"]}" ;;
+            *) echo "Invalid ITHUTE_AUTH_REDIRECT_URIS_JSON; refusing to overwrite it" >&2; exit 1 ;;
+          esac
+          upsert_env ITHUTE_AUTH_REDIRECT_URIS_JSON "$redirects"
+
+          loanhub_secret="$(env_value ITHUTE_SERVICE_LOANHUB_SECRET)"
+          rsl_secret="$(env_value ITHUTE_SERVICE_RSL_POS_SECRET)"
+          mailbox_secret="$(env_value ITHUTE_SERVICE_MAILBOX_DNS_SECRET)"
+          account_secret="$(env_value ITHUTE_SERVICE_ACCOUNT_SECRET)"
+          pay_secret="$(env_value ITHUTE_SERVICE_ITHUTE_PAY_SECRET)"
+          upsert_env ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON "{\"loanhub\":\"${loanhub_secret}\",\"rsl-pos\":\"${rsl_secret}\",\"mailbox-dns\":\"${mailbox_secret}\",\"ithute-account\":\"${account_secret}\",\"ithute-pay\":\"${pay_secret}\"}"
+
+          chmod 600 .env
+          rm -f "/tmp/ithute-pay-${DEPLOY_SHA}.tgz" "$overrides"
+
+          COMPOSE_FILES="-f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.ithute-platform.yml -f docker-compose.ithute-pay.yml -f docker-compose.deploy.yml"
+          compose() { docker compose $COMPOSE_FILES "$@"; }
+          wait_service() {
+            service="$1"; attempts="${2:-90}"; n=1
+            while [ "$n" -le "$attempts" ]; do
+              id="$(compose ps -q "$service" 2>/dev/null || true)"
+              if [ -n "$id" ]; then
+                status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id" 2>/dev/null || true)"
+                case "$status" in healthy|running) return 0 ;; exited|dead|unhealthy) compose logs --tail=200 "$service" || true; return 1 ;; esac
+              fi
+              sleep 2; n=$((n + 1))
+            done
+            compose logs --tail=200 "$service" || true
+            return 1
+          }
+
+          compose config >/dev/null
+          compose pull ithute-pay
+          compose up -d --no-build ithute-pay-db ithute-pay-redis
+          wait_service ithute-pay-db 60
+          wait_service ithute-pay-redis 60
+
+          # Apply the newly registered first-party client/service secret without
+          # replacing the existing Auth/Push databases or product data.
+          compose up -d --no-deps --force-recreate ithute-auth
+          wait_service ithute-auth 60
+          compose up -d --no-deps --force-recreate ithute-push
+          wait_service ithute-push 60
+          compose up -d --no-deps --force-recreate ithute-push-worker
+
+          compose up -d --no-deps --force-recreate ithute-pay
+          wait_service ithute-pay 120
+          compose up -d --no-deps --force-recreate nginx
+          wait_service nginx 60
+
+          compose exec -T nginx wget -qO- --header='Host: pay.ithute.co.ls' http://127.0.0.1/ >/dev/null
+          compose exec -T nginx wget -qO- --header='Host: api.pay.ithute.co.ls' http://127.0.0.1/health >/dev/null
+          compose exec -T nginx wget -qO- --header='Host: portal.pay.ithute.co.ls' http://127.0.0.1/portal >/dev/null
+
+          upsert_env ITHUTE_PAY_IMAGE_TAG "$DEPLOY_SHA"
+          chmod 600 .env
+          echo "Ithute Pay internal production services deployed at image ${DEPLOY_SHA}."
+          REMOTE
+          ssh "$remote" "docker logout '$REGISTRY' >/dev/null 2>&1 || true"
+
+      - name: Check public domain handoff
+        run: |
+          set -eu
+          for url in \
+            https://pay.ithute.co.ls/ \
+            https://api.pay.ithute.co.ls/health \
+            https://portal.pay.ithute.co.ls/portal; do
+            if curl --fail --silent --show-error --connect-timeout 8 --max-time 20 "$url" >/dev/null; then
+              echo "Public route ready: $url"
+            else
+              echo "::warning::Internal Ithute Pay deployment is healthy, but the shared HTTPS edge/DNS is not serving $url yet."
+            fi
+          done

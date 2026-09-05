@@ -1,0 +1,396 @@
+name: Build and Deploy Production
+
+on:
+  workflow_run:
+    workflows: ["Commercial Release Regression"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: mailbox-dns-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  VPS_HOST: 204.12.205.224
+  VPS_USER: administrator
+  VPS_APP_DIR: /home/administrator/mailbox-dns
+  GHCR_USERNAME: Lelefe-dc
+  BOOTSTRAP_ADMIN_EMAIL: thekoetlisi@gmail.com
+  BACKEND_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-backend
+  FRONTEND_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-frontend
+  UNBOUND_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-unbound
+  DOVECOT_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-dovecot
+  POSTFIX_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-postfix
+  RADICALE_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-radicale
+  BACKUP_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-backup
+  MAIL_EDGE_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-mail-edge
+  ITHUTE_AUTH_IMAGE: ghcr.io/lelefe-dc/ithute-auth
+  ITHUTE_PUSH_IMAGE: ghcr.io/lelefe-dc/ithute-push
+
+jobs:
+  build-and-publish:
+    name: Build immutable production images
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: production
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          persist-credentials: false
+
+      - name: Authenticate GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          printf '%s' "$GHCR_TOKEN" | docker login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin
+
+      - name: Initialize Docker Buildx
+        run: |
+          set -eu
+          docker buildx create --name mailbox-dns-builder --use
+          docker buildx inspect --bootstrap
+
+      - name: Build and publish backend
+        run: |
+          set -eu
+          docker buildx build --platform linux/amd64 --pull --push \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${DEPLOY_SHA}" \
+            -t "${BACKEND_IMAGE}:${DEPLOY_SHA}" -t "${BACKEND_IMAGE}:latest" \
+            ./apps/backend
+
+      - name: Build and publish frontend
+        run: |
+          set -eu
+          docker buildx build --platform linux/amd64 --pull --push --target runner \
+            --build-arg NEXT_PUBLIC_API_URL=/api/v1 \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${DEPLOY_SHA}" \
+            -t "${FRONTEND_IMAGE}:${DEPLOY_SHA}" -t "${FRONTEND_IMAGE}:latest" \
+            ./apps/frontend
+
+      - name: Build and publish central Ithute platform images
+        run: |
+          set -eu
+          build_platform_image() {
+            image="$1"
+            context="$2"
+            docker buildx build --platform linux/amd64 --pull --push \
+              --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+              --label "org.opencontainers.image.revision=${DEPLOY_SHA}" \
+              -t "${image}:${DEPLOY_SHA}" -t "${image}:latest" \
+              "$context"
+          }
+          build_platform_image "$ITHUTE_AUTH_IMAGE" ./platform/ithute-auth
+          build_platform_image "$ITHUTE_PUSH_IMAGE" ./platform/ithute-push
+
+      - name: Build and publish mail infrastructure images
+        run: |
+          set -eu
+          build_image() {
+            image="$1"
+            context="$2"
+            docker buildx build --platform linux/amd64 --pull --push \
+              --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+              --label "org.opencontainers.image.revision=${DEPLOY_SHA}" \
+              -t "${image}:${DEPLOY_SHA}" -t "${image}:latest" \
+              "$context"
+          }
+          build_image "$UNBOUND_IMAGE" ./infra/unbound
+          build_image "$DOVECOT_IMAGE" ./infra/dovecot
+          build_image "$POSTFIX_IMAGE" ./infra/postfix
+          build_image "$RADICALE_IMAGE" ./infra/radicale
+          build_image "$BACKUP_IMAGE" ./infra/backup
+          build_image "$MAIL_EDGE_IMAGE" ./infra/mail-edge
+
+  deploy-to-vps:
+    name: Deploy exact images to shared production VPS
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    env:
+      DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+      BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}
+
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          persist-credentials: false
+
+      - name: Validate deployment credentials
+        run: |
+          set -eu
+          for name in VPS_SSH_KEY BOOTSTRAP_ADMIN_PASSWORD; do
+            eval "value=\${$name:-}"
+            if [ -z "$value" ]; then
+              echo "::error::$name is required for production deployment"
+              exit 1
+            fi
+          done
+
+      - name: Configure production SSH identity
+        run: |
+          set -eu
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/mailbox_dns_deploy"
+          chmod 600 "$HOME/.ssh/mailbox_dns_deploy"
+
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/mailbox-dns-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/mailbox-dns-askpass.sh
+            SSH_ASKPASS=/tmp/mailbox-dns-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+              setsid -w ssh-add "$HOME/.ssh/mailbox_dns_deploy" </dev/null
+            rm -f /tmp/mailbox-dns-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/mailbox_dns_deploy" </dev/null
+          fi
+
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Prepare production deployment bundle
+        run: |
+          set -eu
+          bundle="/tmp/mailbox-dns-${DEPLOY_SHA}.tgz"
+          tar -czf "$bundle" \
+            .env.example \
+            docker-compose.yml \
+            docker-compose.prod.yml \
+            docker-compose.phase6-mail.yml \
+            docker-compose.phase11-backup.yml \
+            docker-compose.phase12-monitoring.yml \
+            docker-compose.commercial-prod.yml \
+            docker-compose.ha-mail.yml \
+            docker-compose.deploy.yml \
+            docker-compose.deploy-ha.yml \
+            docker-compose.ithute-platform.yml \
+            infra \
+            infrastructure \
+            scripts
+
+          umask 077
+          overrides="/tmp/mailbox-dns-overrides-${DEPLOY_SHA}.env"
+          {
+            printf 'BOOTSTRAP_ADMIN_EMAIL=%s\n' "$BOOTSTRAP_ADMIN_EMAIL"
+            printf 'BOOTSTRAP_ADMIN_PASSWORD=%s\n' "$BOOTSTRAP_ADMIN_PASSWORD"
+            printf 'ENVIRONMENT=production\n'
+            printf 'PLATFORM_MODE=bootstrap\n'
+            printf 'SHARED_HTTP_EDGE=true\n'
+            printf 'BOOTSTRAP_PUBLIC_IP=%s\n' "$VPS_HOST"
+            printf 'MAIL_PUBLIC_IP=%s\n' "$VPS_HOST"
+            printf 'MAIL_TLS_MODE=selfsigned\n'
+            printf 'COOKIE_SECURE=true\n'
+            printf 'NEXT_PUBLIC_API_URL=/api/v1\n'
+            printf 'FRONTEND_URL=https://panel.ithute.co.ls\n'
+            printf 'ITHUTE_AUTH_ISSUER=https://auth.ithute.co.ls\n'
+            printf 'ITHUTE_AUTH_CORS_ORIGINS=https://panel.ithute.co.ls\n'
+
+            # The temporary public-IP panel is retired now that the shared Caddy
+            # edge serves the real Ithute hostnames. Application HTTP ports are
+            # loopback-only; Caddy reaches Mailbox-DNS nginx over Docker networking.
+            printf 'FRONTEND_PORT=127.0.0.1:3006\n'
+            printf 'BACKEND_PORT=127.0.0.1:8006\n'
+            printf 'PROXY_PORT=127.0.0.1:8086\n'
+            printf 'GROUPWARE_PORT=127.0.0.1:5232\n'
+            printf 'PROMETHEUS_PORT=127.0.0.1:9090\n'
+            printf 'ALERTMANAGER_PORT=127.0.0.1:9093\n'
+            printf 'GRAFANA_PORT=127.0.0.1:3007\n'
+
+            # Authoritative DNS and secure mail protocols bind only to the VPS
+            # public IPv4. Plain IMAP and Dovecot replication remain local.
+            printf 'DNS_PORT=%s:53\n' "$VPS_HOST"
+            printf 'SMTP_PORT=%s:25\n' "$VPS_HOST"
+            printf 'SUBMISSION_PORT=%s:587\n' "$VPS_HOST"
+            printf 'IMAP_PORT=127.0.0.1:2143\n'
+            printf 'IMAPS_PORT=%s:993\n' "$VPS_HOST"
+            printf 'DOVECOT_REPLICATION_PORT=127.0.0.1:24245\n'
+          } > "$overrides"
+
+      - name: Stage manifests and secure platform identity on VPS
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "mkdir -p '$VPS_APP_DIR' && chmod 700 '$VPS_APP_DIR'"
+          scp "/tmp/mailbox-dns-${DEPLOY_SHA}.tgz" "$remote:/tmp/mailbox-dns-${DEPLOY_SHA}.tgz"
+          scp "/tmp/mailbox-dns-overrides-${DEPLOY_SHA}.env" "$remote:/tmp/mailbox-dns-overrides-${DEPLOY_SHA}.env"
+
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' sh -s" <<'REMOTE'
+          set -eu
+          archive="/tmp/mailbox-dns-${DEPLOY_SHA}.tgz"
+          overrides="/tmp/mailbox-dns-overrides-${DEPLOY_SHA}.env"
+          tar -xzf "$archive" -C "$APP_DIR"
+          cd "$APP_DIR"
+
+          created_env=0
+          if [ ! -f .env ]; then
+            cp .env.example .env
+            created_env=1
+          fi
+          chmod 600 .env
+
+          upsert_env() {
+            key="$1"
+            value="$2"
+            tmp="$(mktemp)"
+            awk -v k="$key" 'index($0, k "=") != 1 { print }' .env > "$tmp"
+            printf '%s=%s\n' "$key" "$value" >> "$tmp"
+            cat "$tmp" > .env
+            rm -f "$tmp"
+          }
+
+          env_value() {
+            key="$1"
+            awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' .env
+          }
+
+          random_hex() {
+            openssl rand -hex 32
+          }
+
+          ensure_random_hex() {
+            key="$1"
+            value="$(env_value "$key")"
+            case "$value" in
+              ""|*replace-with*|*replace-this*|*ChangeMe*|*changeme*) upsert_env "$key" "$(random_hex)" ;;
+            esac
+          }
+
+          if [ "$created_env" -eq 1 ]; then
+            POSTGRES_DB_VALUE="lelefamail"
+            POSTGRES_USER_VALUE="lelefamail"
+            POSTGRES_PASSWORD_VALUE="$(random_hex)"
+            POWERDNS_DB_NAME_VALUE="powerdns"
+            POWERDNS_DB_USER_VALUE="powerdns"
+            POWERDNS_DB_PASSWORD_VALUE="$(random_hex)"
+
+            upsert_env SECRET_KEY "$(random_hex)"
+            upsert_env DKIM_ENCRYPTION_KEY "$(random_hex)"
+            upsert_env BILLING_WEBHOOK_SECRET "$(random_hex)"
+            upsert_env POSTGRES_DB "$POSTGRES_DB_VALUE"
+            upsert_env POSTGRES_USER "$POSTGRES_USER_VALUE"
+            upsert_env POSTGRES_PASSWORD "$POSTGRES_PASSWORD_VALUE"
+            upsert_env DATABASE_URL "postgresql+psycopg://${POSTGRES_USER_VALUE}:${POSTGRES_PASSWORD_VALUE}@postgres:5432/${POSTGRES_DB_VALUE}"
+            upsert_env POWERDNS_API_KEY "$(random_hex)"
+            upsert_env POWERDNS_DB_NAME "$POWERDNS_DB_NAME_VALUE"
+            upsert_env POWERDNS_DB_USER "$POWERDNS_DB_USER_VALUE"
+            upsert_env POWERDNS_DB_PASSWORD "$POWERDNS_DB_PASSWORD_VALUE"
+            upsert_env MAIL_OPS_TOKEN "$(random_hex)"
+            upsert_env RECOVERY_OPS_TOKEN "$(random_hex)"
+            upsert_env MAIL_NODE_TOKEN "$(random_hex)"
+            upsert_env RESTIC_PASSWORD "$(random_hex)"
+            upsert_env RESTORE_DB_PASSWORD "$(random_hex)"
+            upsert_env GRAFANA_ADMIN_PASSWORD "$(random_hex)"
+          fi
+
+          # Central platform secrets are generated once and then retained in the
+          # VPS-owned .env. Auth and Push intentionally use distinct databases.
+          ensure_random_hex ITHUTE_AUTH_DB_PASSWORD
+          ensure_random_hex ITHUTE_PUSH_DB_PASSWORD
+          ensure_random_hex ITHUTE_SERVICE_LOANHUB_SECRET
+          ensure_random_hex ITHUTE_SERVICE_RSL_POS_SECRET
+          ensure_random_hex ITHUTE_SERVICE_MAILBOX_DNS_SECRET
+          ensure_random_hex ITHUTE_SERVICE_ACCOUNT_SECRET
+
+          push_key="$(env_value ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY)"
+          case "$push_key" in
+            ""|*replace-with*|*replace-this*)
+              push_key="$(openssl rand -base64 32 | tr '/+' '_-' | tr -d '\n')"
+              upsert_env ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY "$push_key"
+              ;;
+          esac
+
+          loanhub_secret="$(env_value ITHUTE_SERVICE_LOANHUB_SECRET)"
+          rsl_secret="$(env_value ITHUTE_SERVICE_RSL_POS_SECRET)"
+          mailbox_secret="$(env_value ITHUTE_SERVICE_MAILBOX_DNS_SECRET)"
+          account_secret="$(env_value ITHUTE_SERVICE_ACCOUNT_SECRET)"
+          upsert_env ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON "{\"loanhub\":\"${loanhub_secret}\",\"rsl-pos\":\"${rsl_secret}\",\"mailbox-dns\":\"${mailbox_secret}\",\"ithute-account\":\"${account_secret}\"}"
+
+          # The central signing key is generated once, mounted read-only into
+          # Auth, and never copied into a product container or repository.
+          mkdir -p platform-secrets/ithute-auth platform-secrets/ithute-push
+          chmod 700 platform-secrets platform-secrets/ithute-auth platform-secrets/ithute-push
+          if [ ! -s platform-secrets/ithute-auth/jwt-private.pem ]; then
+            openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out platform-secrets/ithute-auth/jwt-private.pem
+          fi
+          openssl pkey -in platform-secrets/ithute-auth/jwt-private.pem -pubout -out platform-secrets/ithute-auth/jwt-public.pem
+          chmod 600 platform-secrets/ithute-auth/jwt-private.pem
+          chmod 644 platform-secrets/ithute-auth/jwt-public.pem
+
+          while IFS='=' read -r key value; do
+            [ -n "$key" ] || continue
+            upsert_env "$key" "$value"
+          done < "$overrides"
+
+          rm -f "$archive" "$overrides"
+          chmod 600 .env
+          REMOTE
+
+      - name: Authenticate VPS to GHCR for this release
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          printf '%s' "$GHCR_TOKEN" | ssh "${VPS_USER}@${VPS_HOST}" \
+            "docker login '$REGISTRY' -u '$GHCR_USERNAME' --password-stdin"
+
+      - name: Deploy production stack
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          set +e
+          ssh "$remote" "cd '$VPS_APP_DIR' && MAILBOX_DNS_IMAGE_TAG='$DEPLOY_SHA' sh scripts/prod-deploy.sh"
+          rc=$?
+          set -e
+          ssh "$remote" "docker logout '$REGISTRY' >/dev/null 2>&1 || true"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::Production deployment failed. The VPS was staged, but the production preflight or runtime health gate did not pass."
+            exit "$rc"
+          fi
+
+      - name: Verify deployed release and private application ports
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "cd '$VPS_APP_DIR' && grep '^MAILBOX_DNS_IMAGE_TAG=' .env | grep -F '$DEPLOY_SHA' >/dev/null && grep '^SHARED_HTTP_EDGE=true$' .env >/dev/null && grep '^PROXY_PORT=127.0.0.1:8086$' .env >/dev/null && grep '^FRONTEND_PORT=127.0.0.1:3006$' .env >/dev/null && grep '^BACKEND_PORT=127.0.0.1:8006$' .env >/dev/null && curl -fsS http://127.0.0.1:8086/ >/dev/null && curl -fsS -H 'Host: auth.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null && curl -fsS -H 'Host: push.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null"
+
+          curl --fail --silent --show-error --retry 8 --retry-delay 5 --connect-timeout 10 "https://panel.ithute.co.ls/" >/dev/null
+
+          if curl --fail --silent --show-error --connect-timeout 5 "http://${VPS_HOST}:3006/" >/dev/null 2>&1; then
+            echo "::error::Temporary public IP access on ${VPS_HOST}:3006 is still reachable."
+            exit 1
+          fi
+
+          echo "Production panel and internal !thute Auth/Push routes verified; direct public IP access on port 3006 is closed."

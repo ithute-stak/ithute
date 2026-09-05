@@ -1,0 +1,64 @@
+name: Publish Ithute Realtime Production
+
+on:
+  workflow_run:
+    workflows: ["Ithute Realtime"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ithute-realtime-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  GHCR_USERNAME: Lelefe-dc
+  ITHUTE_REALTIME_IMAGE: ghcr.io/lelefe-dc/ithute-realtime
+
+jobs:
+  build-and-publish:
+    name: Build immutable Ithute Realtime image
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+    steps:
+      - name: Checkout exact validated commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          persist-credentials: false
+
+      - name: Authenticate GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          printf '%s' "$GHCR_TOKEN" | docker login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin
+
+      - name: Initialize Docker Buildx
+        run: |
+          set -eu
+          docker buildx create --name ithute-realtime-builder --use
+          docker buildx inspect --bootstrap
+
+      - name: Build and publish Realtime
+        run: |
+          set -eu
+          docker buildx build --platform linux/amd64 --pull --push \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${DEPLOY_SHA}" \
+            -t "${ITHUTE_REALTIME_IMAGE}:${DEPLOY_SHA}" \
+            -t "${ITHUTE_REALTIME_IMAGE}:latest" \
+            ./platform/ithute-realtime

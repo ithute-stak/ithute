@@ -1,0 +1,108 @@
+services:
+  backend:
+    environment:
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://prometheus:9090}
+      PROMETHEUS_TIMEOUT_SECONDS: ${PROMETHEUS_TIMEOUT_SECONDS:-5}
+      OPERATIONS_SLO_TARGET: ${OPERATIONS_SLO_TARGET:-0.999}
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      backend: {condition: service_healthy}
+      blackbox-exporter: {condition: service_started}
+      ops-exporter: {condition: service_started}
+      alertmanager: {condition: service_started}
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/ready >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [mailbox_dns]
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.0
+    restart: unless-stopped
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    volumes:
+      - ./infra/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    networks: [mailbox_dns]
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    restart: unless-stopped
+    command: ["--config.file=/etc/blackbox_exporter/config.yml"]
+    volumes:
+      - ./infra/monitoring/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    networks: [mailbox_dns]
+
+  ops-exporter:
+    image: python:3.12-alpine
+    restart: unless-stopped
+    command: ["python", "/opt/monitoring/ops_exporter.py"]
+    environment:
+      MAIL_OPS_URL: ${MAIL_OPS_URL:-http://postfix:9080}
+      MAIL_OPS_TOKEN: ${MAIL_OPS_TOKEN:-development-mail-ops-token-change-me}
+      BACKUP_STATUS_FILE: /workspace/status/last-run.json
+      OPS_EXPORTER_PORT: 9108
+    volumes:
+      - ./infra/monitoring/ops_exporter.py:/opt/monitoring/ops_exporter.py:ro
+      - backup_workspace:/workspace:ro
+    networks: [mailbox_dns]
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-development-grafana-password-change-me}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./infra/monitoring/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./infra/monitoring/mailbox-dns-operations.json:/var/lib/grafana/dashboards/mailbox-dns-operations.json:ro
+      - ./infra/monitoring/mailbox-dns-slo.json:/var/lib/grafana/dashboards/mailbox-dns-slo.json:ro
+    depends_on:
+      prometheus: {condition: service_healthy}
+    ports:
+      - "${GRAFANA_PORT:-3007}:3000"
+    networks: [mailbox_dns]
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+    volumes:
+      - /:/host:ro,rslave
+    networks: [mailbox_dns]
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.5
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    networks: [mailbox_dns]
+
+volumes:
+  prometheus_data:
+  grafana_data:

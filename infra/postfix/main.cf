@@ -1,0 +1,57 @@
+compatibility_level = 3.6
+myhostname = mail.phase7.test
+mydomain = phase7.test
+myorigin = $mydomain
+inet_interfaces = all
+inet_protocols = ipv4
+mydestination = localhost
+relay_domains =
+
+smtpd_banner = $myhostname ESMTP Mailbox DNS
+biff = no
+append_dot_mydomain = no
+readme_directory = no
+
+virtual_mailbox_domains = pgsql:/etc/postfix/pgsql-virtual-domains.cf
+virtual_mailbox_maps = pgsql:/etc/postfix/pgsql-virtual-mailboxes.cf
+virtual_alias_maps = pgsql:/etc/postfix/pgsql-virtual-aliases.cf, pgsql:/etc/postfix/pgsql-distribution-groups.cf
+virtual_transport = lmtp:inet:dovecot:24
+
+smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
+smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
+
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = inet:dovecot:12345
+smtpd_sasl_auth_enable = no
+smtpd_sasl_security_options = noanonymous
+broken_sasl_auth_clients = yes
+
+smtpd_tls_cert_file = /etc/postfix/tls/cert.pem
+smtpd_tls_key_file = /etc/postfix/tls/key.pem
+smtpd_tls_security_level = may
+smtpd_tls_auth_only = yes
+smtp_tls_security_level = may
+
+smtpd_milters = inet:rspamd:11332
+non_smtpd_milters = inet:rspamd:11332
+milter_protocol = 6
+milter_default_action = tempfail
+# Rspamd's DKIM signing policy needs the SASL login identity to recognize
+# authenticated submission as outbound mail. Pass it explicitly at MAIL FROM
+# together with the normal connection/sender macros.
+milter_mail_macros = i {mail_addr} {client_addr} {client_name} {auth_authen}
+
+# Baseline anti-abuse controls. These are deliberately conservative and can be
+# tuned per production deployment after traffic baselines are known.
+anvil_rate_time_unit = 60s
+smtpd_client_connection_rate_limit = 60
+smtpd_client_message_rate_limit = 120
+smtpd_client_recipient_rate_limit = 240
+smtpd_soft_error_limit = 10
+smtpd_hard_error_limit = 20
+smtpd_error_sleep_time = 1s
+
+message_size_limit = 26214400
+mailbox_size_limit = 0
+recipient_delimiter = +
+disable_vrfy_command = yes

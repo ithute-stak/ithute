@@ -1,0 +1,250 @@
+name: LoanHub Product Production
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'products/LoanHub/**'
+      - '.github/workflows/loanhub-product-production.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: loanhub-product-production
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ghcr.io/lelefe-dc/loanhub-backend
+  FRONTEND_IMAGE: ghcr.io/lelefe-dc/loanhub-frontend
+  VPS_HOST: 204.12.205.224
+  VPS_USER: administrator
+  VPS_PLATFORM_ROOT: /home/administrator/mailbox-dns
+  LOANHUB_RUNTIME_DIR: loanhub
+  LEGACY_LOANHUB_DIR: /opt/loanhub
+  PRODUCT_DIR: products/LoanHub
+  PRODUCTION_API_URL: https://api.loanhub.co.ls/api/v1
+  GHCR_USERNAME: Lelefe-dc
+
+jobs:
+  validate:
+    name: Validate LoanHub product deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Mailbox repository
+        uses: actions/checkout@v6
+
+      - name: Validate product Compose manifest
+        working-directory: products/LoanHub
+        run: |
+          cp .env.example .env
+          docker compose config -q
+          docker compose --profile production config -q
+
+      - name: Compile backend
+        working-directory: products/LoanHub/apps/backend
+        run: python -m compileall -q .
+
+      - name: Verify production data invariants
+        run: |
+          set -eu
+          grep -Fq 'name: ${COMPOSE_PROJECT_NAME:-loanhub}' products/LoanHub/compose.yaml
+          grep -Fq -- '- postgres_data:/var/lib/postgresql/data' products/LoanHub/compose.yaml
+          grep -Fq 'COMPOSE_PROJECT_NAME=loanhub' products/LoanHub/.env.production.example
+
+  build-and-publish:
+    name: Build LoanHub product images
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Mailbox repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push LoanHub backend
+        uses: docker/build-push-action@v7
+        with:
+          context: ./products/LoanHub/apps/backend
+          file: ./products/LoanHub/apps/backend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          pull: true
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:latest
+            ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+
+      - name: Build and push LoanHub frontend
+        uses: docker/build-push-action@v7
+        with:
+          context: ./products/LoanHub/apps/frontend
+          file: ./products/LoanHub/apps/frontend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          pull: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ env.PRODUCTION_API_URL }}
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:latest
+            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+
+  deploy-to-existing-loanhub-vps:
+    name: Deploy LoanHub under Mailbox platform root
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Mailbox repository
+        uses: actions/checkout@v6
+
+      - name: Validate deployment secrets
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          set -eu
+          for name in VPS_SSH_KEY GHCR_TOKEN; do
+            eval "value=\${$name:-}"
+            if [ -z "$value" ]; then
+              echo "::error::$name must be configured in the Mailbox-DNS repository or organization Actions secrets"
+              exit 1
+            fi
+          done
+
+      - name: Copy LoanHub production manifests to VPS
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ env.VPS_HOST }}
+          username: ${{ env.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }}
+          source: products/LoanHub/compose.yaml,products/LoanHub/infra/caddy/Caddyfile
+          target: /tmp/mailbox-loanhub-${{ github.sha }}
+          overwrite: true
+
+      - name: Deploy into the Mailbox-DNS mother runtime
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ env.VPS_HOST }}
+          username: ${{ env.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }}
+          script_stop: true
+          command_timeout: 30m
+          script: |
+            set -eu
+
+            PLATFORM_ROOT='${{ env.VPS_PLATFORM_ROOT }}'
+            APP_DIR="$PLATFORM_ROOT/${{ env.LOANHUB_RUNTIME_DIR }}"
+            LEGACY_APP_DIR='${{ env.LEGACY_LOANHUB_DIR }}'
+            SRC='/tmp/mailbox-loanhub-${{ github.sha }}/products/LoanHub'
+
+            test -d "$PLATFORM_ROOT"
+            test -f "$SRC/compose.yaml"
+            test -f "$SRC/infra/caddy/Caddyfile"
+
+            mkdir -p "$APP_DIR/infra/caddy" "$APP_DIR/backups" "$APP_DIR/secrets"
+
+            # First migration from /opt/loanhub: copy only production identity/config.
+            # The old directory remains untouched as a rollback reference.
+            if [ ! -s "$APP_DIR/.env.production" ]; then
+              if [ -s "$LEGACY_APP_DIR/.env.production" ]; then
+                cp -p "$LEGACY_APP_DIR/.env.production" "$APP_DIR/.env.production"
+              else
+                echo "Missing LoanHub .env.production in both $APP_DIR and $LEGACY_APP_DIR." >&2
+                exit 1
+              fi
+            fi
+            if [ -d "$LEGACY_APP_DIR/secrets" ] && [ -z "$(find "$APP_DIR/secrets" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+              cp -a "$LEGACY_APP_DIR/secrets/." "$APP_DIR/secrets/"
+            fi
+
+            cp "$SRC/compose.yaml" "$APP_DIR/compose.yaml"
+            cp "$SRC/infra/caddy/Caddyfile" "$APP_DIR/infra/caddy/Caddyfile"
+            cd "$APP_DIR"
+
+            set -a
+            . ./.env.production
+            set +a
+
+            export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-loanhub}"
+            export LOANHUB_ENV_FILE=.env.production
+            export LOANHUB_BACKEND_IMAGE='${{ env.BACKEND_IMAGE }}'
+            export LOANHUB_FRONTEND_IMAGE='${{ env.FRONTEND_IMAGE }}'
+            export LOANHUB_IMAGE_TAG='${{ github.sha }}'
+
+            EXPECTED_DB_VOLUME="${COMPOSE_PROJECT_NAME}_postgres_data"
+            if ! docker volume inspect "$EXPECTED_DB_VOLUME" >/dev/null 2>&1; then
+              echo "Expected existing LoanHub database volume not found: $EXPECTED_DB_VOLUME" >&2
+              echo 'Deployment aborted before Docker can create an empty replacement volume.' >&2
+              exit 1
+            fi
+
+            docker network inspect mailbox-dns_mailbox_dns >/dev/null 2>&1 || docker network create mailbox-dns_mailbox_dns
+            echo '${{ secrets.GHCR_TOKEN }}' | docker login ghcr.io -u '${{ env.GHCR_USERNAME }}' --password-stdin
+
+            docker compose --env-file .env.production --profile production config -q
+            docker compose --env-file .env.production --profile production pull backend frontend caddy db redis
+
+            # Reuse the existing database and Redis volumes. Never use down -v here.
+            docker compose --env-file .env.production --profile production up -d --no-build db redis
+
+            DB_CONTAINER="$(docker compose --env-file .env.production --profile production ps -q db)"
+            if [ -z "$DB_CONTAINER" ]; then
+              echo 'LoanHub database container did not start.' >&2
+              exit 1
+            fi
+
+            ACTUAL_DB_VOLUME="$(docker inspect "$DB_CONTAINER" --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}')"
+            if [ "$ACTUAL_DB_VOLUME" != "$EXPECTED_DB_VOLUME" ]; then
+              echo "LoanHub database volume mismatch. Expected $EXPECTED_DB_VOLUME, got ${ACTUAL_DB_VOLUME:-none}." >&2
+              echo 'Deployment aborted before migration.' >&2
+              exit 1
+            fi
+
+            # Mandatory pre-migration database backup. A failed or empty dump stops deployment.
+            BACKUP_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+            BACKUP_FILE="$APP_DIR/backups/loanhub-pre-migrate-${BACKUP_STAMP}-${{ github.sha }}.dump"
+            docker compose --env-file .env.production --profile production exec -T db \
+              pg_dump -U "${DB_USER:-loanhub}" -d "${DB_NAME:-loan_db}" -Fc > "$BACKUP_FILE"
+            if [ ! -s "$BACKUP_FILE" ]; then
+              echo 'Pre-migration PostgreSQL backup is empty or missing; aborting.' >&2
+              exit 1
+            fi
+            sha256sum "$BACKUP_FILE" > "${BACKUP_FILE}.sha256"
+
+            # Apply only forward Alembic migrations against the verified existing volume.
+            docker compose --env-file .env.production --profile production run --rm --no-deps migrate
+            docker compose --env-file .env.production --profile production up -d --no-build backend maintenance frontend caddy
+            docker compose --env-file .env.production --profile production ps
+
+            for url in https://api.loanhub.co.ls/health/ready https://loanhub.co.ls/; do
+              healthy=false
+              for attempt in $(seq 1 30); do
+                if curl -fsS "$url" >/dev/null; then
+                  healthy=true
+                  break
+                fi
+                sleep 5
+              done
+              if [ "$healthy" != true ]; then
+                echo "Production health check failed: $url" >&2
+                exit 1
+              fi
+            done
+
+            printf '%s\n' \
+              "LoanHub runtime: $APP_DIR" \
+              "Preserved database volume: $EXPECTED_DB_VOLUME" \
+              "Pre-migration backup: $BACKUP_FILE" \
+              "Legacy runtime retained: $LEGACY_APP_DIR"

@@ -1,0 +1,103 @@
+name: ${COMPOSE_PROJECT_NAME:-ithute-tutor}
+
+services:
+  tutor-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${ITHUTE_TUTOR_DB_NAME:-ithute_tutor}
+      POSTGRES_USER: ${ITHUTE_TUTOR_DB_USER:-ithute_tutor}
+      POSTGRES_PASSWORD: ${ITHUTE_TUTOR_DB_PASSWORD:?Set ITHUTE_TUTOR_DB_PASSWORD in .env}
+    volumes:
+      - ithute_tutor_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ITHUTE_TUTOR_DB_USER:-ithute_tutor} -d ${ITHUTE_TUTOR_DB_NAME:-ithute_tutor}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [ithute_tutor_private]
+
+  tutor-backend:
+    image: ${ITHUTE_TUTOR_BACKEND_IMAGE:-ithute-tutor-backend:local}
+    build:
+      context: ./sms_back_end
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${ITHUTE_TUTOR_DB_USER:-ithute_tutor}:${ITHUTE_TUTOR_DB_PASSWORD:?Set ITHUTE_TUTOR_DB_PASSWORD in .env}@tutor-db:5432/${ITHUTE_TUTOR_DB_NAME:-ithute_tutor}
+      TUTOR_PUBLIC_URL: ${ITHUTE_TUTOR_PUBLIC_URL:-http://localhost:3202}
+      TUTOR_FRONTEND_URL: ${ITHUTE_TUTOR_FRONTEND_URL:-http://localhost:3202}
+      AUTH_ISSUER: ${ITHUTE_AUTH_ISSUER:-https://auth.ithute.co.ls}
+      AUTH_AUDIENCE: ithute-tutor
+      AUTH_INTERNAL_BASE_URL: ${ITHUTE_TUTOR_AUTH_BASE_URL:-https://auth.ithute.co.ls}
+      AUTH_JWKS_URL: ${ITHUTE_AUTH_JWKS_URL:-https://auth.ithute.co.ls/.well-known/jwks.json}
+      AUTH_OIDC_REDIRECT_URI: ${ITHUTE_TUTOR_OIDC_REDIRECT_URI:-http://localhost:3202/api/auth/oidc/callback}
+      AUTH_COOKIE_SECURE: ${ITHUTE_TUTOR_COOKIE_SECURE:-false}
+      AUTH_COOKIE_SAMESITE: ${ITHUTE_TUTOR_COOKIE_SAMESITE:-lax}
+      LEGACY_AUTH_ENABLED: ${ITHUTE_TUTOR_LEGACY_AUTH_ENABLED:-false}
+      PUSH_BASE_URL: ${ITHUTE_TUTOR_PUSH_BASE_URL:-https://push.ithute.co.ls}
+      PUSH_SERVICE_CLIENT_ID: ithute-tutor
+      PUSH_SERVICE_CLIENT_SECRET: ${ITHUTE_TUTOR_PUSH_SERVICE_CLIENT_SECRET:-}
+      TUTOR_BOOTSTRAP_AUTH_USER_ID: ${ITHUTE_TUTOR_BOOTSTRAP_AUTH_USER_ID:-}
+      TUTOR_BOOTSTRAP_ADMIN_EMAIL: ${ITHUTE_TUTOR_BOOTSTRAP_ADMIN_EMAIL:-}
+      TUTOR_BOOTSTRAP_ADMIN_USERNAME: ${ITHUTE_TUTOR_BOOTSTRAP_ADMIN_USERNAME:-superadmin}
+      MPESA_API_KEY: ${ITHUTE_TUTOR_MPESA_API_KEY:-}
+      MPESA_PUBLIC_KEY: ${ITHUTE_TUTOR_MPESA_PUBLIC_KEY:-}
+      MPESA_BASE_URL: ${ITHUTE_TUTOR_MPESA_BASE_URL:-}
+      MPESA_MARKET: ${ITHUTE_TUTOR_MPESA_MARKET:-}
+      MPESA_COUNTRY: ${ITHUTE_TUTOR_MPESA_COUNTRY:-LS}
+      MPESA_CURRENCY: ${ITHUTE_TUTOR_MPESA_CURRENCY:-LSL}
+      MPESA_SHORTCODE: ${ITHUTE_TUTOR_MPESA_SHORTCODE:-}
+      MPESA_MODEL: ${ITHUTE_TUTOR_MPESA_MODEL:-}
+    volumes:
+      - ithute_tutor_media:/app/media/students
+    depends_on:
+      tutor-db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${ITHUTE_TUTOR_BACKEND_PORT:-8202}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [ithute_tutor_private, ithute_tutor_app]
+
+  tutor-frontend:
+    image: ${ITHUTE_TUTOR_FRONTEND_IMAGE:-ithute-tutor-frontend:local}
+    build:
+      context: ./sms-frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_TUTOR_API_URL: ${NEXT_PUBLIC_TUTOR_API_URL:-http://localhost:8202}
+    restart: unless-stopped
+    init: true
+    environment:
+      NEXT_PUBLIC_TUTOR_API_URL: ${NEXT_PUBLIC_TUTOR_API_URL:-http://localhost:8202}
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+    depends_on:
+      tutor-backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${ITHUTE_TUTOR_FRONTEND_PORT:-3202}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [ithute_tutor_app]
+
+networks:
+  ithute_tutor_private:
+    driver: bridge
+    internal: true
+  ithute_tutor_app:
+    driver: bridge
+
+volumes:
+  ithute_tutor_postgres:
+  ithute_tutor_media:

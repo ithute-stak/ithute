@@ -1,0 +1,264 @@
+.surface {
+  --mail-bg: #f6f8fc;
+  --mail-surface: #ffffff;
+  --mail-text: #202124;
+  --mail-muted: #5f6368;
+  --mail-border: #e3e7eb;
+  --mail-blue: #0b57d0;
+  --mail-blue-soft: #d3e3fd;
+  --mail-focus: #1a73e8;
+  min-height: 100%;
+  background: var(--mail-bg);
+  color: var(--mail-text);
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+.surface :global(*) {
+  scrollbar-width: thin;
+  scrollbar-color: #c7cdd4 transparent;
+}
+
+.surface :global(*::-webkit-scrollbar) {
+  width: 10px;
+  height: 10px;
+}
+
+.surface :global(*::-webkit-scrollbar-track) {
+  background: transparent;
+}
+
+.surface :global(*::-webkit-scrollbar-thumb) {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: #c7cdd4;
+  background-clip: content-box;
+}
+
+.surface :global(button),
+.surface :global(a),
+.surface :global(input),
+.surface :global(textarea),
+.surface :global([contenteditable="true"]) {
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease,
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.surface :global(button:not(:disabled):active),
+.surface :global(a:active) {
+  transform: scale(0.985);
+}
+
+.surface :global(button:disabled) {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.surface :global(button:focus-visible),
+.surface :global(a:focus-visible),
+.surface :global(input:focus-visible),
+.surface :global(textarea:focus-visible),
+.surface :global([contenteditable="true"]:focus-visible) {
+  outline: 3px solid rgba(26, 115, 232, 0.22);
+  outline-offset: 2px;
+}
+
+.surface :global(input::placeholder),
+.surface :global(textarea::placeholder) {
+  color: #80868b;
+  opacity: 1;
+}
+
+.surface :global(header) {
+  position: relative;
+  z-index: 30;
+  background: rgba(246, 248, 252, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.surface :global(main) {
+  box-shadow:
+    0 1px 2px rgba(60, 64, 67, 0.06),
+    0 1px 6px rgba(60, 64, 67, 0.04);
+}
+
+.surface :global(aside) {
+  transition: width 200ms ease, transform 200ms ease, opacity 200ms ease;
+}
+
+.surface :global(article) {
+  animation: contentIn 180ms ease-out both;
+}
+
+.surface :global(input[type="checkbox"]) {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--mail-blue);
+  cursor: pointer;
+}
+
+.surface :global(textarea),
+.surface :global([contenteditable="true"]) {
+  caret-color: var(--mail-blue);
+}
+
+.surface :global([title]) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.surface :global(.shadow-2xl) {
+  box-shadow:
+    0 18px 56px rgba(32, 33, 36, 0.2),
+    0 4px 18px rgba(32, 33, 36, 0.12);
+}
+
+.surface :global(.hover\:shadow-md:hover) {
+  box-shadow:
+    0 2px 6px rgba(60, 64, 67, 0.15),
+    0 6px 16px rgba(60, 64, 67, 0.08);
+}
+
+.surface :global(.group:hover) {
+  transform: translateZ(0);
+}
+
+.surface :global(.group:hover .row-date) {
+  opacity: 0;
+}
+
+.surface :global(.row-actions) {
+  animation: rowActionsIn 110ms ease-out both;
+}
+
+.surface :global(.backdrop-blur) {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.surface :global(.rounded-tl-2xl),
+.surface :global(.rounded-tr-2xl) {
+  overflow: clip;
+}
+
+.surface :global(.fixed.inset-0) {
+  animation: overlayIn 140ms ease-out both;
+}
+
+.surface :global(.mail-compose-window) {
+  border: 1px solid rgba(60, 64, 67, 0.09);
+  transform-origin: bottom right;
+  animation: composeIn 170ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+.surface :global(.mail-rich-editor) {
+  min-height: 220px;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.surface :global(.mail-rich-editor:empty::before) {
+  content: attr(data-placeholder);
+  color: #9aa0a6;
+  pointer-events: none;
+}
+
+.surface :global(.mail-rich-editor a) {
+  color: #0b57d0;
+  text-decoration: underline;
+}
+
+.surface :global(.mail-rich-editor blockquote) {
+  margin: .75rem 0;
+  border-left: 3px solid #dadce0;
+  padding-left: .8rem;
+  color: #5f6368;
+}
+
+.surface :global(.mail-rich-editor ul),
+.surface :global(.mail-rich-editor ol) {
+  margin: .5rem 0;
+  padding-left: 1.5rem;
+}
+
+@keyframes overlayIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes contentIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes composeIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes rowActionsIn {
+  from { opacity: 0; transform: translateX(5px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@media (max-width: 640px) {
+  .surface :global(header) {
+    box-shadow: 0 1px 0 var(--mail-border);
+  }
+
+  .surface :global(main) {
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .surface :global(input),
+  .surface :global(textarea),
+  .surface :global([contenteditable="true"]) {
+    font-size: 16px;
+  }
+
+  .surface :global(.mail-compose-window) {
+    border-left: 0;
+    border-right: 0;
+    max-height: calc(100vh - 64px);
+  }
+
+  .surface :global(.mail-rich-editor) {
+    min-height: 180px;
+  }
+}
+
+@media (hover: none) {
+  .surface :global(.group:hover .row-date) {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surface :global(*),
+  .surface :global(*::before),
+  .surface :global(*::after) {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

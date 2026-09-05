@@ -1,0 +1,22 @@
+services:
+  backend:
+    environment:
+      # The panel validates central mailbox-dns access tokens through JWKS.
+      ITHUTE_AUTH_ENABLED: ${ITHUTE_AUTH_ENABLED:-true}
+      ITHUTE_AUTH_ISSUER: ${ITHUTE_AUTH_ISSUER:-https://auth.ithute.co.ls}
+      ITHUTE_AUTH_AUDIENCE: ${ITHUTE_AUTH_AUDIENCE:-mailbox-dns}
+      ITHUTE_AUTH_JWKS_URL: ${ITHUTE_AUTH_JWKS_URL:-https://auth.ithute.co.ls/.well-known/jwks.json}
+
+      # Privileged console uses Authorization Code + PKCE and stores the
+      # resulting short-lived central token only in a panel HttpOnly cookie.
+      ITHUTE_PLATFORM_AUTH_CALLBACK_URL: ${ITHUTE_PLATFORM_AUTH_CALLBACK_URL:-https://api.ithute.co.ls/api/v1/platform/ithute/admin/callback}
+      ITHUTE_PLATFORM_PANEL_RETURN_URL: ${ITHUTE_PLATFORM_PANEL_RETURN_URL:-https://panel.ithute.co.ls/ithute-platform}
+      ITHUTE_PLATFORM_PUSH_URL: ${ITHUTE_PLATFORM_PUSH_URL:-http://ithute-push:8080}
+      ITHUTE_PLATFORM_REQUEST_TIMEOUT_SECONDS: ${ITHUTE_PLATFORM_REQUEST_TIMEOUT_SECONDS:-5}
+      ITHUTE_PLATFORM_STEP_UP_SECONDS: ${ITHUTE_PLATFORM_STEP_UP_SECONDS:-600}
+
+  ithute-push:
+    environment:
+      # Only the central Mailbox DNS platform console can present push.admin.
+      PUSH_ALLOWED_ADMIN_CLIENTS: ${ITHUTE_PUSH_ALLOWED_ADMIN_CLIENTS:-mailbox-dns}
+      PUSH_AUTH_MAX_ADMIN_TOKEN_SECONDS: ${ITHUTE_PUSH_AUTH_MAX_ADMIN_TOKEN_SECONDS:-180}

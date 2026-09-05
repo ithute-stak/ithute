@@ -1,0 +1,211 @@
+name: Commercial Release Regression
+
+on:
+  push:
+    branches: [development, main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commercial-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  commercial-full-regression:
+    name: Commercial full regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Verify dependency lock and audit dependencies
+        timeout-minutes: 12
+        run: |
+          set -eu
+          test -f apps/frontend/package-lock.json
+          cd apps/frontend
+          timeout 180s npm ci --ignore-scripts --no-audit --no-fund
+
+          npm_audit_ok=0
+          npm_audit_unavailable=0
+          for attempt in 1 2 3; do
+            log="$(mktemp)"
+            set +e
+            timeout 60s npm audit --package-lock-only --omit=dev --audit-level=high >"$log" 2>&1
+            status=$?
+            set -e
+            cat "$log"
+
+            if [ "$status" -eq 0 ]; then
+              npm_audit_ok=1
+              rm -f "$log"
+              break
+            fi
+
+            if [ "$status" -eq 124 ] || grep -Eqi '503 Service Unavailable|audit endpoint returned an error|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENETUNREACH|socket hang up' "$log"; then
+              npm_audit_unavailable=1
+              echo "::warning::npm audit service unavailable on attempt ${attempt}/3; retrying"
+              rm -f "$log"
+              if [ "$attempt" -lt 3 ]; then
+                sleep $((attempt * 15))
+              fi
+              continue
+            fi
+
+            echo "::error::npm audit completed with a non-transient failure"
+            rm -f "$log"
+            exit "$status"
+          done
+
+          if [ "$npm_audit_ok" -ne 1 ]; then
+            if [ "$npm_audit_unavailable" -eq 1 ]; then
+              echo "::warning::npm audit remained unavailable after retries; dependency lock is unchanged and application regression will continue"
+            else
+              echo "::error::npm audit did not complete successfully"
+              exit 1
+            fi
+          fi
+
+          cd ../..
+          timeout 180s python -m pip install --disable-pip-version-check --quiet pip-audit==2.10.1
+
+          pip_audit_ok=0
+          pip_audit_unavailable=0
+          for attempt in 1 2 3; do
+            log="$(mktemp)"
+            set +e
+            timeout 120s pip-audit -r apps/backend/requirements.txt >"$log" 2>&1
+            status=$?
+            set -e
+            cat "$log"
+
+            if [ "$status" -eq 0 ]; then
+              pip_audit_ok=1
+              rm -f "$log"
+              break
+            fi
+
+            if [ "$status" -eq 124 ] || grep -Eqi '503 Service Unavailable|ConnectionError|ReadTimeout|ConnectTimeout|Temporary failure|Name or service not known|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENETUNREACH' "$log"; then
+              pip_audit_unavailable=1
+              echo "::warning::pip-audit service unavailable on attempt ${attempt}/3; retrying"
+              rm -f "$log"
+              if [ "$attempt" -lt 3 ]; then
+                sleep $((attempt * 15))
+              fi
+              continue
+            fi
+
+            echo "::error::pip-audit completed with a non-transient failure"
+            rm -f "$log"
+            exit "$status"
+          done
+
+          if [ "$pip_audit_ok" -ne 1 ]; then
+            if [ "$pip_audit_unavailable" -eq 1 ]; then
+              echo "::warning::pip-audit remained unavailable after retries; application regression will continue"
+            else
+              echo "::error::pip-audit did not complete successfully"
+              exit 1
+            fi
+          fi
+
+      - name: Show Docker environment
+        run: |
+          docker version
+          docker compose version
+
+      - name: Validate shell scripts
+        run: |
+          set -eu
+          for script in scripts/verify-phase*.sh scripts/verify-commercial-release.sh scripts/prod-*.sh scripts/dev.sh; do
+            [ -f "$script" ] || continue
+            sh -n "$script"
+          done
+          find infra infrastructure -type f -name '*.sh' -print -exec sh -n {} \;
+
+      - name: Verify reference-grade Webmail UX
+        run: sh scripts/verify-webmail-reference-ux.sh
+
+      - name: Verify platform UX integration
+        run: sh scripts/verify-platform-ux.sh
+
+      - name: Validate compose files
+        env:
+          BOOTSTRAP_PUBLIC_IP: "1.1.1.1"
+          PANEL_HOSTNAME: panel.example.co.ls
+          API_HOSTNAME: api.example.co.ls
+          GROUPWARE_HOSTNAME: groupware.example.co.ls
+          ACME_EMAIL: ops@example.co.ls
+          MAIL_EDGE_NODE1_HOST: mail-node-1.example.co.ls
+          MAIL_EDGE_NODE2_HOST: mail-node-2.example.co.ls
+          SMTP_PORT: "2525"
+          SUBMISSION_PORT: "2587"
+          IMAPS_PORT: "2993"
+          MAILBOX_DNS_IMAGE_TAG: ci
+        run: |
+          docker compose -f docker-compose.yml config >/dev/null
+          docker compose -f docker-compose.yml -f docker-compose.phase5-secondary.yml config >/dev/null
+          docker compose -f docker-compose.yml -f docker-compose.phase6-mail.yml config >/dev/null
+          docker compose -f docker-compose.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml config >/dev/null
+          docker compose -f docker-compose.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml config >/dev/null
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.commercial-prod.yml config >/dev/null
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.commercial-prod.yml -f docker-compose.deploy.yml config >/dev/null
+          # Shared-VPS production path: commercial features stay in the images,
+          # while the Mailbox-DNS Caddy overlay is intentionally omitted so an
+          # existing host reverse proxy can continue to own ports 80/443.
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.deploy.yml config >/dev/null
+          docker compose -f docker-compose.yml -f docker-compose.phase6-mail.yml -f docker-compose.ha-mail.yml config >/dev/null
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.commercial-prod.yml -f docker-compose.deploy.yml -f docker-compose.ha-mail.yml -f docker-compose.deploy-ha.yml config >/dev/null
+
+      - name: Run commercial full regression
+        env:
+          DNS_PORT: "5353"
+        run: |
+          set -o pipefail
+          sh scripts/verify-commercial-release.sh 2>&1 | tee commercial-verification.log
+
+      - name: Capture diagnostics on failure
+        if: failure()
+        run: |
+          COMPOSE="docker compose -f docker-compose.yml -f docker-compose.phase6-mail.yml"
+          {
+            echo "### docker compose ps"
+            $COMPOSE ps || true
+            echo "### backend logs"
+            $COMPOSE logs --tail=500 backend || true
+            echo "### frontend logs"
+            $COMPOSE logs --tail=350 frontend || true
+            echo "### postfix logs"
+            $COMPOSE logs --tail=500 postfix || true
+            echo "### dovecot logs"
+            $COMPOSE logs --tail=400 dovecot || true
+            echo "### smtp-policy logs"
+            $COMPOSE logs --tail=300 smtp-policy || true
+            echo "### radicale logs"
+            $COMPOSE logs --tail=300 radicale || true
+            echo "### rspamd logs"
+            $COMPOSE logs --tail=400 rspamd || true
+            echo "### migration head"
+            $COMPOSE exec -T backend alembic current || true
+            $COMPOSE exec -T backend alembic heads || true
+            echo "### commercial routes"
+            $COMPOSE exec -T backend python -c "from app.main import app; paths=set(app.openapi().get('paths', {})); print(sorted(p for p in paths if any(k in p for k in ('professional-email','transactional','reseller','registrar','groupware','payment','billing','support','platform/setup'))))" || true
+          } | tee commercial-failure-diagnostics.log
+
+      - name: Upload verification logs
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: commercial-regression-${{ github.run_id }}
+          path: |
+            commercial-verification.log
+            commercial-failure-diagnostics.log
+          if-no-files-found: ignore
+          retention-days: 7

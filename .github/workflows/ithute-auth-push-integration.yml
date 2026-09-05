@@ -1,0 +1,35 @@
+name: Ithute Auth Push Integration
+
+on:
+  pull_request:
+    paths:
+      - "platform/ithute-auth/**"
+      - "platform/ithute-push/**"
+      - "docker-compose.ithute-platform.yml"
+      - "scripts/validate-auth-push-integration.sh"
+      - ".github/workflows/ithute-auth-push-integration.yml"
+  push:
+    branches: [main]
+    paths:
+      - "platform/ithute-auth/**"
+      - "platform/ithute-push/**"
+      - "docker-compose.ithute-platform.yml"
+      - "scripts/validate-auth-push-integration.sh"
+      - ".github/workflows/ithute-auth-push-integration.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  auth-push-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Validate Auth Push integration
+        run: bash scripts/validate-auth-push-integration.sh

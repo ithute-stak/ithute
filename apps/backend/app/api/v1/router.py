@@ -1,0 +1,84 @@
+from fastapi import APIRouter
+from app.api.v1 import (
+    account_verification,
+    audit,
+    auth,
+    backups,
+    billing,
+    business,
+    deliverability,
+    dns,
+    dns_phase5,
+    domain_onboarding,
+    domains,
+    edge,
+    external_webmail,
+    external_webmail_counts,
+    external_webmail_events,
+    external_webmail_known,
+    external_webmail_preferences,
+    external_webmail_register,
+    hosting,
+    identity,
+    ithute_auth,
+    ithute_operating,
+    ithute_platform,
+    mailbox_lifecycle,
+    mail_intelligence,
+    mail_operations,
+    mailboxes,
+    operations,
+    payments,
+    plan_admin,
+    platform_setup,
+    professional_email,
+    tenants,
+    transactional,
+    webmail,
+    webmail_content,
+    webmail_drafts_plus,
+    webmail_events,
+)
+
+api_router = APIRouter()
+api_router.include_router(auth.router)
+api_router.include_router(ithute_auth.router)
+api_router.include_router(ithute_platform.router)
+api_router.include_router(ithute_operating.router)
+api_router.include_router(account_verification.router)
+api_router.include_router(identity.router)
+api_router.include_router(audit.router)
+api_router.include_router(tenants.router)
+api_router.include_router(domain_onboarding.router)
+api_router.include_router(domains.router)
+api_router.include_router(dns.router)
+api_router.include_router(dns_phase5.router)
+api_router.include_router(edge.router)
+api_router.include_router(mailboxes.router)
+api_router.include_router(mailbox_lifecycle.router)
+api_router.include_router(professional_email.router)
+api_router.include_router(deliverability.router)
+api_router.include_router(mail_intelligence.router)
+api_router.include_router(mail_operations.router)
+api_router.include_router(backups.router)
+api_router.include_router(operations.router)
+api_router.include_router(billing.router)
+api_router.include_router(plan_admin.router)
+api_router.include_router(payments.router)
+api_router.include_router(business.router)
+api_router.include_router(hosting.router)
+api_router.include_router(platform_setup.router)
+api_router.include_router(transactional.router)
+api_router.include_router(webmail.router)
+# The exact-count route is registered before the legacy external router so the
+# Flutter/Webmail /folder-counts call uses selected-folder UID searches rather
+# than stale STATUS values reported by some connected mail servers.
+api_router.include_router(external_webmail_counts.router)
+api_router.include_router(external_webmail.router)
+api_router.include_router(external_webmail_known.router)
+api_router.include_router(external_webmail_register.router)
+api_router.include_router(external_webmail_preferences.router)
+api_router.include_router(webmail_drafts_plus.router)
+api_router.include_router(webmail_content.router)
+api_router.include_router(external_webmail_events.router)
+api_router.include_router(webmail_events.router)

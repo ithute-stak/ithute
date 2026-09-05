@@ -1,0 +1,103 @@
+name: Ithute Platform Production
+
+on:
+  pull_request:
+    paths:
+      - 'platform/ithute-auth/**'
+      - 'platform/ithute-push/**'
+      - 'platform/ithute-realtime/**'
+      - 'platform/README.md'
+      - 'docker-compose.ithute-platform.yml'
+      - 'infrastructure/nginx/default.conf'
+      - 'scripts/load-dotenv.sh'
+      - 'scripts/prod-deploy.sh'
+      - 'scripts/prod-preflight.sh'
+      - 'scripts/verify-load-dotenv.sh'
+      - 'scripts/verify-ithute-platform-production.sh'
+      - '.github/workflows/deploy-production.yml'
+      - '.github/workflows/ithute-realtime.yml'
+      - '.github/workflows/ithute-realtime-production.yml'
+      - '.github/workflows/ithute-platform-production.yml'
+      - '.env.example'
+  push:
+    branches: [main]
+    paths:
+      - 'platform/ithute-auth/**'
+      - 'platform/ithute-push/**'
+      - 'platform/ithute-realtime/**'
+      - 'platform/README.md'
+      - 'docker-compose.ithute-platform.yml'
+      - 'infrastructure/nginx/default.conf'
+      - 'scripts/load-dotenv.sh'
+      - 'scripts/prod-deploy.sh'
+      - 'scripts/prod-preflight.sh'
+      - 'scripts/verify-load-dotenv.sh'
+      - 'scripts/verify-ithute-platform-production.sh'
+      - '.github/workflows/deploy-production.yml'
+      - '.github/workflows/ithute-realtime.yml'
+      - '.github/workflows/ithute-realtime-production.yml'
+      - '.github/workflows/ithute-platform-production.yml'
+      - '.env.example'
+
+permissions:
+  contents: read
+
+jobs:
+  platform-production-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Verify platform production contract
+        run: sh scripts/verify-ithute-platform-production.sh
+
+      - name: Verify dotenv value preservation
+        run: sh scripts/verify-load-dotenv.sh
+
+      - name: Validate shell syntax
+        run: |
+          set -eu
+          sh -n scripts/load-dotenv.sh
+          sh -n scripts/prod-deploy.sh
+          sh -n scripts/prod-preflight.sh
+          sh -n scripts/verify-load-dotenv.sh
+          sh -n scripts/verify-ithute-platform-production.sh
+          sh -n platform/ithute-realtime/entrypoint.sh
+
+      - name: Validate composed production topology
+        env:
+          ITHUTE_AUTH_DB_PASSWORD: ci-auth-db-password-only
+          ITHUTE_PUSH_DB_PASSWORD: ci-push-db-password-only
+          ITHUTE_REALTIME_DB_PASSWORD: ci-realtime-db-password-only
+          ITHUTE_SERVICE_REALTIME_SECRET: ci-realtime-service-secret-long-enough
+          ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+        run: |
+          set -eu
+          docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.prod.yml \
+            -f docker-compose.phase6-mail.yml \
+            -f docker-compose.phase11-backup.yml \
+            -f docker-compose.phase12-monitoring.yml \
+            -f docker-compose.ithute-platform.yml \
+            -f docker-compose.deploy.yml \
+            config >/tmp/ithute-platform-compose.yml
+          grep -q 'ithute-auth:' /tmp/ithute-platform-compose.yml
+          grep -q 'ithute-push:' /tmp/ithute-platform-compose.yml
+          grep -q 'ithute-realtime:' /tmp/ithute-platform-compose.yml
+          grep -q 'ithute-auth-db:' /tmp/ithute-platform-compose.yml
+          grep -q 'ithute-push-db:' /tmp/ithute-platform-compose.yml
+          grep -q 'ithute-realtime-db:' /tmp/ithute-platform-compose.yml
+          grep -q 'ithute-realtime-redis:' /tmp/ithute-platform-compose.yml
+
+      - name: Smoke-build central platform images
+        run: |
+          set -eu
+          docker build -t ithute-auth-ci ./platform/ithute-auth
+          docker build -t ithute-push-ci ./platform/ithute-push
+          docker build -t ithute-realtime-ci ./platform/ithute-realtime

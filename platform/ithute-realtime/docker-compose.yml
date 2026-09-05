@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ithute_realtime
+      POSTGRES_USER: ithute_realtime
+      POSTGRES_PASSWORD: ${REALTIME_DB_PASSWORD:-realtime-dev-only}
+    volumes: ["realtime_pg:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ithute_realtime -d ithute_realtime"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["realtime_redis:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  realtime:
+    build: .
+    environment:
+      REALTIME_DATABASE_URL: postgresql+psycopg://ithute_realtime:${REALTIME_DB_PASSWORD:-realtime-dev-only}@db:5432/ithute_realtime
+      REALTIME_REDIS_URL: redis://redis:6379/0
+      REALTIME_AUTH_ISSUER: ${REALTIME_AUTH_ISSUER:-https://auth.ithute.co.ls}
+      REALTIME_AUTH_JWKS_URL: ${REALTIME_AUTH_JWKS_URL:-https://auth.ithute.co.ls/.well-known/jwks.json}
+      REALTIME_AUTH_SERVICE_TOKEN_URL: ${REALTIME_AUTH_SERVICE_TOKEN_URL:-https://auth.ithute.co.ls/v1/auth/service-token}
+      REALTIME_PLATFORM_CLIENT_SECRET: ${REALTIME_PLATFORM_CLIENT_SECRET:-}
+      REALTIME_PUSH_URL: ${REALTIME_PUSH_URL:-https://push.ithute.co.ls}
+      REALTIME_PUSH_ENABLED: ${REALTIME_PUSH_ENABLED:-false}
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    ports: ["8083:8080"]
+
+volumes:
+  realtime_pg:
+  realtime_redis:

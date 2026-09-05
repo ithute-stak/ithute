@@ -1,0 +1,128 @@
+name: Enforce Production Domain Identity
+
+on:
+  workflow_run:
+    workflows: ["Build and Deploy Production"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: mailbox-dns-production-identity
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 204.12.205.224
+  VPS_USER: administrator
+  VPS_APP_DIR: /home/administrator/mailbox-dns
+  PLATFORM_DOMAIN: ithute.co.ls
+
+jobs:
+  enforce:
+    name: Reconcile public DNS and mail identity
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      RELEASE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+
+    steps:
+      - name: Checkout exact production release
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          persist-credentials: false
+
+      - name: Validate production SSH credentials
+        run: |
+          set -eu
+          [ -n "${VPS_SSH_KEY:-}" ] || { echo "::error::VPS_SSH_KEY is required"; exit 1; }
+
+      - name: Configure production SSH identity
+        run: |
+          set -eu
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/mailbox_dns_identity"
+          chmod 600 "$HOME/.ssh/mailbox_dns_identity"
+
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/mailbox-dns-identity-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/mailbox-dns-identity-askpass.sh
+            SSH_ASKPASS=/tmp/mailbox-dns-identity-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+              setsid -w ssh-add "$HOME/.ssh/mailbox_dns_identity" </dev/null
+            rm -f /tmp/mailbox-dns-identity-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/mailbox_dns_identity" </dev/null
+          fi
+
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Enforce production domain identity on VPS
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "cd '$VPS_APP_DIR' && test -x scripts/enforce-production-domain-identity.sh || chmod 0755 scripts/enforce-production-domain-identity.sh"
+          ssh "$remote" "cd '$VPS_APP_DIR' && PLATFORM_DOMAIN='$PLATFORM_DOMAIN' PUBLIC_IP='$VPS_HOST' sh scripts/enforce-production-domain-identity.sh"
+
+      - name: Verify public authoritative DNS externally
+        run: |
+          set -eu
+          if ! command -v dig >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq dnsutils
+          fi
+
+          ns1="ns1.${PLATFORM_DOMAIN}."
+          ns2="ns2.${PLATFORM_DOMAIN}."
+          mail="mail.${PLATFORM_DOMAIN}."
+
+          soa="$(dig +short @"$VPS_HOST" "$PLATFORM_DOMAIN" SOA)"
+          set -- $soa
+          [ "${1:-}" = "$ns1" ] || { echo "::error::Public SOA primary is ${1:-missing}, expected $ns1"; exit 1; }
+          [ "${2:-}" = "hostmaster.${PLATFORM_DOMAIN}." ] || { echo "::error::Public SOA hostmaster is ${2:-missing}"; exit 1; }
+
+          ns="$(dig +short @"$VPS_HOST" "$PLATFORM_DOMAIN" NS | sort)"
+          printf '%s\n' "$ns" | grep -Fx "$ns1" >/dev/null
+          printf '%s\n' "$ns" | grep -Fx "$ns2" >/dev/null
+          dig +short @"$VPS_HOST" "ns1.${PLATFORM_DOMAIN}" A | grep -Fx "$VPS_HOST" >/dev/null
+          dig +short @"$VPS_HOST" "ns2.${PLATFORM_DOMAIN}" A | grep -Fx "$VPS_HOST" >/dev/null
+          dig +short @"$VPS_HOST" "mail.${PLATFORM_DOMAIN}" A | grep -Fx "$VPS_HOST" >/dev/null
+
+          mx="$(dig +short @"$VPS_HOST" "$PLATFORM_DOMAIN" MX)"
+          set -- $mx
+          [ "${1:-}" = "10" ] && [ "${2:-}" = "$mail" ] || { echo "::error::Unexpected public MX: $mx"; exit 1; }
+
+          tcp_soa="$(dig +tcp +short @"$VPS_HOST" "$PLATFORM_DOMAIN" SOA)"
+          set -- $tcp_soa
+          [ "${1:-}" = "$ns1" ] || { echo "::error::TCP authoritative DNS failed"; exit 1; }
+
+          echo "Public authoritative DNS identity verified."
+
+      - name: Report PTR readiness
+        run: |
+          set -eu
+          if ! command -v dig >/dev/null 2>&1; then exit 0; fi
+          ptr="$(dig +short -x "$VPS_HOST" | head -n1 | tr '[:upper:]' '[:lower:]')"
+          expected="mail.${PLATFORM_DOMAIN}."
+          if [ "$ptr" != "$expected" ]; then
+            echo "::warning::PTR/rDNS is '$ptr'; ask the VPS provider to change $VPS_HOST PTR to $expected for production mail deliverability."
+          else
+            echo "PTR/rDNS matches $expected"
+          fi

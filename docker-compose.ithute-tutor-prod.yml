@@ -1,0 +1,7 @@
+services:
+  nginx:
+    depends_on:
+      tutor-backend:
+        condition: service_healthy
+      tutor-frontend:
+        condition: service_healthy

@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>[Business Name] | enterprise-grade presence</title>
+    <!-- Font Awesome 6 (free) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <!-- Google Fonts: system-first stack + Inter & Cormorant for refined contrast -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..800;1,14..32,300..800&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&display=swap" rel="stylesheet">
+    <style>
+        /* ---------- reset & design system ---------- */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #FFFFFF;
+            color: #1E2B37;
+            line-height: 1.5;
+            scroll-behavior: smooth;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* professional color palette: deep charcoal, warm grey, crisp white, subtle gold accent */
+        :root {
+            --primary-dark: #1F2A38;        /* almost charcoal with blue depth */
+            --primary-foreground: #FFFFFF;
+            --secondary-stone: #5A6874;      /* sophisticated grey */
+            --accent-subtle: #9B8C7C;        /* warm taupe / muted bronze â€“ prestige */
+            --border-light: #E7ECF1;
+            --bg-soft: #F8FAFD;
+            --card-bg: #FFFFFF;
+            --text-body: #2C3A47;
+            --text-heading: #1A262F;
+            --hover-shift: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+        }
+
+        .container {
+            max-width: 1340px;
+            margin: 0 auto;
+            padding: 0 36px;
+        }
+
+        /* typography */
+        h1, h2, h3, .heading-serif {
+            font-family: "Cormorant Garamond", serif;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            color: var(--text-heading);
+        }
+
+        .section-title {
+            font-size: 3.2rem;
+            line-height: 1.1;
+            margin-bottom: 1rem;
+            font-weight: 600;
+        }
+
+        .section-subhead {
+            font-size: 1.2rem;
+            color: var(--secondary-stone);
+            max-width: 700px;
+            margin: 0 auto 3.5rem auto;
+            font-weight: 400;
+        }
+
+        /* editable placeholder â€“ very faint helper (removable) */
+        .editable {
+            transition: var(--hover-shift);
+            border-radius: 4px;
+            outline: 1px dashed transparent;
+        }
+        .editable:hover {
+            outline-color: rgba(90,104,116,0.2);
+            background-color: rgba(0,0,0,0.01);
+        }
+
+        /* image placeholder â€“ refined pattern */
+        .img-placeholder {
+            background: linear-gradient(145deg, #F0F3F7, #E4EAF0);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #5A6874;
+            font-size: 1rem;
+            font-weight: 400;
+            border-radius: inherit;
+            background-image: radial-gradient(circle at 25px 25px, rgba(90,104,116,0.1) 2px, transparent 2px);
+            background-size: 40px 40px;
+            border: 1px solid rgba(255,255,255,0.7);
+            box-shadow: inset 0 2px 6px rgba(0,0,0,0.02);
+        }
+
+        /* ----- navbar : impeccable, minimal ----- */
+        .navbar {
+            position: sticky;
+            top: 0;
+            background: rgba(255,255,255,0.85);
+            backdrop-filter: blur(16px) saturate(180%);
+            -webkit-backdrop-filter: blur(16px) saturate(180%);
+            border-bottom: 1px solid rgba(0,0,0,0.04);
+            z-index: 200;
+        }
+
+        .nav-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 84px;
+        }
+
+        .logo a {
+            font-family: "Cormorant Garamond", serif;
+            font-size: 2.4rem;
+            font-weight: 700;
+            text-decoration: none;
+            color: var(--primary-dark);
+            letter-spacing: -0.02em;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 3rem;
+            align-items: center;
+        }
+
+        .nav-links a {
+            text-decoration: none;
+            font-weight: 500;
+            color: var(--primary-dark);
+            font-size: 1rem;
+            transition: var(--hover-shift);
+            border-bottom: 1px solid transparent;
+            padding-bottom: 4px;
+        }
+
+        .nav-links a:hover {
+            border-bottom-color: var(--accent-subtle);
+            color: #000000;
+        }
+
+        .nav-cta {
+            background: var(--primary-dark);
+            color: white !important;
+            padding: 0.65rem 2rem;
+            border-radius: 100px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            letter-spacing: 0.3px;
+            border: none;
+            box-shadow: 0 8px 16px -10px rgba(20,30,40,0.3);
+            transition: var(--hover-shift);
+            border-bottom: none !important;
+        }
+        .nav-cta:hover {
+            background: #131E2A;
+            color: white !important;
+            transform: translateY(-2px);
+            box-shadow: 0 14px 22px -12px rgba(20,30,40,0.35);
+            border-bottom: none !important;
+        }
+
+        /* ----- hero : commanding, yet warm ----- */
+        .hero {
+            padding: 4rem 0 5rem;
+            background: var(--bg-soft);
+        }
+
+        .hero-grid {
+            display: flex;
+            align-items: center;
+            gap: 5rem;
+            flex-wrap: wrap;
+        }
+
+        .hero-content {
+            flex: 1 1 420px;
+        }
+
+        .hero-badge {
+            display: inline-block;
+            background: rgba(90,104,116,0.1);
+            color: var(--secondary-stone);
+            padding: 0.3rem 1.3rem;
+            border-radius: 40px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            margin-bottom: 1.8rem;
+        }
+
+        .hero-content h1 {
+            font-size: 4rem;
+            line-height: 1.1;
+            margin-bottom: 1.5rem;
+            font-weight: 700;
+            color: var(--text-heading);
+        }
+
+        .hero-content h1 .editable {
+            font-family: inherit;
+        }
+
+        .hero-desc {
+            font-size: 1.25rem;
+            color: var(--secondary-stone);
+            max-width: 550px;
+            margin-bottom: 2.5rem;
+            font-weight: 400;
+        }
+
+        .hero-cta {
+            display: flex;
+            gap: 1.2rem;
+            flex-wrap: wrap;
+        }
+
+        .btn-primary {
+            background: var(--primary-dark);
+            color: white;
+            font-weight: 600;
+            padding: 1rem 2.5rem;
+            border-radius: 60px;
+            text-decoration: none;
+            font-size: 1rem;
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            transition: var(--hover-shift);
+            box-shadow: 0 10px 20px -10px rgba(20,35,50,0.25);
+            letter-spacing: 0.2px;
+        }
+
+        .btn-primary i {
+            font-size: 0.95rem;
+        }
+
+        .btn-primary:hover {
+            background: #131E2A;
+            transform: translateY(-3px);
+            box-shadow: 0 20px 28px -12px rgba(20,35,50,0.35);
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1.5px solid #D0D9E2;
+            color: var(--primary-dark);
+            font-weight: 600;
+            padding: 1rem 2.3rem;
+            border-radius: 60px;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            transition: var(--hover-shift);
+        }
+
+        .btn-outline:hover {
+            border-color: var(--primary-dark);
+            background: rgba(31,42,56,0.02);
+            transform: translateY(-2px);
+        }
+
+        .hero-image {
+            flex: 1 1 400px;
+            height: 440px;
+            border-radius: 32px;
+            overflow: hidden;
+            box-shadow: 0 40px 50px -25px rgba(0,0,0,0.15);
+        }
+
+        .hero-image .img-placeholder {
+            width: 100%;
+            height: 100%;
+            border-radius: 32px;
+            font-size: 1.4rem;
+        }
+
+        /* ----- info bar (business details) : clean, structured ----- */
+        .info-bar {
+            background: white;
+            padding: 1.6rem 0;
+            border-bottom: 1px solid var(--border-light);
+        }
+        .info-flex {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem 2rem;
+            color: var(--primary-dark);
+            font-weight: 500;
+        }
+        .info-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .info-item i {
+            color: var(--accent-subtle);
+            font-size: 1.4rem;
+        }
+
+        /* ----- services cards : refined depth ----- */
+        .services {
+            background: #FFFFFF;
+            padding: 6rem 0;
+        }
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+            gap: 2.2rem;
+        }
+        .service-card {
+            background: var(--card-bg);
+            padding: 2.5rem 2rem;
+            border-radius: 28px;
+            border: 1px solid var(--border-light);
+            transition: var(--hover-shift);
+            box-shadow: 0 10px 25px -15px rgba(0,0,0,0.05);
+        }
+        .service-card:hover {
+            border-color: #C0CCDA;
+            box-shadow: 0 25px 35px -18px rgba(0,0,0,0.1);
+            transform: translateY(-5px);
+        }
+        .icon-circle {
+            background: #F0F4F9;
+            width: 70px;
+            height: 70px;
+            border-radius: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 2rem;
+        }
+        .icon-circle i {
+            font-size: 2.2rem;
+            color: var(--primary-dark);
+        }
+        .service-card h3 {
+            font-size: 1.9rem;
+            margin-bottom: 0.8rem;
+            font-weight: 600;
+        }
+        .service-card p {
+            color: var(--secondary-stone);
+            font-size: 1rem;
+            line-height: 1.6;
+        }
+
+        /* ----- about : elegant split ----- */
+        .about {
+            background: var(--bg-soft);
+            padding: 6rem 0;
+        }
+        .about-grid {
+            display: flex;
+            gap: 5rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .about-content {
+            flex: 1 1 340px;
+        }
+        .about-content h2 {
+            font-size: 3rem;
+            font-weight: 600;
+            margin-bottom: 1.8rem;
+        }
+        .about-content p {
+            font-size: 1.1rem;
+            color: var(--secondary-stone);
+            margin-bottom: 2rem;
+        }
+        .about-highlight {
+            background: white;
+            border-radius: 100px;
+            padding: 0.8rem 1.8rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.8rem;
+            box-shadow: 0 8px 16px -12px rgba(0,0,0,0.08);
+            border: 1px solid var(--border-light);
+            font-weight: 500;
+        }
+        .about-image {
+            flex: 1 1 360px;
+            height: 380px;
+            border-radius: 32px;
+            overflow: hidden;
+            box-shadow: 0 35px 45px -25px rgba(0,0,0,0.2);
+        }
+        .about-image .img-placeholder {
+            width: 100%;
+            height: 100%;
+            border-radius: 32px;
+        }
+
+        /* ----- gallery / portfolio : airy grid ----- */
+        .gallery {
+            padding: 6rem 0;
+            background: white;
+        }
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+        .gallery-item {
+            aspect-ratio: 5 / 4;
+            border-radius: 28px;
+            overflow: hidden;
+            box-shadow: 0 15px 25px -15px rgba(0,0,0,0.08);
+        }
+        .gallery-item .img-placeholder {
+            width: 100%;
+            height: 100%;
+            border-radius: 28px;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        /* ----- testimonial: understated authority ----- */
+        .testimonials {
+            background: var(--bg-soft);
+            padding: 6rem 0;
+        }
+        .testimonial-card {
+            max-width: 820px;
+            margin: 0 auto;
+            background: white;
+            padding: 3rem 3.5rem;
+            border-radius: 48px;
+            box-shadow: 0 35px 45px -30px rgba(0,0,0,0.1);
+            border: 1px solid var(--border-light);
+            text-align: center;
+        }
+        .testimonial-card i {
+            color: var(--accent-subtle);
+            font-size: 2.8rem;
+            opacity: 0.5;
+            margin-bottom: 1.2rem;
+        }
+        .testimonial-text {
+            font-size: 1.35rem;
+            color: var(--text-heading);
+            font-weight: 400;
+            line-height: 1.6;
+            margin-bottom: 2rem;
+        }
+        .testimonial-author {
+            font-weight: 600;
+            color: var(--primary-dark);
+        }
+
+        /* ----- cta section : deep, persuasive ----- */
+        .cta-section {
+            background: var(--primary-dark);
+            color: white;
+            padding: 5rem 0;
+            text-align: center;
+        }
+        .cta-title {
+            font-size: 3.5rem;
+            font-weight: 600;
+            color: white;
+            margin-bottom: 1rem;
+        }
+        .cta-desc {
+            font-size: 1.3rem;
+            opacity: 0.8;
+            max-width: 650px;
+            margin: 0 auto 2.5rem;
+        }
+        .cta-button {
+            background: white;
+            color: var(--primary-dark);
+            border: none;
+            padding: 1.1rem 3rem;
+            border-radius: 60px;
+            font-weight: 700;
+            font-size: 1.1rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.8rem;
+            text-decoration: none;
+            transition: var(--hover-shift);
+            box-shadow: 0 18px 28px -12px rgba(0,0,0,0.3);
+        }
+        .cta-button:hover {
+            background: #F0F5FB;
+            transform: scale(1.02) translateY(-2px);
+            box-shadow: 0 25px 35px -12px #0A121C;
+        }
+
+        /* ad spot (subtle, professional) */
+        .ad-spot {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.12);
+            backdrop-filter: blur(4px);
+            border-radius: 60px;
+            padding: 0.6rem 2rem;
+            display: inline-block;
+            margin-top: 2.5rem;
+            color: rgba(255,255,255,0.7);
+            font-size: 0.9rem;
+        }
+        .ad-spot i {
+            color: var(--accent-subtle);
+            margin-right: 6px;
+        }
+        .ad-spot-light {
+            background: #F1F5F9;
+            border: 1px solid #DDE5ED;
+            color: var(--secondary-stone);
+            border-radius: 60px;
+            padding: 0.5rem 1.8rem;
+            display: inline-block;
+        }
+
+        /* ----- footer : authoritative ----- */
+        .footer {
+            background: #1A232E;
+            color: #ACBAC8;
+            padding: 5rem 0 2.5rem;
+        }
+        .footer-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1.6fr;
+            gap: 2.5rem;
+            margin-bottom: 3.5rem;
+        }
+        .footer-logo {
+            font-family: "Cormorant Garamond", serif;
+            font-size: 2.4rem;
+            font-weight: 700;
+            color: white;
+            margin-bottom: 1.2rem;
+        }
+        .footer-col p {
+            margin: 1rem 0 1.5rem;
+            font-size: 0.95rem;
+            opacity: 0.7;
+        }
+        .social {
+            display: flex;
+            gap: 1.2rem;
+        }
+        .social a {
+            color: #ACBAC8;
+            font-size: 1.3rem;
+            transition: var(--hover-shift);
+        }
+        .social a:hover { color: white; }
+        .footer-col h4 {
+            color: white;
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 1.3rem;
+        }
+        .footer-col ul {
+            list-style: none;
+        }
+        .footer-col ul li {
+            margin-bottom: 0.8rem;
+        }
+        .footer-col ul a {
+            color: #ACBAC8;
+            text-decoration: none;
+            transition: var(--hover-shift);
+            font-size: 0.95rem;
+        }
+        .footer-col ul a:hover { color: white; }
+        .newsletter {
+            display: flex;
+        }
+        .newsletter input {
+            flex: 1;
+            padding: 0.8rem 1.2rem;
+            border-radius: 60px 0 0 60px;
+            border: none;
+            background: #2A3441;
+            color: white;
+        }
+        .newsletter input::placeholder { color: #8F9FB0; }
+        .newsletter button {
+            background: var(--accent-subtle);
+            border: none;
+            border-radius: 0 60px 60px 0;
+            padding: 0 1.5rem;
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--hover-shift);
+        }
+        .newsletter button:hover { background: #887A6B; }
+        .footer-bottom {
+            border-top: 1px solid #2C3847;
+            padding-top: 2rem;
+            text-align: center;
+            font-size: 0.9rem;
+            opacity: 0.6;
+        }
+
+        /* responsive */
+        @media (max-width: 800px) {
+            .section-title { font-size: 2.6rem; }
+            .gallery-grid { grid-template-columns: 1fr 1fr; }
+            .footer-grid { grid-template-columns: 1fr 1fr; }
+        }
+        @media (max-width: 550px) {
+            .nav-container { flex-direction: column; height: auto; gap: 1rem; padding: 1.2rem; }
+            .gallery-grid { grid-template-columns: 1fr; }
+            .footer-grid { grid-template-columns: 1fr; }
+            .hero-content h1 { font-size: 3rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ========== NAVBAR (enterprise calm) ========== -->
+    <nav class="navbar">
+        <div class="container nav-container">
+            <div class="logo"><a href="#" class="editable" contenteditable="true">[Business Name]</a></div>
+            <div class="nav-links">
+                <a href="#" class="editable" contenteditable="true">Home</a>
+                <a href="#services" class="editable" contenteditable="true">Services</a>
+                <a href="#about" class="editable" contenteditable="true">About</a>
+                <a href="#contact" class="editable" contenteditable="true">Contact</a>
+                <a href="#" class="nav-cta editable" contenteditable="true">Talk to us</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- ========== HERO ========== -->
+    <section class="hero">
+        <div class="container hero-grid">
+            <div class="hero-content">
+                <span class="hero-badge editable" contenteditable="true"><i class="fas fa-shield-alt"></i> since 2008</span>
+                <h1><span class="editable" contenteditable="true">[Business Name]</span> â€” <br><span class="editable" contenteditable="true">partners in growth</span></h1>
+                <p class="hero-desc editable" contenteditable="true">We provide uncompromising quality and strategic insight. Your success is our legacy.</p>
+                <div class="hero-cta">
+                    <a href="#" class="btn-primary editable" contenteditable="true"><i class="fas fa-calendar-check"></i> Schedule a call</a>
+                    <a href="#" class="btn-outline editable" contenteditable="true"><i class="fas fa-chevron-right"></i> Discover more</a>
+                </div>
+                <!-- ad spot (discreet) -->
+                <div class="ad-spot-light" style="margin-top: 2.5rem; background: #F0F4F9;">
+                    <i class="fas fa-ad"></i> <span class="editable" contenteditable="true">ad space #1 (optional)</span>
+                </div>
+            </div>
+            <div class="hero-image">
+                <div class="img-placeholder">
+                    <i class="fas fa-building"></i> <span class="editable" contenteditable="true"> hero image</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ========== INFO BAR (business essentials) ========== -->
+    <div class="info-bar">
+        <div class="container info-flex">
+            <span class="info-item editable" contenteditable="true"><i class="fas fa-phone-alt"></i> +1 (212) 555 7800</span>
+            <span class="info-item editable" contenteditable="true"><i class="fas fa-clock"></i> Monâ€“Fri 9am â€“ 6pm</span>
+            <span class="info-item editable" contenteditable="true"><i class="fas fa-map-pin"></i> 350 Madison Ave, NY</span>
+            <span class="info-item editable" contenteditable="true"><i class="fas fa-envelope"></i> hello@business.com</span>
+        </div>
+    </div>
+
+    <!-- ========== SERVICES ========== -->
+    <section class="services" id="services">
+        <div class="container">
+            <h2 class="section-title editable" contenteditable="true">Expertise, delivered</h2>
+            <p class="section-subhead editable" contenteditable="true">Tailored solutions that drive lasting results.</p>
+            <div class="cards-grid">
+                <div class="service-card">
+                    <div class="icon-circle"><i class="fas fa-briefcase"></i></div>
+                    <h3 class="editable" contenteditable="true">Consulting</h3>
+                    <p class="editable" contenteditable="true">Strategic advisory to elevate operations and market position.</p>
+                </div>
+                <div class="service-card">
+                    <div class="icon-circle"><i class="fas fa-chart-pie"></i></div>
+                    <h3 class="editable" contenteditable="true">Analytics</h3>
+                    <p class="editable" contenteditable="true">Dataâ€‘driven insights for confident decisionâ€‘making.</p>
+                </div>
+                <div class="service-card">
+                    <div class="icon-circle"><i class="fas fa-scroll"></i></div>
+                    <h3 class="editable" contenteditable="true">Planning</h3>
+                    <p class="editable" contenteditable="true">Comprehensive roadmaps from concept to execution.</p>
+                </div>
+                <div class="service-card">
+                    <div class="icon-circle"><i class="fas fa-handshake"></i></div>
+                    <h3 class="editable" contenteditable="true">Partnerships</h3>
+                    <p class="editable" contenteditable="true">Longâ€‘term relationship management and growth.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ========== ABOUT (with image placeholder) ========== -->
+    <section class="about" id="about">
+        <div class="container about-grid">
+            <div class="about-content">
+                <h2 class="editable" contenteditable="true">About [Business Name]</h2>
+                <p class="editable" contenteditable="true">Founded on the principle of integrity, we combine decades of experience with a modern approach. Our team is dedicated to crafting bespoke strategies for forwardâ€‘thinking organizations.</p>
+                <div class="about-highlight editable" contenteditable="true"><i class="fas fa-ribbon"></i> Certified Â· 30+ experts</div>
+                <div class="ad-spot-light" style="margin-top: 2rem;">
+                    <i class="fas fa-ad"></i> <span class="editable" contenteditable="true">ad space #2</span>
+                </div>
+            </div>
+            <div class="about-image">
+                <div class="img-placeholder">
+                    <i class="fas fa-users"></i> <span class="editable" contenteditable="true"> about image</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ========== GALLERY (refined) ========== -->
+    <section class="gallery">
+        <div class="container">
+            <h2 class="section-title editable" contenteditable="true">Selected work</h2>
+            <p class="section-subhead editable" contenteditable="true">A glimpse of our recent collaborations.</p>
+            <div class="gallery-grid">
+                <div class="gallery-item"><div class="img-placeholder"><i class="fas fa-arrow-trend-up"></i> project alpha</div></div>
+                <div class="gallery-item"><div class="img-placeholder"><i class="fas fa-scale-balanced"></i> project bridge</div></div>
+                <div class="gallery-item"><div class="img-placeholder"><i class="fas fa-chart-line"></i> project summit</div></div>
+            </div>
+            <div style="text-align: center; margin-top: 2.8rem;">
+                <span class="ad-spot-light"><i class="fas fa-ad"></i> <span class="editable" contenteditable="true">ad space #3</span></span>
+            </div>
+        </div>
+    </section>
+
+    <!-- ========== TESTIMONIAL ========== -->
+    <section class="testimonials">
+        <div class="container">
+            <h2 class="section-title editable" contenteditable="true">Client reflections</h2>
+            <div class="testimonial-card">
+                <i class="fas fa-quote-left"></i>
+                <div class="testimonial-text editable" contenteditable="true">â€œTheir strategic insight transformed our approach. The team is professional, responsive, and truly cares about our success.â€</div>
+                <div class="testimonial-author editable" contenteditable="true">â€” Elena V., CEO, Alpine Group</div>
+                <div style="margin-top: 2rem; border-top: 1px solid var(--border-light); padding-top: 1.5rem;">
+                    <span class="ad-spot-light"><i class="fas fa-ad"></i> <span class="editable" contenteditable="true">ad spot #4</span></span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ========== CTA ========== -->
+    <section class="cta-section">
+        <div class="container">
+            <h2 class="cta-title editable" contenteditable="true">Begin your journey</h2>
+            <p class="cta-desc editable" contenteditable="true">Let's discuss how we can help you achieve lasting results.</p>
+            <a href="#" class="cta-button editable" contenteditable="true"><i class="fas fa-arrow-right"></i> Schedule a consultation</a>
+            <div class="ad-spot">
+                <i class="fas fa-ad"></i> <span class="editable" contenteditable="true">ad space #5 (footer banner)</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- ========== FOOTER ========== -->
+    <footer class="footer" id="contact">
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-col">
+                    <div class="footer-logo editable" contenteditable="true">[Business Name]</div>
+                    <p class="editable" contenteditable="true">Enterprise thinking, personal commitment. Your success is our business.</p>
+                    <div class="social">
+                        <a href="#"><i class="fab fa-linkedin-in"></i></a>
+                        <a href="#"><i class="fab fa-x-twitter"></i></a>
+                        <a href="#"><i class="fab fa-instagram"></i></a>
+                    </div>
+                </div>
+                <div class="footer-col">
+                    <h4 class="editable" contenteditable="true">Explore</h4>
+                    <ul>
+                        <li><a href="#" class="editable" contenteditable="true">Home</a></li>
+                        <li><a href="#" class="editable" contenteditable="true">Services</a></li>
+                        <li><a href="#" class="editable" contenteditable="true">Insights</a></li>
+                    </ul>
+                </div>
+                <div class="footer-col">
+                    <h4 class="editable" contenteditable="true">Legal</h4>
+                    <ul>
+                        <li><a href="#" class="editable" contenteditable="true">Privacy</a></li>
+                        <li><a href="#" class="editable" contenteditable="true">Terms</a></li>
+                    </ul>
+                </div>
+                <div class="footer-col">
+                    <h4 class="editable" contenteditable="true">Connect</h4>
+                    <p class="editable" contenteditable="true">Subscribe to receive insights</p>
+                    <div class="newsletter">
+                        <input type="email" placeholder="work email" class="editable" contenteditable="true">
+                        <button class="noedit"><i class="fas fa-arrow-right"></i></button>
+                    </div>
+                    <div style="margin-top: 1.8rem;" class="ad-spot-light">
+                        <i class="fas fa-ad"></i> <span class="editable" contenteditable="true">ad space #6</span>
+                    </div>
+                </div>
+            </div>
+            <div class="footer-bottom editable" contenteditable="true">
+                Â© 2025 [Business Name] â€“ all rights reserved. Enterprise template.
+            </div>
+        </div>
+    </footer>
+
+    <!-- All .editable fields are contenteditable for quick customization. -->
+    <!-- Replace image placeholders with real <img src="..."> when ready. -->
+</body>
+</html>

@@ -1,0 +1,30 @@
+services:
+  backend:
+    image: ${MAILBOX_DNS_BACKEND_IMAGE:-ghcr.io/lelefe-dc/mailbox-dns-backend}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+
+  frontend:
+    image: ${MAILBOX_DNS_FRONTEND_IMAGE:-ghcr.io/lelefe-dc/mailbox-dns-frontend}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+
+  unbound:
+    image: ${MAILBOX_DNS_UNBOUND_IMAGE:-ghcr.io/lelefe-dc/mailbox-dns-unbound}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+
+  smtp-policy:
+    image: ${MAILBOX_DNS_BACKEND_IMAGE:-ghcr.io/lelefe-dc/mailbox-dns-backend}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+
+  dovecot:
+    image: ${MAILBOX_DNS_DOVECOT_IMAGE:-ghcr.io/lelefe-dc/mailbox-dns-dovecot}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+
+  postfix:
+    image: ${MAILBOX_DNS_POSTFIX_IMAGE:-ghcr.io/lelefe-dc/mailbox-dns-postfix}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+
+  radicale:
+    image: ${MAILBOX_DNS_RADICALE_IMAGE:-ghcr.io/lelefe-dc/mailbox-dns-radicale}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+
+  backup:
+    image: ${MAILBOX_DNS_BACKUP_IMAGE:-ghcr.io/lelefe-dc/mailbox-dns-backup}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+
+  backup-scheduler:
+    image: ${MAILBOX_DNS_BACKUP_IMAGE:-ghcr.io/lelefe-dc/mailbox-dns-backup}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+
+  backup-recovery:
+    image: ${MAILBOX_DNS_BACKUP_IMAGE:-ghcr.io/lelefe-dc/mailbox-dns-backup}:${MAILBOX_DNS_IMAGE_TAG:-latest}

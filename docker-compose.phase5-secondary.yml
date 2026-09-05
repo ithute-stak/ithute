@@ -1,0 +1,77 @@
+services:
+  powerdns:
+    command:
+      - --launch=gpgsql
+      - --gpgsql-host=powerdns-db
+      - --gpgsql-dbname=${POWERDNS_DB_NAME:-powerdns}
+      - --gpgsql-user=${POWERDNS_DB_USER:-powerdns}
+      - --gpgsql-password=${POWERDNS_DB_PASSWORD:-powerdns_dev_password}
+      - --gpgsql-dnssec=yes
+      - --primary=yes
+      - --secondary=no
+      - --allow-axfr-ips=172.31.55.11/32
+    networks:
+      mailbox_dns: {}
+      phase5_dns:
+        ipv4_address: 172.31.55.10
+
+  backend:
+    networks:
+      mailbox_dns: {}
+      phase5_dns: {}
+
+  powerdns-secondary-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: powerdns_secondary
+      POSTGRES_USER: powerdns_secondary
+      POSTGRES_PASSWORD: powerdns_secondary_dev_password
+    volumes:
+      - powerdns_secondary_data:/var/lib/postgresql/data
+      - ./infra/powerdns/schema.sql:/docker-entrypoint-initdb.d/01-powerdns.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U powerdns_secondary -d powerdns_secondary"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      phase5_dns: {}
+
+  powerdns-secondary:
+    image: powerdns/pdns-auth-49:4.9.17
+    restart: unless-stopped
+    depends_on:
+      powerdns-secondary-db: {condition: service_healthy}
+    environment:
+      PDNS_AUTH_API_KEY: phase5-secondary-api-key-change-me
+    command:
+      - --launch=gpgsql
+      - --gpgsql-host=powerdns-secondary-db
+      - --gpgsql-dbname=powerdns_secondary
+      - --gpgsql-user=powerdns_secondary
+      - --gpgsql-password=powerdns_secondary_dev_password
+      - --gpgsql-dnssec=yes
+      - --primary=no
+      - --secondary=yes
+    volumes:
+      - ./infra/powerdns/pdns.conf:/etc/powerdns/pdns.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pdns_control rping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      phase5_dns:
+        ipv4_address: 172.31.55.11
+
+volumes:
+  powerdns_secondary_data:
+
+networks:
+  phase5_dns:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.55.0/24
