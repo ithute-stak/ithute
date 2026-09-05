@@ -46,6 +46,8 @@ echo "==> Building Mailbox panel backend and validating Superadmin contract"
 docker build -t "$PANEL_BACKEND_IMAGE" "$ROOT_DIR/apps/backend"
 docker run --rm \
   --entrypoint sh \
+  -e SECRET_KEY='ci-auth-push-integration-secret-key-0123456789abcdef' \
+  -e DATABASE_URL='sqlite+pysqlite:///:memory:' \
   "$PANEL_BACKEND_IMAGE" \
   -c 'python3 -m pytest -q tests/test_ithute_platform_admin_contract.py'
 
