@@ -3,8 +3,12 @@ from pathlib import Path
 import pytest
 
 
-ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = ROOT.parents[1]
+TEST_FILE = Path(__file__).resolve()
+ROOT = TEST_FILE.parents[1]
+REPO_ROOT = next(
+    (parent for parent in TEST_FILE.parents if (parent / "apps" / "backend").is_dir()),
+    ROOT,
+)
 ROUTE = (ROOT / "app/api/v1/ithute_platform.py").read_text(encoding="utf-8")
 ROUTER = (ROOT / "app/api/v1/router.py").read_text(encoding="utf-8")
 BROKER = (ROOT / "app/services/ithute_platform_admin.py").read_text(encoding="utf-8")
