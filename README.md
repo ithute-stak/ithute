@@ -69,3 +69,4 @@ Before moving real customer MX or nameserver delegation: use real public hostnam
 
 Repository production policy is documented in `docs/PRODUCTION-READINESS.md` and vulnerability handling in `SECURITY.md`. Frontend dependencies are locked with `package-lock.json`; production images use `npm ci`; Dependabot targets `development`; and GitHub Actions dependencies are pinned to immutable commit SHAs.
 # ithute
+# ithute
