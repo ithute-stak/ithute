@@ -18,8 +18,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  BACKEND_IMAGE: ghcr.io/lelefe-dc/loanhub-backend
-  FRONTEND_IMAGE: ghcr.io/lelefe-dc/loanhub-frontend
+  BACKEND_IMAGE: ghcr.io/ithute-stak/loanhub-backend
+  FRONTEND_IMAGE: ghcr.io/ithute-stak/loanhub-frontend
   VPS_HOST: 204.12.205.224
   VPS_USER: administrator
   VPS_PLATFORM_ROOT: /home/administrator/mailbox-dns
@@ -27,14 +27,14 @@ env:
   LEGACY_LOANHUB_DIR: /opt/loanhub
   PRODUCT_DIR: products/LoanHub
   PRODUCTION_API_URL: https://api.loanhub.co.ls/api/v1
-  GHCR_USERNAME: Lelefe-dc
+  GHCR_USERNAME: ithute-stak
 
 jobs:
   validate:
     name: Validate LoanHub product deployment
     runs-on: ubuntu-latest
     steps:
-      - name: Check out Mailbox repository
+      - name: Check out Ithute repository
         uses: actions/checkout@v6
 
       - name: Validate product Compose manifest
@@ -60,7 +60,7 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     steps:
-      - name: Check out Mailbox repository
+      - name: Check out Ithute repository
         uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
@@ -70,7 +70,7 @@ jobs:
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
+          username: ${{ env.GHCR_USERNAME }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push LoanHub backend
@@ -100,26 +100,22 @@ jobs:
             ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
 
   deploy-to-existing-loanhub-vps:
-    name: Deploy LoanHub under Mailbox platform root
+    name: Deploy LoanHub under Ithute platform root
     needs: build-and-publish
     runs-on: ubuntu-latest
     steps:
-      - name: Check out Mailbox repository
+      - name: Check out Ithute repository
         uses: actions/checkout@v6
 
       - name: Validate deployment secrets
         env:
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         run: |
           set -eu
-          for name in VPS_SSH_KEY GHCR_TOKEN; do
-            eval "value=\${$name:-}"
-            if [ -z "$value" ]; then
-              echo "::error::$name must be configured in the Mailbox-DNS repository or organization Actions secrets"
-              exit 1
-            fi
-          done
+          if [ -z "${VPS_SSH_KEY:-}" ]; then
+            echo "::error::VPS_SSH_KEY must be configured in the Ithute repository or organization Actions secrets"
+            exit 1
+          fi
 
       - name: Copy LoanHub production manifests to VPS
         uses: appleboy/scp-action@v1
@@ -129,10 +125,12 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }}
           source: products/LoanHub/compose.yaml,products/LoanHub/infra/caddy/Caddyfile
-          target: /tmp/mailbox-loanhub-${{ github.sha }}
+          target: /tmp/ithute-loanhub-${{ github.sha }}
           overwrite: true
 
-      - name: Deploy into the Mailbox-DNS mother runtime
+      - name: Deploy into the Ithute mother runtime
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ env.VPS_HOST }}
@@ -141,13 +139,14 @@ jobs:
           passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }}
           script_stop: true
           command_timeout: 30m
+          envs: GHCR_TOKEN
           script: |
             set -eu
 
             PLATFORM_ROOT='${{ env.VPS_PLATFORM_ROOT }}'
             APP_DIR="$PLATFORM_ROOT/${{ env.LOANHUB_RUNTIME_DIR }}"
             LEGACY_APP_DIR='${{ env.LEGACY_LOANHUB_DIR }}'
-            SRC='/tmp/mailbox-loanhub-${{ github.sha }}/products/LoanHub'
+            SRC='/tmp/ithute-loanhub-${{ github.sha }}/products/LoanHub'
 
             test -d "$PLATFORM_ROOT"
             test -f "$SRC/compose.yaml"
@@ -191,7 +190,7 @@ jobs:
             fi
 
             docker network inspect mailbox-dns_mailbox_dns >/dev/null 2>&1 || docker network create mailbox-dns_mailbox_dns
-            echo '${{ secrets.GHCR_TOKEN }}' | docker login ghcr.io -u '${{ env.GHCR_USERNAME }}' --password-stdin
+            printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u '${{ env.GHCR_USERNAME }}' --password-stdin
 
             docker compose --env-file .env.production --profile production config -q
             docker compose --env-file .env.production --profile production pull backend frontend caddy db redis
@@ -243,6 +242,7 @@ jobs:
               fi
             done
 
+            docker logout ghcr.io >/dev/null 2>&1 || true
             printf '%s\n' \
               "LoanHub runtime: $APP_DIR" \
               "Preserved database volume: $EXPECTED_DB_VOLUME" \
