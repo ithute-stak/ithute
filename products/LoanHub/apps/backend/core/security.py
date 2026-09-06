@@ -1,3 +1,4 @@
+import secrets
 from typing import Annotated
 from uuid import UUID
 
@@ -7,6 +8,7 @@ from jwt import ExpiredSignatureError, InvalidTokenError
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session, selectinload
 
+from database.models.enums import UserRole
 from database.models.user import RefreshToken, User
 from database.models.governance_control import UserSecurityState
 from database.session import get_db
@@ -76,27 +78,56 @@ def _current_local_user(token: str, db: Session) -> User:
     return user
 
 
-def get_current_local_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
-    db: Session = Depends(get_db),
-) -> User:
-    """Require an existing LoanHub-issued access token.
+def _project_platform_owner(claims: dict, db: Session) -> User:
+    """Project the signed Ithute owner into LoanHub's highest local role."""
+    auth_user_id = UUID(str(claims["sub"]))
+    email = str(claims.get("email") or "").strip().lower() or None
 
-    This dependency is intentionally used by central-account linking and
-    unlinking so a central identity can never attach itself to a LoanHub user
-    without proof of control of the existing product account.
-    """
+    user = db.query(User).filter(User.auth_user_id == auth_user_id).first()
+    if user is None and email:
+        user = db.query(User).filter(User.email == email).first()
+        if user is not None and user.auth_user_id not in (None, auth_user_id):
+            raise HTTPException(status_code=409, detail="The system owner email is linked to another central identity")
 
-    try:
-        return _current_local_user(token, db)
-    except ExpiredSignatureError as error:
-        raise HTTPException(status_code=401, detail="Access token expired") from error
-    except (InvalidTokenError, ValueError) as error:
-        raise HTTPException(status_code=401, detail="Invalid LoanHub access token") from error
+    if user is None:
+        central_phone = str(claims.get("phone_number") or "").strip()
+        # LoanHub's legacy user schema requires a phone and password hash. The
+        # platform owner does not authenticate with either value; they are
+        # deliberately non-secret local sentinels while central Auth remains
+        # the only credential authority.
+        phone = central_phone or f"sys-{auth_user_id.hex[:20]}"
+        user = User(
+            email=email,
+            phone=phone,
+            auth_user_id=auth_user_id,
+            password_hash=hash_password(secrets.token_urlsafe(48)),
+            role=UserRole.SUPERADMIN,
+            is_active=True,
+            is_verified=True,
+            must_change_password=False,
+        )
+        db.add(user)
+        db.flush()
+    else:
+        user.auth_user_id = auth_user_id
+        user.role = UserRole.SUPERADMIN
+        user.is_active = True
+        user.is_verified = True
+        user.must_change_password = False
+
+    db.commit()
+    projected = _load_user(db, user.id)
+    if projected is None:
+        raise HTTPException(status_code=500, detail="Unable to project central system owner")
+    setattr(projected, "_auth_source", "ithute")
+    return projected
 
 
 def _current_ithute_user(token: str, db: Session) -> User:
     claims = decode_ithute_access_token(token)
+    if claims.get("is_platform_admin") is True:
+        return _project_platform_owner(claims, db)
+
     auth_user_id = UUID(str(claims["sub"]))
     user = (
         db.query(User)
@@ -118,6 +149,25 @@ def _current_ithute_user(token: str, db: Session) -> User:
         )
     setattr(user, "_auth_source", "ithute")
     return user
+
+
+def get_current_local_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    db: Session = Depends(get_db),
+) -> User:
+    """Require an existing LoanHub-issued access token.
+
+    This dependency is intentionally used by central-account linking and
+    unlinking so a central identity can never attach itself to a LoanHub user
+    without proof of control of the existing product account.
+    """
+
+    try:
+        return _current_local_user(token, db)
+    except ExpiredSignatureError as error:
+        raise HTTPException(status_code=401, detail="Access token expired") from error
+    except (InvalidTokenError, ValueError) as error:
+        raise HTTPException(status_code=401, detail="Invalid LoanHub access token") from error
 
 
 def get_current_user(
