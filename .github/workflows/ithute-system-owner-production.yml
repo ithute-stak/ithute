@@ -2,13 +2,13 @@ name: Synchronize Ithute System Owner
 
 on:
   workflow_run:
-    workflows: ["Deploy Shared TLS Edge Production"]
+    workflows: ["Recover Shared HTTPS Edge"]
     types: [completed]
     branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: ithute-system-owner-production
+  group: ithute-production-vps
   cancel-in-progress: false
 
 permissions:
@@ -94,6 +94,12 @@ jobs:
           remote="${VPS_USER}@${VPS_HOST}"
           ssh "$remote" "APP_DIR='$VPS_APP_DIR' OWNER_FILE='/tmp/ithute-system-owner-${GITHUB_RUN_ID}.secret' sh -s" <<'REMOTE'
           set -eu
+
+          if command -v flock >/dev/null 2>&1; then
+            exec 9>/tmp/ithute-production.lock
+            flock 9
+          fi
+
           cd "$APP_DIR"
           [ -f .env ] || { echo "Missing production .env" >&2; exit 1; }
           [ -f "$OWNER_FILE" ] || { echo "Missing staged owner secret" >&2; exit 1; }
@@ -153,9 +159,8 @@ jobs:
           chmod 600 .env
           rm -f "$OWNER_FILE"
 
-          # Auth's entrypoint applies migrations and synchronizes the one global
-          # owner before serving traffic. Recreate only Auth; product databases
-          # and independently deployed product containers are untouched.
+          # This is a central-identity operation, so Auth is intentionally the
+          # only runtime service recreated while the global VPS lock is held.
           compose up -d --no-deps --force-recreate ithute-auth
 
           id="$(compose ps -q ithute-auth)"

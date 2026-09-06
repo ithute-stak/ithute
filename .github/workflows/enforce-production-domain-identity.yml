@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: mailbox-dns-production-identity
+  group: ithute-production-vps
   cancel-in-progress: false
 
 permissions:
@@ -81,7 +81,15 @@ jobs:
           staged="/tmp/enforce-production-domain-identity-${GITHUB_RUN_ID}.sh"
           scp scripts/enforce-production-domain-identity.sh "$remote:$staged"
           ssh "$remote" "install -m 0755 '$staged' '$VPS_APP_DIR/scripts/enforce-production-domain-identity.sh' && rm -f '$staged'"
-          ssh "$remote" "cd '$VPS_APP_DIR' && PLATFORM_DOMAIN='$PLATFORM_DOMAIN' PUBLIC_IP='$VPS_HOST' sh scripts/enforce-production-domain-identity.sh"
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' PLATFORM_DOMAIN='$PLATFORM_DOMAIN' PUBLIC_IP='$VPS_HOST' sh -s" <<'REMOTE'
+          set -eu
+          if command -v flock >/dev/null 2>&1; then
+            exec 9>/tmp/ithute-production.lock
+            flock 9
+          fi
+          cd "$APP_DIR"
+          PLATFORM_DOMAIN="$PLATFORM_DOMAIN" PUBLIC_IP="$PUBLIC_IP" sh scripts/enforce-production-domain-identity.sh
+          REMOTE
 
       - name: Verify public authoritative DNS externally
         run: |

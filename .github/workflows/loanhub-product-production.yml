@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ithute-edge-production
+  group: ithute-production-vps
   cancel-in-progress: false
 
 permissions:
@@ -41,8 +41,7 @@ jobs:
         working-directory: products/LoanHub
         run: |
           cp .env.example .env
-          docker compose -f compose.yaml -f compose.edge-nginx.yml config -q
-          docker compose -f compose.yaml -f compose.edge-nginx.yml --profile production config -q
+          docker compose -f compose.yaml -f compose.shared-edge.yml config -q
 
       - name: Compile backend
         working-directory: products/LoanHub/apps/backend
@@ -54,9 +53,8 @@ jobs:
           grep -Fq 'name: ${COMPOSE_PROJECT_NAME:-loanhub}' products/LoanHub/compose.yaml
           grep -Fq -- '- postgres_data:/var/lib/postgresql/data' products/LoanHub/compose.yaml
           grep -Fq 'COMPOSE_PROJECT_NAME=loanhub' products/LoanHub/.env.production.example
-          grep -Fq 'profiles: ["legacy-caddy"]' products/LoanHub/compose.edge-nginx.yml
-          grep -Fq 'edge-nginx:' products/LoanHub/compose.edge-nginx.yml
-          grep -Fq 'certbot:' products/LoanHub/compose.edge-nginx.yml
+          grep -Fq 'loanhub-backend' products/LoanHub/compose.shared-edge.yml
+          grep -Fq 'loanhub-frontend' products/LoanHub/compose.shared-edge.yml
 
   build-and-publish:
     name: Build LoanHub product images
@@ -120,18 +118,18 @@ jobs:
             exit 1
           fi
 
-      - name: Copy LoanHub production manifests to VPS
+      - name: Copy LoanHub product manifests to VPS
         uses: appleboy/scp-action@v1
         with:
           host: ${{ env.VPS_HOST }}
           username: ${{ env.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }}
-          source: products/LoanHub/compose.yaml,products/LoanHub/compose.edge-nginx.yml,products/LoanHub/infra/nginx-edge/default.conf.template,products/LoanHub/infra/nginx-edge/ithute-tls.conf,products/LoanHub/infra/nginx-edge/bootstrap-cert.sh
+          source: products/LoanHub/compose.yaml,products/LoanHub/compose.shared-edge.yml
           target: /tmp/ithute-loanhub-${{ github.sha }}
           overwrite: true
 
-      - name: Deploy into the Ithute mother runtime
+      - name: Deploy only LoanHub product services
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: appleboy/ssh-action@v1.2.0
@@ -146,6 +144,11 @@ jobs:
           script: |
             set -eu
 
+            if command -v flock >/dev/null 2>&1; then
+              exec 9>/tmp/ithute-production.lock
+              flock 9
+            fi
+
             PLATFORM_ROOT='${{ env.VPS_PLATFORM_ROOT }}'
             APP_DIR="$PLATFORM_ROOT/${{ env.LOANHUB_RUNTIME_DIR }}"
             LEGACY_APP_DIR='${{ env.LEGACY_LOANHUB_DIR }}'
@@ -153,15 +156,9 @@ jobs:
 
             test -d "$PLATFORM_ROOT"
             test -f "$SRC/compose.yaml"
-            test -f "$SRC/compose.edge-nginx.yml"
-            test -f "$SRC/infra/nginx-edge/default.conf.template"
-            test -f "$SRC/infra/nginx-edge/ithute-tls.conf"
-            test -f "$SRC/infra/nginx-edge/bootstrap-cert.sh"
+            test -f "$SRC/compose.shared-edge.yml"
+            mkdir -p "$APP_DIR/backups" "$APP_DIR/secrets"
 
-            mkdir -p "$APP_DIR/infra/nginx-edge" "$APP_DIR/backups" "$APP_DIR/secrets"
-
-            # First migration from /opt/loanhub: copy only production identity/config.
-            # The old directory remains untouched as a rollback reference.
             if [ ! -s "$APP_DIR/.env.production" ]; then
               if [ -s "$LEGACY_APP_DIR/.env.production" ]; then
                 cp -p "$LEGACY_APP_DIR/.env.production" "$APP_DIR/.env.production"
@@ -175,11 +172,7 @@ jobs:
             fi
 
             cp "$SRC/compose.yaml" "$APP_DIR/compose.yaml"
-            cp "$SRC/compose.edge-nginx.yml" "$APP_DIR/compose.edge-nginx.yml"
-            cp "$SRC/infra/nginx-edge/default.conf.template" "$APP_DIR/infra/nginx-edge/default.conf.template"
-            cp "$SRC/infra/nginx-edge/ithute-tls.conf" "$APP_DIR/infra/nginx-edge/ithute-tls.conf"
-            cp "$SRC/infra/nginx-edge/bootstrap-cert.sh" "$APP_DIR/infra/nginx-edge/bootstrap-cert.sh"
-            chmod 700 "$APP_DIR/infra/nginx-edge/bootstrap-cert.sh"
+            cp "$SRC/compose.shared-edge.yml" "$APP_DIR/compose.shared-edge.yml"
             cd "$APP_DIR"
 
             set -a
@@ -191,10 +184,9 @@ jobs:
             export LOANHUB_BACKEND_IMAGE='${{ env.BACKEND_IMAGE }}'
             export LOANHUB_FRONTEND_IMAGE='${{ env.FRONTEND_IMAGE }}'
             export LOANHUB_IMAGE_TAG='${{ github.sha }}'
-            export TLS_EMAIL="${TLS_EMAIL:-admin@ithute.co.ls}"
 
             compose() {
-              docker compose --env-file .env.production -f compose.yaml -f compose.edge-nginx.yml --profile production "$@"
+              docker compose --env-file .env.production -f compose.yaml -f compose.shared-edge.yml "$@"
             }
 
             EXPECTED_DB_VOLUME="${COMPOSE_PROJECT_NAME}_postgres_data"
@@ -204,13 +196,10 @@ jobs:
               exit 1
             fi
 
-            docker network inspect mailbox-dns_mailbox_dns >/dev/null 2>&1 || docker network create mailbox-dns_mailbox_dns
             printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u '${{ env.GHCR_USERNAME }}' --password-stdin
 
             compose config -q
-            compose pull backend frontend edge-nginx certbot db redis
-
-            # Reuse the existing database and Redis volumes. Never use down -v here.
+            compose pull backend frontend db redis
             compose up -d --no-build db redis
 
             DB_CONTAINER="$(compose ps -q db)"
@@ -226,7 +215,6 @@ jobs:
               exit 1
             fi
 
-            # Mandatory pre-migration database backup. A failed or empty dump stops deployment.
             BACKUP_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
             BACKUP_FILE="$APP_DIR/backups/loanhub-pre-migrate-${BACKUP_STAMP}-${{ github.sha }}.dump"
             compose exec -T db \
@@ -237,29 +225,8 @@ jobs:
             fi
             sha256sum "$BACKUP_FILE" > "${BACKUP_FILE}.sha256"
 
-            # Apply only forward Alembic migrations against the verified existing volume.
             compose run --rm --no-deps migrate
             compose up -d --no-build backend maintenance frontend
-
-            # The dedicated shared-edge workflow performs the first certificate
-            # migration with rollback. Product deploys only take over the edge
-            # after that certificate already exists.
-            edge_cert_ready=false
-            if compose run --rm --no-deps --entrypoint /bin/sh certbot \
-              -c 'test -s /etc/letsencrypt/live/ithute-edge/fullchain.pem && test -s /etc/letsencrypt/live/ithute-edge/privkey.pem'; then
-              edge_cert_ready=true
-            fi
-
-            if [ "$edge_cert_ready" = true ]; then
-              docker ps \
-                --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
-                --filter 'label=com.docker.compose.service=caddy' \
-                -q | xargs -r docker rm -f
-              compose up -d --no-build edge-nginx certbot
-              compose exec -T edge-nginx nginx -t
-            else
-              echo 'Nginx certificate is not present yet; leaving the existing Caddy edge running until the shared-edge migration completes.'
-            fi
             compose ps
 
             for url in https://api.loanhub.co.ls/health/ready https://loanhub.co.ls/; do
@@ -272,20 +239,18 @@ jobs:
                 sleep 5
               done
               if [ "$healthy" != true ]; then
-                echo "Production health check failed: $url" >&2
-                compose logs --tail=200 edge-nginx certbot >&2 || true
+                echo "Production health check failed through shared Ithute edge: $url" >&2
+                compose logs --tail=200 backend frontend >&2 || true
                 exit 1
               fi
             done
 
-            if [ "$edge_cert_ready" = true ]; then
-              curl -fsS --retry 12 --retry-delay 5 https://auth.ithute.co.ls/healthz >/dev/null
-            fi
-
+            curl -fsS --retry 12 --retry-delay 5 https://auth.ithute.co.ls/healthz >/dev/null
             docker logout ghcr.io >/dev/null 2>&1 || true
             printf '%s\n' \
               "LoanHub runtime: $APP_DIR" \
               "Preserved database volume: $EXPECTED_DB_VOLUME" \
               "Pre-migration backup: $BACKUP_FILE" \
-              "Shared edge ready: $edge_cert_ready" \
+              "Shared edge aliases: loanhub-frontend, loanhub-backend" \
+              "Shared edge owner: ithute-edge (unchanged)" \
               "Legacy runtime retained: $LEGACY_APP_DIR"

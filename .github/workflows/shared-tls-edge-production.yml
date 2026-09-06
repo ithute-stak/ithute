@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/shared-tls-edge-production.yml'
+      - 'docker-compose.ithute-edge.yml'
+      - 'infrastructure/ithute-edge/**'
   workflow_dispatch:
 
 concurrency:
-  group: ithute-edge-recovery
+  group: ithute-production-vps
   cancel-in-progress: false
 
 permissions:
@@ -17,14 +19,14 @@ permissions:
 env:
   VPS_HOST: 204.12.205.224
   VPS_USER: administrator
-  LOANHUB_RUNTIME_DIR: /home/administrator/mailbox-dns/loanhub
+  VPS_EDGE_DIR: /home/administrator/ithute-edge
   EDGE_SHA: ${{ github.sha }}
 
 jobs:
   recover:
-    name: Restore and validate Nginx HTTPS edge
+    name: Restore and validate dedicated Ithute HTTPS edge
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     environment: production
     env:
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
@@ -67,104 +69,129 @@ jobs:
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Stage exact Nginx edge files
+      - name: Stage dedicated Ithute edge files
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
-          stage="/tmp/ithute-edge-recovery-${EDGE_SHA}"
-          ssh "$remote" "rm -rf '$stage' && mkdir -p '$stage/infra/nginx-edge'"
-          scp products/LoanHub/compose.edge-nginx.yml "$remote:$stage/compose.edge-nginx.yml"
-          scp products/LoanHub/infra/nginx-edge/default.conf.template "$remote:$stage/infra/nginx-edge/default.conf.template"
-          scp products/LoanHub/infra/nginx-edge/ithute-tls.conf "$remote:$stage/infra/nginx-edge/ithute-tls.conf"
+          stage="/tmp/ithute-edge-${EDGE_SHA}"
+          ssh "$remote" "rm -rf '$stage' && mkdir -p '$stage/infrastructure/ithute-edge'"
+          scp docker-compose.ithute-edge.yml "$remote:$stage/docker-compose.ithute-edge.yml"
+          scp infrastructure/ithute-edge/default.conf.template "$remote:$stage/infrastructure/ithute-edge/default.conf.template"
+          scp infrastructure/ithute-edge/ithute-tls.conf "$remote:$stage/infrastructure/ithute-edge/ithute-tls.conf"
 
       - name: Prevalidate and switch the VPS edge
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "APP_DIR='$LOANHUB_RUNTIME_DIR' EDGE_SHA='$EDGE_SHA' sh -s" <<'REMOTE'
+          ssh "$remote" "EDGE_DIR='$VPS_EDGE_DIR' EDGE_SHA='$EDGE_SHA' sh -s" <<'REMOTE'
           set -eu
-          cd "$APP_DIR"
-          [ -s .env.production ] || { echo 'LoanHub production environment is missing' >&2; exit 1; }
-          [ -s compose.yaml ] || { echo 'LoanHub production compose.yaml is missing' >&2; exit 1; }
 
-          stage="/tmp/ithute-edge-recovery-${EDGE_SHA}"
-          [ -s "$stage/compose.edge-nginx.yml" ] || { echo 'Staged edge override is missing' >&2; exit 1; }
-          mkdir -p infra/nginx-edge
-          cp "$stage/compose.edge-nginx.yml" compose.edge-nginx.yml
-          cp "$stage/infra/nginx-edge/default.conf.template" infra/nginx-edge/default.conf.template
-          cp "$stage/infra/nginx-edge/ithute-tls.conf" infra/nginx-edge/ithute-tls.conf
+          if command -v flock >/dev/null 2>&1; then
+            exec 9>/tmp/ithute-production.lock
+            flock 9
+          fi
+
+          stage="/tmp/ithute-edge-${EDGE_SHA}"
+          mkdir -p "$EDGE_DIR/infrastructure/ithute-edge"
+          cp "$stage/docker-compose.ithute-edge.yml" "$EDGE_DIR/docker-compose.ithute-edge.yml"
+          cp "$stage/infrastructure/ithute-edge/default.conf.template" "$EDGE_DIR/infrastructure/ithute-edge/default.conf.template"
+          cp "$stage/infrastructure/ithute-edge/ithute-tls.conf" "$EDGE_DIR/infrastructure/ithute-edge/ithute-tls.conf"
           rm -rf "$stage"
+          cd "$EDGE_DIR"
 
-          set -a
-          . ./.env.production
-          set +a
-          export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-loanhub}"
-          export LOANHUB_ENV_FILE=.env.production
+          : "${ITHUTE_MAILBOX_NETWORK_NAME:=mailbox-dns_mailbox_dns}"
+          : "${ITHUTE_LOANHUB_NETWORK_NAME:=loanhub_loanhub}"
+          : "${ITHUTE_LOANHUB_SANDBOX_NETWORK_NAME:=loanhub_sandbox}"
+          : "${ITHUTE_EDGE_LETSENCRYPT_VOLUME:=loanhub_edge_letsencrypt}"
+          : "${ITHUTE_EDGE_CERTBOT_WEBROOT_VOLUME:=loanhub_edge_certbot_webroot}"
+          export ITHUTE_MAILBOX_NETWORK_NAME ITHUTE_LOANHUB_NETWORK_NAME ITHUTE_LOANHUB_SANDBOX_NETWORK_NAME
+          export ITHUTE_EDGE_LETSENCRYPT_VOLUME ITHUTE_EDGE_CERTBOT_WEBROOT_VOLUME
 
-          edge() {
-            docker compose --env-file .env.production -f compose.yaml -f compose.edge-nginx.yml --profile production "$@"
-          }
-          caddy_restore() {
-            edge rm -sf edge-nginx certbot >/dev/null 2>&1 || true
-            docker compose --env-file .env.production --profile production up -d caddy >/dev/null 2>&1 || true
+          for network in "$ITHUTE_MAILBOX_NETWORK_NAME" "$ITHUTE_LOANHUB_NETWORK_NAME" "$ITHUTE_LOANHUB_SANDBOX_NETWORK_NAME"; do
+            docker network inspect "$network" >/dev/null 2>&1 || {
+              echo "Required shared edge network is missing: $network" >&2
+              exit 1
+            }
+          done
+          for volume in "$ITHUTE_EDGE_LETSENCRYPT_VOLUME" "$ITHUTE_EDGE_CERTBOT_WEBROOT_VOLUME"; do
+            docker volume inspect "$volume" >/dev/null 2>&1 || {
+              echo "Required shared edge volume is missing: $volume" >&2
+              exit 1
+            }
+          done
+
+          compose() {
+            docker compose -p ithute-edge -f docker-compose.ithute-edge.yml "$@"
           }
           listener_ok() {
-            curl -ksS --resolve panel.ithute.co.ls:443:127.0.0.1 \
-              --connect-timeout 3 --max-time 10 -o /dev/null https://panel.ithute.co.ls/
+            curl -ksS --resolve auth.ithute.co.ls:443:127.0.0.1 \
+              --connect-timeout 3 --max-time 10 -o /dev/null https://auth.ithute.co.ls/healthz
+          }
+          restore_legacy_caddy() {
+            compose rm -sf edge-nginx certbot >/dev/null 2>&1 || true
+            if [ -n "${legacy_caddy:-}" ]; then
+              docker start "$legacy_caddy" >/dev/null 2>&1 || true
+            fi
           }
 
-          # Do all template/certificate validation while Caddy is still serving
-          # production. Nothing below this point needs ports 80/443 yet.
-          edge pull edge-nginx certbot >/dev/null
-          if ! edge run --rm --no-deps --entrypoint /bin/sh certbot \
+          compose config >/dev/null
+          compose pull edge-nginx certbot >/dev/null
+
+          if ! compose run --rm --no-deps --entrypoint /bin/sh certbot \
             -c 'test -s /etc/letsencrypt/live/ithute-edge/fullchain.pem && test -s /etc/letsencrypt/live/ithute-edge/privkey.pem'; then
-            echo 'Nginx certificate volume is missing; retaining Caddy and aborting the cutover.' >&2
+            echo 'Shared Ithute certificate volume is missing the ithute-edge certificate.' >&2
             exit 1
           fi
 
           rendered="/tmp/ithute-nginx-rendered-${EDGE_SHA}.txt"
-          if ! edge run --rm --no-deps --entrypoint /bin/sh edge-nginx -c \
+          if ! compose run --rm --no-deps --entrypoint /bin/sh edge-nginx -c \
             '/docker-entrypoint.d/20-envsubst-on-templates.sh >/dev/null && nginx -t && nginx -T' >"$rendered" 2>&1; then
             cat "$rendered" >&2 || true
-            echo 'Offline Nginx configuration validation failed; Caddy was left untouched.' >&2
+            echo 'Offline Ithute Nginx configuration validation failed.' >&2
             exit 1
           fi
           for required in 'auth.ithute.co.ls' 'panel.ithute.co.ls' 'portal.pay.ithute.co.ls' 'listen 443 ssl'; do
-            if ! grep -Fq "$required" "$rendered"; then
+            grep -Fq "$required" "$rendered" || {
               cat "$rendered" >&2 || true
               echo "Offline Nginx configuration is missing: $required" >&2
               exit 1
-            fi
+            }
           done
           rm -f "$rendered"
-          echo 'Offline Nginx template and certificate validation passed while Caddy remained online.'
 
-          trap 'caddy_restore; exit 1' HUP INT TERM
-          docker ps \
-            --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+          legacy_caddy="$(docker ps -a \
             --filter 'label=com.docker.compose.service=caddy' \
-            -q | xargs -r docker rm -f
+            --format '{{.ID}}' | head -n1 || true)"
 
-          if ! edge up -d --no-build --no-deps --force-recreate edge-nginx certbot; then
-            caddy_restore
-            echo 'Nginx failed to start; Caddy restored.' >&2
+          for id in $(docker ps --filter publish=443 --format '{{.ID}}'); do
+            project="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$id" 2>/dev/null || true)"
+            if [ "$project" != "ithute-edge" ]; then
+              docker stop "$id" >/dev/null
+            fi
+          done
+
+          trap 'restore_legacy_caddy; exit 1' HUP INT TERM
+          if ! compose up -d --no-build --no-deps --force-recreate edge-nginx certbot; then
+            restore_legacy_caddy
+            echo 'Dedicated Ithute edge failed to start; legacy Caddy restored.' >&2
             exit 1
           fi
-          if ! edge exec -T edge-nginx nginx -t \
-            || ! edge exec -T edge-nginx nginx -T 2>/dev/null | grep -Fq 'auth.ithute.co.ls' \
+
+          if ! compose exec -T edge-nginx nginx -t \
+            || ! compose exec -T edge-nginx nginx -T 2>/dev/null | grep -Fq 'auth.ithute.co.ls' \
             || ! listener_ok; then
-            edge logs --tail=250 edge-nginx certbot >&2 || true
-            caddy_restore
-            echo 'Nginx runtime verification failed; Caddy restored.' >&2
+            compose logs --tail=250 edge-nginx certbot >&2 || true
+            restore_legacy_caddy
+            echo 'Dedicated Ithute edge runtime verification failed; legacy Caddy restored.' >&2
             exit 1
           fi
 
           trap - HUP INT TERM
           ss -lnt | grep -E ':(80|443)[[:space:]]' || true
-          echo 'Nginx is now the active shared HTTPS edge.'
+          echo 'Dedicated ithute-edge project now owns public HTTP/HTTPS.'
           REMOTE
 
-      - name: Verify Nginx from the public Internet
+      - name: Verify edge from the public Internet
         run: |
           set -eu
           for url in \
@@ -180,10 +207,10 @@ jobs:
               fi
               sleep 3
             done
-            [ "$healthy" = true ] || { echo "::error::Public Nginx verification failed: $url"; exit 1; }
-            echo "Nginx verified: $url"
+            [ "$healthy" = true ] || { echo "::error::Public Ithute edge verification failed: $url"; exit 1; }
+            echo "Edge verified: $url"
           done
 
           echo | openssl s_client -connect auth.ithute.co.ls:443 -servername auth.ithute.co.ls 2>/dev/null \
             | openssl x509 -noout -subject -issuer -dates
-          echo 'Nginx shared HTTPS edge is publicly healthy.'
+          echo 'Dedicated Ithute HTTPS edge is publicly healthy.'

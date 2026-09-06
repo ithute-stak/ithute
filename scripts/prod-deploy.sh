@@ -4,6 +4,13 @@ set -eu
 [ -f .env ] || { echo "Missing production .env in $(pwd)" >&2; exit 1; }
 : "${MAILBOX_DNS_IMAGE_TAG:?MAILBOX_DNS_IMAGE_TAG is required}"
 
+# All workflows that can alter the shared VPS use this same host lock. The lock
+# remains effective even when separate GitHub workflows have different queues.
+if command -v flock >/dev/null 2>&1; then
+  exec 9>/tmp/ithute-production.lock
+  flock 9
+fi
+
 env_value() {
   key="$1"
   awk -F= -v k="$key" '$1 == k { sub(/^[^=]*=/, ""); print; exit }' .env
@@ -39,6 +46,37 @@ ensure_csv_entry() {
   upsert_env "$key" "$value"
 }
 
+ensure_service_secret() {
+  client="$1"
+  secret="$2"
+  current="$(env_value ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON)"
+  case "$current" in
+    ""|'{}') current="{\"${client}\":\"${secret}\"}" ;;
+    *"\"${client}\""*) return 0 ;;
+    \{*\}) current="${current%?},\"${client}\":\"${secret}\"}" ;;
+    *) echo "Invalid ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON; refusing to overwrite it" >&2; exit 1 ;;
+  esac
+  upsert_env ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON "$current"
+}
+
+ensure_redirect_uri() {
+  client="$1"
+  callback="$2"
+  current="$(env_value ITHUTE_AUTH_REDIRECT_URIS_JSON)"
+  case "$current" in
+    ""|'{}') current="{\"${client}\":[\"${callback}\"]}" ;;
+    *"\"${client}\""*)
+      case "$current" in
+        *"$callback"*) return 0 ;;
+        *) echo "Existing redirect registration for $client does not contain $callback" >&2; exit 1 ;;
+      esac
+      ;;
+    \{*\}) current="${current%?},\"${client}\":[\"${callback}\"]}" ;;
+    *) echo "Invalid ITHUTE_AUTH_REDIRECT_URIS_JSON; refusing to overwrite it" >&2; exit 1 ;;
+  esac
+  upsert_env ITHUTE_AUTH_REDIRECT_URIS_JSON "$current"
+}
+
 repair_fernet_key() {
   key="$1"
   label="$2"
@@ -64,25 +102,30 @@ provision_realtime_identity() {
   ensure_csv_entry ITHUTE_AUTH_FIRST_PARTY_CLIENTS 'ithute-realtime:!thute Realtime'
   ensure_csv_entry ITHUTE_PUSH_ALLOWED_SERVICE_CLIENTS 'ithute-realtime'
   ensure_csv_entry ITHUTE_PUSH_DELEGATED_SERVICE_CLIENTS 'ithute-realtime'
+  ensure_service_secret ithute-realtime "$(env_value ITHUTE_SERVICE_REALTIME_SECRET)"
+}
 
-  realtime_secret="$(env_value ITHUTE_SERVICE_REALTIME_SECRET)"
-  service_map="$(env_value ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON)"
-  case "$service_map" in
-    ""|'{}')
-      service_map="{\"ithute-realtime\":\"${realtime_secret}\"}"
-      ;;
-    *'"ithute-realtime"'*)
-      :
-      ;;
-    \{*\})
-      service_map="${service_map%?},\"ithute-realtime\":\"${realtime_secret}\"}"
-      ;;
-    *)
-      echo "Invalid ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON; refusing to overwrite it" >&2
-      exit 1
+provision_ithute_pay_identity() {
+  # Central identity owns client registration. Ithute Pay deployments only
+  # validate these entries and therefore never restart Auth or Push.
+  ensure_random_hex ITHUTE_SERVICE_ITHUTE_PAY_SECRET
+  ensure_csv_entry ITHUTE_AUTH_FIRST_PARTY_CLIENTS 'ithute-pay:Ithute Pay'
+  ensure_csv_entry ITHUTE_PUSH_ALLOWED_USER_CLIENTS 'ithute-pay'
+  ensure_csv_entry ITHUTE_PUSH_ALLOWED_SERVICE_CLIENTS 'ithute-pay'
+  ensure_csv_entry ITHUTE_AUTH_CORS_ORIGINS 'https://pay.ithute.co.ls'
+  ensure_redirect_uri ithute-pay 'https://pay.ithute.co.ls/api/v1/auth/ithute/callback'
+  ensure_service_secret ithute-pay "$(env_value ITHUTE_SERVICE_ITHUTE_PAY_SECRET)"
+}
+
+provision_platform_proxy_trust() {
+  current="$(env_value ITHUTE_AUTH_TRUSTED_PROXY_CIDRS)"
+  case "$current" in
+    ""|'127.0.0.1/32,::1/128')
+      # Auth has no published host port. Trust private container peers so the
+      # internal Nginx gateway can supply the real public X-Forwarded-For chain.
+      upsert_env ITHUTE_AUTH_TRUSTED_PROXY_CIDRS '127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'
       ;;
   esac
-  upsert_env ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON "$service_map"
 }
 
 configure_push_provider_policy() {
@@ -90,24 +133,18 @@ configure_push_provider_policy() {
   required="$(env_value ITHUTE_PUSH_REQUIRED_PROVIDERS)"
 
   if [ "$mode" = "bootstrap" ] && [ -z "$required" ]; then
-    # Bootstrap production is allowed to run before a Firebase project is
-    # provisioned. An explicitly configured provider requirement is preserved.
-    # The Compose interpolation uses ${VAR-default} so this explicit empty value
-    # reaches Push instead of falling back to the Android production baseline.
     upsert_env ITHUTE_PUSH_REQUIRED_PROVIDERS ""
     echo "Bootstrap mode: Push provider delivery is optional until provider credentials are provisioned."
   elif [ "$mode" = "domain" ] && [ -z "$required" ]; then
-    # Full domain production must restore the Android-first FCM readiness gate.
     upsert_env ITHUTE_PUSH_REQUIRED_PROVIDERS "fcm"
   fi
 }
 
-# Preserve valid encryption material and generate missing keys only once in the
-# VPS-owned .env. Rotating either Fernet key implicitly would make encrypted
-# Auth MFA or Push endpoint data unreadable, so valid existing values are kept.
 repair_fernet_key ITHUTE_AUTH_TOTP_ENCRYPTION_KEY '!thute Auth MFA'
 repair_fernet_key ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY '!thute Push endpoints'
 provision_realtime_identity
+provision_ithute_pay_identity
+provision_platform_proxy_trust
 configure_push_provider_policy
 
 . scripts/load-dotenv.sh
@@ -117,10 +154,6 @@ sh scripts/prod-preflight.sh
 
 COMPOSE_FILES="-f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.ithute-platform.yml"
 
-# On a dedicated Mailbox-DNS host the commercial production overlay owns the
-# public HTTP/HTTPS edge through Caddy. On a shared VPS another stack may
-# already own 80/443; in that case Nginx remains the Mailbox-DNS upstream and
-# the existing host reverse proxy forwards traffic to PROXY_PORT instead.
 if [ "${SHARED_HTTP_EDGE:-false}" = "true" ]; then
   echo "Shared HTTP edge enabled; Mailbox-DNS Caddy will not be started."
 else
@@ -198,12 +231,8 @@ startup_diagnostics() {
 mkdir -p backups platform-secrets/ithute-auth platform-secrets/ithute-push
 chmod 700 platform-secrets platform-secrets/ithute-auth platform-secrets/ithute-push
 compose config >/dev/null
-# All immutable production images are published for the same release SHA by the
-# production build job. Retry pulls briefly to tolerate registry propagation.
 retry 24 compose pull
 
-# Bring persistent data services up first so a pre-release backup can be taken
-# before any application applies Alembic migrations.
 compose up -d --no-build --pull never postgres redis powerdns-db rspamd-redis restore-postgres ithute-auth-db ithute-push-db ithute-realtime-db ithute-realtime-redis
 wait_service postgres 60
 wait_service redis 60
@@ -241,10 +270,6 @@ echo "Creating pre-release !thute Realtime database backup: $realtime_backup"
 compose exec -T ithute-realtime-db pg_dump --format=custom --no-owner --no-privileges -U "${ITHUTE_REALTIME_DB_USER:-ithute_realtime}" "${ITHUTE_REALTIME_DB_NAME:-ithute_realtime}" > "$realtime_backup"
 test -s "$realtime_backup"
 
-# The production backend and central platform API commands apply their own
-# Alembic migrations. The shared VPS also hosts independently deployed product
-# Compose services (for example Ithute Pay), so the core release must never
-# remove containers that are outside this compose-file set.
 if ! compose up -d --no-build --pull never; then
   startup_diagnostics
   exit 1
@@ -255,9 +280,6 @@ wait_service ithute-push 90
 wait_service ithute-push-worker 90
 wait_service ithute-realtime 90
 
-# Keep the configured bootstrap account authoritative for platform-owner login.
-# The password is read only from the production environment and is never stored
-# in source control or printed to deployment logs.
 compose exec -T backend python - <<'PY'
 from sqlalchemy import select
 
@@ -286,17 +308,9 @@ with SessionLocal() as db:
 print("Bootstrap platform owner synchronized")
 PY
 
-# A mail-enabled domain on platform-hosted authoritative DNS must not require a
-# production shell intervention to become deliverable. Reconcile all existing
-# verified domains on every release. The operation is idempotent: existing DKIM
-# identities are reused and unrelated apex TXT records are preserved.
 echo "Reconciling managed mail DNS and DKIM signing identities..."
 compose exec -T backend python -m app.services.mail_dns_reconcile_cli
 
-# Nginx resolves Docker service names when its worker starts. A normal Compose
-# update can recreate upstreams while leaving an unchanged Nginx container
-# running with stale container IPs. Recreate it on every release after all
-# application services are healthy.
 wait_service frontend 90
 compose up -d --no-deps --force-recreate nginx
 wait_service nginx 90
@@ -309,7 +323,6 @@ if [ "${SHARED_HTTP_EDGE:-false}" != "true" ]; then
   wait_service caddy 90
 fi
 
-# Verify readiness inside the Docker network before relying on public DNS/TLS.
 compose exec -T backend curl -fsS http://127.0.0.1:8000/health/ready >/dev/null
 frontend_probe >/dev/null
 compose exec -T ithute-auth curl -fsS http://127.0.0.1:8080/healthz >/dev/null
@@ -336,8 +349,8 @@ if [ "${SHARED_HTTP_EDGE:-false}" = "true" ]; then
     *:*) proxy_target="${PROXY_PORT}" ;;
     *) proxy_target="127.0.0.1:${PROXY_PORT:-8086}" ;;
   esac
-  printf 'HTTP upstream for existing reverse proxy: http://%s\n' "$proxy_target"
-  printf 'LoanHub/existing host edge remains responsible for public 80/443.\n'
+  printf 'HTTP upstream for shared edge: http://%s\n' "$proxy_target"
+  printf 'Dedicated ithute-edge remains responsible for public 80/443.\n'
 else
   printf 'Panel:     https://%s\n' "$PANEL_HOSTNAME"
   printf 'API:       https://%s\n' "$API_HOSTNAME"

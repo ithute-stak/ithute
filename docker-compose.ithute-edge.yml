@@ -1,0 +1,72 @@
+name: ithute-edge
+
+services:
+  edge-nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-loanhub.co.ls}
+      API_DOMAIN: ${API_DOMAIN:-api.loanhub.co.ls}
+      WWW_DOMAIN: ${WWW_DOMAIN:-www.loanhub.co.ls}
+      SANDBOX_APP_DOMAIN: ${SANDBOX_APP_DOMAIN:-sandbox.loanhub.co.ls}
+      SANDBOX_API_DOMAIN: ${SANDBOX_API_DOMAIN:-api-sandbox.loanhub.co.ls}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infrastructure/ithute-edge/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./infrastructure/ithute-edge/ithute-tls.conf:/etc/nginx/snippets/ithute-tls.conf:ro
+      - edge_letsencrypt:/etc/letsencrypt:ro
+      - edge_certbot_webroot:/var/www/certbot:ro
+    command:
+      - /bin/sh
+      - -c
+      - |
+        /docker-entrypoint.d/20-envsubst-on-templates.sh
+        nginx -t
+        nginx -g 'daemon off;' &
+        nginx_pid=$$!
+        while kill -0 "$$nginx_pid" 2>/dev/null; do
+          sleep 21600 & wait $$! || true
+          nginx -s reload || true
+        done &
+        wait "$$nginx_pid"
+    networks:
+      - mailbox_dns_shared
+      - loanhub
+      - sandbox
+
+  certbot:
+    image: certbot/certbot:latest
+    restart: unless-stopped
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        trap 'exit 0' TERM INT
+        while :; do
+          certbot renew --webroot -w /var/www/certbot --quiet || true
+          sleep 43200 & wait $$! || true
+        done
+    volumes:
+      - edge_letsencrypt:/etc/letsencrypt
+      - edge_certbot_webroot:/var/www/certbot
+
+networks:
+  mailbox_dns_shared:
+    external: true
+    name: ${ITHUTE_MAILBOX_NETWORK_NAME:-mailbox-dns_mailbox_dns}
+  loanhub:
+    external: true
+    name: ${ITHUTE_LOANHUB_NETWORK_NAME:-loanhub_loanhub}
+  sandbox:
+    external: true
+    name: ${ITHUTE_LOANHUB_SANDBOX_NETWORK_NAME:-loanhub_sandbox}
+
+volumes:
+  edge_letsencrypt:
+    external: true
+    name: ${ITHUTE_EDGE_LETSENCRYPT_VOLUME:-loanhub_edge_letsencrypt}
+  edge_certbot_webroot:
+    external: true
+    name: ${ITHUTE_EDGE_CERTBOT_WEBROOT_VOLUME:-loanhub_edge_certbot_webroot}

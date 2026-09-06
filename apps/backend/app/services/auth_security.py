@@ -1,4 +1,5 @@
 import hashlib
+from ipaddress import ip_address, ip_network
 
 from fastapi import HTTPException, Request
 from redis import Redis
@@ -12,15 +13,76 @@ PASSWORD_RESET_WINDOW_SECONDS = 3600
 PASSWORD_RESET_ACCOUNT_MAX_REQUESTS = 5
 PASSWORD_RESET_SOURCE_MAX_REQUESTS = 30
 
+# Application traffic reaches the backend from the local reverse proxy/Docker
+# network in production. Forwarded headers must never be trusted from an
+# arbitrary direct client because they are caller-controlled HTTP headers.
+_TRUSTED_PROXY_NETWORKS = tuple(
+    ip_network(value)
+    for value in (
+        "127.0.0.0/8",
+        "::1/128",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "fc00::/7",
+    )
+)
+
 
 def _digest(value: str) -> str:
     return hashlib.sha256(value.strip().lower().encode("utf-8")).hexdigest()
 
 
+def _peer(request: Request) -> str | None:
+    if request.client is None:
+        return None
+    value = str(request.client.host).strip()
+    return value or None
+
+
+def trusted_proxy_peer(peer: str | None) -> bool:
+    if not peer:
+        return False
+    try:
+        address = ip_address(peer)
+    except ValueError:
+        return False
+    return any(address in network for network in _TRUSTED_PROXY_NETWORKS)
+
+
+def request_client_ip(request: Request) -> str:
+    """Return the verified client IP used for auditing and rate limiting.
+
+    X-Real-IP is accepted only from a trusted local/private reverse proxy. An
+    invalid forwarded value is ignored rather than becoming a rate-limit key.
+    """
+    peer = _peer(request)
+    if trusted_proxy_peer(peer):
+        forwarded = request.headers.get("x-real-ip", "").strip()
+        if forwarded:
+            try:
+                return str(ip_address(forwarded))
+            except ValueError:
+                pass
+    return peer or "unknown"
+
+
+def request_is_https(request: Request) -> bool:
+    """Determine HTTPS without trusting spoofable proxy headers.
+
+    A reverse proxy may report the original scheme using X-Forwarded-Proto, but
+    only when the immediate peer belongs to a trusted proxy network.
+    """
+    peer = _peer(request)
+    if trusted_proxy_peer(peer):
+        forwarded = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+        if forwarded in {"http", "https"}:
+            return forwarded == "https"
+    return request.url.scheme.lower() == "https"
+
+
 def _source(request: Request) -> str:
-    # Nginx overwrites X-Real-IP at the application edge, making it preferable
-    # to accepting a caller-controlled X-Forwarded-For value here.
-    return (request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")).strip()
+    return request_client_ip(request)
 
 
 def _redis() -> Redis:

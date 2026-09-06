@@ -1,0 +1,93 @@
+name: Production Isolation Contract
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/deploy-production.yml'
+      - '.github/workflows/enforce-production-domain-identity.yml'
+      - '.github/workflows/ithute-pay-dns.yml'
+      - '.github/workflows/ithute-pay-production.yml'
+      - '.github/workflows/ithute-system-owner-production.yml'
+      - '.github/workflows/loanhub-product-production.yml'
+      - '.github/workflows/shared-tls-edge-production.yml'
+      - '.github/workflows/production-isolation-contract.yml'
+      - 'docker-compose.ithute-edge.yml'
+      - 'infrastructure/ithute-edge/**'
+      - 'products/LoanHub/compose.yaml'
+      - 'products/LoanHub/compose.shared-edge.yml'
+      - 'scripts/prod-deploy.sh'
+      - 'scripts/enforce-production-domain-identity.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  isolation-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Validate shell syntax
+        run: |
+          set -eu
+          sh -n scripts/prod-deploy.sh
+          sh -n scripts/enforce-production-domain-identity.sh
+
+      - name: Validate dedicated edge Compose
+        run: |
+          set -eu
+          docker compose -f docker-compose.ithute-edge.yml config -q
+          grep -Fq 'server loanhub-frontend:3000;' infrastructure/ithute-edge/default.conf.template
+          grep -Fq 'server loanhub-backend:8000;' infrastructure/ithute-edge/default.conf.template
+
+      - name: Validate LoanHub edge aliases
+        working-directory: products/LoanHub
+        run: |
+          set -eu
+          cp .env.example .env
+          docker compose -f compose.yaml -f compose.shared-edge.yml config >/tmp/loanhub-shared-edge.yml
+          grep -Fq 'loanhub-backend' /tmp/loanhub-shared-edge.yml
+          grep -Fq 'loanhub-frontend' /tmp/loanhub-shared-edge.yml
+
+      - name: Enforce product isolation invariants
+        run: |
+          set -eu
+
+          # Ithute Pay may deploy only its own product services.
+          ! grep -Fq 'force-recreate ithute-auth' .github/workflows/ithute-pay-production.yml
+          ! grep -Fq 'force-recreate ithute-push' .github/workflows/ithute-pay-production.yml
+          ! grep -Fq 'force-recreate nginx' .github/workflows/ithute-pay-production.yml
+          ! grep -Fq 'MAILBOX_DNS_IMAGE_TAG=latest' .github/workflows/ithute-pay-production.yml
+
+          # LoanHub may not own the shared edge lifecycle anymore.
+          ! grep -Fq 'compose.edge-nginx.yml' .github/workflows/loanhub-product-production.yml
+          ! grep -Fq 'edge-nginx' .github/workflows/loanhub-product-production.yml
+          ! grep -Fq 'certbot' .github/workflows/loanhub-product-production.yml
+
+          # All workflows that mutate the shared VPS use the same GitHub queue.
+          for file in \
+            .github/workflows/enforce-production-domain-identity.yml \
+            .github/workflows/ithute-pay-dns.yml \
+            .github/workflows/ithute-pay-production.yml \
+            .github/workflows/ithute-system-owner-production.yml \
+            .github/workflows/loanhub-product-production.yml \
+            .github/workflows/shared-tls-edge-production.yml; do
+            grep -Fq 'group: ithute-production-vps' "$file"
+          done
+
+          # Runtime serialization remains enforced even if a workflow is invoked manually.
+          grep -Fq '/tmp/ithute-production.lock' scripts/prod-deploy.sh
+          grep -Fq '/tmp/ithute-production.lock' .github/workflows/ithute-pay-production.yml
+          grep -Fq '/tmp/ithute-production.lock' .github/workflows/loanhub-product-production.yml
+          grep -Fq '/tmp/ithute-production.lock' .github/workflows/shared-tls-edge-production.yml
+
+      - name: Verify public-route deployment gates
+        run: |
+          set -eu
+          grep -Fq 'Public Ithute Pay route is unhealthy' .github/workflows/ithute-pay-production.yml
+          grep -Fq 'Public Ithute edge verification failed' .github/workflows/shared-tls-edge-production.yml
