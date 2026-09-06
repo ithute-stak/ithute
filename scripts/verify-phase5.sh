@@ -21,18 +21,69 @@ wait_for_url() {
   return 1
 }
 
+wait_for_service_healthy() {
+  service="$1"
+  attempts="${2:-60}"
+  delay="${3:-2}"
+  i=1
+  while [ "$i" -le "$attempts" ]; do
+    container_id="$($COMPOSE ps -q "$service" 2>/dev/null || true)"
+    if [ -n "$container_id" ]; then
+      status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+      case "$status" in
+        healthy|running)
+          printf '%s is ready (%s).\n' "$service" "$status"
+          return 0
+          ;;
+        exited|dead)
+          printf '%s stopped while waiting for readiness.\n' "$service" >&2
+          $COMPOSE logs --tail=160 "$service" >&2 || true
+          return 1
+          ;;
+      esac
+      printf 'Waiting for %s health (%s/%s, status=%s)...\n' "$service" "$i" "$attempts" "${status:-unknown}"
+    else
+      printf 'Waiting for %s container (%s/%s)...\n' "$service" "$i" "$attempts"
+    fi
+    sleep "$delay"
+    i=$((i + 1))
+  done
+
+  printf '%s did not become healthy.\n' "$service" >&2
+  $COMPOSE ps "$service" >&2 || true
+  $COMPOSE logs --tail=200 "$service" >&2 || true
+  container_id="$($COMPOSE ps -q "$service" 2>/dev/null || true)"
+  if [ -n "$container_id" ]; then
+    docker inspect --format '{{json .State.Health}}' "$container_id" >&2 || true
+  fi
+  return 1
+}
+
 printf '\n== Phase 5: compose configuration ==\n'
 $COMPOSE config >/dev/null
 
 printf '\n== Phase 5: rebuild application images ==\n'
 $COMPOSE build backend frontend
 
-printf '\n== Phase 5: start core and secondary DNS services ==\n'
-$COMPOSE up -d postgres redis powerdns-db powerdns powerdns-secondary-db powerdns-secondary backend frontend
+# Start infrastructure in stages. A cold GitHub runner can take several seconds
+# to initialise the PowerDNS control socket after PostgreSQL becomes healthy.
+# Starting backend in the same `compose up` call makes Compose evaluate its
+# `service_healthy` dependency during that transition and can abort even though
+# PowerDNS is still legitimately in the health-starting state.
+printf '\n== Phase 5: start databases and Redis ==\n'
+$COMPOSE up -d postgres redis powerdns-db powerdns-secondary-db
+
+printf '\n== Phase 5: start authoritative DNS services ==\n'
+$COMPOSE up -d powerdns powerdns-secondary
+wait_for_service_healthy powerdns 60 2
+wait_for_service_healthy powerdns-secondary 60 2
 
 printf '\n== Phase 5: PowerDNS control planes ==\n'
 $COMPOSE exec -T powerdns pdns_control rping | grep -q PONG
 $COMPOSE exec -T powerdns-secondary pdns_control rping | grep -q PONG
+
+printf '\n== Phase 5: start application services ==\n'
+$COMPOSE up -d backend frontend
 
 printf '\n== Phase 5: migrations ==\n'
 $COMPOSE exec -T backend alembic upgrade head
