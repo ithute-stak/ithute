@@ -1,4 +1,4 @@
-name: Deploy Nginx TLS Edge Production
+name: Deploy Shared TLS Edge Production
 
 on:
   workflow_run:
