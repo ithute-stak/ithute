@@ -40,7 +40,7 @@ def _peer(request: Request) -> str | None:
     return value or None
 
 
-def _trusted_proxy_peer(peer: str | None) -> bool:
+def trusted_proxy_peer(peer: str | None) -> bool:
     if not peer:
         return False
     try:
@@ -57,7 +57,7 @@ def request_client_ip(request: Request) -> str:
     invalid forwarded value is ignored rather than becoming a rate-limit key.
     """
     peer = _peer(request)
-    if _trusted_proxy_peer(peer):
+    if trusted_proxy_peer(peer):
         forwarded = request.headers.get("x-real-ip", "").strip()
         if forwarded:
             try:
@@ -74,7 +74,7 @@ def request_is_https(request: Request) -> bool:
     only when the immediate peer belongs to a trusted proxy network.
     """
     peer = _peer(request)
-    if _trusted_proxy_peer(peer):
+    if trusted_proxy_peer(peer):
         forwarded = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
         if forwarded in {"http", "https"}:
             return forwarded == "https"
