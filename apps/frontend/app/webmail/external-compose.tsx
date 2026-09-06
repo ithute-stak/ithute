@@ -17,6 +17,7 @@ import {
   Redo2,
   Send,
   Trash2,
+  Type,
   Underline,
   Undo2,
   X,
@@ -77,7 +78,18 @@ function uniqueRecipients(values: string[]) {
 }
 
 function ToolButton({ title, children, onClick }: { title: string; children: React.ReactNode; onClick: () => void }) {
-  return <button type="button" title={title} aria-label={title} onMouseDown={(event) => event.preventDefault()} onClick={onClick} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-white">{children}</button>;
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onClick}
+      className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[#5f6368] transition hover:bg-[#e9eef6] hover:text-[#202124] dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-white"
+    >
+      {children}
+    </button>
+  );
 }
 
 function RecipientField({ label, value, onChange, searchContacts, placeholder = "Add recipient", required = false, trailing }: RecipientFieldProps) {
@@ -102,11 +114,15 @@ function RecipientField({ label, value, onChange, searchContacts, placeholder = 
       return;
     }
     const timer = window.setTimeout(() => {
-      void searchContacts(term).then((items) => {
-        const filtered = items.filter((contact) => !tokens.some((token) => token.toLowerCase() === contact.email.toLowerCase())).slice(0, 7);
-        setContacts(filtered);
-        setOpen(Boolean(filtered.length));
-      }).catch(() => undefined);
+      void searchContacts(term)
+        .then((items) => {
+          const filtered = items
+            .filter((contact) => !tokens.some((token) => token.toLowerCase() === contact.email.toLowerCase()))
+            .slice(0, 7);
+          setContacts(filtered);
+          setOpen(Boolean(filtered.length));
+        })
+        .catch(() => undefined);
     }, 180);
     return () => window.clearTimeout(timer);
   }, [draft, searchContacts, tokens]);
@@ -126,18 +142,32 @@ function RecipientField({ label, value, onChange, searchContacts, placeholder = 
   }
 
   return (
-    <div className="relative flex min-h-11 items-start border-b border-slate-200 py-1.5 dark:border-white/10">
-      <span className="w-12 shrink-0 pt-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">{label}</span>
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+    <div className="relative flex min-h-10 items-start border-b border-[#e0e3e7] py-1 dark:border-white/10">
+      <span className="w-10 shrink-0 pt-2 text-xs font-medium text-[#5f6368] dark:text-slate-400">{label}</span>
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 py-1">
         {tokens.map((token, index) => (
-          <span key={`${token}-${index}`} className="inline-flex max-w-full items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 py-1 pl-2.5 pr-1 text-xs font-semibold text-emerald-900 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-100">
+          <span key={`${token}-${index}`} className="inline-flex max-w-full items-center gap-1 rounded-full bg-[#eaf1fb] py-1 pl-2.5 pr-1 text-xs font-medium text-[#244a7c] dark:bg-white/10 dark:text-slate-100">
             <span className="max-w-[240px] truncate">{token}</span>
-            <button type="button" onClick={() => { const next = tokens.filter((_, i) => i !== index); setTokens(next); emit(next, draft); }} className="grid h-5 w-5 place-items-center rounded-full hover:bg-emerald-100 dark:hover:bg-white/10" aria-label={`Remove ${token}`}><X size={12} /></button>
+            <button
+              type="button"
+              onClick={() => {
+                const next = tokens.filter((_, i) => i !== index);
+                setTokens(next);
+                emit(next, draft);
+              }}
+              className="grid h-5 w-5 place-items-center rounded-full hover:bg-[#d7e4f6] dark:hover:bg-white/10"
+              aria-label={`Remove ${token}`}
+            >
+              <X size={12} />
+            </button>
           </span>
         ))}
         <input
           value={draft}
-          onChange={(event) => { setDraft(event.target.value); emit(tokens, event.target.value); }}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            emit(tokens, event.target.value);
+          }}
           onFocus={() => setOpen(Boolean(contacts.length))}
           onKeyDown={(event) => {
             if ((event.key === "Enter" || event.key === "Tab" || event.key === "," || event.key === ";") && draft.trim()) {
@@ -146,38 +176,62 @@ function RecipientField({ label, value, onChange, searchContacts, placeholder = 
             } else if (event.key === "Backspace" && !draft && tokens.length) {
               const next = tokens.slice(0, -1);
               const last = tokens[tokens.length - 1];
-              setTokens(next); setDraft(last); emit(next, last);
+              setTokens(next);
+              setDraft(last);
+              emit(next, last);
             }
           }}
           onPaste={(event) => {
             const pasted = event.clipboardData.getData("text");
             if (!/[;,\n]/.test(pasted)) return;
-            event.preventDefault(); add(recipientList(pasted));
+            event.preventDefault();
+            add(recipientList(pasted));
           }}
-          className="min-w-[150px] flex-1 bg-transparent py-1.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-white"
+          className="min-w-[135px] flex-1 bg-transparent py-1.5 text-sm text-[#202124] outline-none placeholder:text-[#9aa0a6] dark:text-white"
           placeholder={tokens.length ? "" : placeholder}
           required={required && tokens.length === 0}
           autoComplete="off"
         />
       </div>
-      {trailing ? <div className="ml-2 shrink-0 pt-1">{trailing}</div> : null}
-      {open ? <div className="absolute left-12 right-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-2xl dark:border-white/10 dark:bg-slate-900">
-        {contacts.map((contact) => <button key={contact.email} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => add([contact.email])} className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-white/5">
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-emerald-100 text-xs font-black text-emerald-800 dark:bg-emerald-400/10 dark:text-emerald-200">{(contact.name || contact.email)[0]?.toUpperCase()}</span>
-          <span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{contact.name || contact.email}</span><span className="block truncate text-xs text-slate-500">{contact.email}</span></span>
-        </button>)}
-      </div> : null}
+      {trailing ? <div className="ml-2 shrink-0 pt-1.5">{trailing}</div> : null}
+      {open ? (
+        <div className="absolute left-10 right-0 top-full z-30 mt-1 overflow-hidden rounded-xl border border-[#dadce0] bg-white py-1 shadow-[0_8px_26px_rgba(60,64,67,.22)] dark:border-white/10 dark:bg-slate-900">
+          {contacts.map((contact) => (
+            <button key={contact.email} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => add([contact.email])} className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[#f2f6fc] dark:hover:bg-white/5">
+              <span className="grid h-8 w-8 place-items-center rounded-full bg-[#d3e3fd] text-xs font-bold text-[#174ea6] dark:bg-white/10 dark:text-slate-100">{(contact.name || contact.email)[0]?.toUpperCase()}</span>
+              <span className="min-w-0"><span className="block truncate text-sm font-medium text-[#202124] dark:text-slate-100">{contact.name || contact.email}</span><span className="block truncate text-xs text-[#5f6368] dark:text-slate-400">{contact.email}</span></span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
 
 export function ExternalMailCompose({
-  address, compose, setCompose, loading, minimized, expanded, showCcBcc, title = "New message", signatureHtml = "",
-  onMinimized, onExpanded, onShowCcBcc, onClose, onDiscard, onSaveDraft, onSend, onAttach, searchContacts,
+  address,
+  compose,
+  setCompose,
+  loading,
+  minimized,
+  expanded,
+  showCcBcc,
+  title = "New message",
+  signatureHtml = "",
+  onMinimized,
+  onExpanded,
+  onShowCcBcc,
+  onClose,
+  onDiscard,
+  onSaveDraft,
+  onSend,
+  onAttach,
+  searchContacts,
 }: Props) {
   const editorRef = useRef<HTMLDivElement>(null);
   const selectionRef = useRef<Range | null>(null);
-  const [ribbonOpen, setRibbonOpen] = useState(true);
+  const [formatOpen, setFormatOpen] = useState(false);
+  const threadMode = title !== "New message";
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -208,9 +262,13 @@ export function ExternalMailCompose({
   function exec(command: string, value?: string) {
     const selection = window.getSelection();
     editorRef.current?.focus();
-    if (selection && selectionRef.current) { selection.removeAllRanges(); selection.addRange(selectionRef.current); }
+    if (selection && selectionRef.current) {
+      selection.removeAllRanges();
+      selection.addRange(selectionRef.current);
+    }
     document.execCommand(command, false, value);
-    rememberSelection(); syncEditor();
+    rememberSelection();
+    syncEditor();
   }
 
   function addLink() {
@@ -220,57 +278,112 @@ export function ExternalMailCompose({
     exec("createLink", value);
   }
 
-  const ccBcc = <button type="button" onClick={() => onShowCcBcc(!showCcBcc)} className="rounded-lg px-2 py-1 text-xs font-bold text-slate-500 transition hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-white/10">{showCcBcc ? "Hide Cc/Bcc" : "Cc Bcc"}</button>;
+  const ccBcc = (
+    <button type="button" onClick={() => onShowCcBcc(!showCcBcc)} className="rounded-full px-2 py-1 text-xs font-medium text-[#5f6368] transition hover:bg-[#e9eef6] dark:text-slate-400 dark:hover:bg-white/10">
+      {showCcBcc ? "Hide Cc/Bcc" : "Cc Bcc"}
+    </button>
+  );
+
+  const formatBar = formatOpen ? (
+    <div className="flex min-h-11 shrink-0 items-center gap-1 overflow-x-auto border-t border-[#e0e3e7] bg-[#f8fafd] px-3 py-1.5 dark:border-white/10 dark:bg-white/[.025]">
+      <select aria-label="Font family" defaultValue="Arial" onChange={(event) => exec("fontName", event.target.value)} className="h-8 w-24 shrink-0 rounded-md border border-[#dadce0] bg-white px-2 text-xs text-[#3c4043] outline-none dark:border-white/10 dark:bg-slate-800 dark:text-slate-100">
+        <option>Arial</option><option>Calibri</option><option>Georgia</option><option>Tahoma</option><option>Times New Roman</option><option>Verdana</option>
+      </select>
+      <select aria-label="Font size" defaultValue="3" onChange={(event) => exec("fontSize", event.target.value)} className="h-8 w-14 shrink-0 rounded-md border border-[#dadce0] bg-white px-1.5 text-xs text-[#3c4043] outline-none dark:border-white/10 dark:bg-slate-800 dark:text-slate-100">
+        <option value="2">10</option><option value="3">12</option><option value="4">14</option><option value="5">18</option><option value="6">24</option><option value="7">32</option>
+      </select>
+      <span className="mx-1 h-6 w-px bg-[#dadce0] dark:bg-white/10" />
+      <ToolButton title="Bold" onClick={() => exec("bold")}><Bold size={16} /></ToolButton>
+      <ToolButton title="Italic" onClick={() => exec("italic")}><Italic size={16} /></ToolButton>
+      <ToolButton title="Underline" onClick={() => exec("underline")}><Underline size={16} /></ToolButton>
+      <span className="mx-1 h-6 w-px bg-[#dadce0] dark:bg-white/10" />
+      <ToolButton title="Bullets" onClick={() => exec("insertUnorderedList")}><List size={16} /></ToolButton>
+      <ToolButton title="Numbered list" onClick={() => exec("insertOrderedList")}><ListOrdered size={16} /></ToolButton>
+      <ToolButton title="Quote" onClick={() => exec("formatBlock", "blockquote")}><Quote size={16} /></ToolButton>
+      <ToolButton title="Align left" onClick={() => exec("justifyLeft")}><AlignLeft size={16} /></ToolButton>
+      <ToolButton title="Center" onClick={() => exec("justifyCenter")}><AlignCenter size={16} /></ToolButton>
+      <ToolButton title="Align right" onClick={() => exec("justifyRight")}><AlignRight size={16} /></ToolButton>
+      <ToolButton title="Add link" onClick={addLink}><Link2 size={16} /></ToolButton>
+      <ToolButton title="Undo" onClick={() => exec("undo")}><Undo2 size={16} /></ToolButton>
+      <ToolButton title="Redo" onClick={() => exec("redo")}><Redo2 size={16} /></ToolButton>
+      <ToolButton title="Clear formatting" onClick={() => exec("removeFormat")}><Eraser size={16} /></ToolButton>
+    </div>
+  ) : null;
 
   return (
-    <div className={`fixed z-[100] ${expanded ? "inset-0 flex items-center justify-center bg-slate-950/35 p-2 sm:p-5" : "bottom-0 right-0 sm:right-5"}`}>
-      <form onSubmit={onSend} className={`flex overflow-hidden border border-slate-200 bg-white shadow-[0_28px_90px_rgba(15,23,42,.28)] dark:border-white/10 dark:bg-slate-900 ${expanded ? "h-[95vh] w-full max-w-6xl rounded-2xl" : minimized ? "h-12 w-[min(94vw,500px)] rounded-t-2xl" : "h-[min(790px,calc(100vh-68px))] w-[min(100vw,800px)] rounded-t-2xl"}`}>
+    <div className={`fixed z-[100] ${expanded ? "inset-0 flex items-center justify-center bg-slate-950/20 p-2 sm:p-5" : "bottom-0 right-0 sm:right-5"}`}>
+      <form
+        onSubmit={onSend}
+        className={`mail-compose-window flex overflow-hidden border border-[#dadce0] bg-white shadow-[0_12px_40px_rgba(60,64,67,.30)] dark:border-white/10 dark:bg-slate-900 ${
+          expanded
+            ? "h-[92vh] w-full max-w-5xl rounded-2xl"
+            : minimized
+              ? "h-11 w-[min(94vw,500px)] rounded-t-xl"
+              : threadMode
+                ? "h-[min(510px,calc(100vh-78px))] w-[min(100vw,660px)] rounded-t-xl"
+                : "h-[min(650px,calc(100vh-70px))] w-[min(100vw,680px)] rounded-t-xl"
+        }`}
+      >
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex h-12 shrink-0 items-center gap-2 border-b border-slate-200 bg-gradient-to-r from-emerald-950 to-emerald-900 px-3 text-white dark:border-white/10 sm:px-4">
-            <span className="min-w-0 flex-1 truncate text-[13px] font-bold">{title}</span>
-            <span className="hidden rounded-full bg-white/10 px-2 py-1 text-[10px] font-semibold text-emerald-50 sm:block">From {address}</span>
+          <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[#dfe3e7] bg-[#f2f6fc] px-3 text-[#202124] dark:border-white/10 dark:bg-slate-800 dark:text-white sm:px-4">
+            <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{title}</span>
+            <span className="hidden max-w-[260px] truncate text-[11px] font-normal text-[#5f6368] dark:text-slate-400 sm:block">From {address}</span>
             <ToolButton title={minimized ? "Restore" : "Minimize"} onClick={() => onMinimized(!minimized)}>{minimized ? <Maximize2 size={14} /> : <Minimize2 size={14} />}</ToolButton>
             <ToolButton title={expanded ? "Exit full screen" : "Full screen"} onClick={() => { onExpanded(!expanded); onMinimized(false); }}><Maximize2 size={14} /></ToolButton>
             <ToolButton title="Save and close" onClick={onClose}><X size={16} /></ToolButton>
           </div>
 
-          {!minimized ? <>
-            <div className="shrink-0 px-3 sm:px-4">
-              <RecipientField label="To" value={compose.to} onChange={(value) => setCompose((current) => ({ ...current, to: value }))} searchContacts={searchContacts} required placeholder="Type an email and press Enter" trailing={ccBcc} />
-              {showCcBcc ? <><RecipientField label="Cc" value={compose.cc} onChange={(value) => setCompose((current) => ({ ...current, cc: value }))} searchContacts={searchContacts} /><RecipientField label="Bcc" value={compose.bcc} onChange={(value) => setCompose((current) => ({ ...current, bcc: value }))} searchContacts={searchContacts} /></> : null}
-              <label className="flex min-h-11 items-center border-b border-slate-200 dark:border-white/10"><span className="w-12 shrink-0 text-xs font-bold text-slate-500 dark:text-slate-400">Subject</span><input value={compose.subject} onChange={(event) => setCompose((current) => ({ ...current, subject: event.target.value }))} className="min-w-0 flex-1 bg-transparent py-2.5 text-sm text-slate-900 outline-none dark:text-white" placeholder="Subject" /></label>
-            </div>
-
-            {ribbonOpen ? <div className="shrink-0 border-b border-slate-200 bg-slate-50/80 dark:border-white/10 dark:bg-white/[.025]">
-              <div className="flex h-8 items-end gap-4 border-b border-slate-200 px-3 text-xs font-bold text-slate-500 dark:border-white/10 dark:text-slate-400"><span className="border-b-2 border-emerald-700 px-1 pb-1 text-emerald-800 dark:border-emerald-400 dark:text-emerald-300">Home</span><span className="pb-1">Message</span></div>
-              <div className="flex min-h-12 items-center gap-1 overflow-x-auto px-2 py-1.5 sm:px-3">
-                <select aria-label="Font family" defaultValue="Arial" onChange={(event) => exec("fontName", event.target.value)} className="h-8 w-28 shrink-0 rounded-lg border border-slate-200 bg-white px-2 text-xs dark:border-white/10 dark:bg-slate-800"><option>Arial</option><option>Calibri</option><option>Georgia</option><option>Tahoma</option><option>Times New Roman</option><option>Verdana</option></select>
-                <select aria-label="Font size" defaultValue="3" onChange={(event) => exec("fontSize", event.target.value)} className="h-8 w-16 shrink-0 rounded-lg border border-slate-200 bg-white px-1.5 text-xs dark:border-white/10 dark:bg-slate-800"><option value="2">10</option><option value="3">12</option><option value="4">14</option><option value="5">18</option><option value="6">24</option><option value="7">32</option></select>
-                <span className="mx-1 h-7 w-px bg-slate-200 dark:bg-white/10" />
-                <ToolButton title="Bold" onClick={() => exec("bold")}><Bold size={16} /></ToolButton><ToolButton title="Italic" onClick={() => exec("italic")}><Italic size={16} /></ToolButton><ToolButton title="Underline" onClick={() => exec("underline")}><Underline size={16} /></ToolButton>
-                <span className="mx-1 h-7 w-px bg-slate-200 dark:bg-white/10" />
-                <ToolButton title="Bullets" onClick={() => exec("insertUnorderedList")}><List size={16} /></ToolButton><ToolButton title="Numbered list" onClick={() => exec("insertOrderedList")}><ListOrdered size={16} /></ToolButton><ToolButton title="Quote" onClick={() => exec("formatBlock", "blockquote")}><Quote size={16} /></ToolButton>
-                <span className="mx-1 h-7 w-px bg-slate-200 dark:bg-white/10" />
-                <ToolButton title="Align left" onClick={() => exec("justifyLeft")}><AlignLeft size={16} /></ToolButton><ToolButton title="Center" onClick={() => exec("justifyCenter")}><AlignCenter size={16} /></ToolButton><ToolButton title="Align right" onClick={() => exec("justifyRight")}><AlignRight size={16} /></ToolButton>
-                <span className="mx-1 h-7 w-px bg-slate-200 dark:bg-white/10" />
-                <ToolButton title="Add link" onClick={addLink}><Link2 size={16} /></ToolButton><ToolButton title="Undo" onClick={() => exec("undo")}><Undo2 size={16} /></ToolButton><ToolButton title="Redo" onClick={() => exec("redo")}><Redo2 size={16} /></ToolButton><ToolButton title="Clear formatting" onClick={() => exec("removeFormat")}><Eraser size={16} /></ToolButton>
+          {!minimized ? (
+            <>
+              <div className="shrink-0 bg-white px-3 dark:bg-slate-900 sm:px-4">
+                <RecipientField label="To" value={compose.to} onChange={(value) => setCompose((current) => ({ ...current, to: value }))} searchContacts={searchContacts} required placeholder="Recipients" trailing={ccBcc} />
+                {showCcBcc ? (
+                  <>
+                    <RecipientField label="Cc" value={compose.cc} onChange={(value) => setCompose((current) => ({ ...current, cc: value }))} searchContacts={searchContacts} />
+                    <RecipientField label="Bcc" value={compose.bcc} onChange={(value) => setCompose((current) => ({ ...current, bcc: value }))} searchContacts={searchContacts} />
+                  </>
+                ) : null}
+                {!threadMode ? (
+                  <label className="flex min-h-10 items-center border-b border-[#e0e3e7] dark:border-white/10"><span className="w-10 shrink-0 text-xs font-medium text-[#5f6368] dark:text-slate-400">Subject</span><input value={compose.subject} onChange={(event) => setCompose((current) => ({ ...current, subject: event.target.value }))} className="min-w-0 flex-1 bg-transparent py-2.5 text-sm text-[#202124] outline-none dark:text-white" placeholder="Subject" /></label>
+                ) : null}
               </div>
-            </div> : null}
 
-            <div className="min-h-0 flex-1 overflow-y-auto bg-white dark:bg-slate-900">
-              <div ref={editorRef} contentEditable suppressContentEditableWarning onInput={syncEditor} onBlur={syncEditor} onKeyUp={rememberSelection} onMouseUp={rememberSelection} className="min-h-full px-5 py-5 text-[14px] leading-7 text-slate-900 outline-none dark:text-slate-100 sm:px-7" data-placeholder="Write your message…" />
-            </div>
+              <div className="min-h-0 flex-1 overflow-y-auto bg-white dark:bg-slate-900">
+                <div
+                  ref={editorRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onInput={syncEditor}
+                  onBlur={syncEditor}
+                  onKeyUp={rememberSelection}
+                  onMouseUp={rememberSelection}
+                  className={`mail-rich-editor min-h-full px-4 text-[14px] leading-7 text-[#202124] outline-none dark:text-slate-100 sm:px-5 ${threadMode ? "py-4" : "py-5"}`}
+                  data-placeholder={threadMode ? "Write your reply…" : "Write your message…"}
+                />
+              </div>
 
-            {compose.attachments.length ? <div className="flex shrink-0 flex-wrap gap-2 border-t border-slate-200 px-4 py-2.5 dark:border-white/10">{compose.attachments.map((item, index) => <span key={`${item.filename}-${index}`} className="inline-flex max-w-[260px] items-center gap-2 rounded-full border border-slate-200 bg-slate-50 py-1.5 pl-3 pr-1.5 text-xs font-semibold dark:border-white/10 dark:bg-white/5"><Paperclip size={13} /><span className="truncate">{item.filename}</span><button type="button" onClick={() => setCompose((current) => ({ ...current, attachments: current.attachments.filter((_, i) => i !== index) }))} className="grid h-5 w-5 place-items-center rounded-full hover:bg-slate-200 dark:hover:bg-white/10"><X size={12} /></button></span>)}</div> : null}
+              {compose.attachments.length ? (
+                <div className="flex shrink-0 flex-wrap gap-2 border-t border-[#e0e3e7] px-4 py-2.5 dark:border-white/10">
+                  {compose.attachments.map((item, index) => (
+                    <span key={`${item.filename}-${index}`} className="inline-flex max-w-[260px] items-center gap-2 rounded-full border border-[#dadce0] bg-[#f8fafd] py-1.5 pl-3 pr-1.5 text-xs font-medium text-[#3c4043] dark:border-white/10 dark:bg-white/5 dark:text-slate-200">
+                      <Paperclip size={13} /><span className="truncate">{item.filename}</span>
+                      <button type="button" onClick={() => setCompose((current) => ({ ...current, attachments: current.attachments.filter((_, i) => i !== index) }))} className="grid h-5 w-5 place-items-center rounded-full hover:bg-[#e9eef6] dark:hover:bg-white/10"><X size={12} /></button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
 
-            <div className="flex min-h-14 shrink-0 items-center gap-2 border-t border-slate-200 px-3 py-2 dark:border-white/10 sm:px-4">
-              <button disabled={loading} type="submit" className="inline-flex h-10 items-center gap-2 rounded-xl bg-emerald-800 px-5 text-sm font-black text-white shadow-sm transition hover:bg-emerald-900 disabled:opacity-60"><Send size={16} /> {loading ? "Sending…" : "Send"}</button>
-              <label className="grid h-9 w-9 cursor-pointer place-items-center rounded-lg text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/10" title="Attach files"><Paperclip size={18} /><input type="file" multiple className="hidden" onChange={(event) => { void onAttach(event.target.files); event.currentTarget.value = ""; }} /></label>
-              <button type="button" onClick={() => setRibbonOpen((value) => !value)} className="h-9 rounded-lg px-3 text-xs font-bold text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-white/10">{ribbonOpen ? "Hide formatting" : "Formatting"}</button>
-              <button type="button" disabled={loading} onClick={onSaveDraft} className="ml-auto h-9 rounded-lg px-3 text-xs font-bold text-slate-500 hover:bg-slate-100 disabled:opacity-60 dark:text-slate-400 dark:hover:bg-white/10">Save draft</button>
-              <ToolButton title="Discard" onClick={onDiscard}><Trash2 size={17} /></ToolButton>
-            </div>
-          </> : null}
+              {formatBar}
+
+              <div className="flex min-h-14 shrink-0 items-center gap-1.5 border-t border-[#e0e3e7] bg-white px-3 py-2 dark:border-white/10 dark:bg-slate-900 sm:px-4">
+                <button disabled={loading} type="submit" className="inline-flex h-10 items-center gap-2 rounded-full bg-[#0b57d0] px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#0842a0] disabled:opacity-60"><Send size={16} /> {loading ? "Sending…" : "Send"}</button>
+                <button type="button" onClick={() => setFormatOpen((value) => !value)} className={`grid h-9 w-9 place-items-center rounded-full transition ${formatOpen ? "bg-[#eaf1fb] text-[#0b57d0]" : "text-[#5f6368] hover:bg-[#e9eef6] dark:text-slate-300 dark:hover:bg-white/10"}`} title="Formatting options" aria-label="Formatting options"><Type size={18} /></button>
+                <label className="grid h-9 w-9 cursor-pointer place-items-center rounded-full text-[#5f6368] hover:bg-[#e9eef6] dark:text-slate-300 dark:hover:bg-white/10" title="Attach files"><Paperclip size={18} /><input type="file" multiple className="hidden" onChange={(event) => { void onAttach(event.target.files); event.currentTarget.value = ""; }} /></label>
+                <button type="button" disabled={loading} onClick={onSaveDraft} className="ml-auto h-9 rounded-full px-3 text-xs font-medium text-[#5f6368] hover:bg-[#e9eef6] disabled:opacity-60 dark:text-slate-400 dark:hover:bg-white/10">Save draft</button>
+                <ToolButton title="Discard" onClick={onDiscard}><Trash2 size={17} /></ToolButton>
+              </div>
+            </>
+          ) : null}
         </div>
       </form>
     </div>
