@@ -95,5 +95,5 @@ def test_cross_school_routers_are_mounted_and_schema_is_provisioned():
     assert 'app.include_router(student_transfers.router)' in main
     assert 'app.include_router(learning_exchange.router)' in main
     assert 'app.include_router(learning_review.router)' in main
-    assert 'ensure_learning_exchange_schema.py' in entrypoint
-    assert 'ensure_student_transfer_schema.py' in entrypoint
+    assert 'python -m scripts.ensure_learning_exchange_schema' in entrypoint
+    assert 'python -m scripts.ensure_student_transfer_schema' in entrypoint
