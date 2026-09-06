@@ -1,6 +1,10 @@
 name: Register Ithute Pay DNS
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ithute-pay-dns.yml"
   workflow_run:
     workflows: ["Deploy Ithute Pay Production"]
     types: [completed]
@@ -23,6 +27,7 @@ jobs:
   register:
     name: Reconcile Ithute Pay authoritative DNS
     if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
