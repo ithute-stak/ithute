@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ithute-pay-dns-production
+  group: ithute-production-vps
   cancel-in-progress: false
 
 permissions:
@@ -73,6 +73,10 @@ jobs:
           remote="${VPS_USER}@${VPS_HOST}"
           ssh "$remote" "APP_DIR='$VPS_APP_DIR' sh -s" <<'REMOTE'
           set -eu
+          if command -v flock >/dev/null 2>&1; then
+            exec 9>/tmp/ithute-production.lock
+            flock 9
+          fi
           cd "$APP_DIR"
           [ -f .env ] || { echo "Ithute production .env is missing" >&2; exit 1; }
 
@@ -108,8 +112,6 @@ jobs:
           target = str(address)
           client = PowerDNSClient()
 
-          # The Ithute zone is platform-owned already. Refuse to create a new zone
-          # implicitly here so a delegation/configuration mistake fails loudly.
           client.get_zone(zone_name)
           for hostname in hosts:
               client.replace_rrset(
