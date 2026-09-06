@@ -36,6 +36,11 @@ def normalize_phone(value: str | None) -> str | None:
     return f"{prefix}{digits}" if digits else None
 
 
+def is_system_owner(settings: Settings, email: str | None) -> bool:
+    configured = normalize_email(settings.system_owner_email)
+    return bool(configured and normalize_email(email) == configured)
+
+
 def hash_password(password: str) -> str:
     return password_context.hash(password)
 
@@ -135,6 +140,7 @@ def create_access_token(
         "exp": int((issued_at + timedelta(minutes=settings.access_token_minutes)).timestamp()),
         "email": email,
         "phone_number": phone,
+        "is_platform_admin": is_system_owner(settings, email),
         "token_use": "access",
     }
     return _encode(settings, payload)
@@ -192,6 +198,7 @@ def create_id_token(
         "email_verified": email_verified,
         "phone_number": phone,
         "phone_number_verified": phone_verified,
+        "is_platform_admin": is_system_owner(settings, email),
         "token_use": "id",
     }
     return _encode(settings, payload)
