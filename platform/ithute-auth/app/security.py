@@ -37,6 +37,11 @@ def normalize_phone(value: str | None) -> str | None:
 
 
 def is_system_owner(settings: Settings, email: str | None) -> bool:
+    # The privileged claim stays off until both halves of the protected runtime
+    # configuration are present. Merely knowing or registering the configured
+    # email can therefore never grant platform authority before provisioning.
+    if not settings.system_owner_password:
+        return False
     configured = normalize_email(settings.system_owner_email)
     return bool(configured and normalize_email(email) == configured)
 
