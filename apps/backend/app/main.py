@@ -58,6 +58,11 @@ def _strip_untrusted_proxy_headers(request: Request) -> None:
         for name, value in request.scope.get("headers", [])
         if name.lower() not in _PROXY_ONLY_HEADERS
     ]
+    # Starlette lazily caches Headers on the Request. If an upstream middleware
+    # inspected them first, invalidate that cache so every downstream consumer
+    # sees the sanitized scope rather than stale spoofable values.
+    if hasattr(request, "_headers"):
+        delattr(request, "_headers")
 
 
 def _request_origin(request: Request) -> str:
