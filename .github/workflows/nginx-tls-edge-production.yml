@@ -80,6 +80,7 @@ jobs:
             products/LoanHub/infra/nginx-edge/proxy-common.conf \
             products/LoanHub/infra/nginx-edge/acme-bootstrap.conf \
             scripts/deploy-nginx-edge-production.sh \
+            scripts/ensure-nginx-edge-dns.sh \
             scripts/deploy-mail-tls.sh
 
       - name: Stage Nginx edge release
@@ -107,6 +108,11 @@ jobs:
           cp "$stage/products/LoanHub/infra/nginx-edge/default.conf.template" "$APP_DIR/infra/nginx-edge/default.conf.template"
           cp "$stage/products/LoanHub/infra/nginx-edge/proxy-common.conf" "$APP_DIR/infra/nginx-edge/proxy-common.conf"
           cp "$stage/products/LoanHub/infra/nginx-edge/acme-bootstrap.conf" "$APP_DIR/infra/nginx-edge/acme-bootstrap.conf"
+
+          MAILBOX_APP_DIR="$MAILBOX_APP_DIR" \
+          PLATFORM_DOMAIN=ithute.co.ls \
+          PUBLIC_IP="$EXPECTED_IP" \
+            sh "$stage/scripts/ensure-nginx-edge-dns.sh"
 
           APP_DIR="$APP_DIR" \
           MAILBOX_APP_DIR="$MAILBOX_APP_DIR" \
