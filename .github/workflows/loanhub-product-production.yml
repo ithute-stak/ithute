@@ -225,6 +225,15 @@ jobs:
             # Apply only forward Alembic migrations against the verified existing volume.
             docker compose --env-file .env.production --profile production run --rm --no-deps migrate
             docker compose --env-file .env.production --profile production up -d --no-build backend maintenance frontend caddy
+
+            # Caddy owns the shared VPS TLS edge. The Caddyfile is bind-mounted,
+            # so copying a new file does not automatically load it into an already
+            # running process. Validate and reload explicitly after every release.
+            docker compose --env-file .env.production --profile production exec -T caddy \
+              caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+            docker compose --env-file .env.production --profile production exec -T caddy \
+              caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+
             docker compose --env-file .env.production --profile production ps
 
             for url in https://api.loanhub.co.ls/health/ready https://loanhub.co.ls/; do
@@ -240,6 +249,32 @@ jobs:
                 echo "Production health check failed: $url" >&2
                 exit 1
               fi
+            done
+
+            # Verify the shared TLS edge directly on this VPS. --resolve bypasses
+            # recursive DNS caches but still performs normal certificate/SNI
+            # validation, so this proves Caddy obtained a valid certificate and
+            # Nginx can route each Ithute Pay hostname correctly.
+            for target in \
+              'pay.ithute.co.ls|/' \
+              'api.pay.ithute.co.ls|/health' \
+              'portal.pay.ithute.co.ls|/portal'; do
+              host="${target%%|*}"
+              path="${target#*|}"
+              healthy=false
+              for attempt in $(seq 1 36); do
+                if curl -fsS --resolve "${host}:443:127.0.0.1" "https://${host}${path}" >/dev/null; then
+                  healthy=true
+                  break
+                fi
+                sleep 5
+              done
+              if [ "$healthy" != true ]; then
+                echo "Shared TLS edge verification failed: https://${host}${path}" >&2
+                docker compose --env-file .env.production --profile production logs --tail=200 caddy || true
+                exit 1
+              fi
+              echo "Shared TLS edge verified: https://${host}${path}"
             done
 
             docker logout ghcr.io >/dev/null 2>&1 || true
