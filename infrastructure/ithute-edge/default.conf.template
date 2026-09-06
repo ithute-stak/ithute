@@ -11,12 +11,12 @@ upstream mailbox_gateway {
 }
 
 upstream loanhub_frontend {
-    server frontend:3000;
+    server loanhub-frontend:3000;
     keepalive 16;
 }
 
 upstream loanhub_backend {
-    server backend:8000;
+    server loanhub-backend:8000;
     keepalive 16;
 }
 
