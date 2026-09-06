@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: shared-tls-edge-production
+  group: ithute-edge-production
   cancel-in-progress: false
 
 permissions:
@@ -144,15 +144,32 @@ jobs:
           sleep 3
           compose exec -T edge-nginx nginx -t || fail_with_restore 'Nginx configuration validation failed'
 
+          # These endpoints only prove that public TLS terminates and the request
+          # reaches the correct virtual host. A 4xx application response is still
+          # a successful edge check, so do not use curl -f here.
           for url in \
             https://ithute.co.ls/ \
             https://panel.ithute.co.ls/ \
             https://pay.ithute.co.ls/ \
             https://api.pay.ithute.co.ls/ \
             https://portal.pay.ithute.co.ls/portal \
-            https://auth.ithute.co.ls/healthz \
-            https://api.loanhub.co.ls/health/ready \
             https://loanhub.co.ls/; do
+            healthy=false
+            for attempt in $(seq 1 36); do
+              if curl -sS --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
+                healthy=true
+                break
+              fi
+              sleep 5
+            done
+            [ "$healthy" = true ] || fail_with_restore "Public TLS/route verification failed: $url"
+            echo "TLS route verified: $url"
+          done
+
+          # Health endpoints must return a successful application status.
+          for url in \
+            https://auth.ithute.co.ls/healthz \
+            https://api.loanhub.co.ls/health/ready; do
             healthy=false
             for attempt in $(seq 1 36); do
               if curl -fsS --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
@@ -161,8 +178,8 @@ jobs:
               fi
               sleep 5
             done
-            [ "$healthy" = true ] || fail_with_restore "Public HTTPS verification failed: $url"
-            echo "HTTPS verified: $url"
+            [ "$healthy" = true ] || fail_with_restore "Public application health verification failed: $url"
+            echo "Application health verified: $url"
           done
 
           echo | openssl s_client -connect auth.ithute.co.ls:443 -servername auth.ithute.co.ls 2>/dev/null \
