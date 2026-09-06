@@ -2,7 +2,7 @@ name: Synchronize Ithute System Owner
 
 on:
   workflow_run:
-    workflows: ["Build and Deploy Production"]
+    workflows: ["Enforce Production Domain Identity"]
     types: [completed]
     branches: [main]
   workflow_dispatch:
