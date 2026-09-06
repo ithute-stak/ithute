@@ -218,6 +218,11 @@ jobs:
 
           COMPOSE_FILES="-f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.ithute-platform.yml -f docker-compose.ithute-pay.yml -f docker-compose.deploy.yml"
           compose() { docker compose $COMPOSE_FILES "$@"; }
+          # Product deployment must not inherit a stale full-stack release tag
+          # when it recreates central Auth/Push only to apply new Ithute Pay
+          # client registration. Central platform images are published with a
+          # stable `latest` tag by the production image build.
+          platform_compose() { MAILBOX_DNS_IMAGE_TAG=latest docker compose $COMPOSE_FILES "$@"; }
           wait_service() {
             service="$1"; attempts="${2:-90}"; n=1
             while [ "$n" -le "$attempts" ]; do
@@ -239,12 +244,15 @@ jobs:
           wait_service ithute-pay-redis 60
 
           # Apply the newly registered first-party client/service secret without
-          # replacing the existing Auth/Push databases or product data.
-          compose up -d --no-deps --force-recreate ithute-auth
+          # replacing the existing Auth/Push databases or product data. Use the
+          # central platform's published latest images instead of the unrelated
+          # MAILBOX_DNS_IMAGE_TAG that may reference an unavailable historical tag.
+          platform_compose pull ithute-auth ithute-push
+          platform_compose up -d --no-deps --force-recreate ithute-auth
           wait_service ithute-auth 60
-          compose up -d --no-deps --force-recreate ithute-push
+          platform_compose up -d --no-deps --force-recreate ithute-push
           wait_service ithute-push 60
-          compose up -d --no-deps --force-recreate ithute-push-worker
+          platform_compose up -d --no-deps --force-recreate ithute-push-worker
 
           compose up -d --no-deps --force-recreate ithute-pay
           wait_service ithute-pay 120
