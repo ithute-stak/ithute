@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from typing import Annotated
 
 import jwt
@@ -69,6 +70,43 @@ def local_user_from_token(token: str, db: Session) -> User:
     return user
 
 
+def _project_platform_owner(claims: dict, db: Session) -> User:
+    """Project the signed central owner into Pay without copying its password."""
+    subject = str(claims['sub'])
+    email = str(claims.get('email') or '').strip().lower()
+    if not email:
+        raise HTTPException(status_code=401, detail='Central platform owner token is missing an email claim')
+
+    user = db.scalar(select(User).where(User.auth_user_id == subject))
+    if user is None:
+        user = db.scalar(select(User).where(User.email == email))
+        if user is not None and user.auth_user_id not in (None, subject):
+            raise HTTPException(status_code=409, detail='The system owner email is linked to another central identity')
+
+    if user is None:
+        # Pay's legacy schema still requires a password_hash. Use an unrecoverable
+        # product-local random value, never the central system-owner password.
+        user = User(
+            auth_user_id=subject,
+            email=email,
+            password_hash=hash_password(secrets.token_urlsafe(48)),
+            full_name='Ithute System Owner',
+            role='platform_super_admin',
+            is_active=True,
+        )
+        db.add(user)
+    else:
+        user.auth_user_id = subject
+        user.role = 'platform_super_admin'
+        user.is_active = True
+        if not user.full_name.strip():
+            user.full_name = 'Ithute System Owner'
+
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def central_user_from_token(token: str, db: Session) -> User:
     try:
         claims = decode_access_token(token)
@@ -81,6 +119,9 @@ def central_user_from_token(token: str, db: Session) -> User:
         ) from exc
     except jwt.InvalidTokenError as exc:
         raise HTTPException(status_code=401, detail='Invalid !thute Auth token') from exc
+
+    if claims.get('is_platform_admin') is True:
+        return _project_platform_owner(claims, db)
 
     user = db.scalar(select(User).where(User.auth_user_id == str(claims['sub'])))
     if not user or not user.is_active:
