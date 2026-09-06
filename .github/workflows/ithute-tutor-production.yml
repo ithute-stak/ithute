@@ -8,7 +8,9 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ithute-production-vps
+  # Keep Tutor runs from being evicted by sibling production workflows. The
+  # actual VPS mutation is still serialized by /tmp/ithute-production.lock.
+  group: ithute-tutor-production
   cancel-in-progress: false
 
 permissions:
