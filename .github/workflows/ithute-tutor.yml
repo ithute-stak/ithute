@@ -10,9 +10,11 @@ on:
       - 'docker-compose.ithute-tutor-prod.yml'
       - 'docker-compose.ithute-tutor-caddy.yml'
       - 'infrastructure/nginx/default.conf'
+      - 'infrastructure/ithute-edge/**'
       - 'infrastructure/caddy/bootstrap.sh'
       - '.env.example'
       - '.github/workflows/ithute-tutor.yml'
+      - '.github/workflows/ithute-tutor-production.yml'
   push:
     branches: [main, ithute-tutor]
     paths:
@@ -23,9 +25,11 @@ on:
       - 'docker-compose.ithute-tutor-prod.yml'
       - 'docker-compose.ithute-tutor-caddy.yml'
       - 'infrastructure/nginx/default.conf'
+      - 'infrastructure/ithute-edge/**'
       - 'infrastructure/caddy/bootstrap.sh'
       - '.env.example'
       - '.github/workflows/ithute-tutor.yml'
+      - '.github/workflows/ithute-tutor-production.yml'
 
 permissions:
   contents: read
@@ -131,6 +135,10 @@ jobs:
           grep -q 'tutor-frontend:' /tmp/ithute-tutor-compose.yml
           grep -q 'ithute-auth:' /tmp/ithute-tutor-compose.yml
           grep -q 'ithute-push:' /tmp/ithute-tutor-compose.yml
+          grep -q 'ghcr.io/ithute-stak/ithute-tutor-backend' /tmp/ithute-tutor-compose.yml
+          grep -q 'ghcr.io/ithute-stak/ithute-tutor-frontend' /tmp/ithute-tutor-compose.yml
+          grep -q 'tutor.ithute.co.ls' infrastructure/ithute-edge/default.conf.template
+          grep -q 'Deploy Tutor, DNS and HTTPS' .github/workflows/ithute-tutor-production.yml
 
       - name: Build Tutor containers
         run: |
