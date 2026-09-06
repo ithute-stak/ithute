@@ -174,10 +174,25 @@ jobs:
       - name: Capture diagnostics on failure
         if: failure()
         run: |
-          COMPOSE="docker compose -f docker-compose.yml -f docker-compose.phase6-mail.yml"
+          COMPOSE="docker compose -f docker-compose.yml -f docker-compose.phase5-secondary.yml -f docker-compose.phase6-mail.yml"
           {
             echo "### docker compose ps"
             $COMPOSE ps || true
+            echo "### primary PowerDNS logs"
+            $COMPOSE logs --tail=300 powerdns || true
+            echo "### secondary PowerDNS logs"
+            $COMPOSE logs --tail=300 powerdns-secondary || true
+            echo "### PowerDNS health state"
+            for service in powerdns powerdns-secondary; do
+              container_id="$($COMPOSE ps -q "$service" 2>/dev/null || true)"
+              echo "--- ${service} ---"
+              if [ -n "$container_id" ]; then
+                docker inspect --format 'state={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id" || true
+                docker inspect --format '{{json .State.Health}}' "$container_id" || true
+              else
+                echo "container not present"
+              fi
+            done
             echo "### backend logs"
             $COMPOSE logs --tail=500 backend || true
             echo "### frontend logs"
