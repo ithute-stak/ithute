@@ -1,0 +1,66 @@
+services:
+  nginx-edge:
+    image: nginx:1.27-alpine
+    profiles: ["nginx-edge"]
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-loanhub.co.ls}
+      API_DOMAIN: ${API_DOMAIN:-api.loanhub.co.ls}
+      WWW_DOMAIN: ${WWW_DOMAIN:-www.loanhub.co.ls}
+      SANDBOX_APP_DOMAIN: ${SANDBOX_APP_DOMAIN:-sandbox.loanhub.co.ls}
+      SANDBOX_API_DOMAIN: ${SANDBOX_API_DOMAIN:-api-sandbox.loanhub.co.ls}
+    command:
+      - /bin/sh
+      - -c
+      - |
+        (while sleep 21600; do nginx -t >/dev/null 2>&1 && nginx -s reload || true; done) &
+        exec nginx -g 'daemon off;'
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/nginx-edge/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./infra/nginx-edge/proxy-common.conf:/etc/nginx/snippets/proxy-common.conf:ro
+      - ${EDGE_CERTBOT_CONFIG_DIR:-/var/lib/ithute/letsencrypt}:/etc/letsencrypt:ro
+      - ${EDGE_ACME_WEBROOT:-/var/lib/ithute/acme-webroot}:/var/www/certbot:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nginx -t >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [loanhub, sandbox, mailbox_dns_shared]
+
+  nginx-acme-bootstrap:
+    image: nginx:1.27-alpine
+    profiles: ["nginx-edge-bootstrap"]
+    restart: "no"
+    ports:
+      - "80:80"
+    volumes:
+      - ./infra/nginx-edge/acme-bootstrap.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${EDGE_ACME_WEBROOT:-/var/lib/ithute/acme-webroot}:/var/www/certbot:ro
+
+  certbot:
+    image: certbot/certbot:v2.11.0
+    profiles: ["nginx-edge-tools"]
+    volumes:
+      - ${EDGE_CERTBOT_CONFIG_DIR:-/var/lib/ithute/letsencrypt}:/etc/letsencrypt
+      - ${EDGE_ACME_WEBROOT:-/var/lib/ithute/acme-webroot}:/var/www/certbot
+
+  certbot-renew:
+    image: certbot/certbot:v2.11.0
+    profiles: ["nginx-edge"]
+    restart: unless-stopped
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        trap 'exit 0' TERM INT
+        while :; do
+          certbot renew --webroot -w /var/www/certbot --quiet || true
+          sleep 43200 & wait $!
+        done
+    volumes:
+      - ${EDGE_CERTBOT_CONFIG_DIR:-/var/lib/ithute/letsencrypt}:/etc/letsencrypt
+      - ${EDGE_ACME_WEBROOT:-/var/lib/ithute/acme-webroot}:/var/www/certbot
