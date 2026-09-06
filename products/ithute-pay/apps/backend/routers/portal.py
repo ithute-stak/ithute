@@ -7,16 +7,19 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from core.access_control import MerchantContext, get_merchant_context
+from database.models import GatewayProviderConfiguration
 from database.session import get_db
 from integrations.mpesa.contracts import normalize_mpesa_capabilities
 from integrations.mpesa.sandbox_matrix import MPESA_DOCUMENTED_NOT_RUNNABLE, MPESA_OFFICIAL_SANDBOX_MATRIX, sandbox_case
+from providers.mpesa.factory import build_gateway_provider
 from routers import mpesa_certification as certification
 from routers import mpesa_live_testing as live_testing
-from routers import testing as legacy_testing
 from services.audit import write_audit
+from services.gateway_configuration import decrypted_api_key
 from utils.helpers import public_id, utcnow
 
 
@@ -170,9 +173,82 @@ def _portal_configuration(context: MerchantContext, environment: PortalEnvironme
     }
 
 
+def _gateway_configuration(db: Session, environment: PortalEnvironment) -> GatewayProviderConfiguration | None:
+    provider_environment = 'sandbox' if environment == 'sandbox' else 'production'
+    return db.scalar(
+        select(GatewayProviderConfiguration)
+        .where(
+            GatewayProviderConfiguration.provider == 'mpesa',
+            GatewayProviderConfiguration.environment == provider_environment,
+            GatewayProviderConfiguration.enabled.is_(True),
+        )
+        .order_by(GatewayProviderConfiguration.updated_at.desc())
+    )
+
+
+def _gateway_configuration_missing(
+    config: GatewayProviderConfiguration | None,
+    environment: PortalEnvironment,
+) -> list[str]:
+    if config is None:
+        return [f'enabled M-Pesa {"sandbox" if environment == "sandbox" else "production"} configuration']
+
+    missing: list[str] = []
+    if str(config.mode or '').strip().lower() != 'live':
+        missing.append('connection mode must be Live OpenAPI')
+    if not config.service_provider_code:
+        missing.append('service provider shortcode')
+    if not config.origin:
+        missing.append('registered Origin')
+    if not config.api_key_ciphertext:
+        missing.append('application API key')
+    else:
+        try:
+            if not decrypted_api_key(config):
+                missing.append('application API key')
+        except Exception:
+            missing.append('stored application API key cannot be decrypted; re-enter it in Providers')
+    if not config.public_key:
+        missing.append('M-Pesa platform public key')
+    return missing
+
+
+def _configured_partner_provider(db: Session, environment: PortalEnvironment):
+    config = _gateway_configuration(db, environment)
+    missing = _gateway_configuration_missing(config, environment)
+    if config is None or missing:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                'message': f'M-Pesa {environment} validation is not ready',
+                'missing': missing,
+            },
+        )
+    return config, build_gateway_provider(config)
+
+
+def _catalog_configuration(
+    config: GatewayProviderConfiguration | None,
+    environment: PortalEnvironment,
+) -> dict[str, Any]:
+    return {
+        'provider': 'mpesa',
+        'environment': environment,
+        'provider_environment': getattr(config, 'environment', None),
+        'mode': getattr(config, 'mode', None),
+        'market': getattr(config, 'market', None),
+        'country': getattr(config, 'country', None),
+        'currency': getattr(config, 'currency', None),
+        'shortcode': getattr(config, 'service_provider_code', None),
+        'provider_base_url': getattr(config, 'base_url', None),
+        'configured': config is not None,
+        'active_for_platform': bool(getattr(config, 'active', False)) if config else False,
+    }
+
+
 def _safe_catalog(db: Session) -> dict[str, Any]:
-    config, missing = legacy_testing._live_gateway_readiness(db)
-    sandbox_configured = bool(config and str(config.environment).strip().lower() == 'sandbox')
+    config = _gateway_configuration(db, 'sandbox')
+    missing = _gateway_configuration_missing(config, 'sandbox')
     capabilities = normalize_mpesa_capabilities((config.metadata_json or {}).get('capabilities') if config else None)
     services = {
         product: {
@@ -189,20 +265,12 @@ def _safe_catalog(db: Session) -> dict[str, Any]:
     return {
         'provider': 'mpesa',
         'environment': 'sandbox',
-        'ready': bool(sandbox_configured and not missing),
-        'missing': missing if sandbox_configured else ['active sandbox provider configuration'],
+        'ready': bool(config and not missing),
+        'missing': missing,
         'capabilities': capabilities,
         'services': services,
         'documented_not_runnable': MPESA_DOCUMENTED_NOT_RUNNABLE,
-        'configuration': {
-            'provider': 'mpesa',
-            'environment': 'sandbox',
-            'mode': getattr(config, 'mode', None) if sandbox_configured else None,
-            'market': getattr(config, 'market', None) if sandbox_configured else None,
-            'country': getattr(config, 'country', None) if sandbox_configured else None,
-            'shortcode': getattr(config, 'service_provider_code', None) if sandbox_configured else None,
-            'provider_base_url': getattr(config, 'base_url', None) if sandbox_configured else None,
-        },
+        'configuration': _catalog_configuration(config, 'sandbox'),
         'safety': {
             'live_funds': False,
             'production_credentials_exposed': False,
@@ -212,13 +280,8 @@ def _safe_catalog(db: Session) -> dict[str, Any]:
 
 
 def _live_catalog(db: Session) -> dict[str, Any]:
-    config = None
-    missing: list[str] = []
-    try:
-        config, _provider = live_testing._configured_live_provider(db)
-    except HTTPException as exc:
-        missing = [str(exc.detail)]
-
+    config = _gateway_configuration(db, 'live')
+    missing = _gateway_configuration_missing(config, 'live')
     services = {
         operation: {
             **spec,
@@ -233,21 +296,13 @@ def _live_catalog(db: Session) -> dict[str, Any]:
     return {
         'provider': 'mpesa',
         'environment': 'live',
-        'ready': config is not None,
+        'ready': bool(config and not missing),
         'missing': missing,
         'capabilities': normalize_mpesa_capabilities(
             (config.metadata_json or {}).get('capabilities') if config else None
         ),
         'services': services,
-        'configuration': {
-            'provider': 'mpesa',
-            'environment': str(config.environment) if config else 'live',
-            'mode': getattr(config, 'mode', None) if config else None,
-            'market': getattr(config, 'market', None) if config else None,
-            'country': getattr(config, 'country', None) if config else None,
-            'shortcode': getattr(config, 'service_provider_code', None) if config else None,
-            'provider_base_url': getattr(config, 'base_url', None) if config else None,
-        },
+        'configuration': _catalog_configuration(config, 'live'),
         'safety': {
             'live_funds': True,
             'production_credentials_exposed': False,
@@ -305,7 +360,7 @@ async def run_mpesa_test(
     except KeyError as exc:
         raise HTTPException(status_code=422, detail=f'Unknown M-Pesa sandbox test case: {exc.args[0]}') from None
 
-    config, provider = certification._configured_provider(db)
+    config, provider = _configured_partner_provider(db, 'sandbox')
     certification._require_capability(config, product_spec)
     certification_payload = certification.MpesaCertificationRunRequest(
         product=payload.product,
@@ -338,6 +393,7 @@ async def run_mpesa_test(
         metadata={
             'application_id': context.application.id,
             'environment': 'sandbox',
+            'provider_configuration_id': config.id,
             'product': payload.product,
             'scenario': payload.scenario,
             'passed': result.get('passed'),
@@ -358,7 +414,7 @@ async def run_mpesa_live_test(
 ):
     _require_environment(context, 'live')
     live_testing._require_funds_confirmation(payload)
-    config, provider = live_testing._configured_live_provider(db)
+    config, provider = _configured_partner_provider(db, 'live')
 
     operation = payload.operation
     reference, generated_third_party_reference, third_party_conversation_id = live_testing._ids(operation)
@@ -694,7 +750,8 @@ async def run_mpesa_live_test(
         'passed': result.status in {'succeeded', 'processing'} and result.accepted,
         'duration_ms': duration_ms,
         'executed_at': utcnow().isoformat(),
-        'environment': config.environment,
+        'environment': 'live',
+        'provider_environment': config.environment,
         'provider': 'mpesa',
         'shortcode': config.service_provider_code,
         'request_evidence': {key: value for key, value in request_evidence.items() if value is not None},
@@ -713,6 +770,7 @@ async def run_mpesa_live_test(
         metadata={
             'application_id': context.application.id,
             'environment': 'live',
+            'provider_configuration_id': config.id,
             'operation': operation,
             'status': result.status,
             'response_code': result.response_code,
