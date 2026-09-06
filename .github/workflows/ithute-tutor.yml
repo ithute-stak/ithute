@@ -140,6 +140,13 @@ jobs:
           grep -q 'tutor.ithute.co.ls' infrastructure/ithute-edge/default.conf.template
           grep -q 'Deploy Tutor, DNS and HTTPS' .github/workflows/ithute-tutor-production.yml
 
+          # Tutor needs its own GitHub queue so sibling production workflows
+          # cannot evict it before jobs start. The shared VPS is still protected
+          # by the runtime host lock inside the deploy step.
+          grep -q 'group: ithute-tutor-production' .github/workflows/ithute-tutor-production.yml
+          grep -q '/tmp/ithute-production.lock' .github/workflows/ithute-tutor-production.yml
+          ! grep -q 'group: ithute-production-vps' .github/workflows/ithute-tutor-production.yml
+
       - name: Build Tutor containers
         run: |
           set -eu
