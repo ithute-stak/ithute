@@ -33,9 +33,9 @@ grep -q 'REALTIME_REDIS_URL: redis://ithute-realtime-redis:6379/0' "$compose_fil
 
 # The central APIs must be separate images/services. Products communicate over
 # signed HTTP/WebSocket contracts and never read these databases directly.
-grep -q 'ghcr.io/lelefe-dc/ithute-auth' "$compose_file" || fail "Auth production image is missing"
-grep -q 'ghcr.io/lelefe-dc/ithute-push' "$compose_file" || fail "Push production image is missing"
-grep -q 'ghcr.io/lelefe-dc/ithute-realtime' "$compose_file" || fail "Realtime production image is missing"
+grep -q 'ghcr.io/ithute-stak/ithute-auth' "$compose_file" || fail "Auth production image is missing"
+grep -q 'ghcr.io/ithute-stak/ithute-push' "$compose_file" || fail "Push production image is missing"
+grep -q 'ghcr.io/ithute-stak/ithute-realtime' "$compose_file" || fail "Realtime production image is missing"
 grep -q '^  ithute-push-worker:' "$compose_file" || fail "Push worker is missing"
 grep -q 'REALTIME_AUTH_ISSUER:' "$compose_file" || fail "Realtime is not protected by central Auth"
 grep -q 'REALTIME_PUSH_URL: http://ithute-push:8080' "$compose_file" || fail "Realtime is not connected to central Push"
@@ -61,19 +61,25 @@ grep -q 'wait_service ithute-realtime ' "$deploy_script" || fail "Realtime healt
 grep -q "Host: auth.ithute.co.ls" "$deploy_script" || fail "Auth nginx probe is missing"
 grep -q "Host: push.ithute.co.ls" "$deploy_script" || fail "Push nginx probe is missing"
 grep -q "Host: realtime.ithute.co.ls" "$deploy_script" || fail "Realtime nginx probe is missing"
+grep -q 'repair_fernet_key ITHUTE_AUTH_TOTP_ENCRYPTION_KEY' "$deploy_script" || fail "Auth MFA Fernet key provisioning is missing"
+grep -q 'repair_fernet_key ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY' "$deploy_script" || fail "Push Fernet key provisioning is missing"
 grep -q 'ensure_random_hex ITHUTE_REALTIME_DB_PASSWORD' "$deploy_script" || fail "Realtime database password provisioning is missing"
 grep -q 'ensure_random_hex ITHUTE_SERVICE_REALTIME_SECRET' "$deploy_script" || fail "Realtime Auth service secret provisioning is missing"
 grep -q 'ithute-realtime:!thute Realtime' "$deploy_script" || fail "Realtime Auth registration is missing"
 grep -q 'ITHUTE_PUSH_DELEGATED_SERVICE_CLIENTS' "$deploy_script" || fail "Realtime delegated Push provisioning is missing"
 
-# Auth/Push remain in the shared release build. Realtime has its own validated
-# immutable image publication workflow so its exact commit tag can be pulled by
-# the shared production deployment.
-grep -q 'ITHUTE_AUTH_IMAGE: ghcr.io/lelefe-dc/ithute-auth' "$workflow" || fail "Auth image build is missing"
-grep -q 'ITHUTE_PUSH_IMAGE: ghcr.io/lelefe-dc/ithute-push' "$workflow" || fail "Push image build is missing"
+# Auth, Push and Realtime are built together for every production release SHA so
+# Compose never waits for a platform image that was not published for that release.
+grep -q 'ITHUTE_AUTH_IMAGE: ghcr.io/ithute-stak/ithute-auth' "$workflow" || fail "Auth image build is missing"
+grep -q 'ITHUTE_PUSH_IMAGE: ghcr.io/ithute-stak/ithute-push' "$workflow" || fail "Push image build is missing"
+grep -q 'ITHUTE_REALTIME_IMAGE: ghcr.io/ithute-stak/ithute-realtime' "$workflow" || fail "Realtime image build is missing from shared release"
+grep -q 'build_platform_image "$ITHUTE_REALTIME_IMAGE" ./platform/ithute-realtime' "$workflow" || fail "Realtime is not part of the atomic platform release"
 grep -q 'openssl genpkey -algorithm RSA' "$workflow" || fail "Auth RSA key generation is missing"
 grep -q 'ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY' "$workflow" || fail "Push endpoint encryption provisioning is missing"
-grep -q 'ITHUTE_REALTIME_IMAGE: ghcr.io/lelefe-dc/ithute-realtime' "$realtime_workflow" || fail "Realtime image publication is missing"
+
+# The dedicated Realtime publisher remains available for validated targeted
+# releases, and it must publish to the same ithute-stak registry namespace.
+grep -q 'ITHUTE_REALTIME_IMAGE: ghcr.io/ithute-stak/ithute-realtime' "$realtime_workflow" || fail "Realtime image publication is missing"
 grep -q './platform/ithute-realtime' "$realtime_workflow" || fail "Realtime Docker build context is missing"
 grep -q 'workflow_run:' "$realtime_workflow" || fail "Realtime production publishing is not validation-gated"
 

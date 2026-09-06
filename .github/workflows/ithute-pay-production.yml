@@ -16,8 +16,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE: ghcr.io/lelefe-dc/ithute-pay-bridge
-  GHCR_USERNAME: Lelefe-dc
+  IMAGE: ghcr.io/ithute-stak/ithute-pay-bridge
+  GHCR_USERNAME: ithute-stak
   VPS_HOST: 204.12.205.224
   VPS_USER: administrator
   VPS_APP_DIR: /home/administrator/mailbox-dns
@@ -149,7 +149,7 @@ jobs:
           cd "$APP_DIR"
           tar -xzf "/tmp/ithute-pay-${DEPLOY_SHA}.tgz" -C "$APP_DIR"
           overrides="/tmp/ithute-pay-overrides-${DEPLOY_SHA}.env"
-          [ -f .env ] || { echo "Mailbox-DNS production .env is missing" >&2; exit 1; }
+          [ -f .env ] || { echo "Ithute production .env is missing" >&2; exit 1; }
           chmod 600 .env
 
           upsert_env() {
@@ -187,10 +187,6 @@ jobs:
           ensure_random_hex ITHUTE_PAY_SECRET_KEY
           ensure_random_hex ITHUTE_PAY_DATA_ENCRYPTION_KEY
           ensure_random_hex ITHUTE_SERVICE_ITHUTE_PAY_SECRET
-          ensure_random_hex ITHUTE_SERVICE_LOANHUB_SECRET
-          ensure_random_hex ITHUTE_SERVICE_RSL_POS_SECRET
-          ensure_random_hex ITHUTE_SERVICE_MAILBOX_DNS_SECRET
-          ensure_random_hex ITHUTE_SERVICE_ACCOUNT_SECRET
 
           ensure_csv_entry ITHUTE_AUTH_FIRST_PARTY_CLIENTS 'ithute-pay:Ithute Pay'
           ensure_csv_entry ITHUTE_PUSH_ALLOWED_USER_CLIENTS 'ithute-pay'
@@ -207,12 +203,15 @@ jobs:
           esac
           upsert_env ITHUTE_AUTH_REDIRECT_URIS_JSON "$redirects"
 
-          loanhub_secret="$(env_value ITHUTE_SERVICE_LOANHUB_SECRET)"
-          rsl_secret="$(env_value ITHUTE_SERVICE_RSL_POS_SECRET)"
-          mailbox_secret="$(env_value ITHUTE_SERVICE_MAILBOX_DNS_SECRET)"
-          account_secret="$(env_value ITHUTE_SERVICE_ACCOUNT_SECRET)"
           pay_secret="$(env_value ITHUTE_SERVICE_ITHUTE_PAY_SECRET)"
-          upsert_env ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON "{\"loanhub\":\"${loanhub_secret}\",\"rsl-pos\":\"${rsl_secret}\",\"mailbox-dns\":\"${mailbox_secret}\",\"ithute-account\":\"${account_secret}\",\"ithute-pay\":\"${pay_secret}\"}"
+          service_map="$(env_value ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON)"
+          case "$service_map" in
+            ""|'{}') service_map="{\"ithute-pay\":\"${pay_secret}\"}" ;;
+            *'"ithute-pay"'*) : ;;
+            \{*\}) service_map="${service_map%?},\"ithute-pay\":\"${pay_secret}\"}" ;;
+            *) echo "Invalid ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON; refusing to overwrite it" >&2; exit 1 ;;
+          esac
+          upsert_env ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON "$service_map"
 
           chmod 600 .env
           rm -f "/tmp/ithute-pay-${DEPLOY_SHA}.tgz" "$overrides"

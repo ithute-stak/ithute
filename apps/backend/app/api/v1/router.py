@@ -23,7 +23,6 @@ from app.api.v1 import (
     ithute_auth,
     ithute_operating,
     ithute_platform,
-    mailbox_lifecycle,
     mail_intelligence,
     mail_operations,
     mailboxes,
@@ -55,7 +54,6 @@ api_router.include_router(dns.router)
 api_router.include_router(dns_phase5.router)
 api_router.include_router(edge.router)
 api_router.include_router(mailboxes.router)
-api_router.include_router(mailbox_lifecycle.router)
 api_router.include_router(professional_email.router)
 api_router.include_router(deliverability.router)
 api_router.include_router(mail_intelligence.router)

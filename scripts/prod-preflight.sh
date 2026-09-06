@@ -35,7 +35,7 @@ for name in BOOTSTRAP_PUBLIC_IP MAIL_PUBLIC_IP RESTIC_REPOSITORY BOOTSTRAP_ADMIN
   require "$name"
 done
 
-for name in SECRET_KEY DKIM_ENCRYPTION_KEY BILLING_WEBHOOK_SECRET POSTGRES_PASSWORD POWERDNS_API_KEY POWERDNS_DB_PASSWORD MAIL_OPS_TOKEN RECOVERY_OPS_TOKEN MAIL_NODE_TOKEN RESTIC_PASSWORD RESTORE_DB_PASSWORD GRAFANA_ADMIN_PASSWORD BOOTSTRAP_ADMIN_PASSWORD ITHUTE_AUTH_DB_PASSWORD ITHUTE_PUSH_DB_PASSWORD ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY; do
+for name in SECRET_KEY DKIM_ENCRYPTION_KEY BILLING_WEBHOOK_SECRET POSTGRES_PASSWORD POWERDNS_API_KEY POWERDNS_DB_PASSWORD MAIL_OPS_TOKEN RECOVERY_OPS_TOKEN MAIL_NODE_TOKEN RESTIC_PASSWORD RESTORE_DB_PASSWORD GRAFANA_ADMIN_PASSWORD BOOTSTRAP_ADMIN_PASSWORD ITHUTE_AUTH_DB_PASSWORD ITHUTE_AUTH_TOTP_ENCRYPTION_KEY ITHUTE_PUSH_DB_PASSWORD ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY ITHUTE_REALTIME_DB_PASSWORD ITHUTE_SERVICE_REALTIME_SECRET; do
   reject_placeholder "$name"
 done
 
@@ -44,8 +44,10 @@ if [ "${SECRET_KEY:-}" = "${DKIM_ENCRYPTION_KEY:-}" ] && [ -n "${SECRET_KEY:-}" 
   fail=1
 fi
 
-if [ "${ITHUTE_AUTH_DB_PASSWORD:-}" = "${ITHUTE_PUSH_DB_PASSWORD:-}" ]; then
-  echo "ERROR: !thute Auth and !thute Push must use different database passwords"
+if [ "${ITHUTE_AUTH_DB_PASSWORD:-}" = "${ITHUTE_PUSH_DB_PASSWORD:-}" ] || \
+   [ "${ITHUTE_AUTH_DB_PASSWORD:-}" = "${ITHUTE_REALTIME_DB_PASSWORD:-}" ] || \
+   [ "${ITHUTE_PUSH_DB_PASSWORD:-}" = "${ITHUTE_REALTIME_DB_PASSWORD:-}" ]; then
+  echo "ERROR: !thute Auth, Push and Realtime must use different database passwords"
   fail=1
 fi
 
@@ -55,11 +57,14 @@ case "${ITHUTE_AUTH_ISSUER:-}" in
 esac
 
 # Fernet keys are URL-safe base64-encoded 32-byte keys (44 characters with
-# padding). The service validates cryptographically again on startup.
-case "${ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY:-}" in
-  ???????????????????????????????????????????=) ;;
-  *) echo "ERROR: ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY does not look like a Fernet key"; fail=1 ;;
-esac
+# padding). Services validate cryptographically again on startup.
+for name in ITHUTE_AUTH_TOTP_ENCRYPTION_KEY ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY; do
+  eval "value=\${$name:-}"
+  case "$value" in
+    ???????????????????????????????????????????=) ;;
+    *) echo "ERROR: $name does not look like a Fernet key"; fail=1 ;;
+  esac
+done
 
 for key_file in platform-secrets/ithute-auth/jwt-private.pem platform-secrets/ithute-auth/jwt-public.pem; do
   [ -s "$key_file" ] || { echo "ERROR: missing central Auth key file $key_file"; fail=1; }
@@ -151,4 +156,4 @@ fi
 
 [ "$fail" -eq 0 ] || { echo "Production preflight FAILED."; exit 1; }
 
-echo "Production preflight PASSED (${PLATFORM_MODE:-bootstrap} mode, central Auth/Push enabled)."
+echo "Production preflight PASSED (${PLATFORM_MODE:-bootstrap} mode, central Auth/Push/Realtime enabled)."

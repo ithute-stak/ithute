@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { Activity, BadgeCheck, KeyRound, Loader2, Play, RotateCcw, ShieldCheck, TestTube2 } from "lucide-react";
 import { API_URL } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
@@ -45,7 +45,7 @@ function prettyLabel(value: string) {
 }
 
 export default function PartnerTestingPortal() {
-  const [apiKey, setApiKey] = useState("");
+  const [apiKey, setApiKey] = useState(() => typeof window === "undefined" ? "" : window.sessionStorage.getItem(API_KEY_STORAGE) || "");
   const [context, setContext] = useState<PortalContext | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [product, setProduct] = useState("c2b");
@@ -60,17 +60,6 @@ export default function PartnerTestingPortal() {
 
   const service = catalog?.services?.[product];
   const scenarioEntries = useMemo(() => Object.entries(service?.cases ?? {}), [service]);
-
-  useEffect(() => {
-    const stored = window.sessionStorage.getItem(API_KEY_STORAGE) || "";
-    if (stored) setApiKey(stored);
-  }, []);
-
-  useEffect(() => {
-    if (!service) return;
-    const first = Object.keys(service.cases)[0];
-    if (first && !(scenario in service.cases)) setScenario(first);
-  }, [service, scenario]);
 
   async function authorizedFetch(path: string, init?: RequestInit, keyOverride?: string) {
     const key = (keyOverride ?? apiKey).trim();
@@ -129,6 +118,12 @@ export default function PartnerTestingPortal() {
     setCatalog(null);
     setResult(null);
     setError("");
+  }
+
+  function chooseProduct(id: string, item: CatalogService) {
+    setProduct(id);
+    const firstScenario = Object.keys(item.cases)[0];
+    if (firstScenario) setScenario(firstScenario);
   }
 
   async function runTest() {
@@ -215,7 +210,7 @@ export default function PartnerTestingPortal() {
               <CardContent className="space-y-5">
                 <div className="flex gap-2 overflow-x-auto pb-2">
                   {Object.entries(catalog?.services ?? {}).map(([id, item]) => (
-                    <button key={id} type="button" onClick={() => setProduct(id)} className={`min-w-[170px] rounded-xl border px-4 py-3 text-left transition ${product === id ? "border-[#116fbb] bg-[#116fbb] text-white" : "border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50"}`}>
+                    <button key={id} type="button" onClick={() => chooseProduct(id, item)} className={`min-w-[170px] rounded-xl border px-4 py-3 text-left transition ${product === id ? "border-[#116fbb] bg-[#116fbb] text-white" : "border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50"}`}>
                       <span className="block text-sm font-black">{item.label}</span>
                       <span className={`mt-1 block text-[11px] ${product === id ? "text-blue-100" : "text-slate-500"}`}>{item.capability || prettyLabel(id)} · {Object.keys(item.cases).length} scenarios</span>
                     </button>

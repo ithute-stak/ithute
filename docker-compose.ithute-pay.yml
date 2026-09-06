@@ -32,8 +32,7 @@ services:
     networks: [ithute_pay_private]
 
   ithute-pay:
-    # Keep the existing GHCR repository name for release compatibility.
-    image: ${ITHUTE_PAY_IMAGE:-ghcr.io/lelefe-dc/ithute-pay-bridge}:${ITHUTE_PAY_IMAGE_TAG:-latest}
+    image: ${ITHUTE_PAY_IMAGE:-ghcr.io/ithute-stak/ithute-pay-bridge}:${ITHUTE_PAY_IMAGE_TAG:-latest}
     restart: always
     environment:
       ENVIRONMENT: production

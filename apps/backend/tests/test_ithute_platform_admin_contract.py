@@ -1,13 +1,21 @@
 from pathlib import Path
 
+import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = ROOT.parents[1]
+
+TEST_FILE = Path(__file__).resolve()
+ROOT = TEST_FILE.parents[1]
+REPO_ROOT = next(
+    (parent for parent in TEST_FILE.parents if (parent / "apps" / "backend").is_dir()),
+    ROOT,
+)
 ROUTE = (ROOT / "app/api/v1/ithute_platform.py").read_text(encoding="utf-8")
 ROUTER = (ROOT / "app/api/v1/router.py").read_text(encoding="utf-8")
 BROKER = (ROOT / "app/services/ithute_platform_admin.py").read_text(encoding="utf-8")
-PANEL_PAGE = (REPO_ROOT / "apps/frontend/app/ithute-platform/page.tsx").read_text(encoding="utf-8")
-PANEL_SHELL = (REPO_ROOT / "apps/frontend/components/control-shell.tsx").read_text(encoding="utf-8")
+PANEL_PAGE_PATH = REPO_ROOT / "apps/frontend/app/ithute-platform/page.tsx"
+PANEL_SHELL_PATH = REPO_ROOT / "apps/frontend/components/control-shell.tsx"
+PANEL_PAGE = PANEL_PAGE_PATH.read_text(encoding="utf-8") if PANEL_PAGE_PATH.exists() else ""
+PANEL_SHELL = PANEL_SHELL_PATH.read_text(encoding="utf-8") if PANEL_SHELL_PATH.exists() else ""
 
 
 def test_console_requires_local_platform_owner_and_linked_central_identity() -> None:
@@ -40,6 +48,10 @@ def test_admin_cookie_is_http_only_and_short_lived() -> None:
     assert "refresh_token" not in ROUTE
 
 
+@pytest.mark.skipif(
+    not PANEL_PAGE_PATH.exists() or not PANEL_SHELL_PATH.exists(),
+    reason="frontend source is not included in the backend-only container test image",
+)
 def test_superadmin_dashboard_is_registered_and_visible_in_panel_navigation() -> None:
     assert "api_router.include_router(ithute_platform.router)" in ROUTER
     assert 'href: "/ithute-platform"' in PANEL_SHELL

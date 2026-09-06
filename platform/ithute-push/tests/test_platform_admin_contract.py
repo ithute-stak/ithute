@@ -75,7 +75,9 @@ def test_push_admin_token_lifetime_is_strictly_capped() -> None:
 
 
 def test_production_server_registers_privileged_routes() -> None:
-    paths = {route.path for route in app.routes}
+    # Starlette 1.6 may retain included routers as nested route objects, so the
+    # generated API schema is the stable public contract for registered paths.
+    paths = set(app.openapi().get("paths", {}))
     assert "/v1/admin/overview" in paths
     assert "/v1/admin/applications" in paths
     assert "/v1/admin/messages" in paths

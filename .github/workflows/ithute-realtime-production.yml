@@ -16,8 +16,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  GHCR_USERNAME: Lelefe-dc
-  ITHUTE_REALTIME_IMAGE: ghcr.io/lelefe-dc/ithute-realtime
+  GHCR_USERNAME: ithute-stak
+  ITHUTE_REALTIME_IMAGE: ghcr.io/ithute-stak/ithute-realtime
 
 jobs:
   build-and-publish:

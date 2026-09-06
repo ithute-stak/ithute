@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: mailbox-dns-production
+  group: ithute-production
   cancel-in-progress: false
 
 permissions:
@@ -19,18 +19,19 @@ env:
   VPS_HOST: 204.12.205.224
   VPS_USER: administrator
   VPS_APP_DIR: /home/administrator/mailbox-dns
-  GHCR_USERNAME: Lelefe-dc
+  GHCR_USERNAME: ithute-stak
   BOOTSTRAP_ADMIN_EMAIL: thekoetlisi@gmail.com
-  BACKEND_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-backend
-  FRONTEND_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-frontend
-  UNBOUND_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-unbound
-  DOVECOT_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-dovecot
-  POSTFIX_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-postfix
-  RADICALE_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-radicale
-  BACKUP_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-backup
-  MAIL_EDGE_IMAGE: ghcr.io/lelefe-dc/mailbox-dns-mail-edge
-  ITHUTE_AUTH_IMAGE: ghcr.io/lelefe-dc/ithute-auth
-  ITHUTE_PUSH_IMAGE: ghcr.io/lelefe-dc/ithute-push
+  BACKEND_IMAGE: ghcr.io/ithute-stak/mailbox-dns-backend
+  FRONTEND_IMAGE: ghcr.io/ithute-stak/mailbox-dns-frontend
+  UNBOUND_IMAGE: ghcr.io/ithute-stak/mailbox-dns-unbound
+  DOVECOT_IMAGE: ghcr.io/ithute-stak/mailbox-dns-dovecot
+  POSTFIX_IMAGE: ghcr.io/ithute-stak/mailbox-dns-postfix
+  RADICALE_IMAGE: ghcr.io/ithute-stak/mailbox-dns-radicale
+  BACKUP_IMAGE: ghcr.io/ithute-stak/mailbox-dns-backup
+  MAIL_EDGE_IMAGE: ghcr.io/ithute-stak/mailbox-dns-mail-edge
+  ITHUTE_AUTH_IMAGE: ghcr.io/ithute-stak/ithute-auth
+  ITHUTE_PUSH_IMAGE: ghcr.io/ithute-stak/ithute-push
+  ITHUTE_REALTIME_IMAGE: ghcr.io/ithute-stak/ithute-realtime
 
 jobs:
   build-and-publish:
@@ -64,7 +65,7 @@ jobs:
       - name: Initialize Docker Buildx
         run: |
           set -eu
-          docker buildx create --name mailbox-dns-builder --use
+          docker buildx create --name ithute-production-builder --use
           docker buildx inspect --bootstrap
 
       - name: Build and publish backend
@@ -100,6 +101,7 @@ jobs:
           }
           build_platform_image "$ITHUTE_AUTH_IMAGE" ./platform/ithute-auth
           build_platform_image "$ITHUTE_PUSH_IMAGE" ./platform/ithute-push
+          build_platform_image "$ITHUTE_REALTIME_IMAGE" ./platform/ithute-realtime
 
       - name: Build and publish mail infrastructure images
         run: |
@@ -158,24 +160,24 @@ jobs:
           set -eu
           mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
-          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/mailbox_dns_deploy"
-          chmod 600 "$HOME/.ssh/mailbox_dns_deploy"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_deploy"
+          chmod 600 "$HOME/.ssh/ithute_deploy"
 
           eval "$(ssh-agent -s)"
           printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
           printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
 
           if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
-            cat > /tmp/mailbox-dns-askpass.sh <<'SH'
+            cat > /tmp/ithute-askpass.sh <<'SH'
           #!/usr/bin/env sh
           printf '%s\n' "$VPS_SSH_PASSPHRASE"
           SH
-            chmod 700 /tmp/mailbox-dns-askpass.sh
-            SSH_ASKPASS=/tmp/mailbox-dns-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
-              setsid -w ssh-add "$HOME/.ssh/mailbox_dns_deploy" </dev/null
-            rm -f /tmp/mailbox-dns-askpass.sh
+            chmod 700 /tmp/ithute-askpass.sh
+            SSH_ASKPASS=/tmp/ithute-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+              setsid -w ssh-add "$HOME/.ssh/ithute_deploy" </dev/null
+            rm -f /tmp/ithute-askpass.sh
           else
-            ssh-add "$HOME/.ssh/mailbox_dns_deploy" </dev/null
+            ssh-add "$HOME/.ssh/ithute_deploy" </dev/null
           fi
 
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
@@ -184,7 +186,7 @@ jobs:
       - name: Prepare production deployment bundle
         run: |
           set -eu
-          bundle="/tmp/mailbox-dns-${DEPLOY_SHA}.tgz"
+          bundle="/tmp/ithute-${DEPLOY_SHA}.tgz"
           tar -czf "$bundle" \
             .env.example \
             docker-compose.yml \
@@ -202,7 +204,7 @@ jobs:
             scripts
 
           umask 077
-          overrides="/tmp/mailbox-dns-overrides-${DEPLOY_SHA}.env"
+          overrides="/tmp/ithute-overrides-${DEPLOY_SHA}.env"
           {
             printf 'BOOTSTRAP_ADMIN_EMAIL=%s\n' "$BOOTSTRAP_ADMIN_EMAIL"
             printf 'BOOTSTRAP_ADMIN_PASSWORD=%s\n' "$BOOTSTRAP_ADMIN_PASSWORD"
@@ -220,7 +222,7 @@ jobs:
 
             # The temporary public-IP panel is retired now that the shared Caddy
             # edge serves the real Ithute hostnames. Application HTTP ports are
-            # loopback-only; Caddy reaches Mailbox-DNS nginx over Docker networking.
+            # loopback-only; Caddy reaches the Ithute nginx service over Docker networking.
             printf 'FRONTEND_PORT=127.0.0.1:3006\n'
             printf 'BACKEND_PORT=127.0.0.1:8006\n'
             printf 'PROXY_PORT=127.0.0.1:8086\n'
@@ -244,13 +246,13 @@ jobs:
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
           ssh "$remote" "mkdir -p '$VPS_APP_DIR' && chmod 700 '$VPS_APP_DIR'"
-          scp "/tmp/mailbox-dns-${DEPLOY_SHA}.tgz" "$remote:/tmp/mailbox-dns-${DEPLOY_SHA}.tgz"
-          scp "/tmp/mailbox-dns-overrides-${DEPLOY_SHA}.env" "$remote:/tmp/mailbox-dns-overrides-${DEPLOY_SHA}.env"
+          scp "/tmp/ithute-${DEPLOY_SHA}.tgz" "$remote:/tmp/ithute-${DEPLOY_SHA}.tgz"
+          scp "/tmp/ithute-overrides-${DEPLOY_SHA}.env" "$remote:/tmp/ithute-overrides-${DEPLOY_SHA}.env"
 
           ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' sh -s" <<'REMOTE'
           set -eu
-          archive="/tmp/mailbox-dns-${DEPLOY_SHA}.tgz"
-          overrides="/tmp/mailbox-dns-overrides-${DEPLOY_SHA}.env"
+          archive="/tmp/ithute-${DEPLOY_SHA}.tgz"
+          overrides="/tmp/ithute-overrides-${DEPLOY_SHA}.env"
           tar -xzf "$archive" -C "$APP_DIR"
           cd "$APP_DIR"
 
@@ -288,6 +290,19 @@ jobs:
             esac
           }
 
+          ensure_service_secret() {
+            client="$1"
+            secret="$2"
+            current="$(env_value ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON)"
+            case "$current" in
+              ""|'{}') current="{\"${client}\":\"${secret}\"}" ;;
+              *"\"${client}\""*) return 0 ;;
+              \{*\}) current="${current%?},\"${client}\":\"${secret}\"}" ;;
+              *) echo "Invalid ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON; refusing to overwrite it" >&2; exit 1 ;;
+            esac
+            upsert_env ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON "$current"
+          }
+
           if [ "$created_env" -eq 1 ]; then
             POSTGRES_DB_VALUE="lelefamail"
             POSTGRES_USER_VALUE="lelefamail"
@@ -315,8 +330,8 @@ jobs:
             upsert_env GRAFANA_ADMIN_PASSWORD "$(random_hex)"
           fi
 
-          # Central platform secrets are generated once and then retained in the
-          # VPS-owned .env. Auth and Push intentionally use distinct databases.
+          # Central service secrets are generated once and retained in the
+          # VPS-owned .env. Existing product service registrations are preserved.
           ensure_random_hex ITHUTE_AUTH_DB_PASSWORD
           ensure_random_hex ITHUTE_PUSH_DB_PASSWORD
           ensure_random_hex ITHUTE_SERVICE_LOANHUB_SECRET
@@ -327,16 +342,15 @@ jobs:
           push_key="$(env_value ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY)"
           case "$push_key" in
             ""|*replace-with*|*replace-this*)
-              push_key="$(openssl rand -base64 32 | tr '/+' '_-' | tr -d '\n')"
+              push_key="$(openssl rand 32 | openssl base64 -A | tr '+/' '-_')"
               upsert_env ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY "$push_key"
               ;;
           esac
 
-          loanhub_secret="$(env_value ITHUTE_SERVICE_LOANHUB_SECRET)"
-          rsl_secret="$(env_value ITHUTE_SERVICE_RSL_POS_SECRET)"
-          mailbox_secret="$(env_value ITHUTE_SERVICE_MAILBOX_DNS_SECRET)"
-          account_secret="$(env_value ITHUTE_SERVICE_ACCOUNT_SECRET)"
-          upsert_env ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON "{\"loanhub\":\"${loanhub_secret}\",\"rsl-pos\":\"${rsl_secret}\",\"mailbox-dns\":\"${mailbox_secret}\",\"ithute-account\":\"${account_secret}\"}"
+          ensure_service_secret loanhub "$(env_value ITHUTE_SERVICE_LOANHUB_SECRET)"
+          ensure_service_secret rsl-pos "$(env_value ITHUTE_SERVICE_RSL_POS_SECRET)"
+          ensure_service_secret mailbox-dns "$(env_value ITHUTE_SERVICE_MAILBOX_DNS_SECRET)"
+          ensure_service_secret ithute-account "$(env_value ITHUTE_SERVICE_ACCOUNT_SECRET)"
 
           # The central signing key is generated once, mounted read-only into
           # Auth, and never copied into a product container or repository.
@@ -384,7 +398,7 @@ jobs:
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "cd '$VPS_APP_DIR' && grep '^MAILBOX_DNS_IMAGE_TAG=' .env | grep -F '$DEPLOY_SHA' >/dev/null && grep '^SHARED_HTTP_EDGE=true$' .env >/dev/null && grep '^PROXY_PORT=127.0.0.1:8086$' .env >/dev/null && grep '^FRONTEND_PORT=127.0.0.1:3006$' .env >/dev/null && grep '^BACKEND_PORT=127.0.0.1:8006$' .env >/dev/null && curl -fsS http://127.0.0.1:8086/ >/dev/null && curl -fsS -H 'Host: auth.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null && curl -fsS -H 'Host: push.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null"
+          ssh "$remote" "cd '$VPS_APP_DIR' && grep '^MAILBOX_DNS_IMAGE_TAG=' .env | grep -F '$DEPLOY_SHA' >/dev/null && grep '^SHARED_HTTP_EDGE=true$' .env >/dev/null && grep '^PROXY_PORT=127.0.0.1:8086$' .env >/dev/null && grep '^FRONTEND_PORT=127.0.0.1:3006$' .env >/dev/null && grep '^BACKEND_PORT=127.0.0.1:8006$' .env >/dev/null && curl -fsS http://127.0.0.1:8086/ >/dev/null && curl -fsS -H 'Host: auth.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null && curl -fsS -H 'Host: push.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null && curl -fsS -H 'Host: realtime.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null"
 
           curl --fail --silent --show-error --retry 8 --retry-delay 5 --connect-timeout 10 "https://panel.ithute.co.ls/" >/dev/null
 
@@ -393,4 +407,4 @@ jobs:
             exit 1
           fi
 
-          echo "Production panel and internal !thute Auth/Push routes verified; direct public IP access on port 3006 is closed."
+          echo "Production panel and internal !thute Auth/Push/Realtime routes verified; direct public IP access on port 3006 is closed."

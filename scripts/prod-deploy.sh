@@ -39,8 +39,9 @@ ensure_csv_entry() {
   upsert_env "$key" "$value"
 }
 
-repair_push_fernet_key() {
-  key="ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY"
+repair_fernet_key() {
+  key="$1"
+  label="$2"
   current="$(env_value "$key")"
 
   if printf '%s\n' "$current" | grep -Eq '^[A-Za-z0-9_-]{43}=$'; then
@@ -49,12 +50,12 @@ repair_push_fernet_key() {
 
   replacement="$(openssl rand 32 | openssl base64 -A | tr '+/' '-_')"
   if ! printf '%s\n' "$replacement" | grep -Eq '^[A-Za-z0-9_-]{43}=$'; then
-    echo "Failed to generate a valid Fernet key for !thute Push" >&2
+    echo "Failed to generate a valid Fernet key for $label" >&2
     exit 1
   fi
 
   upsert_env "$key" "$replacement"
-  echo "Replaced malformed !thute Push endpoint encryption key before production preflight."
+  echo "Provisioned a valid persistent Fernet key for $label before production preflight."
 }
 
 provision_realtime_identity() {
@@ -84,9 +85,11 @@ provision_realtime_identity() {
   upsert_env ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON "$service_map"
 }
 
-# Preserve valid Push endpoint encryption material and provision the new central
-# Realtime database/service identity once on the VPS. No secret is committed.
-repair_push_fernet_key
+# Preserve valid encryption material and generate missing keys only once in the
+# VPS-owned .env. Rotating either Fernet key implicitly would make encrypted
+# Auth MFA or Push endpoint data unreadable, so valid existing values are kept.
+repair_fernet_key ITHUTE_AUTH_TOTP_ENCRYPTION_KEY '!thute Auth MFA'
+repair_fernet_key ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY '!thute Push endpoints'
 provision_realtime_identity
 
 . scripts/load-dotenv.sh
@@ -177,8 +180,8 @@ startup_diagnostics() {
 mkdir -p backups platform-secrets/ithute-auth platform-secrets/ithute-push
 chmod 700 platform-secrets platform-secrets/ithute-auth platform-secrets/ithute-push
 compose config >/dev/null
-# The Realtime image is published by its own validated platform workflow. Give
-# concurrent release workflows a few minutes to make the exact SHA available.
+# All immutable production images are published for the same release SHA by the
+# production build job. Retry pulls briefly to tolerate registry propagation.
 retry 24 compose pull
 
 # Bring persistent data services up first so a pre-release backup can be taken
