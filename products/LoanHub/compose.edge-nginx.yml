@@ -24,6 +24,7 @@ services:
       - "443:443"
     volumes:
       - ./infra/nginx-edge/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./infra/nginx-edge/ithute-tls.conf:/etc/nginx/snippets/ithute-tls.conf:ro
       - edge_letsencrypt:/etc/letsencrypt:ro
       - edge_certbot_webroot:/var/www/certbot:ro
     # Certbot updates the shared certificate volume. Reload periodically so a
