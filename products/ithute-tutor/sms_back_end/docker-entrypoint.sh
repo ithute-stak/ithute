@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+cd /app
+export PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}"
+
 python - <<'PY'
 import time
 from sqlalchemy import text
@@ -22,9 +25,9 @@ PY
 # Existing Tutor history contains multiple migration branches; upgrading all
 # heads is safer than choosing a single head and silently skipping schema work.
 alembic upgrade heads
-python scripts/ensure_central_auth_schema.py
-python scripts/ensure_academic_core_schema.py
-python scripts/ensure_student_transfer_schema.py
-python scripts/ensure_learning_exchange_schema.py
+python -m scripts.ensure_central_auth_schema
+python -m scripts.ensure_academic_core_schema
+python -m scripts.ensure_student_transfer_schema
+python -m scripts.ensure_learning_exchange_schema
 
 exec uvicorn main:app --host 0.0.0.0 --port 8000
