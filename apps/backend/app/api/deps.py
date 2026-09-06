@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.rbac import has_permission
-from app.core.security import ALGORITHM, hash_token
+from app.core.security import ALGORITHM, hash_password, hash_token
 from app.db.session import get_db
 from app.models import ApiKey, MembershipStatus, Tenant, TenantMembership, User
 from app.services.ithute_auth import (
@@ -43,6 +44,54 @@ def _decode_local_user(token: str, db: Session) -> User:
     return user
 
 
+def central_user_from_claims(claims: dict, db: Session) -> User:
+    auth_user_id = UUID(str(claims["sub"]))
+    user = db.scalar(select(User).where(User.auth_user_id == auth_user_id))
+
+    if claims.get("is_platform_admin") is True:
+        email = str(claims.get("email") or "").strip().lower()
+        if not email:
+            raise HTTPException(status_code=401, detail="Central platform owner token is missing an email claim")
+        if user is None:
+            user = db.scalar(select(User).where(User.email == email))
+            if user is not None and user.auth_user_id not in (None, auth_user_id):
+                raise HTTPException(status_code=409, detail="The system owner email is linked to another central identity")
+        if user is None:
+            # The legacy Mailbox DNS schema requires a password hash. Generate a
+            # product-local unusable value; the global owner password remains
+            # exclusively inside central !thute Auth.
+            user = User(
+                email=email,
+                auth_user_id=auth_user_id,
+                password_hash=hash_password(secrets.token_urlsafe(48)),
+                full_name="Ithute System Owner",
+                is_platform_owner=True,
+                is_active=True,
+                email_verified_at=datetime.now(timezone.utc),
+            )
+            db.add(user)
+        else:
+            user.auth_user_id = auth_user_id
+            user.is_platform_owner = True
+            user.is_active = True
+            user.email_verified_at = user.email_verified_at or datetime.now(timezone.utc)
+            if not user.full_name.strip():
+                user.full_name = "Ithute System Owner"
+        db.commit()
+        db.refresh(user)
+        return user
+
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "code": "ITHUTE_ACCOUNT_NOT_LINKED",
+                "message": "This !thute account is not linked to a Mailbox DNS user.",
+            },
+        )
+    return user
+
+
 def _decode_central_user(token: str, db: Session) -> User:
     try:
         claims = decode_ithute_access_token(token)
@@ -55,18 +104,7 @@ def _decode_central_user(token: str, db: Session) -> User:
         ) from exc
     except InvalidTokenError as exc:
         raise HTTPException(status_code=401, detail="Invalid token") from exc
-
-    auth_user_id = UUID(str(claims["sub"]))
-    user = db.scalar(select(User).where(User.auth_user_id == auth_user_id))
-    if not user or not user.is_active:
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "code": "ITHUTE_ACCOUNT_NOT_LINKED",
-                "message": "This !thute account is not linked to a Mailbox DNS user.",
-            },
-        )
-    return user
+    return central_user_from_claims(claims, db)
 
 
 def _token_algorithm(token: str) -> str:
