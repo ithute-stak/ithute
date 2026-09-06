@@ -1,0 +1,12 @@
+services:
+  backend:
+    networks:
+      loanhub:
+        aliases:
+          - loanhub-backend
+
+  frontend:
+    networks:
+      loanhub:
+        aliases:
+          - loanhub-frontend
