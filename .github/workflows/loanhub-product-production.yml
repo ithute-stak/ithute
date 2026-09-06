@@ -41,7 +41,7 @@ jobs:
         working-directory: products/LoanHub
         run: |
           cp .env.example .env
-          docker compose -f compose.yaml config -q
+          docker compose -f compose.yaml -f compose.shared-edge.yml config -q
 
       - name: Compile backend
         working-directory: products/LoanHub/apps/backend
@@ -53,6 +53,8 @@ jobs:
           grep -Fq 'name: ${COMPOSE_PROJECT_NAME:-loanhub}' products/LoanHub/compose.yaml
           grep -Fq -- '- postgres_data:/var/lib/postgresql/data' products/LoanHub/compose.yaml
           grep -Fq 'COMPOSE_PROJECT_NAME=loanhub' products/LoanHub/.env.production.example
+          grep -Fq 'loanhub-backend' products/LoanHub/compose.shared-edge.yml
+          grep -Fq 'loanhub-frontend' products/LoanHub/compose.shared-edge.yml
 
   build-and-publish:
     name: Build LoanHub product images
@@ -116,14 +118,14 @@ jobs:
             exit 1
           fi
 
-      - name: Copy LoanHub product manifest to VPS
+      - name: Copy LoanHub product manifests to VPS
         uses: appleboy/scp-action@v1
         with:
           host: ${{ env.VPS_HOST }}
           username: ${{ env.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }}
-          source: products/LoanHub/compose.yaml
+          source: products/LoanHub/compose.yaml,products/LoanHub/compose.shared-edge.yml
           target: /tmp/ithute-loanhub-${{ github.sha }}
           overwrite: true
 
@@ -154,9 +156,9 @@ jobs:
 
             test -d "$PLATFORM_ROOT"
             test -f "$SRC/compose.yaml"
+            test -f "$SRC/compose.shared-edge.yml"
             mkdir -p "$APP_DIR/backups" "$APP_DIR/secrets"
 
-            # First migration from /opt/loanhub copies only product identity/config.
             if [ ! -s "$APP_DIR/.env.production" ]; then
               if [ -s "$LEGACY_APP_DIR/.env.production" ]; then
                 cp -p "$LEGACY_APP_DIR/.env.production" "$APP_DIR/.env.production"
@@ -170,6 +172,7 @@ jobs:
             fi
 
             cp "$SRC/compose.yaml" "$APP_DIR/compose.yaml"
+            cp "$SRC/compose.shared-edge.yml" "$APP_DIR/compose.shared-edge.yml"
             cd "$APP_DIR"
 
             set -a
@@ -183,7 +186,7 @@ jobs:
             export LOANHUB_IMAGE_TAG='${{ github.sha }}'
 
             compose() {
-              docker compose --env-file .env.production -f compose.yaml "$@"
+              docker compose --env-file .env.production -f compose.yaml -f compose.shared-edge.yml "$@"
             }
 
             EXPECTED_DB_VOLUME="${COMPOSE_PROJECT_NAME}_postgres_data"
@@ -226,8 +229,6 @@ jobs:
             compose up -d --no-build backend maintenance frontend
             compose ps
 
-            # The product must be reachable through the independently managed
-            # ithute-edge. LoanHub never starts, stops or recreates ports 80/443.
             for url in https://api.loanhub.co.ls/health/ready https://loanhub.co.ls/; do
               healthy=false
               for attempt in $(seq 1 30); do
@@ -250,5 +251,6 @@ jobs:
               "LoanHub runtime: $APP_DIR" \
               "Preserved database volume: $EXPECTED_DB_VOLUME" \
               "Pre-migration backup: $BACKUP_FILE" \
+              "Shared edge aliases: loanhub-frontend, loanhub-backend" \
               "Shared edge owner: ithute-edge (unchanged)" \
               "Legacy runtime retained: $LEGACY_APP_DIR"
