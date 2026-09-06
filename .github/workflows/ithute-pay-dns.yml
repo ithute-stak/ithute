@@ -1,0 +1,143 @@
+name: Register Ithute Pay DNS
+
+on:
+  workflow_run:
+    workflows: ["Deploy Ithute Pay Production"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ithute-pay-dns-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 204.12.205.224
+  VPS_USER: administrator
+  VPS_APP_DIR: /home/administrator/mailbox-dns
+
+jobs:
+  register:
+    name: Reconcile Ithute Pay authoritative DNS
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+    steps:
+      - name: Validate deployment credentials
+        run: |
+          set -eu
+          [ -n "${VPS_SSH_KEY:-}" ] || { echo "::error::VPS_SSH_KEY is required"; exit 1; }
+
+      - name: Configure SSH identity
+        run: |
+          set -eu
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_pay_dns"
+          chmod 600 "$HOME/.ssh/ithute_pay_dns"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/ithute-pay-dns-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/ithute-pay-dns-askpass.sh
+            SSH_ASKPASS=/tmp/ithute-pay-dns-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+              setsid -w ssh-add "$HOME/.ssh/ithute_pay_dns" </dev/null
+            rm -f /tmp/ithute-pay-dns-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/ithute_pay_dns" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Register Ithute Pay routes in PowerDNS
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' sh -s" <<'REMOTE'
+          set -eu
+          cd "$APP_DIR"
+          [ -f .env ] || { echo "Ithute production .env is missing" >&2; exit 1; }
+
+          COMPOSE_FILES="-f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.ithute-platform.yml -f docker-compose.deploy.yml"
+          compose() { docker compose $COMPOSE_FILES "$@"; }
+
+          backend_id="$(compose ps -q backend)"
+          [ -n "$backend_id" ] || { echo "Production backend container is not running" >&2; exit 1; }
+          backend_status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$backend_id")"
+          [ "$backend_status" = "healthy" ] || [ "$backend_status" = "running" ] || {
+            echo "Production backend is not healthy: $backend_status" >&2
+            exit 1
+          }
+
+          compose exec -T backend python - <<'PY'
+          from ipaddress import ip_address
+
+          from app.core.config import settings
+          from app.services.powerdns import PowerDNSClient
+
+          zone_name = "ithute.co.ls"
+          hosts = (
+              "pay.ithute.co.ls",
+              "api.pay.ithute.co.ls",
+              "portal.pay.ithute.co.ls",
+          )
+
+          if not settings.bootstrap_public_ip:
+              raise SystemExit("BOOTSTRAP_PUBLIC_IP is required to register product routes")
+
+          address = ip_address(settings.bootstrap_public_ip.strip())
+          record_type = "A" if address.version == 4 else "AAAA"
+          target = str(address)
+          client = PowerDNSClient()
+
+          # The Ithute zone is platform-owned already. Refuse to create a new zone
+          # implicitly here so a delegation/configuration mistake fails loudly.
+          client.get_zone(zone_name)
+          for hostname in hosts:
+              client.replace_rrset(
+                  zone_name,
+                  hostname,
+                  record_type,
+                  settings.powerdns_default_ttl,
+                  [target],
+              )
+          client.rectify_zone(zone_name)
+
+          zone = client.get_zone(zone_name)
+          rrsets = zone.get("rrsets", []) if isinstance(zone, dict) else []
+          expected = {hostname.rstrip(".").lower() for hostname in hosts}
+          observed = {}
+          for rrset in rrsets:
+              if not isinstance(rrset, dict) or str(rrset.get("type", "")).upper() != record_type:
+                  continue
+              name = str(rrset.get("name", "")).rstrip(".").lower()
+              if name not in expected:
+                  continue
+              values = [
+                  str(record.get("content", "")).strip()
+                  for record in rrset.get("records", [])
+                  if isinstance(record, dict) and not record.get("disabled", False)
+              ]
+              observed[name] = values
+
+          missing = [hostname for hostname in hosts if target not in observed.get(hostname, [])]
+          if missing:
+              raise SystemExit(f"PowerDNS verification failed for: {', '.join(missing)}")
+
+          for hostname in hosts:
+              print(f"DNS registered: {hostname} {record_type} {target}")
+          PY
+          REMOTE
