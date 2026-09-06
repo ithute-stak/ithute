@@ -226,7 +226,7 @@ jobs:
           wait_service() {
             service="$1"; attempts="${2:-90}"; n=1
             while [ "$n" -le "$attempts" ]; do
-              id="$(compose ps -q "$service" 2>//null || true)"
+              id="$(compose ps -q "$service" 2>/dev/null || true)"
               if [ -n "$id" ]; then
                 status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id" 2>/dev/null || true)"
                 case "$status" in healthy|running) return 0 ;; exited|dead|unhealthy) compose logs --tail=200 "$service" || true; return 1 ;; esac
