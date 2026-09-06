@@ -3,6 +3,8 @@ set -eu
 
 PAGE='apps/frontend/app/webmail/mail-client.tsx'
 ENTRY_WRAPPER='apps/frontend/app/webmail/webmail-entry.tsx'
+SHELL='apps/frontend/app/webmail/webmail-shell.tsx'
+LOADING='apps/frontend/app/webmail/mail-loading.tsx'
 COMPOSE='apps/frontend/app/webmail/mail-compose.tsx'
 ROUTE_COMPOSE='apps/frontend/app/webmail/compose/page.tsx'
 SETTINGS='apps/frontend/app/webmail/settings/page.tsx'
@@ -14,20 +16,25 @@ LAYOUT='apps/frontend/app/webmail/layout.tsx'
 POLISH='apps/backend/app/services/webmail_polish.py'
 API_ROUTE='apps/backend/app/api/v1/webmail.py'
 
-for file in "$PAGE" "$ENTRY_WRAPPER" "$COMPOSE" "$ROUTE_COMPOSE" "$SETTINGS" "$TYPES" "$BASE_CSS" "$SKIN" "$ENTRY" "$LAYOUT" "$POLISH" "$API_ROUTE"; do
+for file in "$PAGE" "$ENTRY_WRAPPER" "$SHELL" "$LOADING" "$COMPOSE" "$ROUTE_COMPOSE" "$SETTINGS" "$TYPES" "$BASE_CSS" "$SKIN" "$ENTRY" "$LAYOUT" "$POLISH" "$API_ROUTE"; do
   test -s "$file"
 done
 
 # Functional contract: keep the live production client and composer implementation.
-# The public /webmail page now uses a real auth/product wrapper, which must still
-# render the existing MailClient after mailbox authentication.
-grep -F 'WebmailEntry' "$ENTRY" >/dev/null
+# The public /webmail page uses the branded loading shell, which must resolve to
+# the real auth/product wrapper and then the existing MailClient after mailbox authentication.
+grep -F 'WebmailShell' "$ENTRY" >/dev/null
+grep -F 'WebmailEntry' "$SHELL" >/dev/null
+grep -F 'MailLoading' "$SHELL" >/dev/null
+grep -F 'Opening iMail' "$SHELL" >/dev/null
+grep -F 'Preparing your secure Ithute mailbox' "$SHELL" >/dev/null
 grep -F 'MailClient' "$ENTRY_WRAPPER" >/dev/null
 grep -F 'webmail("/session"' "$ENTRY_WRAPPER" >/dev/null
 grep -F '/auth/login' "$ENTRY_WRAPPER" >/dev/null
 grep -F 'Mailbox Login' "$ENTRY_WRAPPER" >/dev/null
 grep -F 'System Login' "$ENTRY_WRAPPER" >/dev/null
 ! grep -F 'SourceMailClient' "$ENTRY" >/dev/null
+! grep -F 'SourceMailClient' "$SHELL" >/dev/null
 ! grep -F 'SourceMailClient' "$ENTRY_WRAPPER" >/dev/null
 grep -F 'source-skin.css' "$LAYOUT" >/dev/null
 grep -F 'sourceGmailSkin' "$LAYOUT" >/dev/null
@@ -124,4 +131,4 @@ grep -F 'wm("/identity"' "$SETTINGS" >/dev/null
 grep -F 'wm("/signature"' "$SETTINGS" >/dev/null
 grep -F 'wm("/contacts"' "$SETTINGS" >/dev/null
 
-echo 'Modern Webmail UI, unified login entry, visual signatures, smart contacts, multi-recipient entry, Word-style composer, and rich attachment/thread signature guardrails passed.'
+echo 'Modern Webmail UI, branded iMail loading shell, unified login entry, visual signatures, smart contacts, multi-recipient entry, Word-style composer, and rich attachment/thread signature guardrails passed.'

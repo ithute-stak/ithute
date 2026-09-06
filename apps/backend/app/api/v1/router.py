@@ -18,6 +18,8 @@ from app.api.v1 import (
     external_webmail_known,
     external_webmail_preferences,
     external_webmail_register,
+    external_webmail_rich,
+    external_webmail_rich_alias,
     hosting,
     identity,
     ithute_auth,
@@ -68,11 +70,13 @@ api_router.include_router(hosting.router)
 api_router.include_router(platform_setup.router)
 api_router.include_router(transactional.router)
 api_router.include_router(webmail.router)
-# The exact-count route is registered before the legacy external router so the
-# Flutter/Webmail /folder-counts call uses selected-folder UID searches rather
-# than stale STATUS values reported by some connected mail servers.
+# Exact counts and rich compose aliases are registered before the legacy
+# external router so the newer behavior wins for identical paths while the
+# established session/message contract remains unchanged.
 api_router.include_router(external_webmail_counts.router)
+api_router.include_router(external_webmail_rich_alias.router)
 api_router.include_router(external_webmail.router)
+api_router.include_router(external_webmail_rich.router)
 api_router.include_router(external_webmail_known.router)
 api_router.include_router(external_webmail_register.router)
 api_router.include_router(external_webmail_preferences.router)

@@ -2,23 +2,30 @@
 
 import Link from "next/link";
 import {
+  Archive,
   ArrowLeft,
   ChevronDown,
   Download,
   Eye,
   EyeOff,
+  FileText,
+  FolderClosed,
+  Forward,
   Inbox,
   Loader2,
   LogOut,
   Mail,
   Menu,
+  MoreVertical,
   Paperclip,
   PenLine,
   RefreshCw,
   Reply,
+  ReplyAll,
   Search,
   Send,
   Server,
+  Settings2,
   ShieldCheck,
   Star,
   Trash2,
@@ -26,7 +33,24 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
+import { ExternalMailCompose } from "../external-compose";
+import { MailContent, MailPrivacyNote } from "../mail-content";
+import { MailLoading } from "../mail-loading";
+import { MailSettingsPanel, resolvedTheme, useMailPreferences } from "../mail-preferences";
+import {
+  API,
+  addressOnly,
+  emptyCompose,
+  humanBytes,
+  senderName,
+  shortDate,
+  splitAddresses,
+  stripHtml,
+  textToHtml,
+  type ComposeState,
+  type Contact,
+} from "../mail-types";
+
 const PAGE_SIZE = 50;
 
 type Folder = { name: string; raw?: string };
@@ -63,27 +87,8 @@ type SessionInfo = {
   smtp_port: number;
   smtp_security: string;
 };
-type ComposeState = {
-  to: string;
-  cc: string;
-  bcc: string;
-  subject: string;
-  body_text: string;
-  in_reply_to: string;
-  references: string;
-  attachments: { filename: string; content_type: string; content_b64: string }[];
-};
 
-const emptyCompose: ComposeState = {
-  to: "",
-  cc: "",
-  bcc: "",
-  subject: "",
-  body_text: "",
-  in_reply_to: "",
-  references: "",
-  attachments: [],
-};
+type ComposeKind = "new" | "reply" | "reply-all" | "forward";
 
 async function external(path: string, init?: RequestInit) {
   return fetch(`${API}/webmail/external${path}`, {
@@ -93,54 +98,69 @@ async function external(path: string, init?: RequestInit) {
   });
 }
 
-function splitAddresses(value: string) {
-  return value.split(/[;,]/).map((item) => item.trim()).filter(Boolean);
-}
-
-function addressOnly(value: string) {
-  const match = value.match(/<([^>]+)>/);
-  return (match?.[1] || value).trim();
-}
-
-function senderName(value: string) {
-  const text = value.replace(/<.*?>/g, "").replace(/^"|"$/g, "").trim();
-  return text || addressOnly(value) || "Unknown sender";
-}
-
 function initials(value: string) {
-  return senderName(value)
-    .split(/[\s@._-]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((item) => item[0]?.toUpperCase())
-    .join("") || "M";
+  return senderName(value).split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((item) => item[0]?.toUpperCase()).join("") || "M";
 }
 
-function shortDate(value: string) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  const now = new Date();
-  if (parsed.toDateString() === now.toDateString()) {
-    return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  }
-  if (parsed.getFullYear() === now.getFullYear()) {
-    return parsed.toLocaleDateString([], { day: "2-digit", month: "short" });
-  }
-  return parsed.toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" });
+function folderKind(name: string) {
+  const lower = name.toLowerCase();
+  if (lower === "inbox") return "inbox";
+  if (lower.includes("sent")) return "sent";
+  if (lower.includes("draft")) return "drafts";
+  if (lower.includes("trash") || lower.includes("deleted") || lower === "bin") return "trash";
+  if (lower.includes("archive") || lower.includes("all mail")) return "archive";
+  return "folder";
 }
 
 function folderIcon(name: string) {
-  const lower = name.toLowerCase();
-  if (lower === "inbox") return <Inbox size={17} />;
-  if (lower.includes("sent")) return <Send size={17} />;
-  if (lower.includes("trash") || lower.includes("deleted") || lower === "bin") return <Trash2 size={17} />;
-  return <Mail size={17} />;
+  const kind = folderKind(name);
+  if (kind === "inbox") return <Inbox size={17} />;
+  if (kind === "sent") return <Send size={17} />;
+  if (kind === "drafts") return <FileText size={17} />;
+  if (kind === "trash") return <Trash2 size={17} />;
+  if (kind === "archive") return <Archive size={17} />;
+  return <FolderClosed size={17} />;
+}
+
+function normalizedRecipients(value: string) {
+  return splitAddresses(value).map(addressOnly).filter(Boolean);
+}
+
+function unique(values: string[]) {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const key = value.toLowerCase();
+    if (!value || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function quoteForReply(row: MessageRow) {
+  const source = row.body_text || row.snippet || "";
+  const header = `On ${row.date || "an earlier date"}, ${row.from} wrote:`;
+  return {
+    text: `\n\n${header}\n${source.split("\n").map((line) => `> ${line}`).join("\n")}`,
+    html: `<br><br><div style="color:#64748b;font-size:12px">${textToHtml(header)}</div><blockquote style="margin:8px 0 0 0;border-left:3px solid #cbd5e1;padding-left:12px;color:#64748b">${textToHtml(source)}</blockquote>`,
+  };
+}
+
+function quoteForForward(row: MessageRow) {
+  const source = row.body_text || row.snippet || "";
+  const header = `---------- Forwarded message ----------\nFrom: ${row.from}\nDate: ${row.date}\nSubject: ${row.subject}\nTo: ${row.to}${row.cc ? `\nCc: ${row.cc}` : ""}`;
+  return {
+    text: `\n\n${header}\n\n${source}`,
+    html: `<br><br><div style="border-top:1px solid #d7dee8;padding-top:14px;color:#64748b;font-size:12px;line-height:1.65">${textToHtml(header)}</div><div style="margin-top:14px">${textToHtml(source)}</div>`,
+  };
 }
 
 export default function ExternalWebmailPage() {
+  const { preferences, setPreferences, resetPreferences, ready: preferencesReady } = useMailPreferences();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [checking, setChecking] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [messageLoading, setMessageLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -164,47 +184,67 @@ export default function ExternalWebmailPage() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [selected, setSelected] = useState<MessageRow | null>(null);
   const [query, setQuery] = useState("");
+
   const [composeOpen, setComposeOpen] = useState(false);
   const [compose, setCompose] = useState<ComposeState>(emptyCompose);
+  const [composeKind, setComposeKind] = useState<ComposeKind>("new");
+  const [composeMinimized, setComposeMinimized] = useState(false);
+  const [composeExpanded, setComposeExpanded] = useState(false);
+  const [showCcBcc, setShowCcBcc] = useState(false);
+  const [signatureHtml, setSignatureHtml] = useState("");
+  const [signatureDraft, setSignatureDraft] = useState("");
+  const [displayNameDraft, setDisplayNameDraft] = useState("");
+  const [savingSettings, setSavingSettings] = useState(false);
+
+  const theme = resolvedTheme(preferences.theme);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const wantsDark = theme === "dark";
+    root.classList.toggle("dark", wantsDark);
+    root.dataset.imailTheme = theme;
+  }, [theme]);
 
   const countFor = useCallback((name: string) => {
     const row = counts.find((item) => item.name.toLowerCase() === name.toLowerCase());
     if (!row) return 0;
-    return name.toLowerCase() === "inbox" ? row.unseen : row.messages;
+    return folderKind(name) === "inbox" ? row.unseen : row.messages;
   }, [counts]);
 
   const loadFolders = useCallback(async () => {
-    const [foldersResponse, countsResponse] = await Promise.all([
-      external("/folders"),
-      external("/folder-counts"),
-    ]);
-    if (foldersResponse.status === 401 || countsResponse.status === 401) {
-      setSession(null);
-      return;
-    }
+    const [foldersResponse, countsResponse] = await Promise.all([external("/folders"), external("/folder-counts")]);
+    if (foldersResponse.status === 401 || countsResponse.status === 401) { setSession(null); return; }
     if (foldersResponse.ok) setFolders((await foldersResponse.json()).items || []);
     if (countsResponse.ok) setCounts((await countsResponse.json()).items || []);
   }, []);
 
   const loadMessages = useCallback(async (target: string, search = "") => {
-    setLoading(true);
-    setError("");
+    setLoading(true); setError("");
     try {
       const params = new URLSearchParams({ folder: target, limit: String(PAGE_SIZE), offset: "0" });
       if (search.trim()) params.set("q", search.trim());
       const response = await external(`/messages?${params}`);
-      if (response.status === 401) {
-        setSession(null);
-        return;
-      }
+      if (response.status === 401) { setSession(null); return; }
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Unable to load messages");
       const data = await response.json();
       setMessages(data.items || []);
       setSelected(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to load messages");
-    } finally {
-      setLoading(false);
+    } finally { setLoading(false); }
+  }, []);
+
+  const loadPreferences = useCallback(async () => {
+    const [signatureResponse, identityResponse] = await Promise.all([external("/signature"), external("/identity")]);
+    if (signatureResponse.ok) {
+      const data = await signatureResponse.json();
+      setSignatureHtml(String(data.html || ""));
+      setSignatureDraft(String(data.html || ""));
+    }
+    if (identityResponse.ok) {
+      const data = await identityResponse.json();
+      const name = String(data.display_name || "");
+      setDisplayNameDraft(name);
     }
   }, []);
 
@@ -218,273 +258,238 @@ export default function ExternalWebmailPage() {
       try {
         const response = await external("/session");
         if (!active) return;
-        if (!response.ok) {
-          setSession(null);
-          return;
-        }
+        if (!response.ok) { setSession(null); return; }
         const data = await response.json();
         setSession(data);
-        await Promise.all([loadFolders(), loadMessages("INBOX")]);
-      } catch {
-        if (active) setSession(null);
-      } finally {
-        if (active) setChecking(false);
-      }
+        setDisplayNameDraft(String(data.display_name || ""));
+        await Promise.all([loadFolders(), loadMessages("INBOX"), loadPreferences()]);
+      } catch { if (active) setSession(null); }
+      finally { if (active) setChecking(false); }
     })();
     return () => { active = false; };
-  }, [loadFolders, loadMessages]);
+  }, [loadFolders, loadMessages, loadPreferences]);
 
   useEffect(() => {
     if (!session) return;
-    const timer = window.setInterval(() => {
-      void loadFolders();
-    }, 20000);
+    const timer = window.setInterval(() => { void loadFolders(); }, 20000);
     return () => window.clearInterval(timer);
   }, [loadFolders, session]);
 
   useEffect(() => {
     if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(""), 3000);
+    const timer = window.setTimeout(() => setNotice(""), 3500);
     return () => window.clearTimeout(timer);
   }, [notice]);
 
   const inferredDomain = useMemo(() => email.trim().toLowerCase().split("@")[1] || "", [email]);
 
   function useDomainDefaults() {
-    if (!inferredDomain) {
-      setError("Enter the email address first so iMail can determine the domain.");
-      return;
-    }
+    if (!inferredDomain) { setError("Enter the email address first so iMail can determine the domain."); return; }
     const host = `mail.${inferredDomain}`;
-    setUsername(email.trim().toLowerCase());
-    setImapHost(host);
-    setImapPort("993");
-    setImapSecurity("ssl");
-    setSmtpHost(host);
-    setSmtpPort("465");
-    setSmtpSecurity("ssl");
-    setAdvanced(true);
-    setError("");
+    setUsername(email.trim().toLowerCase()); setImapHost(host); setImapPort("993"); setImapSecurity("ssl");
+    setSmtpHost(host); setSmtpPort("465"); setSmtpSecurity("ssl"); setAdvanced(true); setError("");
   }
 
   async function connect(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoading(true);
-    setError("");
+    event.preventDefault(); setLoading(true); setError("");
     try {
       const address = email.trim().toLowerCase();
       const domain = address.split("@")[1] || "";
       const defaultHost = domain ? `mail.${domain}` : "";
-      const response = await external("/session", {
-        method: "POST",
-        body: JSON.stringify({
-          address,
-          password,
-          display_name: displayName.trim(),
-          username: username.trim() || address,
-          imap_host: imapHost.trim() || defaultHost,
-          imap_port: Number(imapPort || 993),
-          imap_security: imapSecurity,
-          smtp_host: smtpHost.trim() || defaultHost,
-          smtp_port: Number(smtpPort || 465),
-          smtp_security: smtpSecurity,
-        }),
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.detail || "Could not connect to this external mailbox.");
-      }
+      const response = await external("/session", { method: "POST", body: JSON.stringify({
+        address, password, display_name: displayName.trim(), username: username.trim() || address,
+        imap_host: imapHost.trim() || defaultHost, imap_port: Number(imapPort || 993), imap_security: imapSecurity,
+        smtp_host: smtpHost.trim() || defaultHost, smtp_port: Number(smtpPort || 465), smtp_security: smtpSecurity,
+      }) });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Could not connect to this external mailbox.");
       const data = await response.json();
-      setSession(data);
-      setFolder("INBOX");
-      setPassword("");
-      await Promise.all([loadFolders(), loadMessages("INBOX")]);
-      setNotice("External mailbox connected securely");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to connect external mailbox");
-    } finally {
-      setLoading(false);
-    }
+      setSession(data); setDisplayNameDraft(String(data.display_name || "")); setFolder("INBOX"); setPassword("");
+      await Promise.all([loadFolders(), loadMessages("INBOX"), loadPreferences()]);
+      setNotice("Mailbox connected securely");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to connect external mailbox"); }
+    finally { setLoading(false); }
   }
 
   async function logout() {
     await external("/session", { method: "DELETE" });
-    setSession(null);
-    setMessages([]);
-    setFolders([]);
-    setCounts([]);
-    setSelected(null);
-    setNotice("External mailbox disconnected");
+    setSession(null); setMessages([]); setFolders([]); setCounts([]); setSelected(null); setNotice("External mailbox disconnected");
   }
 
   async function openMessage(row: MessageRow) {
-    setSelected(row);
-    const response = await external(`/messages/${row.uid}?folder=${encodeURIComponent(folder)}`);
-    if (response.ok) {
+    setSelected(row); setMessageLoading(true);
+    try {
+      const response = await external(`/messages/${row.uid}?folder=${encodeURIComponent(folder)}`);
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Unable to open message");
       const full = await response.json();
       setSelected(full);
       setMessages((current) => current.map((item) => item.uid === row.uid ? { ...item, seen: true } : item));
       void loadFolders();
-    }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to open message"); }
+    finally { setMessageLoading(false); }
   }
 
   async function toggleStar(row: MessageRow) {
-    const response = await external(`/messages/${row.uid}/flags?folder=${encodeURIComponent(folder)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ flagged: !row.flagged }),
-    });
+    const response = await external(`/messages/${row.uid}/flags?folder=${encodeURIComponent(folder)}`, { method: "PATCH", body: JSON.stringify({ flagged: !row.flagged }) });
     if (response.ok) {
       const updated = await response.json();
-      setMessages((current) => current.map((item) => item.uid === row.uid ? updated : item));
-      if (selected?.uid === row.uid) setSelected(updated);
+      setMessages((current) => current.map((item) => item.uid === row.uid ? { ...item, ...updated } : item));
+      if (selected?.uid === row.uid) setSelected((current) => current ? { ...current, ...updated } : current);
+    }
+  }
+
+  async function toggleSeen(row: MessageRow) {
+    const response = await external(`/messages/${row.uid}/flags?folder=${encodeURIComponent(folder)}`, { method: "PATCH", body: JSON.stringify({ seen: !row.seen }) });
+    if (response.ok) {
+      setMessages((current) => current.map((item) => item.uid === row.uid ? { ...item, seen: !row.seen } : item));
+      if (selected?.uid === row.uid) setSelected((current) => current ? { ...current, seen: !row.seen } : current);
+      void loadFolders();
     }
   }
 
   async function remove(row: MessageRow) {
     const response = await external(`/messages/${row.uid}?folder=${encodeURIComponent(folder)}`, { method: "DELETE" });
-    if (!response.ok) {
-      setError((await response.json().catch(() => ({}))).detail || "Unable to delete message");
-      return;
-    }
-    setSelected(null);
-    await refresh();
-    setNotice("Message moved to Trash");
+    if (!response.ok) { setError((await response.json().catch(() => ({}))).detail || "Unable to delete message"); return; }
+    setSelected(null); await refresh(); setNotice("Message moved to Trash");
+  }
+
+  function openComposer(kind: ComposeKind, next: ComposeState) {
+    setComposeKind(kind); setCompose(next); setComposeOpen(true); setComposeMinimized(false);
+    setComposeExpanded(preferences.composeFullscreen); setShowCcBcc(Boolean(next.cc || next.bcc));
+  }
+
+  function startNew() {
+    openComposer("new", emptyCompose);
   }
 
   function startReply(row: MessageRow) {
-    const target = addressOnly(row.reply_to || row.from);
+    const quote = quoteForReply(row);
     const subject = /^re:/i.test(row.subject) ? row.subject : `Re: ${row.subject}`;
     const refs = [row.references, row.message_id].filter(Boolean).join(" ");
-    setCompose({
-      ...emptyCompose,
-      to: target,
-      subject,
-      in_reply_to: row.message_id,
-      references: refs,
-      body_text: `\n\nOn ${row.date}, ${row.from} wrote:\n${(row.body_text || row.snippet || "").split("\n").map((line) => `> ${line}`).join("\n")}`,
-    });
-    setComposeOpen(true);
+    const signatureText = stripHtml(signatureHtml);
+    openComposer("reply", { ...emptyCompose, to: addressOnly(row.reply_to || row.from), subject, in_reply_to: row.message_id, references: refs, bodyText: `${signatureText ? `\n\n${signatureText}` : ""}${quote.text}`, bodyHtml: `${signatureHtml ? `<br><br>${signatureHtml}` : ""}${quote.html}` });
+  }
+
+  function startReplyAll(row: MessageRow) {
+    if (!session) return;
+    const own = session.address.toLowerCase();
+    const originalTo = normalizedRecipients(row.to).filter((value) => value.toLowerCase() !== own);
+    const originalCc = normalizedRecipients(row.cc).filter((value) => value.toLowerCase() !== own);
+    const sender = addressOnly(row.reply_to || row.from);
+    const quote = quoteForReply(row);
+    const subject = /^re:/i.test(row.subject) ? row.subject : `Re: ${row.subject}`;
+    const refs = [row.references, row.message_id].filter(Boolean).join(" ");
+    const signatureText = stripHtml(signatureHtml);
+    openComposer("reply-all", { ...emptyCompose, to: unique([sender, ...originalTo]).join(", "), cc: unique(originalCc).join(", "), subject, in_reply_to: row.message_id, references: refs, bodyText: `${signatureText ? `\n\n${signatureText}` : ""}${quote.text}`, bodyHtml: `${signatureHtml ? `<br><br>${signatureHtml}` : ""}${quote.html}` });
+  }
+
+  async function startForward(row: MessageRow) {
+    const quote = quoteForForward(row);
+    const subject = /^fwd?:/i.test(row.subject) ? row.subject : `Fwd: ${row.subject}`;
+    const signatureText = stripHtml(signatureHtml);
+    openComposer("forward", { ...emptyCompose, subject, bodyText: `${signatureText ? `\n\n${signatureText}` : ""}${quote.text}`, bodyHtml: `${signatureHtml ? `<br><br>${signatureHtml}` : ""}${quote.html}` });
+    if (!row.attachments?.length) return;
+    setNotice("Preparing original attachments for forwarding…");
+    const prepared: ComposeState["attachments"] = [];
+    for (const item of row.attachments) {
+      try {
+        const response = await external(`/messages/${row.uid}/attachments/${item.index}?folder=${encodeURIComponent(folder)}`, { headers: {} });
+        if (!response.ok) continue;
+        const blob = await response.blob();
+        if (blob.size > 10 * 1024 * 1024) continue;
+        const content_b64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1] || ""); reader.onerror = () => reject(reader.error); reader.readAsDataURL(blob);
+        });
+        prepared.push({ filename: item.filename, content_type: item.content_type || blob.type || "application/octet-stream", content_b64 });
+      } catch { /* Keep forwarding even if one original attachment cannot be retrieved. */ }
+    }
+    if (prepared.length) setCompose((current) => ({ ...current, attachments: prepared }));
   }
 
   async function attachFiles(files: FileList | null) {
     if (!files) return;
     const rows: ComposeState["attachments"] = [];
+    let total = compose.attachments.reduce((sum, item) => sum + Math.floor(item.content_b64.length * 0.75), 0);
     for (const file of Array.from(files)) {
-      if (file.size > 10 * 1024 * 1024) {
-        setError(`${file.name} is larger than 10 MB`);
-        continue;
-      }
-      const content_b64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
-        reader.onerror = () => reject(reader.error);
-        reader.readAsDataURL(file);
-      });
+      if (file.size > 10 * 1024 * 1024) { setError(`${file.name} is larger than 10 MB`); continue; }
+      total += file.size;
+      if (total > 15 * 1024 * 1024) { setError("Total attachment size cannot exceed 15 MB"); break; }
+      const content_b64 = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1] || ""); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); });
       rows.push({ filename: file.name, content_type: file.type || "application/octet-stream", content_b64 });
     }
     setCompose((current) => ({ ...current, attachments: [...current.attachments, ...rows].slice(0, 20) }));
   }
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoading(true);
-    setError("");
+    event.preventDefault(); setLoading(true); setError("");
     try {
-      const response = await external("/send", {
-        method: "POST",
-        body: JSON.stringify({
-          to: splitAddresses(compose.to),
-          cc: splitAddresses(compose.cc),
-          bcc: splitAddresses(compose.bcc),
-          subject: compose.subject,
-          body_text: compose.body_text,
-          attachments: compose.attachments,
-          in_reply_to: compose.in_reply_to,
-          references: compose.references,
-        }),
-      });
+      const response = await external("/send", { method: "POST", body: JSON.stringify({
+        to: normalizedRecipients(compose.to), cc: normalizedRecipients(compose.cc), bcc: normalizedRecipients(compose.bcc), subject: compose.subject,
+        body_text: compose.bodyText, body_html: compose.bodyHtml, attachments: compose.attachments, in_reply_to: compose.in_reply_to, references: compose.references,
+      }) });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Unable to send message");
-      setCompose(emptyCompose);
-      setComposeOpen(false);
-      await loadFolders();
-      setNotice("Message sent through external SMTP server");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to send message");
-    } finally {
-      setLoading(false);
-    }
+      setCompose(emptyCompose); setComposeOpen(false); await loadFolders(); setNotice("Message sent through your external mail server");
+      if (selected && (composeKind === "reply" || composeKind === "reply-all")) setSelected((current) => current ? { ...current, answered: true } : current);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to send message"); }
+    finally { setLoading(false); }
   }
 
   async function saveDraft() {
-    setLoading(true);
+    setLoading(true); setError("");
     try {
-      const response = await external("/drafts", {
-        method: "POST",
-        body: JSON.stringify({
-          to: splitAddresses(compose.to),
-          cc: splitAddresses(compose.cc),
-          subject: compose.subject,
-          body_text: compose.body_text,
-        }),
-      });
+      const response = await external("/drafts", { method: "POST", body: JSON.stringify({ to: normalizedRecipients(compose.to), cc: normalizedRecipients(compose.cc), subject: compose.subject, body_text: compose.bodyText, body_html: compose.bodyHtml }) });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Unable to save draft");
-      setCompose(emptyCompose);
-      setComposeOpen(false);
-      await loadFolders();
-      setNotice("Draft saved on the external mail server");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to save draft");
-    } finally {
-      setLoading(false);
-    }
+      setCompose(emptyCompose); setComposeOpen(false); await loadFolders(); setNotice("Draft saved on your mail server");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to save draft"); }
+    finally { setLoading(false); }
   }
 
-  if (checking) {
-    return (
-      <div className="grid min-h-screen place-items-center bg-[#f3f7f5] text-[#315b50]">
-        <div className="flex items-center gap-3 rounded-2xl border border-[#dce7e2] bg-white px-5 py-4 text-sm font-semibold shadow-sm">
-          <Loader2 size={18} className="animate-spin" /> Checking external mailbox session
-        </div>
-      </div>
-    );
+  const searchContacts = useCallback(async (term: string): Promise<Contact[]> => {
+    const response = await external(`/contacts?q=${encodeURIComponent(term)}`);
+    if (!response.ok) return [];
+    const data = await response.json();
+    return (data.items || []) as Contact[];
+  }, []);
+
+  async function saveAccountSettings() {
+    setSavingSettings(true); setError("");
+    try {
+      const [identityResponse, signatureResponse] = await Promise.all([
+        external("/identity", { method: "PUT", body: JSON.stringify({ display_name: displayNameDraft.trim() }) }),
+        external("/signature", { method: "PUT", body: JSON.stringify({ html: signatureDraft }) }),
+      ]);
+      if (!identityResponse.ok || !signatureResponse.ok) throw new Error("Unable to save mailbox settings");
+      setSession((current) => current ? { ...current, display_name: displayNameDraft.trim() } : current);
+      setSignatureHtml(signatureDraft); setNotice("Account settings saved");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to save mailbox settings"); }
+    finally { setSavingSettings(false); }
   }
+
+  if (checking || !preferencesReady) return <MailLoading label="Opening iMail" detail="Checking your secure mailbox session" />;
 
   if (!session) {
     return (
-      <main className="min-h-screen bg-[#f2f7f5] px-4 py-6 text-[#1d302a] sm:px-6">
-        <div className="mx-auto max-w-3xl">
-          <Link href="/webmail" className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold text-[#426158] hover:bg-white"><ArrowLeft size={17} /> Back to !THUTE Mail</Link>
-          <div className="mt-5 overflow-hidden rounded-[28px] border border-[#dae6e0] bg-white shadow-[0_26px_70px_rgba(24,72,59,.11)]">
-            <div className="bg-[linear-gradient(135deg,#e8f3ee,#ffffff_72%)] p-6 sm:p-8">
-              <div className="flex items-center gap-3">
-                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[#123a38] text-[#f0d96f]"><Server size={23} /></div>
-                <div><p className="text-xs font-black uppercase tracking-[.14em] text-[#8c7930]">External mail account</p><h1 className="text-2xl font-black tracking-tight text-[#193d35]">Connect another mail server</h1></div>
-              </div>
-              <p className="mt-4 max-w-2xl text-sm leading-6 text-[#64766f]">Use !THUTE Webmail with any standard IMAP/SMTP mail server. The connection is secured for incoming and outgoing mail without promoting or depending on a third-party brand.</p>
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,.10),transparent_34%),linear-gradient(180deg,#f7faf9,#eef4f1)] px-4 py-6 text-slate-800 sm:px-6">
+        <div className="mx-auto max-w-4xl">
+          <Link href="/webmail" className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-bold text-emerald-950 transition hover:bg-white"><ArrowLeft size={17} /> Back to iMail</Link>
+          <div className="mt-5 overflow-hidden rounded-[30px] border border-emerald-950/10 bg-white shadow-[0_30px_90px_rgba(20,55,45,.12)]">
+            <div className="bg-[linear-gradient(135deg,#e5f3ed,#ffffff_70%)] p-6 sm:p-9">
+              <div className="flex items-center gap-4"><div className="grid h-14 w-14 place-items-center rounded-[18px] bg-gradient-to-br from-emerald-950 to-emerald-700 text-amber-300 shadow-lg"><Mail size={27} /></div><div><p className="text-xs font-black uppercase tracking-[.17em] text-amber-700">iMail • External account</p><h1 className="text-2xl font-black tracking-tight text-emerald-950 sm:text-3xl">Bring your business mailbox into Ithute Mail</h1></div></div>
+              <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-600">Connect any standards-based IMAP/SMTP mailbox. iMail keeps the experience consistent while your mail remains on the provider you already use.</p>
             </div>
-
-            <form onSubmit={connect} className="space-y-5 p-6 sm:p-8">
+            <form onSubmit={connect} className="space-y-5 p-6 sm:p-9">
               {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div> : null}
               <div className="grid gap-4 sm:grid-cols-2">
-                <label className="block"><span className="text-xs font-bold text-[#465b54]">Email address</span><input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.co.ls" className="mt-1.5 min-h-12 w-full rounded-xl border border-[#d7e2dd] px-4 text-sm outline-none focus:border-[#276c58] focus:ring-4 focus:ring-[#276c58]/10" /></label>
-                <label className="block"><span className="text-xs font-bold text-[#465b54]">Display name <span className="font-normal text-[#83908b]">optional</span></span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Your name" className="mt-1.5 min-h-12 w-full rounded-xl border border-[#d7e2dd] px-4 text-sm outline-none focus:border-[#276c58] focus:ring-4 focus:ring-[#276c58]/10" /></label>
+                <label><span className="text-xs font-bold text-slate-600">Email address</span><input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.co.ls" className="mt-1.5 h-12 w-full rounded-xl border border-slate-200 px-4 text-sm outline-none focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10" /></label>
+                <label><span className="text-xs font-bold text-slate-600">Display name <span className="font-normal text-slate-400">optional</span></span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Your name" className="mt-1.5 h-12 w-full rounded-xl border border-slate-200 px-4 text-sm outline-none focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10" /></label>
               </div>
-              <label className="block"><span className="text-xs font-bold text-[#465b54]">Mailbox password</span><div className="relative mt-1.5"><input type={showPassword ? "text" : "password"} required value={password} onChange={(event) => setPassword(event.target.value)} className="min-h-12 w-full rounded-xl border border-[#d7e2dd] px-4 pr-12 text-sm outline-none focus:border-[#276c58] focus:ring-4 focus:ring-[#276c58]/10" /><button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-[#71817a] hover:bg-[#edf4f1]">{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>
-
-              <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={useDomainDefaults} className="rounded-xl border border-[#cadbd3] bg-[#f5faf8] px-4 py-2.5 text-xs font-bold text-[#275f50] hover:bg-[#eaf4ef]">Use standard domain defaults</button>
-                <button type="button" onClick={() => setAdvanced((value) => !value)} className="inline-flex items-center gap-1 rounded-xl px-4 py-2.5 text-xs font-bold text-[#5e7169] hover:bg-[#f3f6f5]">{advanced ? "Hide" : "Show"} server settings <ChevronDown size={15} className={advanced ? "rotate-180" : ""} /></button>
-              </div>
-
-              {advanced ? (
-                <div className="grid gap-5 rounded-2xl border border-[#e1e8e5] bg-[#f9fbfa] p-4 sm:grid-cols-2">
-                  <div className="space-y-3"><p className="text-xs font-black uppercase tracking-[.11em] text-[#5f756d]">Incoming IMAP</p><input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username (usually full email)" className="min-h-11 w-full rounded-xl border border-[#d7e2dd] bg-white px-3 text-sm" /><input value={imapHost} onChange={(event) => setImapHost(event.target.value)} placeholder="mail.example.com" className="min-h-11 w-full rounded-xl border border-[#d7e2dd] bg-white px-3 text-sm" /><div className="grid grid-cols-[100px_1fr] gap-2"><input inputMode="numeric" value={imapPort} onChange={(event) => setImapPort(event.target.value)} className="min-h-11 rounded-xl border border-[#d7e2dd] bg-white px-3 text-sm" /><select value={imapSecurity} onChange={(event) => setImapSecurity(event.target.value)} className="min-h-11 rounded-xl border border-[#d7e2dd] bg-white px-3 text-sm"><option value="ssl">SSL/TLS</option><option value="starttls">STARTTLS</option></select></div></div>
-                  <div className="space-y-3"><p className="text-xs font-black uppercase tracking-[.11em] text-[#5f756d]">Outgoing SMTP</p><div className="h-11 rounded-xl border border-dashed border-[#d7e2dd] bg-white px-3 text-xs leading-[42px] text-[#7a8883]">Uses the same username and password</div><input value={smtpHost} onChange={(event) => setSmtpHost(event.target.value)} placeholder="mail.example.com" className="min-h-11 w-full rounded-xl border border-[#d7e2dd] bg-white px-3 text-sm" /><div className="grid grid-cols-[100px_1fr] gap-2"><input inputMode="numeric" value={smtpPort} onChange={(event) => setSmtpPort(event.target.value)} className="min-h-11 rounded-xl border border-[#d7e2dd] bg-white px-3 text-sm" /><select value={smtpSecurity} onChange={(event) => setSmtpSecurity(event.target.value)} className="min-h-11 rounded-xl border border-[#d7e2dd] bg-white px-3 text-sm"><option value="ssl">SSL/TLS</option><option value="starttls">STARTTLS</option></select></div></div>
-                </div>
-              ) : null}
-
-              <div className="flex items-start gap-2 rounded-xl bg-[#f4f8f6] px-4 py-3 text-xs leading-5 text-[#63736d]"><ShieldCheck size={17} className="mt-0.5 shrink-0 text-[#2d715d]" /> Credentials are encrypted in the server-side session. !THUTE Mail only allows public mail-server addresses and verified TLS connections.</div>
-              <button disabled={loading} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#14543f] px-4 text-sm font-black text-white transition hover:bg-[#0f4635] disabled:opacity-60">{loading ? <Loader2 size={18} className="animate-spin" /> : <Server size={18} />} Test and connect mailbox</button>
+              <label className="block"><span className="text-xs font-bold text-slate-600">Mailbox password</span><div className="relative mt-1.5"><input type={showPassword ? "text" : "password"} required value={password} onChange={(event) => setPassword(event.target.value)} className="h-12 w-full rounded-xl border border-slate-200 px-4 pr-12 text-sm outline-none focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10" /><button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-500 hover:bg-slate-100">{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></label>
+              <div className="flex flex-wrap gap-2"><button type="button" onClick={useDomainDefaults} className="rounded-xl border border-emerald-900/15 bg-emerald-50 px-4 py-2.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100">Use standard domain defaults</button><button type="button" onClick={() => setAdvanced((value) => !value)} className="inline-flex items-center gap-1 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50">{advanced ? "Hide" : "Show"} server settings <ChevronDown size={15} className={advanced ? "rotate-180" : ""} /></button></div>
+              {advanced ? <div className="grid gap-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2">
+                <div className="space-y-3"><p className="text-xs font-black uppercase tracking-[.12em] text-slate-500">Incoming IMAP</p><input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username (usually full email)" className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm" /><input value={imapHost} onChange={(event) => setImapHost(event.target.value)} placeholder="mail.example.com" className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm" /><div className="grid grid-cols-[100px_1fr] gap-2"><input inputMode="numeric" value={imapPort} onChange={(event) => setImapPort(event.target.value)} className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm" /><select value={imapSecurity} onChange={(event) => setImapSecurity(event.target.value)} className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm"><option value="ssl">SSL/TLS</option><option value="starttls">STARTTLS</option></select></div></div>
+                <div className="space-y-3"><p className="text-xs font-black uppercase tracking-[.12em] text-slate-500">Outgoing SMTP</p><div className="h-11 rounded-xl border border-dashed border-slate-200 bg-white px-3 text-xs leading-[42px] text-slate-500">Uses the same username and password</div><input value={smtpHost} onChange={(event) => setSmtpHost(event.target.value)} placeholder="mail.example.com" className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm" /><div className="grid grid-cols-[100px_1fr] gap-2"><input inputMode="numeric" value={smtpPort} onChange={(event) => setSmtpPort(event.target.value)} className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm" /><select value={smtpSecurity} onChange={(event) => setSmtpSecurity(event.target.value)} className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm"><option value="ssl">SSL/TLS</option><option value="starttls">STARTTLS</option></select></div></div>
+              </div> : null}
+              <div className="flex items-start gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-950"><ShieldCheck size={17} className="mt-0.5 shrink-0" /> Credentials stay in the encrypted server-side session. iMail requires public mail-server addresses and verified TLS connections.</div>
+              <button disabled={loading} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-emerald-800 px-4 text-sm font-black text-white transition hover:bg-emerald-900 disabled:opacity-60">{loading ? <Loader2 size={18} className="animate-spin" /> : <Server size={18} />} Test and connect mailbox</button>
             </form>
           </div>
         </div>
@@ -492,47 +497,97 @@ export default function ExternalWebmailPage() {
     );
   }
 
-  return (
-    <main className="min-h-screen bg-[#f3f6f5] text-[#1f2d29]">
-      <header className="sticky top-0 z-40 flex h-16 items-center gap-3 border-b border-[#dde5e1] bg-white/95 px-3 backdrop-blur sm:px-5">
-        <button className="grid h-10 w-10 place-items-center rounded-full text-[#50625b] hover:bg-[#eef3f1] lg:hidden" onClick={() => setMobileFolders(true)}><Menu size={20} /></button>
-        <Link href="/webmail" className="grid h-10 w-10 place-items-center rounded-full text-[#50625b] hover:bg-[#eef3f1]" aria-label="Back to Ithute Mail"><ArrowLeft size={20} /></Link>
-        <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#123a38] text-xs font-black text-[#f0d96f]">!T</div>
-        <div className="min-w-0"><p className="truncate text-sm font-black text-[#183c34]">{session.display_name || session.address}</p><p className="truncate text-[10px] font-semibold text-[#71817a]">External • {session.imap_host}</p></div>
-        <div className="ml-auto flex items-center gap-1"><button onClick={() => void refresh()} className="grid h-10 w-10 place-items-center rounded-full text-[#50625b] hover:bg-[#eef3f1]" title="Refresh"><RefreshCw size={18} /></button><button onClick={() => void logout()} className="grid h-10 w-10 place-items-center rounded-full text-[#50625b] hover:bg-[#eef3f1]" title="Disconnect external mailbox"><LogOut size={18} /></button></div>
-      </header>
+  const densityClass = preferences.density === "compact" ? "py-2" : "py-3.5";
+  const paneRight = preferences.readingPane === "right";
+  const paneBottom = preferences.readingPane === "bottom";
+  const noPane = preferences.readingPane === "none";
+  const composeTitle = composeKind === "reply" ? "Reply" : composeKind === "reply-all" ? "Reply all" : composeKind === "forward" ? "Forward message" : "New message";
 
-      {notice ? <div className="fixed right-4 top-20 z-[90] rounded-xl bg-[#183f35] px-4 py-3 text-xs font-bold text-white shadow-xl">{notice}</div> : null}
-      {error ? <div className="mx-auto mt-3 max-w-5xl rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div> : null}
-
-      <div className="mx-auto grid max-w-[1450px] lg:grid-cols-[250px_1fr]">
-        <aside className="hidden min-h-[calc(100vh-4rem)] border-r border-[#e0e7e4] bg-white p-3 lg:block">
-          <button onClick={() => { setCompose(emptyCompose); setComposeOpen(true); }} className="mb-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#dcefe6] text-sm font-black text-[#164d3d] hover:bg-[#cee7dc]"><PenLine size={18} /> Compose</button>
-          <div className="space-y-1">{folders.map((item) => <button key={item.name} onClick={() => { setFolder(item.name); setQuery(""); void loadMessages(item.name); }} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm ${folder === item.name ? "bg-[#e7f0ec] font-black text-[#174f40]" : "font-semibold text-[#52635d] hover:bg-[#f3f6f5]"}`}>{folderIcon(item.name)}<span className="min-w-0 flex-1 truncate">{item.name}</span><span className="text-xs">{countFor(item.name) || ""}</span></button>)}</div>
-          <div className="mt-5 rounded-xl border border-[#e1e8e5] bg-[#fafcfb] p-3 text-[10px] leading-5 text-[#718079]"><Server size={15} className="mb-2 text-[#2f705e]" />Incoming: {session.imap_host}:{session.imap_port}<br />Outgoing: {session.smtp_host}:{session.smtp_port}</div>
-        </aside>
-
-        <section className="min-w-0 p-3 sm:p-5">
-          <div className="mb-4 flex items-center gap-3">
-            <form onSubmit={(event) => { event.preventDefault(); void loadMessages(folder, query); }} className="relative flex-1"><Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#82908a]" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search in external mail" className="min-h-12 w-full rounded-full border border-[#dde5e1] bg-white pl-11 pr-12 text-sm outline-none focus:border-[#397762]" />{query ? <button type="button" onClick={() => { setQuery(""); void loadMessages(folder, ""); }} className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-[#75857f]"><X size={16} /></button> : null}</form>
-            <button onClick={() => { setCompose(emptyCompose); setComposeOpen(true); }} className="grid h-12 w-12 place-items-center rounded-full bg-[#14543f] text-white shadow-sm lg:hidden"><PenLine size={19} /></button>
-          </div>
-
-          <div className="overflow-hidden rounded-2xl border border-[#dfe6e3] bg-white shadow-sm">
-            <div className="flex items-center border-b border-[#e6ece9] px-4 py-3"><div><p className="text-sm font-black text-[#2d4039]">{folder}</p><p className="text-[10px] text-[#798983]">{messages.length} loaded messages</p></div>{loading ? <Loader2 size={17} className="ml-auto animate-spin text-[#2c725e]" /> : null}</div>
-            <div className="divide-y divide-[#edf1ef]">
-              {messages.length === 0 && !loading ? <div className="p-10 text-center text-sm text-[#7a8983]">No messages in this folder.</div> : null}
-              {messages.map((row) => <div key={row.uid} className={`flex cursor-pointer items-center gap-3 px-3 py-3 transition hover:bg-[#f6f9f8] sm:px-4 ${row.seen ? "bg-white" : "bg-[#f4f8f6]"}`} onClick={() => void openMessage(row)}><div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#dfeee7] text-xs font-black text-[#245c4d]">{initials(row.from)}</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className={`truncate text-sm ${row.seen ? "font-semibold" : "font-black"}`}>{senderName(row.from)}</p><span className="ml-auto shrink-0 text-[10px] text-[#73827c]">{shortDate(row.date)}</span></div><p className={`truncate text-xs ${row.seen ? "text-[#566861]" : "font-bold text-[#2e443c]"}`}>{row.subject}</p><p className="truncate text-[11px] text-[#84918c]">{row.snippet}</p></div><button onClick={(event) => { event.stopPropagation(); void toggleStar(row); }} className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[#71817a] hover:bg-[#edf3f0]" title="Star"><Star size={18} fill={row.flagged ? "#d6b84a" : "none"} className={row.flagged ? "text-[#b4972d]" : ""} /></button></div>)}
-            </div>
-          </div>
-        </section>
+  const reader = selected ? (
+    <section className="flex min-h-0 flex-1 flex-col bg-white dark:bg-slate-900">
+      <div className="flex h-13 shrink-0 items-center gap-1 border-b border-slate-200 px-3 dark:border-white/10 sm:px-4">
+        <button type="button" onClick={() => setSelected(null)} className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="Back to inbox"><ArrowLeft size={18} /></button>
+        <button type="button" onClick={() => void toggleStar(selected)} className={`grid h-9 w-9 place-items-center rounded-full hover:bg-slate-100 dark:hover:bg-white/10 ${selected.flagged ? "text-amber-500" : "text-slate-500"}`} title="Star"><Star size={18} fill={selected.flagged ? "currentColor" : "none"} /></button>
+        <button type="button" onClick={() => void toggleSeen(selected)} className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title={selected.seen ? "Mark unread" : "Mark read"}><Mail size={18} /></button>
+        <button type="button" onClick={() => void remove(selected)} className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10" title="Delete"><Trash2 size={18} /></button>
+        <span className="mx-1 h-5 w-px bg-slate-200 dark:bg-white/10" />
+        <button type="button" onClick={() => startReply(selected)} className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="Reply"><Reply size={18} /></button>
+        <button type="button" onClick={() => startReplyAll(selected)} className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="Reply all"><ReplyAll size={18} /></button>
+        <button type="button" onClick={() => void startForward(selected)} className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="Forward"><Forward size={18} /></button>
       </div>
 
-      {mobileFolders ? <div className="fixed inset-0 z-[80] bg-black/35 lg:hidden" onClick={() => setMobileFolders(false)}><aside className="h-full w-[82%] max-w-[320px] bg-white p-4" onClick={(event) => event.stopPropagation()}><div className="mb-5 flex items-center justify-between"><p className="font-black text-[#1b453a]">External folders</p><button onClick={() => setMobileFolders(false)}><X size={20} /></button></div>{folders.map((item) => <button key={item.name} onClick={() => { setMobileFolders(false); setFolder(item.name); void loadMessages(item.name); }} className={`mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm ${folder === item.name ? "bg-[#e7f0ec] font-black" : "font-semibold"}`}>{folderIcon(item.name)}<span className="flex-1 truncate text-left">{item.name}</span><span>{countFor(item.name) || ""}</span></button>)}</aside></div> : null}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-7 sm:py-7 lg:px-9">
+        {messageLoading ? <div className="py-12"><MailLoading compact label="Opening message" detail="Loading the full message securely" /></div> : <div className="mx-auto max-w-4xl">
+          <h1 className="pr-4 text-[22px] font-black leading-tight tracking-tight text-slate-900 dark:text-white sm:text-[26px]">{selected.subject || "(no subject)"}</h1>
+          <div className="mt-6 flex items-start gap-3">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-gradient-to-br from-emerald-100 to-emerald-200 text-sm font-black text-emerald-900 dark:from-emerald-400/15 dark:to-emerald-500/10 dark:text-emerald-200">{initials(selected.from)}</span>
+            <div className="min-w-0 flex-1"><div className="flex flex-wrap items-baseline gap-x-2"><span className="font-black text-slate-900 dark:text-white">{senderName(selected.from)}</span><span className="truncate text-xs text-slate-500">&lt;{addressOnly(selected.from)}&gt;</span></div><p className="mt-1 text-xs text-slate-500">to {selected.to || session.address}{selected.cc ? ` • cc ${selected.cc}` : ""}</p></div>
+            <time className="shrink-0 text-xs font-medium text-slate-500">{selected.date ? shortDate(selected.date) : ""}</time>
+          </div>
 
-      {selected ? <div className="fixed inset-0 z-[70] overflow-y-auto bg-white"><header className="sticky top-0 flex h-16 items-center gap-2 border-b border-[#e4eae7] bg-white px-3 sm:px-5"><button onClick={() => setSelected(null)} className="grid h-10 w-10 place-items-center rounded-full hover:bg-[#f0f4f2]"><ArrowLeft size={21} /></button><div className="ml-auto flex gap-1"><button onClick={() => void toggleStar(selected)} className="grid h-10 w-10 place-items-center rounded-full hover:bg-[#f0f4f2]"><Star size={20} fill={selected.flagged ? "#d6b84a" : "none"} /></button><button onClick={() => void remove(selected)} className="grid h-10 w-10 place-items-center rounded-full hover:bg-[#f0f4f2]"><Trash2 size={20} /></button></div></header><article className="mx-auto max-w-4xl px-5 py-7 sm:px-8"><h1 className="text-2xl font-semibold tracking-tight text-[#202824]">{selected.subject}</h1><div className="mt-7 flex items-start gap-3"><div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#dfeee7] text-sm font-black text-[#245c4d]">{initials(selected.from)}</div><div className="min-w-0"><p className="font-bold text-[#273833]">{senderName(selected.from)} <span className="font-normal text-[#75837e]">&lt;{addressOnly(selected.from)}&gt;</span></p><p className="text-xs text-[#788781]">to {selected.to || "me"} • {shortDate(selected.date)}</p></div><button onClick={() => startReply(selected)} className="ml-auto grid h-10 w-10 place-items-center rounded-full hover:bg-[#f0f4f2]"><Reply size={20} /></button></div><div className="mt-9 whitespace-pre-wrap text-[15px] leading-7 text-[#252e2b]">{selected.body_text || selected.snippet}</div>{selected.attachments?.length ? <div className="mt-8 border-t border-[#e5eae8] pt-5"><p className="mb-3 text-xs font-black uppercase tracking-wide text-[#60716a]">Attachments</p><div className="flex flex-wrap gap-2">{selected.attachments.map((item) => <a key={item.index} href={`${API}/webmail/external/messages/${selected.uid}/attachments/${item.index}?folder=${encodeURIComponent(folder)}`} className="inline-flex items-center gap-2 rounded-xl border border-[#dce4e0] bg-[#f8faf9] px-3 py-2 text-xs font-semibold text-[#40554d]"><Paperclip size={15} />{item.filename}<Download size={14} /></a>)}</div></div> : null}<div className="mt-10 flex gap-2"><button onClick={() => startReply(selected)} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#d7dfdc] px-5 text-sm font-bold hover:bg-[#f3f6f5]"><Reply size={17} /> Reply</button></div></article></div> : null}
+          <div className="mt-5"><MailPrivacyNote /></div>
+          <div className="mt-6 min-h-[220px]"><MailContent text={selected.body_text || selected.snippet || ""} openLinksNewTab={preferences.openLinksNewTab} fontScale={preferences.fontScale} /></div>
 
-      {composeOpen ? <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/25 p-0 sm:items-center sm:p-5"><form onSubmit={sendMessage} className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[24px] bg-white shadow-2xl sm:rounded-[24px]"><div className="flex items-center border-b border-[#e5ebe8] px-4 py-3"><p className="text-sm font-black text-[#274139]">New message</p><button type="button" onClick={() => { setComposeOpen(false); setCompose(emptyCompose); }} className="ml-auto grid h-9 w-9 place-items-center rounded-full hover:bg-[#f1f4f3]"><X size={18} /></button></div><div className="space-y-0 overflow-y-auto"><input required value={compose.to} onChange={(event) => setCompose((current) => ({ ...current, to: event.target.value }))} placeholder="To" className="min-h-12 w-full border-b border-[#e8edeb] px-4 text-sm outline-none" /><div className="grid grid-cols-2"><input value={compose.cc} onChange={(event) => setCompose((current) => ({ ...current, cc: event.target.value }))} placeholder="Cc" className="min-h-11 border-b border-r border-[#e8edeb] px-4 text-sm outline-none" /><input value={compose.bcc} onChange={(event) => setCompose((current) => ({ ...current, bcc: event.target.value }))} placeholder="Bcc" className="min-h-11 border-b border-[#e8edeb] px-4 text-sm outline-none" /></div><input value={compose.subject} onChange={(event) => setCompose((current) => ({ ...current, subject: event.target.value }))} placeholder="Subject" className="min-h-12 w-full border-b border-[#e8edeb] px-4 text-sm outline-none" /><textarea autoFocus value={compose.body_text} onChange={(event) => setCompose((current) => ({ ...current, body_text: event.target.value }))} placeholder="Write a message" className="min-h-[260px] w-full resize-none px-4 py-4 text-sm leading-6 outline-none" /></div>{compose.attachments.length ? <div className="flex flex-wrap gap-2 border-t border-[#e8edeb] px-4 py-3">{compose.attachments.map((item, index) => <span key={`${item.filename}-${index}`} className="rounded-lg bg-[#f0f4f2] px-2 py-1 text-[10px] font-semibold">{item.filename}</span>)}</div> : null}<div className="flex items-center gap-2 border-t border-[#e5ebe8] px-4 py-3"><button disabled={loading} className="inline-flex min-h-10 items-center gap-2 rounded-full bg-[#14543f] px-5 text-sm font-black text-white disabled:opacity-60">{loading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} Send</button><label className="grid h-10 w-10 cursor-pointer place-items-center rounded-full text-[#53665e] hover:bg-[#f0f4f2]" title="Attach files"><Paperclip size={18} /><input type="file" multiple className="hidden" onChange={(event) => void attachFiles(event.target.files)} /></label><button type="button" onClick={() => void saveDraft()} className="ml-auto rounded-full px-4 py-2 text-xs font-bold text-[#65766f] hover:bg-[#f0f4f2]">Save draft</button></div></form></div> : null}
+          {selected.attachments?.length ? <div className="mt-8 border-t border-slate-200 pt-5 dark:border-white/10"><p className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-[.12em] text-slate-500"><Paperclip size={14} /> {selected.attachments.length} attachment{selected.attachments.length === 1 ? "" : "s"}</p><div className="flex flex-wrap gap-2">{selected.attachments.map((item) => <a key={`${selected.uid}-${item.index}`} href={`${API}/webmail/external/messages/${selected.uid}/attachments/${item.index}?folder=${encodeURIComponent(folder)}`} className="group flex max-w-[300px] items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 transition hover:border-emerald-300 hover:bg-emerald-50 dark:border-white/10 dark:bg-white/[.035] dark:hover:bg-emerald-400/10"><span className="grid h-9 w-9 place-items-center rounded-lg bg-white text-slate-500 shadow-sm dark:bg-white/10"><FileText size={17} /></span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-bold text-slate-800 dark:text-slate-100">{item.filename}</span><span className="block text-[10px] text-slate-500">{humanBytes(item.size || 0)}</span></span><Download size={15} className="text-slate-400 group-hover:text-emerald-700" /></a>)}</div></div> : null}
+
+          <div className="mt-9 flex flex-wrap gap-2 border-t border-slate-200 pt-5 dark:border-white/10"><button type="button" onClick={() => startReply(selected)} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 dark:border-white/10 dark:text-slate-200 dark:hover:bg-emerald-400/10"><Reply size={16} /> Reply</button><button type="button" onClick={() => startReplyAll(selected)} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 dark:border-white/10 dark:text-slate-200 dark:hover:bg-emerald-400/10"><ReplyAll size={16} /> Reply all</button><button type="button" onClick={() => void startForward(selected)} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 dark:border-white/10 dark:text-slate-200 dark:hover:bg-emerald-400/10"><Forward size={16} /> Forward</button></div>
+        </div>}
+      </div>
+    </section>
+  ) : (
+    <section className="hidden min-h-0 flex-1 place-items-center bg-white dark:bg-slate-900 lg:grid"><div className="max-w-sm text-center"><span className="mx-auto grid h-16 w-16 place-items-center rounded-[22px] bg-emerald-50 text-emerald-800 dark:bg-emerald-400/10 dark:text-emerald-300"><Mail size={28} /></span><h2 className="mt-4 text-lg font-black text-slate-800 dark:text-white">Your message opens here</h2><p className="mt-1 text-sm leading-6 text-slate-500">Choose a message from the inbox, or change the reading pane in Settings.</p></div></section>
+  );
+
+  const messageList = (
+    <section className="flex min-h-0 flex-1 flex-col bg-[#f6f8f7] dark:bg-[#0e1514]">
+      <div className="shrink-0 px-3 pb-2 pt-3 sm:px-4">
+        <form onSubmit={(event) => { event.preventDefault(); void loadMessages(folder, query); }} className="mx-auto flex h-12 max-w-4xl items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 shadow-sm transition focus-within:border-emerald-400 focus-within:ring-4 focus-within:ring-emerald-500/10 dark:border-white/10 dark:bg-white/[.05]"><Search size={18} className="shrink-0 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search mail" className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-white" />{query ? <button type="button" onClick={() => { setQuery(""); void loadMessages(folder, ""); }} className="grid h-8 w-8 place-items-center rounded-full text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10"><X size={16} /></button> : null}</form>
+      </div>
+      <div className="flex h-11 shrink-0 items-center gap-2 border-y border-slate-200 bg-white px-3 dark:border-white/10 dark:bg-slate-900 sm:px-4"><div className="min-w-0 flex-1"><p className="truncate text-xs font-black uppercase tracking-[.12em] text-slate-600 dark:text-slate-300">{folder}</p><p className="text-[10px] font-medium text-slate-400">{messages.length} loaded message{messages.length === 1 ? "" : "s"}</p></div><button type="button" onClick={() => void refresh()} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="Refresh"><RefreshCw size={16} className={loading ? "animate-spin" : ""} /></button><button type="button" className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="More"><MoreVertical size={16} /></button></div>
+      {loading && !messages.length ? <div className="grid flex-1 place-items-center p-6"><MailLoading compact label="Loading mail" detail={`Reading ${folder}`} /></div> : <div className="min-h-0 flex-1 overflow-y-auto">
+        {!messages.length ? <div className="grid min-h-[360px] place-items-center p-8 text-center"><div><span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-white text-slate-400 shadow-sm dark:bg-white/5"><Inbox size={24} /></span><p className="mt-4 text-sm font-black text-slate-700 dark:text-slate-200">No messages here</p><p className="mt-1 text-xs text-slate-500">{query ? "Try a different search." : "This folder is currently empty."}</p></div></div> : messages.map((row) => <article key={`${folder}-${row.uid}`} className={`group flex cursor-pointer items-center gap-2 border-b border-slate-200/80 px-2 transition hover:z-[1] hover:bg-white hover:shadow-sm dark:border-white/[.07] dark:hover:bg-white/[.045] ${row.seen ? "bg-[#f7f9f8] dark:bg-[#0e1514]" : "bg-white dark:bg-slate-900"} ${densityClass} ${selected?.uid === row.uid ? "border-l-[3px] border-l-emerald-700 bg-emerald-50/70 dark:bg-emerald-400/[.06]" : "border-l-[3px] border-l-transparent"}`} onClick={() => void openMessage(row)}>
+          <button type="button" onClick={(event) => { event.stopPropagation(); void toggleStar(row); }} className={`grid h-8 w-8 shrink-0 place-items-center rounded-full transition hover:bg-slate-100 dark:hover:bg-white/10 ${row.flagged ? "text-amber-500" : "text-slate-300 group-hover:text-slate-500"}`}><Star size={16} fill={row.flagged ? "currentColor" : "none"} /></button>
+          <span className="hidden h-8 w-8 shrink-0 place-items-center rounded-full bg-emerald-100 text-[10px] font-black text-emerald-900 sm:grid dark:bg-emerald-400/10 dark:text-emerald-200">{initials(row.from)}</span>
+          <div className="min-w-0 flex-1 sm:grid sm:grid-cols-[minmax(120px,170px)_1fr_auto] sm:items-center sm:gap-3"><div className={`truncate text-sm ${row.seen ? "font-medium text-slate-700 dark:text-slate-300" : "font-black text-slate-950 dark:text-white"}`}>{senderName(row.from)}</div><div className="min-w-0"><div className={`truncate text-sm ${row.seen ? "font-medium text-slate-700 dark:text-slate-300" : "font-bold text-slate-950 dark:text-white"}`}>{row.subject || "(no subject)"}</div>{preferences.showPreview ? <p className="mt-0.5 truncate text-[11px] text-slate-500">{row.snippet}</p> : null}</div><div className="mt-1 flex items-center gap-2 sm:mt-0 sm:justify-end">{row.attachments?.length ? <Paperclip size={13} className="text-slate-400" /> : null}<time className={`text-[10px] ${row.seen ? "font-medium text-slate-400" : "font-black text-emerald-800 dark:text-emerald-300"}`}>{shortDate(row.date)}</time></div></div>
+          <div className="hidden shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100 xl:flex"><button type="button" onClick={(event) => { event.stopPropagation(); void toggleSeen(row); }} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title={row.seen ? "Mark unread" : "Mark read"}><Mail size={15} /></button><button type="button" onClick={(event) => { event.stopPropagation(); void remove(row); }} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10" title="Delete"><Trash2 size={15} /></button></div>
+        </article>)}
+      </div>}
+    </section>
+  );
+
+  return (
+    <main className={`min-h-screen ${theme === "dark" ? "bg-[#0b1110] text-slate-100" : theme === "ithute" ? "bg-[#eef4f1] text-slate-900" : "bg-[#f4f6f8] text-slate-900"}`}>
+      <header className="sticky top-0 z-40 flex h-16 items-center gap-2 border-b border-slate-200 bg-white/95 px-2 backdrop-blur dark:border-white/10 dark:bg-slate-950/95 sm:px-4">
+        <button className="grid h-10 w-10 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10 lg:hidden" onClick={() => setMobileFolders(true)} aria-label="Open folders"><Menu size={20} /></button>
+        <Link href="/webmail" className="grid h-10 w-10 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" aria-label="Back to Ithute Mail"><ArrowLeft size={20} /></Link>
+        <div className="grid h-10 w-10 place-items-center rounded-[14px] bg-gradient-to-br from-emerald-950 to-emerald-700 text-xs font-black text-amber-300 shadow-sm">iM</div>
+        <div className="min-w-0"><p className="truncate text-sm font-black text-emerald-950 dark:text-white">{session.display_name || session.address}</p><p className="truncate text-[10px] font-semibold text-slate-500">External • {session.imap_host}</p></div>
+        <span className="ml-2 hidden rounded-full border border-emerald-900/10 bg-emerald-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[.1em] text-emerald-800 md:inline">iMail</span>
+        <div className="ml-auto flex items-center gap-0.5"><button onClick={() => void refresh()} className="grid h-10 w-10 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="Refresh"><RefreshCw size={18} /></button><button onClick={() => setSettingsOpen(true)} className="grid h-10 w-10 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="Settings"><Settings2 size={18} /></button><button onClick={() => void logout()} className="grid h-10 w-10 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="Disconnect external mailbox"><LogOut size={18} /></button></div>
+      </header>
+
+      {notice ? <div className="fixed right-4 top-20 z-[120] rounded-xl bg-emerald-950 px-4 py-3 text-xs font-bold text-white shadow-2xl">{notice}</div> : null}
+      {error ? <div className="fixed left-1/2 top-20 z-[120] w-[min(92vw,620px)] -translate-x-1/2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 shadow-xl"><div className="flex items-start gap-3"><span className="min-w-0 flex-1">{error}</span><button onClick={() => setError("")} className="grid h-6 w-6 place-items-center rounded-full hover:bg-red-100"><X size={14} /></button></div></div> : null}
+
+      <div className="flex h-[calc(100vh-64px)] min-h-0">
+        <aside className={`${mobileFolders ? "fixed inset-y-16 left-0 z-50 flex w-[280px] shadow-2xl" : "hidden"} shrink-0 flex-col border-r border-slate-200 bg-[#fbfcfc] p-3 dark:border-white/10 dark:bg-[#101817] lg:flex lg:w-[244px] lg:shadow-none`}>
+          {mobileFolders ? <button type="button" onClick={() => setMobileFolders(false)} className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10"><X size={16} /></button> : null}
+          <button onClick={startNew} className="flex h-13 items-center gap-3 rounded-2xl bg-emerald-100 px-4 text-sm font-black text-emerald-950 shadow-sm transition hover:bg-emerald-200 dark:bg-emerald-400/15 dark:text-emerald-100 dark:hover:bg-emerald-400/20"><PenLine size={18} /> Compose</button>
+          <nav className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">{folders.map((item) => {
+            const active = item.name.toLowerCase() === folder.toLowerCase(); const count = countFor(item.name);
+            return <button key={item.name} onClick={() => { setFolder(item.name); setMobileFolders(false); void loadMessages(item.name, ""); }} className={`mb-1 flex h-10 w-full items-center gap-3 rounded-xl px-3 text-left text-sm transition ${active ? "bg-emerald-100 font-black text-emerald-950 dark:bg-emerald-400/15 dark:text-emerald-100" : "font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5"}`}><span className="shrink-0">{folderIcon(item.name)}</span><span className="min-w-0 flex-1 truncate">{item.name}</span>{count ? <span className="text-[10px] font-black">{count}</span> : null}</button>;
+          })}</nav>
+          <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3 text-[10px] leading-5 text-slate-500 dark:border-white/10 dark:bg-white/[.035]"><div className="flex items-center gap-2 font-black text-slate-700 dark:text-slate-200"><Server size={14} /> Connected securely</div><p className="mt-1 truncate">IMAP {session.imap_host}:{session.imap_port}</p><p className="truncate">SMTP {session.smtp_host}:{session.smtp_port}</p></div>
+        </aside>
+
+        <div className="min-w-0 flex flex-1 flex-col">
+          {noPane && selected ? reader : paneRight ? <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(390px,46%)_1fr]"><div className="min-h-0 border-r border-slate-200 dark:border-white/10">{messageList}</div>{reader}</div> : paneBottom ? <div className="grid min-h-0 flex-1 grid-rows-[minmax(300px,48%)_1fr]"><div className="min-h-0 border-b border-slate-200 dark:border-white/10">{messageList}</div>{reader}</div> : messageList}
+        </div>
+      </div>
+
+      <MailSettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} preferences={preferences} setPreferences={setPreferences} onReset={resetPreferences} displayName={displayNameDraft} signatureHtml={signatureDraft} onDisplayNameChange={setDisplayNameDraft} onSignatureChange={setSignatureDraft} onSaveAccount={saveAccountSettings} savingAccount={savingSettings} />
+
+      {composeOpen ? <ExternalMailCompose address={session.address} compose={compose} setCompose={setCompose} loading={loading} minimized={composeMinimized} expanded={composeExpanded} showCcBcc={showCcBcc} title={composeTitle} signatureHtml={composeKind === "new" ? signatureHtml : ""} onMinimized={setComposeMinimized} onExpanded={setComposeExpanded} onShowCcBcc={setShowCcBcc} onClose={() => { void saveDraft(); }} onDiscard={() => { setCompose(emptyCompose); setComposeOpen(false); }} onSaveDraft={() => void saveDraft()} onSend={sendMessage} onAttach={attachFiles} searchContacts={searchContacts} /> : null}
     </main>
   );
 }
