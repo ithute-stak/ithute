@@ -18,6 +18,7 @@ from app.api.v1 import (
     external_webmail_known,
     external_webmail_preferences,
     external_webmail_register,
+    external_webmail_rich,
     hosting,
     identity,
     ithute_auth,
@@ -73,6 +74,7 @@ api_router.include_router(webmail.router)
 # than stale STATUS values reported by some connected mail servers.
 api_router.include_router(external_webmail_counts.router)
 api_router.include_router(external_webmail.router)
+api_router.include_router(external_webmail_rich.router)
 api_router.include_router(external_webmail_known.router)
 api_router.include_router(external_webmail_register.router)
 api_router.include_router(external_webmail_preferences.router)
