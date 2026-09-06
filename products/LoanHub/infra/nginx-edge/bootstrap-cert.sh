@@ -61,28 +61,22 @@ for domain in $domains; do
   set -- "$@" -d "$domain"
 done
 
-# Remove the old edge before standalone ACME binds port 80. This is safe on the
-# first migration because the old Caddy container remains restartable until the
-# Nginx verification has passed.
+# Standalone ACME owns port 80 only during issuance. The command is idempotent:
+# Certbot keeps a non-expiring certificate when the requested SAN set is the
+# same, and --expand adds newly activated Ithute names without a second cert.
 docker ps \
   --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME:-loanhub}" \
   --filter 'label=com.docker.compose.service=caddy' \
   -q | xargs -r docker rm -f
 
-cert_exists=false
-if compose run --rm --no-deps --entrypoint /bin/sh certbot \
-  -c 'test -s /etc/letsencrypt/live/ithute-edge/fullchain.pem && test -s /etc/letsencrypt/live/ithute-edge/privkey.pem'; then
-  cert_exists=true
-fi
+docker ps \
+  --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME:-loanhub}" \
+  --filter 'label=com.docker.compose.service=edge-nginx' \
+  -q | xargs -r docker rm -f
 
-if [ "$cert_exists" = false ]; then
-  echo 'Issuing initial Ithute edge certificate with Certbot standalone challenge.'
-  compose run --rm --no-deps -p 80:80 --entrypoint certbot certbot \
-    certonly --standalone --non-interactive --agree-tos \
-    --email "$TLS_EMAIL" --cert-name ithute-edge "$@"
-else
-  echo 'Existing Ithute edge certificate found; keeping it for zero-downtime startup.'
-fi
+compose run --rm --no-deps -p 80:80 --entrypoint certbot certbot \
+  certonly --standalone --non-interactive --agree-tos \
+  --email "$TLS_EMAIL" --cert-name ithute-edge --expand "$@"
 
 compose run --rm --no-deps --entrypoint /bin/sh certbot \
-  -c 'openssl x509 -in /etc/letsencrypt/live/ithute-edge/fullchain.pem -noout -subject -issuer -dates' 2>/dev/null || true
+  -c 'test -s /etc/letsencrypt/live/ithute-edge/fullchain.pem && test -s /etc/letsencrypt/live/ithute-edge/privkey.pem'
