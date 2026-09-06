@@ -22,6 +22,7 @@ NS2="ns2.${PLATFORM_DOMAIN}"
 MAIL_HOST="mail.${PLATFORM_DOMAIN}"
 PANEL_HOST="panel.${PLATFORM_DOMAIN}"
 API_HOST="api.${PLATFORM_DOMAIN}"
+AUTH_HOST="auth.${PLATFORM_DOMAIN}"
 GROUPWARE_HOST="groupware.${PLATFORM_DOMAIN}"
 WWW_HOST="www.${PLATFORM_DOMAIN}"
 
@@ -47,7 +48,7 @@ upsert_env API_HOSTNAME "$API_HOST"
 upsert_env GROUPWARE_HOSTNAME "$GROUPWARE_HOST"
 chmod 600 .env
 
-COMPOSE_FILES="-f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.deploy.yml"
+COMPOSE_FILES="-f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.ithute-platform.yml -f docker-compose.deploy.yml"
 if grep -q '^HA_MAIL_ENABLED=true$' .env; then
   COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.ha-mail.yml -f docker-compose.deploy-ha.yml"
 fi
@@ -113,6 +114,7 @@ ns2 = f"ns2.{zone}"
 mail = f"mail.{zone}"
 panel = f"panel.{zone}"
 api = f"api.{zone}"
+auth = f"auth.{zone}"
 groupware = f"groupware.{zone}"
 www = f"www.{zone}"
 client = PowerDNSClient()
@@ -125,7 +127,7 @@ except PowerDNSError as exc:
     client.create_zone_with_nameservers(zone, [ns1, ns2])
 
 client.reconcile_authority(zone, [ns1, ns2])
-for hostname in (zone, www, panel, api, groupware, ns1, ns2, mail):
+for hostname in (zone, www, panel, api, auth, groupware, ns1, ns2, mail):
     client.replace_rrset(zone, hostname, "A", 3600, [public_ip])
 client.replace_rrset(zone, zone, "MX", 3600, [f"10 {mail}."])
 client.replace_rrset(zone, zone, "TXT", 3600, ['"v=spf1 mx -all"'])
@@ -148,7 +150,7 @@ ns="$(dig +short @"$PUBLIC_IP" "$PLATFORM_DOMAIN" NS | sort)"
 printf '%s\n' "$ns" | grep -Fx "${NS1}." >/dev/null
 printf '%s\n' "$ns" | grep -Fx "${NS2}." >/dev/null
 
-for host in "$PLATFORM_DOMAIN" "$WWW_HOST" "$PANEL_HOST" "$API_HOST" "$GROUPWARE_HOST" "$NS1" "$NS2" "$MAIL_HOST"; do
+for host in "$PLATFORM_DOMAIN" "$WWW_HOST" "$PANEL_HOST" "$API_HOST" "$AUTH_HOST" "$GROUPWARE_HOST" "$NS1" "$NS2" "$MAIL_HOST"; do
   dig +short @"$PUBLIC_IP" "$host" A | grep -Fx "$PUBLIC_IP" >/dev/null
 done
 
