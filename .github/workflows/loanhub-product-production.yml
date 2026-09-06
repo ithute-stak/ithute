@@ -9,8 +9,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: loanhub-product-production
-  cancel-in-progress: true
+  group: ithute-edge-production
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -241,14 +241,28 @@ jobs:
             compose run --rm --no-deps migrate
             compose up -d --no-build backend maintenance frontend
 
-            # Certbot owns the public certificate lifecycle; Nginx is the only
-            # production HTTP/TLS listener after bootstrap-cert completes.
-            EDGE_PUBLIC_IP='${{ env.VPS_HOST }}' TLS_EMAIL="$TLS_EMAIL" infra/nginx-edge/bootstrap-cert.sh
-            compose up -d --no-build edge-nginx certbot
-            compose exec -T edge-nginx nginx -t
+            # The dedicated shared-edge workflow performs the first certificate
+            # migration with rollback. Product deploys only take over the edge
+            # after that certificate already exists.
+            edge_cert_ready=false
+            if compose run --rm --no-deps --entrypoint /bin/sh certbot \
+              -c 'test -s /etc/letsencrypt/live/ithute-edge/fullchain.pem && test -s /etc/letsencrypt/live/ithute-edge/privkey.pem'; then
+              edge_cert_ready=true
+            fi
+
+            if [ "$edge_cert_ready" = true ]; then
+              docker ps \
+                --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+                --filter 'label=com.docker.compose.service=caddy' \
+                -q | xargs -r docker rm -f
+              compose up -d --no-build edge-nginx certbot
+              compose exec -T edge-nginx nginx -t
+            else
+              echo 'Nginx certificate is not present yet; leaving the existing Caddy edge running until the shared-edge migration completes.'
+            fi
             compose ps
 
-            for url in https://api.loanhub.co.ls/health/ready https://loanhub.co.ls/ https://auth.ithute.co.ls/healthz; do
+            for url in https://api.loanhub.co.ls/health/ready https://loanhub.co.ls/; do
               healthy=false
               for attempt in $(seq 1 30); do
                 if curl -fsS "$url" >/dev/null; then
@@ -264,17 +278,14 @@ jobs:
               fi
             done
 
-            # Remove any legacy edge container that might have survived an older
-            # Compose project state. Future production deploys keep it disabled.
-            docker ps \
-              --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
-              --filter 'label=com.docker.compose.service=caddy' \
-              -q | xargs -r docker rm -f
+            if [ "$edge_cert_ready" = true ]; then
+              curl -fsS --retry 12 --retry-delay 5 https://auth.ithute.co.ls/healthz >/dev/null
+            fi
 
             docker logout ghcr.io >/dev/null 2>&1 || true
             printf '%s\n' \
               "LoanHub runtime: $APP_DIR" \
               "Preserved database volume: $EXPECTED_DB_VOLUME" \
               "Pre-migration backup: $BACKUP_FILE" \
-              "Shared edge: Nginx + Certbot" \
+              "Shared edge ready: $edge_cert_ready" \
               "Legacy runtime retained: $LEGACY_APP_DIR"
