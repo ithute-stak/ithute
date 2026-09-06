@@ -61,9 +61,17 @@ for file in \
   }
 done
 
-# The force action is container recreation, not data recreation.
+# Pay and Tutor explicitly recreate their application containers while leaving
+# their data services/volumes intact.
 grep -Fq -- '--force-recreate' .github/workflows/ithute-pay-production.yml
 grep -Fq -- '--force-recreate' .github/workflows/ithute-tutor-production.yml
-grep -Fq -- '--force-recreate' .github/workflows/loanhub-product-production.yml
+
+# LoanHub uses an even stricter preservation path: it refuses to deploy if the
+# existing PostgreSQL volume is missing or mounted under an unexpected name,
+# and it takes a pre-migration backup before application services are updated.
+grep -Fq 'Expected existing LoanHub database volume not found' .github/workflows/loanhub-product-production.yml
+grep -Fq 'LoanHub database volume mismatch' .github/workflows/loanhub-product-production.yml
+grep -Fq 'loanhub-pre-migrate-' .github/workflows/loanhub-product-production.yml
+grep -Fq 'Pre-migration PostgreSQL backup is empty or missing; aborting.' .github/workflows/loanhub-product-production.yml
 
 echo 'Full-platform force redeploy safety contract passed: persistent data deletion is not permitted.'
