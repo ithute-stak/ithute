@@ -8,7 +8,10 @@ from app.config import Settings
 from app.security import create_access_token, create_id_token
 
 
-def _settings(tmp_path) -> Settings:
+TEST_OWNER_PASSWORD = "test-owner-secret-12345"
+
+
+def _settings(tmp_path, *, with_owner_password: bool = True) -> Settings:
     private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     private_path = tmp_path / "private.pem"
     public_path = tmp_path / "public.pem"
@@ -30,6 +33,7 @@ def _settings(tmp_path) -> Settings:
         jwt_private_key_file=str(private_path),
         jwt_public_key_file=str(public_path),
         system_owner_email="supperadmin@ithute.co.ls",
+        system_owner_password=TEST_OWNER_PASSWORD if with_owner_password else "",
     )
 
 
@@ -55,6 +59,20 @@ def test_system_owner_access_token_carries_platform_admin_claim(tmp_path) -> Non
     )
     claims = _decode(token, settings, "loanhub")
     assert claims["is_platform_admin"] is True
+
+
+def test_system_owner_email_alone_never_grants_platform_admin(tmp_path) -> None:
+    settings = _settings(tmp_path, with_owner_password=False)
+    token = create_access_token(
+        settings=settings,
+        user_id=uuid.uuid4(),
+        client_id="loanhub",
+        session_id=uuid.uuid4(),
+        email="supperadmin@ithute.co.ls",
+        phone=None,
+    )
+    claims = _decode(token, settings, "loanhub")
+    assert claims["is_platform_admin"] is False
 
 
 def test_ordinary_user_does_not_receive_platform_admin_claim(tmp_path) -> None:
