@@ -13,6 +13,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.db.session import engine
+from app.services.auth_security import request_is_https, trusted_proxy_peer
 from app.services.mail_events import publish_mail_event
 from app.services.metrics import HTTP_LATENCY, HTTP_REQUESTS, READINESS, normalized_route
 from app.services.signup_security import enforce_signup_rate_limit, ensure_public_signup_open
@@ -33,6 +34,12 @@ WEBMAIL_REALTIME_MUTATION_PREFIXES = (
     "/api/v1/webmail/send",
     "/api/v1/webmail/send-rich",
 )
+_PROXY_ONLY_HEADERS = {
+    b"x-forwarded-for",
+    b"x-forwarded-host",
+    b"x-forwarded-proto",
+    b"x-real-ip",
+}
 
 
 def _origin(value: str) -> str:
@@ -42,15 +49,30 @@ def _origin(value: str) -> str:
     return f"{parts.scheme.lower()}://{parts.netloc.lower()}"
 
 
+def _strip_untrusted_proxy_headers(request: Request) -> None:
+    peer = str(request.client.host).strip() if request.client else None
+    if trusted_proxy_peer(peer):
+        return
+    request.scope["headers"] = [
+        (name, value)
+        for name, value in request.scope.get("headers", [])
+        if name.lower() not in _PROXY_ONLY_HEADERS
+    ]
+
+
 def _request_origin(request: Request) -> str:
-    scheme = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower() or request.url.scheme.lower()
-    host = request.headers.get("x-forwarded-host", "").split(",")[0].strip().lower() or request.headers.get("host", "").lower()
+    scheme = "https" if request_is_https(request) else request.url.scheme.lower()
+    peer = str(request.client.host).strip() if request.client else None
+    if trusted_proxy_peer(peer):
+        host = request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip().lower()
+    else:
+        host = ""
+    host = host or request.headers.get("host", "").lower()
     return f"{scheme}://{host}" if scheme and host else ""
 
 
 def _request_is_https(request: Request) -> bool:
-    scheme = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower() or request.url.scheme.lower()
-    return scheme == "https"
+    return request_is_https(request)
 
 
 def _browser_mutation_rejection(request: Request) -> str | None:
@@ -103,6 +125,7 @@ def _publish_webmail_mutation(request: Request) -> None:
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
+    _strip_untrusted_proxy_headers(request)
     started = time.perf_counter()
     request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     request.state.request_id = request_id
