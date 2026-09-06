@@ -103,17 +103,27 @@ jobs:
                 caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || true
             fi
           }
-          trap 'restore_edge' HUP INT TERM ERR
+          fail_with_restore() {
+            message="$1"
+            echo "$message" >&2
+            restore_edge
+            exit 1
+          }
+          trap 'restore_edge; exit 1' HUP INT TERM
 
           caddy_id="$(docker compose --env-file .env.production --profile production ps -q caddy)"
-          [ -n "$caddy_id" ] || { echo 'Shared Caddy edge is not running' >&2; exit 1; }
+          [ -n "$caddy_id" ] || fail_with_restore 'Shared Caddy edge is not running'
           caddy_status="$(docker inspect -f '{{.State.Status}}' "$caddy_id")"
-          [ "$caddy_status" = running ] || { echo "Shared Caddy edge state is $caddy_status" >&2; exit 1; }
+          [ "$caddy_status" = running ] || fail_with_restore "Shared Caddy edge state is $caddy_status"
 
-          docker compose --env-file .env.production --profile production exec -T caddy \
-            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-          docker compose --env-file .env.production --profile production exec -T caddy \
-            caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+          if ! docker compose --env-file .env.production --profile production exec -T caddy \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile; then
+            fail_with_restore 'Caddy configuration validation failed'
+          fi
+          if ! docker compose --env-file .env.production --profile production exec -T caddy \
+            caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile; then
+            fail_with_restore 'Caddy reload failed'
+          fi
 
           for url in \
             https://pay.ithute.co.ls/ \
@@ -128,13 +138,12 @@ jobs:
               sleep 5
             done
             if [ "$healthy" != true ]; then
-              echo "Public HTTPS edge verification failed: $url" >&2
-              exit 1
+              fail_with_restore "Public HTTPS edge verification failed: $url"
             fi
             echo "HTTPS verified: $url"
           done
 
-          trap - HUP INT TERM ERR
+          trap - HUP INT TERM
           rm -f "$backup"
           echo 'Shared TLS edge deployment completed successfully.'
           REMOTE
