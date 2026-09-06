@@ -19,7 +19,7 @@ from database.multi_tenant_school_management.schemas.user import UserLogin, User
 from database.session import get_db
 from utils.auth.password_hash_verify import hash_password, verify_password
 from utils.auth.tokens import authenticate_user, get_current_user
-from utils.central_auth import require_central_claims, validate_central_access_token
+from utils.central_auth import project_platform_owner, require_central_claims, validate_central_access_token
 from utils.school_context import (
     SCHOOL_WORKSPACE_COOKIE,
     SchoolContext,
@@ -179,9 +179,15 @@ def oidc_callback(
         raise HTTPException(status_code=401, detail="central Auth OIDC validation failed")
 
     subject = uuid.UUID(str(claims["sub"]))
-    linked_user = db.query(User).filter(User.auth_user_id == subject).first()
+    if claims.get("is_platform_admin") is True:
+        linked_user = project_platform_owner(db, claims)
+    else:
+        linked_user = db.query(User).filter(User.auth_user_id == subject).first()
+
     if linked_user is None:
         destination = "/login?link_required=1"
+    elif claims.get("is_platform_admin") is True:
+        destination = "/dashboard"
     else:
         has_membership = (
             db.query(SchoolMembership)
