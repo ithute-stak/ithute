@@ -1,0 +1,125 @@
+name: Deploy Nginx TLS Edge Production
+
+on:
+  workflow_run:
+    workflows: ["Enforce Production Domain Identity"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: nginx-tls-edge-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 204.12.205.224
+  VPS_USER: administrator
+  LOANHUB_RUNTIME_DIR: /home/administrator/mailbox-dns/loanhub
+  MAILBOX_RUNTIME_DIR: /home/administrator/mailbox-dns
+  RELEASE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  deploy:
+    name: Cut over and verify Nginx HTTPS edge
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    env:
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+
+    steps:
+      - name: Check out exact production release
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          persist-credentials: false
+
+      - name: Validate deployment credentials
+        run: |
+          set -eu
+          [ -n "${VPS_SSH_KEY:-}" ] || { echo "::error::VPS_SSH_KEY is required"; exit 1; }
+
+      - name: Configure SSH identity
+        run: |
+          set -eu
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/nginx_edge"
+          chmod 600 "$HOME/.ssh/nginx_edge"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/nginx-edge-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/nginx-edge-askpass.sh
+            SSH_ASKPASS=/tmp/nginx-edge-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+              setsid -w ssh-add "$HOME/.ssh/nginx_edge" </dev/null
+            rm -f /tmp/nginx-edge-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/nginx_edge" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Package exact Nginx edge release
+        run: |
+          set -eu
+          tar -czf "/tmp/ithute-nginx-edge-${RELEASE_SHA}.tgz" \
+            products/LoanHub/compose.nginx-edge.yaml \
+            products/LoanHub/infra/nginx-edge/default.conf.template \
+            products/LoanHub/infra/nginx-edge/proxy-common.conf \
+            products/LoanHub/infra/nginx-edge/acme-bootstrap.conf \
+            scripts/deploy-nginx-edge-production.sh \
+            scripts/deploy-mail-tls.sh
+
+      - name: Stage Nginx edge release
+        run: |
+          set -eu
+          scp "/tmp/ithute-nginx-edge-${RELEASE_SHA}.tgz" \
+            "${VPS_USER}@${VPS_HOST}:/tmp/ithute-nginx-edge-${RELEASE_SHA}.tgz"
+
+      - name: Cut over from Caddy to Nginx and verify production
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" \
+            "APP_DIR='$LOANHUB_RUNTIME_DIR' MAILBOX_APP_DIR='$MAILBOX_RUNTIME_DIR' EXPECTED_IP='$VPS_HOST' EDGE_SHA='$RELEASE_SHA' sh -s" <<'REMOTE'
+          set -eu
+          stage="/tmp/ithute-nginx-edge-${EDGE_SHA}"
+          archive="/tmp/ithute-nginx-edge-${EDGE_SHA}.tgz"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          tar -xzf "$archive" -C "$stage"
+          rm -f "$archive"
+
+          mkdir -p "$APP_DIR/infra/nginx-edge"
+          cp "$stage/products/LoanHub/compose.nginx-edge.yaml" "$APP_DIR/compose.nginx-edge.yaml"
+          cp "$stage/products/LoanHub/infra/nginx-edge/default.conf.template" "$APP_DIR/infra/nginx-edge/default.conf.template"
+          cp "$stage/products/LoanHub/infra/nginx-edge/proxy-common.conf" "$APP_DIR/infra/nginx-edge/proxy-common.conf"
+          cp "$stage/products/LoanHub/infra/nginx-edge/acme-bootstrap.conf" "$APP_DIR/infra/nginx-edge/acme-bootstrap.conf"
+
+          APP_DIR="$APP_DIR" \
+          MAILBOX_APP_DIR="$MAILBOX_APP_DIR" \
+          EXPECTED_IP="$EXPECTED_IP" \
+          MAIL_TLS_DEPLOY_SCRIPT="$stage/scripts/deploy-mail-tls.sh" \
+            sh "$stage/scripts/deploy-nginx-edge-production.sh"
+
+          rm -rf "$stage"
+          REMOTE
+
+      - name: Final public Auth certificate check
+        run: |
+          set -eu
+          curl --fail --silent --show-error --retry 8 --retry-delay 5 --connect-timeout 10 \
+            https://auth.ithute.co.ls/healthz >/dev/null
+          echo "Nginx edge is serving a valid public certificate for central Ithute Auth."
