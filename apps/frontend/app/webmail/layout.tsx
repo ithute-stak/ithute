@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { MailRealtime } from "./mail-realtime";
 import styles from "./webmail.module.css";
 import "./source-skin.css";
+import "./mobile-responsive.css";
+import "./mobile-responsive-polish.css";
 
 export default function WebmailLayout({ children }: { children: ReactNode }) {
   return (
