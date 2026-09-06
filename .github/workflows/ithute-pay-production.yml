@@ -117,6 +117,8 @@ jobs:
           else
             ssh-add "$HOME/.ssh/ithute_pay_deploy" </dev/null
           fi
+          cp scripts/production-ssh-keepalive.conf "$HOME/.ssh/config"
+          chmod 600 "$HOME/.ssh/config"
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
@@ -138,7 +140,17 @@ jobs:
 
           if command -v flock >/dev/null 2>&1; then
             exec 9>/tmp/ithute-production.lock
-            flock 9
+            lock_attempt=1
+            while ! flock -n 9; do
+              if [ "$lock_attempt" -ge 120 ]; then
+                echo "Timed out waiting for the shared Ithute production lock." >&2
+                exit 1
+              fi
+              echo "Waiting for shared Ithute production lock (attempt $lock_attempt/120)..."
+              sleep 10
+              lock_attempt=$((lock_attempt + 1))
+            done
+            echo "Acquired shared Ithute production lock."
           fi
 
           cd "$APP_DIR"
@@ -196,10 +208,14 @@ jobs:
           wait_service() {
             service="$1"; attempts="${2:-90}"; n=1
             while [ "$n" -le "$attempts" ]; do
+              status="not-started"
               id="$(compose ps -q "$service" 2>/dev/null || true)"
               if [ -n "$id" ]; then
                 status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id" 2>/dev/null || true)"
                 case "$status" in healthy|running) return 0 ;; exited|dead|unhealthy) compose logs --tail=200 "$service" || true; return 1 ;; esac
+              fi
+              if [ $((n % 10)) -eq 0 ]; then
+                echo "Waiting for $service (status: $status, attempt $n/$attempts)..."
               fi
               sleep 2; n=$((n + 1))
             done

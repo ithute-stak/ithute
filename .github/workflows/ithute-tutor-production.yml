@@ -127,6 +127,8 @@ jobs:
           else
             ssh-add "$HOME/.ssh/ithute_tutor_deploy" </dev/null
           fi
+          cp scripts/production-ssh-keepalive.conf "$HOME/.ssh/config"
+          chmod 600 "$HOME/.ssh/config"
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
@@ -151,7 +153,17 @@ jobs:
 
           if command -v flock >/dev/null 2>&1; then
             exec 9>/tmp/ithute-production.lock
-            flock 9
+            lock_attempt=1
+            while ! flock -n 9; do
+              if [ "$lock_attempt" -ge 120 ]; then
+                echo "Timed out waiting for the shared Ithute production lock." >&2
+                exit 1
+              fi
+              echo "Waiting for shared Ithute production lock (attempt $lock_attempt/120)..."
+              sleep 10
+              lock_attempt=$((lock_attempt + 1))
+            done
+            echo "Acquired shared Ithute production lock."
           fi
 
           cd "$APP_DIR"
@@ -267,6 +279,7 @@ jobs:
           wait_service() {
             service="$1"; attempts="${2:-90}"; n=1
             while [ "$n" -le "$attempts" ]; do
+              status="not-started"
               id="$(compose ps -q "$service" 2>/dev/null || true)"
               if [ -n "$id" ]; then
                 status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id" 2>/dev/null || true)"
@@ -274,6 +287,9 @@ jobs:
                   healthy|running) return 0 ;;
                   exited|dead|unhealthy) compose logs --tail=250 "$service" || true; return 1 ;;
                 esac
+              fi
+              if [ $((n % 10)) -eq 0 ]; then
+                echo "Waiting for $service (status: $status, attempt $n/$attempts)..."
               fi
               sleep 2; n=$((n + 1))
             done
@@ -390,6 +406,7 @@ jobs:
               echo "Tutor origin is healthy through the shared HTTPS edge."
               exit 0
             fi
+            echo "Waiting for Tutor HTTPS origin ($attempt/30)..."
             sleep 3
           done
           edge_compose logs --tail=250 edge-nginx || true
@@ -408,6 +425,7 @@ jobs:
               dns_ready=true
               break
             fi
+            echo "Waiting for public Tutor DNS ($attempt/30): ${answer:-no answer}"
             sleep 5
           done
           [ "$dns_ready" = true ] || { echo "::error::$TUTOR_HOST does not resolve to $VPS_HOST"; exit 1; }
@@ -418,6 +436,7 @@ jobs:
               https_ready=true
               break
             fi
+            echo "Waiting for public Tutor HTTPS ($attempt/20)..."
             sleep 5
           done
           [ "$https_ready" = true ] || { echo "::error::Public Tutor HTTPS route is unhealthy"; exit 1; }
