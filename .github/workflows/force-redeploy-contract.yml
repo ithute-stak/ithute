@@ -1,0 +1,78 @@
+name: Full Platform Force Redeploy Contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/full-platform-force-redeploy.yml'
+      - '.github/workflows/force-redeploy-contract.yml'
+      - '.github/workflows/deploy-production.yml'
+      - '.github/workflows/enforce-production-domain-identity.yml'
+      - '.github/workflows/ithute-pay-production.yml'
+      - '.github/workflows/ithute-pay-dns.yml'
+      - '.github/workflows/ithute-tutor-production.yml'
+      - '.github/workflows/loanhub-product-production.yml'
+      - '.github/workflows/shared-tls-edge-production.yml'
+      - 'scripts/prod-deploy.sh'
+      - 'scripts/verify-force-redeploy-safety.sh'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/full-platform-force-redeploy.yml'
+      - '.github/workflows/force-redeploy-contract.yml'
+      - '.github/workflows/deploy-production.yml'
+      - '.github/workflows/enforce-production-domain-identity.yml'
+      - '.github/workflows/ithute-pay-production.yml'
+      - '.github/workflows/ithute-pay-dns.yml'
+      - '.github/workflows/ithute-tutor-production.yml'
+      - '.github/workflows/loanhub-product-production.yml'
+      - '.github/workflows/shared-tls-edge-production.yml'
+      - 'scripts/prod-deploy.sh'
+      - 'scripts/verify-force-redeploy-safety.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  force-redeploy-contract:
+    name: Verify non-destructive force redeploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Validate safety script syntax
+        run: sh -n scripts/verify-force-redeploy-safety.sh
+
+      - name: Enforce data-preservation contract
+        run: sh scripts/verify-force-redeploy-safety.sh
+
+      - name: Verify force workflow confirmation and scope
+        run: |
+          set -eu
+          file=.github/workflows/full-platform-force-redeploy.yml
+          grep -Fq 'FORCE-REDEPLOY-PRODUCTION' "$file"
+          grep -Fq 'actions: write' "$file"
+          grep -Fq 'scripts/verify-force-redeploy-safety.sh' "$file"
+          grep -Fq 'deploy-production.yml' "$file"
+          grep -Fq 'enforce-production-domain-identity.yml' "$file"
+          grep -Fq 'ithute-pay-production.yml' "$file"
+          grep -Fq 'ithute-pay-dns.yml' "$file"
+          grep -Fq 'ithute-tutor-production.yml' "$file"
+          grep -Fq 'loanhub-product-production.yml' "$file"
+          grep -Fq 'shared-tls-edge-production.yml' "$file"
+          grep -Fq 'Persistent volumes: preserved' "$file"
+          grep -Fq 'Database/volume deletion: prohibited by safety contract' "$file"
+
+      - name: Reject automatic force redeploy triggers
+        run: |
+          set -eu
+          file=.github/workflows/full-platform-force-redeploy.yml
+          grep -Fq 'workflow_dispatch:' "$file"
+          if grep -Eq '^[[:space:]]+(push|pull_request|schedule|workflow_run):' "$file"; then
+            echo '::error::Full force redeploy must remain manual-only.'
+            exit 1
+          fi
