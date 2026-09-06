@@ -1,0 +1,425 @@
+name: Deploy Ithute Tutor Production
+
+on:
+  workflow_run:
+    workflows: ["Build and Deploy Production"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ithute-production-vps
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ghcr.io/ithute-stak/ithute-tutor-backend
+  FRONTEND_IMAGE: ghcr.io/ithute-stak/ithute-tutor-frontend
+  GHCR_USERNAME: ithute-stak
+  VPS_HOST: 204.12.205.224
+  VPS_USER: administrator
+  VPS_APP_DIR: /home/administrator/mailbox-dns
+  VPS_EDGE_DIR: /home/administrator/ithute-edge
+  TUTOR_HOST: tutor.ithute.co.ls
+
+jobs:
+  build-and-publish:
+    name: Build immutable Ithute Tutor images
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          persist-credentials: false
+
+      - name: Authenticate GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin
+
+      - name: Initialize Docker Buildx
+        run: |
+          set -eu
+          docker buildx create --name ithute-tutor-builder --use
+          docker buildx inspect --bootstrap
+
+      - name: Build and publish Tutor backend
+        run: |
+          set -eu
+          docker buildx build --platform linux/amd64 --pull --push \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${DEPLOY_SHA}" \
+            -t "${BACKEND_IMAGE}:${DEPLOY_SHA}" -t "${BACKEND_IMAGE}:latest" \
+            ./products/ithute-tutor/sms_back_end
+
+      - name: Build and publish Tutor frontend
+        run: |
+          set -eu
+          docker buildx build --platform linux/amd64 --pull --push \
+            --build-arg NEXT_PUBLIC_TUTOR_API_URL=/api \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${DEPLOY_SHA}" \
+            -t "${FRONTEND_IMAGE}:${DEPLOY_SHA}" -t "${FRONTEND_IMAGE}:latest" \
+            ./products/ithute-tutor/sms-frontend
+
+  deploy:
+    name: Deploy Tutor, DNS and HTTPS
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    env:
+      DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          persist-credentials: false
+
+      - name: Validate deployment credentials
+        run: |
+          set -eu
+          [ -n "${VPS_SSH_KEY:-}" ] || { echo "::error::VPS_SSH_KEY is required"; exit 1; }
+
+      - name: Configure SSH identity
+        run: |
+          set -eu
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_tutor_deploy"
+          chmod 600 "$HOME/.ssh/ithute_tutor_deploy"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/ithute-tutor-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/ithute-tutor-askpass.sh
+            SSH_ASKPASS=/tmp/ithute-tutor-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+              setsid -w ssh-add "$HOME/.ssh/ithute_tutor_deploy" </dev/null
+            rm -f /tmp/ithute-tutor-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/ithute_tutor_deploy" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Stage Tutor production manifests
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          scp docker-compose.ithute-tutor.yml "$remote:/tmp/docker-compose.ithute-tutor-${DEPLOY_SHA}.yml"
+          scp docker-compose.ithute-tutor-prod.yml "$remote:/tmp/docker-compose.ithute-tutor-prod-${DEPLOY_SHA}.yml"
+          scp infrastructure/ithute-edge/default.conf.template "$remote:/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf"
+
+      - name: Deploy Tutor and register authoritative DNS
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          printf '%s' "$GHCR_TOKEN" | ssh "$remote" "docker login '$REGISTRY' -u '$GHCR_USERNAME' --password-stdin"
+
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' EDGE_DIR='$VPS_EDGE_DIR' DEPLOY_SHA='$DEPLOY_SHA' TUTOR_HOST='$TUTOR_HOST' VPS_HOST='$VPS_HOST' sh -s" <<'REMOTE'
+          set -eu
+
+          if command -v flock >/dev/null 2>&1; then
+            exec 9>/tmp/ithute-production.lock
+            flock 9
+          fi
+
+          cd "$APP_DIR"
+          [ -f .env ] || { echo "Ithute production .env is missing" >&2; exit 1; }
+          cp "/tmp/docker-compose.ithute-tutor-${DEPLOY_SHA}.yml" docker-compose.ithute-tutor.yml
+          cp "/tmp/docker-compose.ithute-tutor-prod-${DEPLOY_SHA}.yml" docker-compose.ithute-tutor-prod.yml
+          rm -f "/tmp/docker-compose.ithute-tutor-${DEPLOY_SHA}.yml" "/tmp/docker-compose.ithute-tutor-prod-${DEPLOY_SHA}.yml"
+          chmod 600 .env
+
+          # Synchronize the Tutor product secret with central Auth and preserve all
+          # existing product registrations. This block changes only Tutor entries.
+          CENTRAL_CHANGED="$(DEPLOY_SHA="$DEPLOY_SHA" python3 - <<'PY'
+          import json
+          import os
+          import secrets
+          from pathlib import Path
+
+          path = Path('.env')
+          original = path.read_text().splitlines()
+          values = {}
+          for line in original:
+              if line and not line.lstrip().startswith('#') and '=' in line:
+                  key, value = line.split('=', 1)
+                  values[key] = value
+
+          updates = {}
+          central_changed = False
+
+          def placeholder(value: str) -> bool:
+              text = (value or '').lower()
+              return not text or 'replace-with' in text or 'replace-this' in text or 'changeme' in text
+
+          def ensure_csv(key: str, entry: str, central: bool = False):
+              global central_changed
+              parts = [item.strip() for item in values.get(key, '').split(',') if item.strip()]
+              if entry not in parts:
+                  parts.append(entry)
+                  updates[key] = ','.join(parts)
+                  values[key] = updates[key]
+                  if central:
+                      central_changed = True
+
+          tutor_secret = values.get('ITHUTE_TUTOR_PUSH_SERVICE_CLIENT_SECRET', '')
+          if placeholder(tutor_secret):
+              tutor_secret = secrets.token_hex(32)
+              updates['ITHUTE_TUTOR_PUSH_SERVICE_CLIENT_SECRET'] = tutor_secret
+              values['ITHUTE_TUTOR_PUSH_SERVICE_CLIENT_SECRET'] = tutor_secret
+
+          db_password = values.get('ITHUTE_TUTOR_DB_PASSWORD', '')
+          if placeholder(db_password):
+              updates['ITHUTE_TUTOR_DB_PASSWORD'] = secrets.token_hex(32)
+              values['ITHUTE_TUTOR_DB_PASSWORD'] = updates['ITHUTE_TUTOR_DB_PASSWORD']
+
+          updates.update({
+              'ITHUTE_TUTOR_IMAGE_TAG': os.environ['DEPLOY_SHA'],
+              'ITHUTE_TUTOR_PUBLIC_URL': 'https://tutor.ithute.co.ls',
+              'ITHUTE_TUTOR_FRONTEND_URL': 'https://tutor.ithute.co.ls',
+              'ITHUTE_TUTOR_OIDC_REDIRECT_URI': 'https://tutor.ithute.co.ls/api/auth/oidc/callback',
+              'ITHUTE_TUTOR_COOKIE_SECURE': 'true',
+              'ITHUTE_TUTOR_LEGACY_AUTH_ENABLED': 'false',
+          })
+
+          ensure_csv('ITHUTE_AUTH_FIRST_PARTY_CLIENTS', 'ithute-tutor:Ithute Tutor', True)
+          ensure_csv('ITHUTE_PUSH_ALLOWED_USER_CLIENTS', 'ithute-tutor', True)
+          ensure_csv('ITHUTE_PUSH_ALLOWED_SERVICE_CLIENTS', 'ithute-tutor', True)
+          ensure_csv('ITHUTE_AUTH_CORS_ORIGINS', 'https://tutor.ithute.co.ls', True)
+
+          try:
+              redirects = json.loads(values.get('ITHUTE_AUTH_REDIRECT_URIS_JSON') or '{}')
+          except json.JSONDecodeError as exc:
+              raise SystemExit(f'Invalid ITHUTE_AUTH_REDIRECT_URIS_JSON: {exc}')
+          callback = 'https://tutor.ithute.co.ls/api/auth/oidc/callback'
+          current_callbacks = redirects.get('ithute-tutor') or []
+          if callback not in current_callbacks:
+              redirects['ithute-tutor'] = [*current_callbacks, callback]
+              updates['ITHUTE_AUTH_REDIRECT_URIS_JSON'] = json.dumps(redirects, separators=(',', ':'))
+              values['ITHUTE_AUTH_REDIRECT_URIS_JSON'] = updates['ITHUTE_AUTH_REDIRECT_URIS_JSON']
+              central_changed = True
+
+          try:
+              service_secrets = json.loads(values.get('ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON') or '{}')
+          except json.JSONDecodeError as exc:
+              raise SystemExit(f'Invalid ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON: {exc}')
+          if service_secrets.get('ithute-tutor') != tutor_secret:
+              service_secrets['ithute-tutor'] = tutor_secret
+              updates['ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON'] = json.dumps(service_secrets, separators=(',', ':'))
+              values['ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON'] = updates['ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON']
+              central_changed = True
+
+          if updates:
+              seen = set()
+              rendered = []
+              for line in original:
+                  if line and not line.lstrip().startswith('#') and '=' in line:
+                      key = line.split('=', 1)[0]
+                      if key in updates:
+                          rendered.append(f'{key}={updates[key]}')
+                          seen.add(key)
+                          continue
+                  rendered.append(line)
+              for key, value in updates.items():
+                  if key not in seen:
+                      rendered.append(f'{key}={value}')
+              path.write_text('\n'.join(rendered) + '\n')
+
+          print('true' if central_changed else 'false')
+          PY
+          )"
+          chmod 600 .env
+
+          COMPOSE_FILES="-f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.ithute-platform.yml -f docker-compose.ithute-tutor.yml -f docker-compose.ithute-tutor-prod.yml -f docker-compose.deploy.yml"
+          compose() { docker compose $COMPOSE_FILES "$@"; }
+          wait_service() {
+            service="$1"; attempts="${2:-90}"; n=1
+            while [ "$n" -le "$attempts" ]; do
+              id="$(compose ps -q "$service" 2>/dev/null || true)"
+              if [ -n "$id" ]; then
+                status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id" 2>/dev/null || true)"
+                case "$status" in
+                  healthy|running) return 0 ;;
+                  exited|dead|unhealthy) compose logs --tail=250 "$service" || true; return 1 ;;
+                esac
+              fi
+              sleep 2; n=$((n + 1))
+            done
+            compose logs --tail=250 "$service" || true
+            return 1
+          }
+
+          compose config >/dev/null
+
+          if [ "$CENTRAL_CHANGED" = "true" ]; then
+            echo "Tutor central identity registration changed; refreshing Auth/Push processes once."
+            compose up -d --no-build --no-deps --force-recreate ithute-auth ithute-push ithute-push-worker
+            wait_service ithute-auth 90
+            wait_service ithute-push 90
+            wait_service ithute-push-worker 90
+          fi
+
+          compose pull tutor-backend tutor-frontend
+          compose up -d --no-build tutor-db
+          wait_service tutor-db 60
+
+          mkdir -p backups
+          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          tutor_backup="backups/ithute-tutor-before-${timestamp}.dump"
+          compose exec -T tutor-db pg_dump --format=custom --no-owner --no-privileges \
+            -U "${ITHUTE_TUTOR_DB_USER:-ithute_tutor}" "${ITHUTE_TUTOR_DB_NAME:-ithute_tutor}" > "$tutor_backup"
+          test -s "$tutor_backup"
+
+          compose up -d --no-build --no-deps --force-recreate tutor-backend
+          wait_service tutor-backend 120
+          compose up -d --no-build --no-deps --force-recreate tutor-frontend
+          wait_service tutor-frontend 120
+
+          compose exec -T tutor-backend curl -fsS http://127.0.0.1:8000/readyz >/dev/null
+          compose exec -T nginx wget -qO- --header='Host: tutor.ithute.co.ls' http://127.0.0.1/ >/dev/null
+
+          # Authoritative DNS belongs to the existing Ithute PowerDNS service.
+          compose exec -T backend python - <<'PY'
+          from ipaddress import ip_address
+          from app.core.config import settings
+          from app.services.powerdns import PowerDNSClient
+
+          zone_name = 'ithute.co.ls'
+          hostname = 'tutor.ithute.co.ls'
+          if not settings.bootstrap_public_ip:
+              raise SystemExit('BOOTSTRAP_PUBLIC_IP is required to register Tutor DNS')
+          address = ip_address(settings.bootstrap_public_ip.strip())
+          record_type = 'A' if address.version == 4 else 'AAAA'
+          target = str(address)
+          client = PowerDNSClient()
+          client.get_zone(zone_name)
+          client.replace_rrset(zone_name, hostname, record_type, settings.powerdns_default_ttl, [target])
+          client.rectify_zone(zone_name)
+          zone = client.get_zone(zone_name)
+          observed = []
+          for rrset in zone.get('rrsets', []):
+              if str(rrset.get('name', '')).rstrip('.').lower() == hostname and str(rrset.get('type', '')).upper() == record_type:
+                  observed.extend(
+                      str(record.get('content', '')).strip()
+                      for record in rrset.get('records', [])
+                      if not record.get('disabled', False)
+                  )
+          if target not in observed:
+              raise SystemExit('Tutor PowerDNS verification failed')
+          print(f'DNS registered: {hostname} {record_type} {target}')
+          PY
+
+          # Keep the checked-in edge template authoritative even if workflow order
+          # means the generic edge recovery job has not run yet.
+          mkdir -p "$EDGE_DIR/infrastructure/ithute-edge"
+          cp "/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf" "$EDGE_DIR/infrastructure/ithute-edge/default.conf.template"
+          rm -f "/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf"
+
+          cd "$EDGE_DIR"
+          edge_compose() { docker compose -p ithute-edge -f docker-compose.ithute-edge.yml "$@"; }
+          edge_compose config >/dev/null
+
+          # Extend the existing shared certificate only when Tutor is absent from
+          # its SAN list. Existing SANs are preserved dynamically.
+          san_file="$(mktemp)"
+          edge_compose exec -T edge-nginx openssl x509 \
+            -in /etc/letsencrypt/live/ithute-edge/fullchain.pem -noout -ext subjectAltName \
+            | tr ',' '\n' | sed -n 's/^[[:space:]]*DNS://p' | sed 's/[[:space:]]//g' | sed '/^$/d' > "$san_file"
+
+          if ! grep -Fxq "$TUTOR_HOST" "$san_file"; then
+            echo "$TUTOR_HOST" >> "$san_file"
+            attempt=1
+            issued=false
+            while [ "$attempt" -le 5 ]; do
+              set --
+              while IFS= read -r domain; do
+                [ -n "$domain" ] && set -- "$@" -d "$domain"
+              done < "$san_file"
+              if edge_compose run --rm --no-deps --entrypoint certbot certbot \
+                certonly --webroot -w /var/www/certbot --cert-name ithute-edge \
+                --non-interactive --expand "$@"; then
+                issued=true
+                break
+              fi
+              echo "Tutor certificate expansion attempt $attempt failed; retrying after DNS propagation."
+              sleep 15
+              attempt=$((attempt + 1))
+            done
+            [ "$issued" = true ] || { echo "Could not extend ithute-edge TLS certificate for Tutor" >&2; exit 1; }
+          fi
+          rm -f "$san_file"
+
+          edge_compose up -d --no-build --no-deps --force-recreate edge-nginx certbot
+          edge_compose exec -T edge-nginx nginx -t
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS --resolve "$TUTOR_HOST:443:127.0.0.1" \
+              --connect-timeout 5 --max-time 15 "https://$TUTOR_HOST/" >/dev/null; then
+              echo "Tutor origin is healthy through the shared HTTPS edge."
+              exit 0
+            fi
+            sleep 3
+          done
+          edge_compose logs --tail=250 edge-nginx || true
+          exit 1
+          REMOTE
+
+          ssh "$remote" "docker logout '$REGISTRY' >/dev/null 2>&1 || true"
+
+      - name: Require public Tutor DNS and HTTPS
+        run: |
+          set -eu
+          dns_ready=false
+          for attempt in $(seq 1 30); do
+            answer="$(dig +short A "$TUTOR_HOST" | tail -n1 || true)"
+            if [ "$answer" = "$VPS_HOST" ]; then
+              dns_ready=true
+              break
+            fi
+            sleep 5
+          done
+          [ "$dns_ready" = true ] || { echo "::error::$TUTOR_HOST does not resolve to $VPS_HOST"; exit 1; }
+
+          https_ready=false
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --show-error --connect-timeout 8 --max-time 20 "https://$TUTOR_HOST/" >/dev/null; then
+              https_ready=true
+              break
+            fi
+            sleep 5
+          done
+          [ "$https_ready" = true ] || { echo "::error::Public Tutor HTTPS route is unhealthy"; exit 1; }
+
+          echo | openssl s_client -connect "$TUTOR_HOST:443" -servername "$TUTOR_HOST" 2>/dev/null \
+            | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+          echo "Ithute Tutor is publicly available at https://$TUTOR_HOST"

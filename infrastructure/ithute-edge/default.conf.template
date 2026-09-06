@@ -32,6 +32,7 @@ server {
         push.ithute.co.ls
         realtime.ithute.co.ls
         groupware.ithute.co.ls
+        tutor.ithute.co.ls
         pay.ithute.co.ls
         api.pay.ithute.co.ls
         portal.pay.ithute.co.ls
@@ -78,6 +79,7 @@ server {
         push.ithute.co.ls
         realtime.ithute.co.ls
         groupware.ithute.co.ls
+        tutor.ithute.co.ls
         pay.ithute.co.ls
         api.pay.ithute.co.ls
         portal.pay.ithute.co.ls;
