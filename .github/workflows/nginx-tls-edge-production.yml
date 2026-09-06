@@ -81,6 +81,7 @@ jobs:
             products/LoanHub/infra/nginx-edge/acme-bootstrap.conf \
             scripts/deploy-nginx-edge-production.sh \
             scripts/ensure-nginx-edge-dns.sh \
+            scripts/sync-nginx-edge-mail-tls.sh \
             scripts/deploy-mail-tls.sh
 
       - name: Stage Nginx edge release
@@ -103,11 +104,21 @@ jobs:
           tar -xzf "$archive" -C "$stage"
           rm -f "$archive"
 
-          mkdir -p "$APP_DIR/infra/nginx-edge"
+          mkdir -p "$APP_DIR/infra/nginx-edge" "$APP_DIR/.edge/bin"
           cp "$stage/products/LoanHub/compose.nginx-edge.yaml" "$APP_DIR/compose.nginx-edge.yaml"
           cp "$stage/products/LoanHub/infra/nginx-edge/default.conf.template" "$APP_DIR/infra/nginx-edge/default.conf.template"
           cp "$stage/products/LoanHub/infra/nginx-edge/proxy-common.conf" "$APP_DIR/infra/nginx-edge/proxy-common.conf"
           cp "$stage/products/LoanHub/infra/nginx-edge/acme-bootstrap.conf" "$APP_DIR/infra/nginx-edge/acme-bootstrap.conf"
+          cp "$stage/scripts/deploy-mail-tls.sh" "$APP_DIR/.edge/bin/deploy-mail-tls.sh"
+          cp "$stage/scripts/sync-nginx-edge-mail-tls.sh" "$APP_DIR/.edge/bin/sync-nginx-edge-mail-tls.sh"
+          chmod 700 "$APP_DIR/.edge/bin/deploy-mail-tls.sh" "$APP_DIR/.edge/bin/sync-nginx-edge-mail-tls.sh"
+
+          command -v crontab >/dev/null 2>&1 || { echo 'crontab is required for mail certificate synchronization' >&2; exit 1; }
+          cron_tmp="$(mktemp)"
+          crontab -l 2>/dev/null | grep -v 'ithute-nginx-mail-tls' > "$cron_tmp" || true
+          printf '%s\n' "17 */6 * * * APP_DIR=$APP_DIR MAILBOX_APP_DIR=$MAILBOX_APP_DIR /bin/sh $APP_DIR/.edge/bin/sync-nginx-edge-mail-tls.sh >> $APP_DIR/.edge/mail-tls-sync.log 2>&1 # ithute-nginx-mail-tls" >> "$cron_tmp"
+          crontab "$cron_tmp"
+          rm -f "$cron_tmp"
 
           MAILBOX_APP_DIR="$MAILBOX_APP_DIR" \
           PLATFORM_DOMAIN=ithute.co.ls \
