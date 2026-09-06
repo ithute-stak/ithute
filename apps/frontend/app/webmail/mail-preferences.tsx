@@ -18,7 +18,7 @@ export type MailPreferences = {
 };
 
 export const defaultMailPreferences: MailPreferences = {
-  theme: "ithute",
+  theme: "light",
   density: "comfortable",
   readingPane: "right",
   showPreview: true,
@@ -27,7 +27,17 @@ export const defaultMailPreferences: MailPreferences = {
   fontScale: "normal",
 };
 
-const STORAGE_KEY = "ithute-imail-preferences-v2";
+const STORAGE_KEY = "ithute-imail-preferences-v3";
+const LEGACY_STORAGE_KEY = "ithute-imail-preferences-v2";
+
+function normalizeStoredPreferences(stored: Partial<MailPreferences>, legacy = false): MailPreferences {
+  const theme = legacy && stored.theme === "ithute" ? "light" : stored.theme;
+  return {
+    ...defaultMailPreferences,
+    ...stored,
+    theme: theme && ["system", "light", "dark", "ithute"].includes(theme) ? theme : defaultMailPreferences.theme,
+  } as MailPreferences;
+}
 
 export function useMailPreferences() {
   const [preferences, setPreferencesState] = useState<MailPreferences>(defaultMailPreferences);
@@ -35,13 +45,19 @@ export function useMailPreferences() {
 
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const stored = JSON.parse(raw) as Partial<MailPreferences>;
-        setPreferencesState({ ...defaultMailPreferences, ...stored });
+      const current = window.localStorage.getItem(STORAGE_KEY);
+      if (current) {
+        setPreferencesState(normalizeStoredPreferences(JSON.parse(current) as Partial<MailPreferences>));
+      } else {
+        const legacy = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+        if (legacy) {
+          const migrated = normalizeStoredPreferences(JSON.parse(legacy) as Partial<MailPreferences>, true);
+          setPreferencesState(migrated);
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+        }
       }
     } catch {
-      // Local preferences are optional; fall back to safe defaults.
+      // Local preferences are optional; fall back to the universal light defaults.
     } finally {
       setReady(true);
     }
@@ -91,14 +107,14 @@ function OptionButton({ active, title, subtitle, onClick, icon }: { active: bool
     <button
       type="button"
       onClick={onClick}
-      className={`flex min-h-12 w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition ${active ? "border-emerald-700 bg-emerald-50 text-emerald-950 shadow-sm dark:border-emerald-500 dark:bg-emerald-500/10 dark:text-emerald-100" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[.035] dark:text-slate-200 dark:hover:bg-white/[.06]"}`}
+      className={`flex min-h-12 w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition ${active ? "border-[#0b57d0] bg-[#eaf1fb] text-[#174ea6] shadow-sm dark:border-blue-400 dark:bg-blue-400/10 dark:text-blue-100" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[.035] dark:text-slate-200 dark:hover:bg-white/[.06]"}`}
     >
       {icon ? <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300">{icon}</span> : null}
       <span className="min-w-0 flex-1">
         <span className="block text-sm font-bold">{title}</span>
         {subtitle ? <span className="mt-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{subtitle}</span> : null}
       </span>
-      {active ? <Check size={17} className="shrink-0 text-emerald-700 dark:text-emerald-300" /> : null}
+      {active ? <Check size={17} className="shrink-0 text-[#0b57d0] dark:text-blue-300" /> : null}
     </button>
   );
 }
@@ -124,9 +140,9 @@ export function MailSettingsPanel({
 
   return (
     <div className="fixed inset-0 z-[110] flex justify-end bg-slate-950/20 backdrop-blur-[2px]" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
-      <aside className="h-full w-full max-w-[430px] overflow-y-auto border-l border-slate-200 bg-[#fbfcfc] shadow-[-22px_0_70px_rgba(15,23,42,.16)] dark:border-white/10 dark:bg-[#101817]">
-        <div className="sticky top-0 z-10 flex h-16 items-center gap-3 border-b border-slate-200 bg-[#fbfcfc]/95 px-5 backdrop-blur dark:border-white/10 dark:bg-[#101817]/95">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-950 text-amber-300"><Settings2 size={18} /></span>
+      <aside className="h-full w-full max-w-[430px] overflow-y-auto border-l border-slate-200 bg-[#f8fafd] shadow-[-22px_0_70px_rgba(15,23,42,.16)] dark:border-white/10 dark:bg-[#101817]">
+        <div className="sticky top-0 z-10 flex h-16 items-center gap-3 border-b border-slate-200 bg-white/95 px-5 backdrop-blur dark:border-white/10 dark:bg-[#101817]/95">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#eaf1fb] text-[#0b57d0] dark:bg-white/10 dark:text-blue-300"><Settings2 size={18} /></span>
           <div className="min-w-0 flex-1"><p className="text-sm font-black text-slate-900 dark:text-white">iMail settings</p><p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Personalize your mailbox workspace</p></div>
           <button type="button" onClick={onClose} className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" aria-label="Close settings"><X size={18} /></button>
         </div>
@@ -135,8 +151,8 @@ export function MailSettingsPanel({
           <section>
             <h2 className="text-xs font-black uppercase tracking-[.15em] text-slate-500 dark:text-slate-400">Appearance</h2>
             <div className="mt-3 grid grid-cols-2 gap-2">
-              <OptionButton active={preferences.theme === "ithute"} title="Ithute" subtitle="Signature green" onClick={() => update("theme", "ithute")} icon={<span className="text-xs font-black text-emerald-800">!T</span>} />
-              <OptionButton active={preferences.theme === "light"} title="Light" subtitle="Bright workspace" onClick={() => update("theme", "light")} icon={<Sun size={16} />} />
+              <OptionButton active={preferences.theme === "light"} title="Universal" subtitle="Clean, familiar light workspace" onClick={() => update("theme", "light")} icon={<Sun size={16} />} />
+              <OptionButton active={preferences.theme === "ithute"} title="Ithute Green" subtitle="Brand-forward workspace" onClick={() => update("theme", "ithute")} icon={<span className="text-xs font-black text-emerald-800">!T</span>} />
               <OptionButton active={preferences.theme === "dark"} title="Dark" subtitle="Low-light mode" onClick={() => update("theme", "dark")} icon={<Moon size={16} />} />
               <OptionButton active={preferences.theme === "system"} title="System" subtitle="Follow device" onClick={() => update("theme", "system")} icon={<Monitor size={16} />} />
             </div>
@@ -159,11 +175,11 @@ export function MailSettingsPanel({
             </div>
             <label className="mt-3 flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white px-3.5 py-3 dark:border-white/10 dark:bg-white/[.035]">
               <span><span className="block text-sm font-bold text-slate-800 dark:text-slate-100">Message previews</span><span className="block text-[11px] text-slate-500 dark:text-slate-400">Show a short body snippet in the inbox</span></span>
-              <input type="checkbox" checked={preferences.showPreview} onChange={(event) => update("showPreview", event.target.checked)} className="h-4 w-4 accent-emerald-700" />
+              <input type="checkbox" checked={preferences.showPreview} onChange={(event) => update("showPreview", event.target.checked)} className="h-4 w-4 accent-[#0b57d0]" />
             </label>
             <label className="mt-2 flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white px-3.5 py-3 dark:border-white/10 dark:bg-white/[.035]">
               <span><span className="block text-sm font-bold text-slate-800 dark:text-slate-100">Compose full screen by default</span><span className="block text-[11px] text-slate-500 dark:text-slate-400">Best for longer documents and proposals</span></span>
-              <input type="checkbox" checked={preferences.composeFullscreen} onChange={(event) => update("composeFullscreen", event.target.checked)} className="h-4 w-4 accent-emerald-700" />
+              <input type="checkbox" checked={preferences.composeFullscreen} onChange={(event) => update("composeFullscreen", event.target.checked)} className="h-4 w-4 accent-[#0b57d0]" />
             </label>
           </section>
 
@@ -174,7 +190,7 @@ export function MailSettingsPanel({
             </div>
             <label className="mt-3 flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white px-3.5 py-3 dark:border-white/10 dark:bg-white/[.035]">
               <span><span className="block text-sm font-bold text-slate-800 dark:text-slate-100">Open links in a new tab</span><span className="block text-[11px] text-slate-500 dark:text-slate-400">Keeps iMail open while browsing a link</span></span>
-              <input type="checkbox" checked={preferences.openLinksNewTab} onChange={(event) => update("openLinksNewTab", event.target.checked)} className="h-4 w-4 accent-emerald-700" />
+              <input type="checkbox" checked={preferences.openLinksNewTab} onChange={(event) => update("openLinksNewTab", event.target.checked)} className="h-4 w-4 accent-[#0b57d0]" />
             </label>
           </section>
 
@@ -182,9 +198,9 @@ export function MailSettingsPanel({
             <section>
               <h2 className="text-xs font-black uppercase tracking-[.15em] text-slate-500 dark:text-slate-400">Account identity</h2>
               <div className="mt-3 space-y-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-white/[.035]">
-                {onDisplayNameChange ? <label className="block"><span className="text-xs font-bold text-slate-600 dark:text-slate-300">Display name</span><input value={displayName} onChange={(event) => onDisplayNameChange(event.target.value)} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 bg-transparent px-3 text-sm outline-none focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 dark:border-white/10" placeholder="Name shown to recipients" /></label> : null}
-                {onSignatureChange ? <label className="block"><span className="text-xs font-bold text-slate-600 dark:text-slate-300">Signature</span><textarea value={signatureHtml} onChange={(event) => onSignatureChange(event.target.value)} rows={5} className="mt-1.5 w-full resize-y rounded-xl border border-slate-200 bg-transparent px-3 py-2.5 text-sm outline-none focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/10 dark:border-white/10" placeholder="Your name, title, phone or closing message" /><span className="mt-1 block text-[10px] text-slate-500">Plain text or simple HTML is supported by your account signature.</span></label> : null}
-                {onSaveAccount ? <button type="button" disabled={savingAccount} onClick={() => void onSaveAccount()} className="h-10 w-full rounded-xl bg-emerald-800 text-xs font-black text-white transition hover:bg-emerald-900 disabled:opacity-60">{savingAccount ? "Saving…" : "Save account settings"}</button> : null}
+                {onDisplayNameChange ? <label className="block"><span className="text-xs font-bold text-slate-600 dark:text-slate-300">Display name</span><input value={displayName} onChange={(event) => onDisplayNameChange(event.target.value)} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 bg-transparent px-3 text-sm outline-none focus:border-[#0b57d0] focus:ring-4 focus:ring-blue-500/10 dark:border-white/10" placeholder="Name shown to recipients" /></label> : null}
+                {onSignatureChange ? <label className="block"><span className="text-xs font-bold text-slate-600 dark:text-slate-300">Signature</span><textarea value={signatureHtml} onChange={(event) => onSignatureChange(event.target.value)} rows={5} className="mt-1.5 w-full resize-y rounded-xl border border-slate-200 bg-transparent px-3 py-2.5 text-sm outline-none focus:border-[#0b57d0] focus:ring-4 focus:ring-blue-500/10 dark:border-white/10" placeholder="Your name, title, phone or closing message" /><span className="mt-1 block text-[10px] text-slate-500">Plain text or simple HTML is supported by your account signature.</span></label> : null}
+                {onSaveAccount ? <button type="button" disabled={savingAccount} onClick={() => void onSaveAccount()} className="h-10 w-full rounded-full bg-[#0b57d0] text-xs font-black text-white transition hover:bg-[#0842a0] disabled:opacity-60">{savingAccount ? "Saving…" : "Save account settings"}</button> : null}
               </div>
             </section>
           ) : null}
