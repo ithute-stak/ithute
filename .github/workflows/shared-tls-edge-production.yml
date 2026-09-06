@@ -85,21 +85,23 @@ jobs:
               --connect-timeout 3 --max-time 10 -o /dev/null https://panel.ithute.co.ls/
           }
 
-          # Prefer Nginx when the Certbot volume already contains a certificate.
           nginx_recovered=false
           if [ -s compose.edge-nginx.yml ] && [ -s infra/nginx-edge/default.conf.template ]; then
             if edge run --rm --no-deps --entrypoint /bin/sh certbot \
               -c 'test -s /etc/letsencrypt/live/ithute-edge/fullchain.pem && test -s /etc/letsencrypt/live/ithute-edge/privkey.pem'; then
-              echo 'Existing Nginx certificate found; attempting Nginx recovery.'
+              echo 'Existing Nginx certificate found; force-recreating Nginx so the current Ithute template is rendered.'
               docker ps \
                 --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
                 --filter 'label=com.docker.compose.service=caddy' \
                 -q | xargs -r docker rm -f
-              if edge up -d --no-build edge-nginx certbot \
+
+              if edge up -d --no-build --no-deps --force-recreate edge-nginx certbot \
                 && edge exec -T edge-nginx nginx -t \
+                && edge exec -T edge-nginx nginx -T 2>/dev/null | grep -Fq 'auth.ithute.co.ls' \
+                && edge exec -T edge-nginx nginx -T 2>/dev/null | grep -Fq 'panel.ithute.co.ls' \
                 && listener_ok; then
                 nginx_recovered=true
-                echo 'Nginx HTTPS listener restored.'
+                echo 'Nginx HTTPS listener restored with the Ithute virtual-host configuration.'
               else
                 echo 'Nginx recovery did not become healthy; falling back to the previous Caddy edge.' >&2
                 edge logs --tail=200 edge-nginx certbot >&2 || true
@@ -109,8 +111,6 @@ jobs:
           fi
 
           if [ "$nginx_recovered" != true ]; then
-            # Emergency fallback only. This restores the hostnames Caddy already
-            # served before the migration; it does not perform any ACME changes.
             if [ -s compose.edge-nginx.yml ]; then
               edge rm -sf edge-nginx certbot >/dev/null 2>&1 || true
             fi
