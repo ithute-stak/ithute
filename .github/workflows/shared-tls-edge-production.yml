@@ -89,7 +89,7 @@ jobs:
           scp products/LoanHub/infra/nginx-edge/ithute-tls.conf "$remote:$stage/infra/nginx-edge/ithute-tls.conf"
           scp products/LoanHub/infra/nginx-edge/bootstrap-cert.sh "$remote:$stage/infra/nginx-edge/bootstrap-cert.sh"
 
-      - name: Migrate, validate and verify HTTPS edge
+      - name: Migrate and validate Nginx edge on VPS
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
@@ -137,16 +137,39 @@ jobs:
           compose pull edge-nginx certbot || fail_with_restore 'Could not pull Nginx/Certbot images'
 
           if ! EDGE_PUBLIC_IP="$EDGE_PUBLIC_IP" TLS_EMAIL="$TLS_EMAIL" infra/nginx-edge/bootstrap-cert.sh; then
-            fail_with_restore 'Initial Nginx edge certificate issuance failed'
+            fail_with_restore 'Nginx edge certificate issuance/validation failed'
           fi
 
           compose up -d --no-build edge-nginx certbot || fail_with_restore 'Nginx edge failed to start'
           sleep 3
           compose exec -T edge-nginx nginx -t || fail_with_restore 'Nginx configuration validation failed'
+          compose exec -T edge-nginx nginx -T 2>/dev/null | grep -Fq 'auth.ithute.co.ls' \
+            || fail_with_restore 'Rendered Nginx configuration does not contain auth.ithute.co.ls'
 
-          # These endpoints only prove that public TLS terminates and the request
-          # reaches the correct virtual host. A 4xx application response is still
-          # a successful edge check, so do not use curl -f here.
+          # This VPS cannot reliably hairpin through its own public IPv4. Verify
+          # the published listener through loopback while preserving each SNI and
+          # Host name with curl --resolve.
+          local_check() {
+            url="$1"
+            require_success="$2"
+            host="$(printf '%s' "$url" | sed -E 's#^https://([^/]+).*$#\1#')"
+            attempt=1
+            while [ "$attempt" -le 18 ]; do
+              if [ "$require_success" = true ]; then
+                if curl -fsS --resolve "$host:443:127.0.0.1" --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
+                  return 0
+                fi
+              else
+                if curl -sS --resolve "$host:443:127.0.0.1" --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
+                  return 0
+                fi
+              fi
+              sleep 3
+              attempt=$((attempt + 1))
+            done
+            return 1
+          }
+
           for url in \
             https://ithute.co.ls/ \
             https://panel.ithute.co.ls/ \
@@ -154,35 +177,18 @@ jobs:
             https://api.pay.ithute.co.ls/ \
             https://portal.pay.ithute.co.ls/portal \
             https://loanhub.co.ls/; do
-            healthy=false
-            for attempt in $(seq 1 36); do
-              if curl -sS --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
-                healthy=true
-                break
-              fi
-              sleep 5
-            done
-            [ "$healthy" = true ] || fail_with_restore "Public TLS/route verification failed: $url"
-            echo "TLS route verified: $url"
+            local_check "$url" false || fail_with_restore "Local TLS/route verification failed: $url"
+            echo "Local TLS route verified: $url"
           done
 
-          # Health endpoints must return a successful application status.
           for url in \
             https://auth.ithute.co.ls/healthz \
             https://api.loanhub.co.ls/health/ready; do
-            healthy=false
-            for attempt in $(seq 1 36); do
-              if curl -fsS --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
-                healthy=true
-                break
-              fi
-              sleep 5
-            done
-            [ "$healthy" = true ] || fail_with_restore "Public application health verification failed: $url"
-            echo "Application health verified: $url"
+            local_check "$url" true || fail_with_restore "Local application health verification failed: $url"
+            echo "Local application health verified: $url"
           done
 
-          echo | openssl s_client -connect auth.ithute.co.ls:443 -servername auth.ithute.co.ls 2>/dev/null \
+          echo | openssl s_client -connect 127.0.0.1:443 -servername auth.ithute.co.ls 2>/dev/null \
             | openssl x509 -noout -subject -issuer -dates \
             || fail_with_restore 'Auth TLS certificate could not be read from the Nginx edge'
 
@@ -197,12 +203,70 @@ jobs:
             || fail_with_restore 'Mail TLS deployment from the Nginx edge certificate failed'
           rm -f "$cert_tmp" "$key_tmp"
 
-          # Caddy no longer owns any production port after this point.
           docker ps \
             --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
             --filter 'label=com.docker.compose.service=caddy' \
             -q | xargs -r docker rm -f
 
           trap - HUP INT TERM
-          echo 'Nginx + Certbot shared TLS edge deployment completed successfully.'
+          echo 'Nginx + Certbot edge passed VPS-local validation.'
           REMOTE
+
+      - name: Verify Nginx edge from the public Internet
+        run: |
+          set -eu
+          external_check() {
+            url="$1"
+            require_success="$2"
+            attempt=1
+            while [ "$attempt" -le 18 ]; do
+              if [ "$require_success" = true ]; then
+                if curl -fsS --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
+                  return 0
+                fi
+              else
+                if curl -sS --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
+                  return 0
+                fi
+              fi
+              sleep 3
+              attempt=$((attempt + 1))
+            done
+            return 1
+          }
+
+          failed=false
+          for url in \
+            https://ithute.co.ls/ \
+            https://panel.ithute.co.ls/ \
+            https://pay.ithute.co.ls/ \
+            https://api.pay.ithute.co.ls/ \
+            https://portal.pay.ithute.co.ls/portal \
+            https://loanhub.co.ls/; do
+            if external_check "$url" false; then
+              echo "Public TLS route verified: $url"
+            else
+              echo "::error::Public TLS/route verification failed: $url"
+              failed=true
+            fi
+          done
+          for url in \
+            https://auth.ithute.co.ls/healthz \
+            https://api.loanhub.co.ls/health/ready; do
+            if external_check "$url" true; then
+              echo "Public application health verified: $url"
+            else
+              echo "::error::Public application health verification failed: $url"
+              failed=true
+            fi
+          done
+
+          if [ "$failed" = true ]; then
+            remote="${VPS_USER}@${VPS_HOST}"
+            ssh "$remote" "cd '$LOANHUB_RUNTIME_DIR' && docker compose --env-file .env.production -f compose.yaml -f compose.edge-nginx.yml --profile production rm -sf edge-nginx certbot >/dev/null 2>&1 || true; cd '$LOANHUB_RUNTIME_DIR' && docker compose --env-file .env.production --profile production up -d caddy >/dev/null 2>&1 || true"
+            exit 1
+          fi
+
+          echo | openssl s_client -connect auth.ithute.co.ls:443 -servername auth.ithute.co.ls 2>/dev/null \
+            | openssl x509 -noout -subject -issuer -dates
+          echo 'Nginx + Certbot shared TLS edge deployment completed successfully.'
