@@ -85,12 +85,30 @@ provision_realtime_identity() {
   upsert_env ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON "$service_map"
 }
 
+configure_push_provider_policy() {
+  mode="$(env_value PLATFORM_MODE)"
+  required="$(env_value ITHUTE_PUSH_REQUIRED_PROVIDERS)"
+
+  if [ "$mode" = "bootstrap" ] && [ -z "$required" ]; then
+    # Bootstrap production is allowed to run before a Firebase project is
+    # provisioned. An explicitly configured provider requirement is preserved.
+    # The Compose interpolation uses ${VAR-default} so this explicit empty value
+    # reaches Push instead of falling back to the Android production baseline.
+    upsert_env ITHUTE_PUSH_REQUIRED_PROVIDERS ""
+    echo "Bootstrap mode: Push provider delivery is optional until provider credentials are provisioned."
+  elif [ "$mode" = "domain" ] && [ -z "$required" ]; then
+    # Full domain production must restore the Android-first FCM readiness gate.
+    upsert_env ITHUTE_PUSH_REQUIRED_PROVIDERS "fcm"
+  fi
+}
+
 # Preserve valid encryption material and generate missing keys only once in the
 # VPS-owned .env. Rotating either Fernet key implicitly would make encrypted
 # Auth MFA or Push endpoint data unreadable, so valid existing values are kept.
 repair_fernet_key ITHUTE_AUTH_TOTP_ENCRYPTION_KEY '!thute Auth MFA'
 repair_fernet_key ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY '!thute Push endpoints'
 provision_realtime_identity
+configure_push_provider_policy
 
 . scripts/load-dotenv.sh
 load_dotenv .env
@@ -224,9 +242,10 @@ compose exec -T ithute-realtime-db pg_dump --format=custom --no-owner --no-privi
 test -s "$realtime_backup"
 
 # The production backend and central platform API commands apply their own
-# Alembic migrations. If Compose stops because a dependency is unhealthy,
-# capture the exact container state/logs.
-if ! compose up -d --no-build --pull never --remove-orphans; then
+# Alembic migrations. The shared VPS also hosts independently deployed product
+# Compose services (for example Ithute Pay), so the core release must never
+# remove containers that are outside this compose-file set.
+if ! compose up -d --no-build --pull never; then
   startup_diagnostics
   exit 1
 fi
