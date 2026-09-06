@@ -9,8 +9,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: loanhub-product-production
-  cancel-in-progress: true
+  group: ithute-edge-production
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -41,8 +41,8 @@ jobs:
         working-directory: products/LoanHub
         run: |
           cp .env.example .env
-          docker compose config -q
-          docker compose --profile production config -q
+          docker compose -f compose.yaml -f compose.edge-nginx.yml config -q
+          docker compose -f compose.yaml -f compose.edge-nginx.yml --profile production config -q
 
       - name: Compile backend
         working-directory: products/LoanHub/apps/backend
@@ -54,6 +54,9 @@ jobs:
           grep -Fq 'name: ${COMPOSE_PROJECT_NAME:-loanhub}' products/LoanHub/compose.yaml
           grep -Fq -- '- postgres_data:/var/lib/postgresql/data' products/LoanHub/compose.yaml
           grep -Fq 'COMPOSE_PROJECT_NAME=loanhub' products/LoanHub/.env.production.example
+          grep -Fq 'profiles: ["legacy-caddy"]' products/LoanHub/compose.edge-nginx.yml
+          grep -Fq 'edge-nginx:' products/LoanHub/compose.edge-nginx.yml
+          grep -Fq 'certbot:' products/LoanHub/compose.edge-nginx.yml
 
   build-and-publish:
     name: Build LoanHub product images
@@ -124,7 +127,7 @@ jobs:
           username: ${{ env.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }}
-          source: products/LoanHub/compose.yaml,products/LoanHub/infra/caddy/Caddyfile
+          source: products/LoanHub/compose.yaml,products/LoanHub/compose.edge-nginx.yml,products/LoanHub/infra/nginx-edge/default.conf.template,products/LoanHub/infra/nginx-edge/ithute-tls.conf,products/LoanHub/infra/nginx-edge/bootstrap-cert.sh
           target: /tmp/ithute-loanhub-${{ github.sha }}
           overwrite: true
 
@@ -150,9 +153,12 @@ jobs:
 
             test -d "$PLATFORM_ROOT"
             test -f "$SRC/compose.yaml"
-            test -f "$SRC/infra/caddy/Caddyfile"
+            test -f "$SRC/compose.edge-nginx.yml"
+            test -f "$SRC/infra/nginx-edge/default.conf.template"
+            test -f "$SRC/infra/nginx-edge/ithute-tls.conf"
+            test -f "$SRC/infra/nginx-edge/bootstrap-cert.sh"
 
-            mkdir -p "$APP_DIR/infra/caddy" "$APP_DIR/backups" "$APP_DIR/secrets"
+            mkdir -p "$APP_DIR/infra/nginx-edge" "$APP_DIR/backups" "$APP_DIR/secrets"
 
             # First migration from /opt/loanhub: copy only production identity/config.
             # The old directory remains untouched as a rollback reference.
@@ -169,7 +175,11 @@ jobs:
             fi
 
             cp "$SRC/compose.yaml" "$APP_DIR/compose.yaml"
-            cp "$SRC/infra/caddy/Caddyfile" "$APP_DIR/infra/caddy/Caddyfile"
+            cp "$SRC/compose.edge-nginx.yml" "$APP_DIR/compose.edge-nginx.yml"
+            cp "$SRC/infra/nginx-edge/default.conf.template" "$APP_DIR/infra/nginx-edge/default.conf.template"
+            cp "$SRC/infra/nginx-edge/ithute-tls.conf" "$APP_DIR/infra/nginx-edge/ithute-tls.conf"
+            cp "$SRC/infra/nginx-edge/bootstrap-cert.sh" "$APP_DIR/infra/nginx-edge/bootstrap-cert.sh"
+            chmod 700 "$APP_DIR/infra/nginx-edge/bootstrap-cert.sh"
             cd "$APP_DIR"
 
             set -a
@@ -181,6 +191,11 @@ jobs:
             export LOANHUB_BACKEND_IMAGE='${{ env.BACKEND_IMAGE }}'
             export LOANHUB_FRONTEND_IMAGE='${{ env.FRONTEND_IMAGE }}'
             export LOANHUB_IMAGE_TAG='${{ github.sha }}'
+            export TLS_EMAIL="${TLS_EMAIL:-admin@ithute.co.ls}"
+
+            compose() {
+              docker compose --env-file .env.production -f compose.yaml -f compose.edge-nginx.yml --profile production "$@"
+            }
 
             EXPECTED_DB_VOLUME="${COMPOSE_PROJECT_NAME}_postgres_data"
             if ! docker volume inspect "$EXPECTED_DB_VOLUME" >/dev/null 2>&1; then
@@ -192,13 +207,13 @@ jobs:
             docker network inspect mailbox-dns_mailbox_dns >/dev/null 2>&1 || docker network create mailbox-dns_mailbox_dns
             printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u '${{ env.GHCR_USERNAME }}' --password-stdin
 
-            docker compose --env-file .env.production --profile production config -q
-            docker compose --env-file .env.production --profile production pull backend frontend caddy db redis
+            compose config -q
+            compose pull backend frontend edge-nginx certbot db redis
 
             # Reuse the existing database and Redis volumes. Never use down -v here.
-            docker compose --env-file .env.production --profile production up -d --no-build db redis
+            compose up -d --no-build db redis
 
-            DB_CONTAINER="$(docker compose --env-file .env.production --profile production ps -q db)"
+            DB_CONTAINER="$(compose ps -q db)"
             if [ -z "$DB_CONTAINER" ]; then
               echo 'LoanHub database container did not start.' >&2
               exit 1
@@ -214,7 +229,7 @@ jobs:
             # Mandatory pre-migration database backup. A failed or empty dump stops deployment.
             BACKUP_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
             BACKUP_FILE="$APP_DIR/backups/loanhub-pre-migrate-${BACKUP_STAMP}-${{ github.sha }}.dump"
-            docker compose --env-file .env.production --profile production exec -T db \
+            compose exec -T db \
               pg_dump -U "${DB_USER:-loanhub}" -d "${DB_NAME:-loan_db}" -Fc > "$BACKUP_FILE"
             if [ ! -s "$BACKUP_FILE" ]; then
               echo 'Pre-migration PostgreSQL backup is empty or missing; aborting.' >&2
@@ -223,9 +238,29 @@ jobs:
             sha256sum "$BACKUP_FILE" > "${BACKUP_FILE}.sha256"
 
             # Apply only forward Alembic migrations against the verified existing volume.
-            docker compose --env-file .env.production --profile production run --rm --no-deps migrate
-            docker compose --env-file .env.production --profile production up -d --no-build backend maintenance frontend caddy
-            docker compose --env-file .env.production --profile production ps
+            compose run --rm --no-deps migrate
+            compose up -d --no-build backend maintenance frontend
+
+            # The dedicated shared-edge workflow performs the first certificate
+            # migration with rollback. Product deploys only take over the edge
+            # after that certificate already exists.
+            edge_cert_ready=false
+            if compose run --rm --no-deps --entrypoint /bin/sh certbot \
+              -c 'test -s /etc/letsencrypt/live/ithute-edge/fullchain.pem && test -s /etc/letsencrypt/live/ithute-edge/privkey.pem'; then
+              edge_cert_ready=true
+            fi
+
+            if [ "$edge_cert_ready" = true ]; then
+              docker ps \
+                --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+                --filter 'label=com.docker.compose.service=caddy' \
+                -q | xargs -r docker rm -f
+              compose up -d --no-build edge-nginx certbot
+              compose exec -T edge-nginx nginx -t
+            else
+              echo 'Nginx certificate is not present yet; leaving the existing Caddy edge running until the shared-edge migration completes.'
+            fi
+            compose ps
 
             for url in https://api.loanhub.co.ls/health/ready https://loanhub.co.ls/; do
               healthy=false
@@ -238,13 +273,19 @@ jobs:
               done
               if [ "$healthy" != true ]; then
                 echo "Production health check failed: $url" >&2
+                compose logs --tail=200 edge-nginx certbot >&2 || true
                 exit 1
               fi
             done
+
+            if [ "$edge_cert_ready" = true ]; then
+              curl -fsS --retry 12 --retry-delay 5 https://auth.ithute.co.ls/healthz >/dev/null
+            fi
 
             docker logout ghcr.io >/dev/null 2>&1 || true
             printf '%s\n' \
               "LoanHub runtime: $APP_DIR" \
               "Preserved database volume: $EXPECTED_DB_VOLUME" \
               "Pre-migration backup: $BACKUP_FILE" \
+              "Shared edge ready: $edge_cert_ready" \
               "Legacy runtime retained: $LEGACY_APP_DIR"
