@@ -27,12 +27,15 @@ services:
       - ./infra/nginx-edge/ithute-tls.conf:/etc/nginx/snippets/ithute-tls.conf:ro
       - edge_letsencrypt:/etc/letsencrypt:ro
       - edge_certbot_webroot:/var/www/certbot:ro
-    # Certbot updates the shared certificate volume. Reload periodically so a
-    # renewed certificate becomes active without restarting application stacks.
+    # Because this service uses a shell command to support periodic certificate
+    # reloads, the official Nginx entrypoint does not auto-render templates.
+    # Invoke its envsubst hook explicitly before starting Nginx.
     command:
       - /bin/sh
       - -c
       - |
+        /docker-entrypoint.d/20-envsubst-on-templates.sh
+        nginx -t
         nginx -g 'daemon off;' &
         nginx_pid=$$!
         while kill -0 "$$nginx_pid" 2>/dev/null; do
