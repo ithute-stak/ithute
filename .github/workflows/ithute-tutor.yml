@@ -155,3 +155,12 @@ jobs:
             --build-arg NEXT_PUBLIC_TUTOR_API_URL=/api \
             -t ithute-tutor-frontend-ci \
             products/ithute-tutor/sms-frontend
+
+      - name: Verify Tutor backend startup import root
+        run: |
+          set -eu
+          grep -q 'python -m scripts.ensure_central_auth_schema' products/ithute-tutor/sms_back_end/docker-entrypoint.sh
+          grep -q 'python -m scripts.ensure_academic_core_schema' products/ithute-tutor/sms_back_end/docker-entrypoint.sh
+          grep -q 'python -m scripts.ensure_student_transfer_schema' products/ithute-tutor/sms_back_end/docker-entrypoint.sh
+          grep -q 'python -m scripts.ensure_learning_exchange_schema' products/ithute-tutor/sms_back_end/docker-entrypoint.sh
+          docker run --rm --entrypoint sh ithute-tutor-backend-ci -c 'set -eu; cd /tmp; test "${PYTHONPATH:-}" = "/app"; python -c "import importlib; modules=(\"database.session\",\"scripts.ensure_central_auth_schema\",\"scripts.ensure_academic_core_schema\",\"scripts.ensure_student_transfer_schema\",\"scripts.ensure_learning_exchange_schema\"); [importlib.import_module(module) for module in modules]; print(\"Tutor startup modules resolve from the production image.\")"'

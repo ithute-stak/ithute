@@ -70,6 +70,7 @@ def test_startup_provisions_academic_core_after_existing_migrations():
     entrypoint = source("docker-entrypoint.sh")
     schema = source("scripts/ensure_academic_core_schema.py")
     assert "alembic upgrade heads" in entrypoint
-    assert "python scripts/ensure_academic_core_schema.py" in entrypoint
+    assert "python -m scripts.ensure_academic_core_schema" in entrypoint
+    assert "PYTHONPATH" in entrypoint
     assert "Base.metadata.create_all" in schema
     assert "HAVING COUNT(DISTINCT school_id) = 1" in schema
