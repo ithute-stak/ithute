@@ -30,6 +30,20 @@ permissions:
 jobs:
   backend-contract:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: paybridge_ci
+          POSTGRES_USER: paybridge
+          POSTGRES_PASSWORD: paybridge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U paybridge -d paybridge_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     defaults:
       run:
         working-directory: products/ithute-pay/apps/backend
@@ -48,8 +62,22 @@ jobs:
         run: python -m pip install --disable-pip-version-check -r requirements.txt pytest
       - name: Compile backend
         run: python -m compileall -q api core database integrations providers routers services utils workers alembic tests
+      - name: Run PostgreSQL migration chain
+        env:
+          ENVIRONMENT: test
+          DATABASE_URL: postgresql+psycopg://paybridge:paybridge@127.0.0.1:5432/paybridge_ci
+        run: |
+          set -eu
+          python -m alembic upgrade head
+          python -m alembic current | grep -q '0007_ithute_central_auth'
       - name: Run authentication, portal, central-platform and central integration contracts
-        run: python -m pytest -q tests/test_auth_security.py tests/test_ithute_central_integration.py tests/test_partner_portal.py tests/test_platform_contract.py
+        run: >-
+          python -m pytest -q
+          tests/test_alembic_bootstrap_contract.py
+          tests/test_auth_security.py
+          tests/test_ithute_central_integration.py
+          tests/test_partner_portal.py
+          tests/test_platform_contract.py
 
   frontend-contract:
     runs-on: ubuntu-latest

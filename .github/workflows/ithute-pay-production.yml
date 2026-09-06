@@ -2,7 +2,7 @@ name: Deploy Ithute Pay Production
 
 on:
   workflow_run:
-    workflows: ["Ithute Pay"]
+    workflows: ["Build and Deploy Production"]
     types: [completed]
     branches: [main]
   workflow_dispatch:
