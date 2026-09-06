@@ -23,6 +23,7 @@ class IthuteAuthSettings(BaseSettings):
     issuer: str = "https://auth.ithute.co.ls"
     audience: str = "mailbox-dns"
     jwks_url: str | None = None
+    internal_url: str = "http://ithute-auth:8080"
 
     model_config = SettingsConfigDict(
         env_prefix="ITHUTE_AUTH_",
@@ -37,6 +38,10 @@ class IthuteAuthSettings(BaseSettings):
     @property
     def resolved_jwks_url(self) -> str:
         return self.jwks_url or f"{self.resolved_issuer}/.well-known/jwks.json"
+
+    @property
+    def resolved_internal_url(self) -> str:
+        return self.internal_url.rstrip("/")
 
 
 @lru_cache(maxsize=1)
@@ -63,9 +68,10 @@ def decode_ithute_access_token(
 ) -> dict[str, Any]:
     """Validate a first-party !thute Auth access token for Mailbox DNS.
 
-    Central Auth proves only the human identity. Tenant memberships, DNS/mail
-    permissions, platform-owner status, mailbox ownership and all other
-    product authorization continue to be loaded from the Mailbox DNS database.
+    Normal users still receive product-local authorization after their central
+    identity is linked. The one signed ``is_platform_admin`` identity may be
+    projected to the Mailbox DNS platform-owner role without sharing its
+    central password or private signing material with this product.
     """
 
     settings = config or get_ithute_auth_settings()

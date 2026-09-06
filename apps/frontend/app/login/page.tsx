@@ -159,7 +159,25 @@ export default function Login() {
               </div>
             </div>
 
-            <form className="mt-6 space-y-4" onSubmit={submit}>
+            {!mfaRequired ? (
+              <div className="mt-6">
+                <a
+                  href={`${API}/auth/ithute/login`}
+                  className="group flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-[#b7d1c8] bg-[#eff8f4] px-4 text-sm font-extrabold text-[#174a40] shadow-sm transition hover:-translate-y-0.5 hover:border-[#7fb0a0] hover:bg-[#e7f4ef]"
+                >
+                  <Fingerprint size={18} />
+                  Sign in with Ithute
+                  <ArrowRight size={16} className="transition group-hover:translate-x-0.5" />
+                </a>
+                <div className="my-5 flex items-center gap-3 text-[10px] font-extrabold uppercase tracking-[.12em] text-[#98a49e]">
+                  <span className="h-px flex-1 bg-[#e1e7e3]" />
+                  <span>or use a local account</span>
+                  <span className="h-px flex-1 bg-[#e1e7e3]" />
+                </div>
+              </div>
+            ) : null}
+
+            <form className={mfaRequired ? "mt-6 space-y-4" : "space-y-4"} onSubmit={submit}>
               <div>
                 <label className="mb-1.5 block text-[11px] font-extrabold text-[#243b31]" htmlFor="email">Email address</label>
                 <div className="relative">

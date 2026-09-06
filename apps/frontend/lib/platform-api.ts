@@ -22,8 +22,11 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
   const request = () => fetch(`${API}${path}`, { credentials: "include", ...init });
   let response = await request();
 
-  if (response.status === 401 && path !== "/auth/refresh" && path !== "/auth/login") {
-    const refresh = await fetch(`${API}/auth/refresh`, { method: "POST", credentials: "include" });
+  if (response.status === 401 && path !== "/auth/refresh" && path !== "/auth/ithute/refresh" && path !== "/auth/login") {
+    let refresh = await fetch(`${API}/auth/refresh`, { method: "POST", credentials: "include" });
+    if (!refresh.ok) {
+      refresh = await fetch(`${API}/auth/ithute/refresh`, { method: "POST", credentials: "include" });
+    }
     if (refresh.ok) response = await request();
   }
 

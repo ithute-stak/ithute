@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from database.config.config import settings
 from database.multi_tenant_school_management.models import User
+from database.multi_tenant_school_management.models.enum.user_role import UserRole
 
 
 class CentralAuthError(ValueError):
@@ -64,7 +65,45 @@ def require_central_claims(request: Request) -> dict[str, Any]:
         ) from None
 
 
+def project_platform_owner(db: Session, claims: dict[str, Any]) -> User:
+    """Create/link Tutor's super-admin projection from the signed central claim."""
+    subject = uuid.UUID(str(claims["sub"]))
+    email = str(claims.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=401, detail="central platform owner token is missing an email claim")
+
+    user = db.query(User).filter(User.auth_user_id == subject).first()
+    if user is None:
+        user = db.query(User).filter(User.email == email).first()
+        if user is not None and user.auth_user_id not in (None, subject):
+            raise HTTPException(status_code=409, detail="system owner email is linked to another central identity")
+
+    if user is None:
+        user = User(
+            auth_user_id=subject,
+            username="Ithute System Owner",
+            email=email,
+            password=None,
+            channel="system",
+            role=UserRole.super_admin,
+            school_id=None,
+        )
+        db.add(user)
+    else:
+        user.auth_user_id = subject
+        user.role = UserRole.super_admin
+        if not str(user.username or "").strip():
+            user.username = "Ithute System Owner"
+
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def resolve_tutor_user(db: Session, claims: dict[str, Any]) -> User:
+    if claims.get("is_platform_admin") is True:
+        return project_platform_owner(db, claims)
+
     subject = uuid.UUID(str(claims["sub"]))
     user = db.query(User).filter(User.auth_user_id == subject).first()
     if user is None:

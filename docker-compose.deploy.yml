@@ -1,6 +1,12 @@
 services:
   backend:
     image: ${MAILBOX_DNS_BACKEND_IMAGE:-ghcr.io/ithute-stak/mailbox-dns-backend}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+    environment:
+      ITHUTE_AUTH_ENABLED: ${ITHUTE_AUTH_ENABLED:-true}
+      ITHUTE_AUTH_ISSUER: ${ITHUTE_AUTH_ISSUER:-https://auth.ithute.co.ls}
+      ITHUTE_AUTH_AUDIENCE: mailbox-dns
+      ITHUTE_AUTH_JWKS_URL: ${ITHUTE_AUTH_JWKS_URL:-http://ithute-auth:8080/.well-known/jwks.json}
+      ITHUTE_AUTH_INTERNAL_URL: ${ITHUTE_AUTH_INTERNAL_URL:-http://ithute-auth:8080}
 
   frontend:
     image: ${MAILBOX_DNS_FRONTEND_IMAGE:-ghcr.io/ithute-stak/mailbox-dns-frontend}:${MAILBOX_DNS_IMAGE_TAG:-latest}
@@ -28,6 +34,13 @@ services:
 
   backup-recovery:
     image: ${MAILBOX_DNS_BACKUP_IMAGE:-ghcr.io/ithute-stak/mailbox-dns-backup}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+
+  # The global owner secret is intentionally injected only into central Auth.
+  # Product containers receive signed identity claims, never this password.
+  ithute-auth:
+    environment:
+      AUTH_SYSTEM_OWNER_EMAIL: ${ITHUTE_SYSTEM_OWNER_EMAIL:-}
+      AUTH_SYSTEM_OWNER_PASSWORD: ${ITHUTE_SYSTEM_OWNER_PASSWORD:-}
 
   # Nginx is force-recreated after its Docker upstreams settle. Process state
   # `running` can precede the HTTP listener by a few seconds, so expose an HTTP
