@@ -233,7 +233,7 @@ jobs:
           check_url 'https://portal.pay.ithute.co.ls/portal' 'Ithute Pay partner portal'
           check_url 'https://tutor.ithute.co.ls/' 'Ithute Tutor'
           check_url 'https://loanhub.co.ls/' 'LoanHub'
-          check_url 'https://api.loanhub.co.ls/health' 'LoanHub API'
+          check_url 'https://api.loanhub.co.ls/health/ready' 'LoanHub API'
 
       - name: Record non-destructive deployment summary
         if: always()
