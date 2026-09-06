@@ -1,0 +1,57 @@
+name: Production SSH Reliability Contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/production-ssh-keepalive.conf'
+      - '.github/workflows/ithute-pay-production.yml'
+      - '.github/workflows/ithute-tutor-production.yml'
+      - '.github/workflows/production-ssh-reliability-contract.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/production-ssh-keepalive.conf'
+      - '.github/workflows/ithute-pay-production.yml'
+      - '.github/workflows/ithute-tutor-production.yml'
+      - '.github/workflows/production-ssh-reliability-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  production-ssh-reliability:
+    name: Verify long-running production SSH protection
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Validate OpenSSH keepalive profile
+        run: |
+          set -eu
+          test -s scripts/production-ssh-keepalive.conf
+          resolved="$(ssh -G -F scripts/production-ssh-keepalive.conf 204.12.205.224 2>/dev/null)"
+          printf '%s\n' "$resolved" | grep -Eq '^serveraliveinterval 20$'
+          printf '%s\n' "$resolved" | grep -Eq '^serveralivecountmax 90$'
+          printf '%s\n' "$resolved" | grep -Eq '^tcpkeepalive yes$'
+
+      - name: Require Pay and Tutor to install keepalive profile
+        run: |
+          set -eu
+          for file in \
+            .github/workflows/ithute-pay-production.yml \
+            .github/workflows/ithute-tutor-production.yml; do
+            grep -Fq 'cp scripts/production-ssh-keepalive.conf "$HOME/.ssh/config"' "$file"
+            grep -Fq 'Waiting for shared Ithute production lock' "$file"
+            grep -Fq 'Acquired shared Ithute production lock.' "$file"
+            grep -Fq 'Waiting for $service (status:' "$file"
+          done
+
+      - name: Keep persistent-data protections intact
+        run: |
+          set -eu
+          sh scripts/verify-force-redeploy-safety.sh
