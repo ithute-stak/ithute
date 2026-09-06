@@ -79,8 +79,9 @@
 # Mailbox-DNS shares this VPS but does not own ports 80/443. LoanHub Caddy is
 # attached to the existing Mailbox-DNS application network as the single TLS
 # edge and forwards each Ithute hostname to Mailbox-DNS's nginx gateway. Nginx
-# preserves host-aware routing for the public site, panel, API and groupware
-# without exposing the Mailbox backend or groupware ports publicly.
+# preserves host-aware routing for the public site, panel, API, groupware,
+# central services and independently deployed products without exposing their
+# internal ports publicly.
 ithute.co.ls {
     encode zstd gzip
     import security_headers
@@ -125,7 +126,89 @@ api.ithute.co.ls {
     }
 }
 
+auth.ithute.co.ls {
+    encode zstd gzip
+    import security_headers
+    request_body {
+        max_size 25MB
+    }
+    reverse_proxy nginx:80
+    log {
+        output stdout
+        format console
+    }
+}
+
+push.ithute.co.ls {
+    encode zstd gzip
+    import security_headers
+    request_body {
+        max_size 25MB
+    }
+    reverse_proxy nginx:80
+    log {
+        output stdout
+        format console
+    }
+}
+
+realtime.ithute.co.ls {
+    encode zstd gzip
+    import security_headers
+    request_body {
+        max_size 25MB
+    }
+    reverse_proxy nginx:80
+    log {
+        output stdout
+        format console
+    }
+}
+
 groupware.ithute.co.ls {
+    encode zstd gzip
+    import security_headers
+    request_body {
+        max_size 25MB
+    }
+    reverse_proxy nginx:80
+    log {
+        output stdout
+        format console
+    }
+}
+
+# Ithute Pay is routed by the shared Nginx gateway, but TLS terminates here.
+# Declaring each hostname at Caddy is what causes ACME certificate issuance and
+# prevents browsers from failing the TLS handshake before the request reaches
+# Nginx.
+pay.ithute.co.ls {
+    encode zstd gzip
+    import security_headers
+    request_body {
+        max_size 25MB
+    }
+    reverse_proxy nginx:80
+    log {
+        output stdout
+        format console
+    }
+}
+
+api.pay.ithute.co.ls {
+    encode zstd gzip
+    import security_headers
+    request_body {
+        max_size 25MB
+    }
+    reverse_proxy nginx:80
+    log {
+        output stdout
+        format console
+    }
+}
+
+portal.pay.ithute.co.ls {
     encode zstd gzip
     import security_headers
     request_body {
