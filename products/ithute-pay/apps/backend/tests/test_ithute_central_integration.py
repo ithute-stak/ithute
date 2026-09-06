@@ -7,8 +7,12 @@ from uuid import uuid4
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from sqlalchemy import select
 
 from database.config.config import settings
+from database.models.user import User
+from database.session import SessionLocal
+from routers.auth import _project_system_owner
 from services import ithute_auth, ithute_push
 
 
@@ -65,6 +69,106 @@ def test_central_id_token_requires_exact_nonce(monkeypatch):
     assert claims['nonce'] == 'expected-nonce'
     with pytest.raises(jwt.InvalidTokenError):
         ithute_auth.decode_id_token(token, nonce='other-nonce', jwks_client=FakeJwks(private_key.public_key()))
+
+
+def test_signed_system_owner_projects_to_local_super_admin():
+    central_sub = str(uuid4())
+    access_claims = {
+        'sub': central_sub,
+        'email': 'supperadmin@ithute.co.ls',
+        'is_platform_admin': True,
+    }
+    id_claims = {
+        'sub': central_sub,
+        'email': 'supperadmin@ithute.co.ls',
+        'name': 'Ithute System Owner',
+        'is_platform_admin': True,
+    }
+
+    with SessionLocal() as db:
+        user = _project_system_owner(
+            db,
+            central_sub=central_sub,
+            access_claims=access_claims,
+            id_claims=id_claims,
+        )
+        assert user is not None
+        assert user.auth_user_id == central_sub
+        assert user.email == 'supperadmin@ithute.co.ls'
+        assert user.full_name == 'Ithute System Owner'
+        assert user.role == 'platform_super_admin'
+        assert user.is_active is True
+        assert user.password_hash
+        first_user_id = user.id
+
+    with SessionLocal() as db:
+        user = _project_system_owner(
+            db,
+            central_sub=central_sub,
+            access_claims=access_claims,
+            id_claims=id_claims,
+        )
+        assert user is not None
+        assert user.id == first_user_id
+        assert len(db.scalars(select(User)).all()) == 1
+
+
+def test_normal_central_user_is_not_auto_provisioned():
+    central_sub = str(uuid4())
+    with SessionLocal() as db:
+        user = _project_system_owner(
+            db,
+            central_sub=central_sub,
+            access_claims={
+                'sub': central_sub,
+                'email': 'normal.user@ithute.co.ls',
+                'is_platform_admin': False,
+            },
+            id_claims={
+                'sub': central_sub,
+                'email': 'normal.user@ithute.co.ls',
+                'name': 'Normal User',
+                'is_platform_admin': False,
+            },
+        )
+        assert user is None
+        assert db.scalars(select(User)).all() == []
+
+
+def test_system_owner_projection_never_steals_an_existing_central_link():
+    central_sub = str(uuid4())
+    other_sub = str(uuid4())
+    with SessionLocal() as db:
+        existing = User(
+            email='supperadmin@ithute.co.ls',
+            password_hash='unusable-for-this-test',
+            full_name='Existing Pay User',
+            role='platform_admin',
+            auth_user_id=other_sub,
+            is_active=True,
+        )
+        db.add(existing)
+        db.commit()
+
+        user = _project_system_owner(
+            db,
+            central_sub=central_sub,
+            access_claims={
+                'sub': central_sub,
+                'email': 'supperadmin@ithute.co.ls',
+                'is_platform_admin': True,
+            },
+            id_claims={
+                'sub': central_sub,
+                'email': 'supperadmin@ithute.co.ls',
+                'name': 'Ithute System Owner',
+                'is_platform_admin': True,
+            },
+        )
+        assert user is None
+        db.refresh(existing)
+        assert existing.auth_user_id == other_sub
+        assert existing.role == 'platform_admin'
 
 
 def test_push_uses_short_lived_service_token_contract(monkeypatch):

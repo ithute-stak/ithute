@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from starlette.responses import JSONResponse, RedirectResponse
 
 from core.access_control import get_current_active_user
-from core.security import authenticate_user, get_current_local_user, local_user_from_token, verify_password
+from core.security import authenticate_user, get_current_local_user, hash_password, local_user_from_token, verify_password
 from database.config.config import settings
 from database.models.audit_log import AuditLog
 from database.models.user import User
@@ -40,6 +40,7 @@ OIDC_STATE_COOKIE = 'ipb_oidc_state'
 OIDC_VERIFIER_COOKIE = 'ipb_oidc_verifier'
 OIDC_NONCE_COOKIE = 'ipb_oidc_nonce'
 OIDC_MODE_COOKIE = 'ipb_oidc_mode'
+SYSTEM_OWNER_ROLE = 'platform_super_admin'
 
 
 def _common_cookie() -> dict:
@@ -92,6 +93,88 @@ def _clear_oidc_cookies(response: Response) -> None:
 
 def _login_redirect_error(code: str) -> RedirectResponse:
     return RedirectResponse(f'/login?error={quote(code)}', status_code=303)
+
+
+def _claim_email(claims: dict) -> str:
+    return str(claims.get('email') or '').strip().lower()
+
+
+def _project_system_owner(
+    db: Session,
+    *,
+    central_sub: str,
+    access_claims: dict,
+    id_claims: dict,
+) -> User | None:
+    """Project the one signed central system owner into Ithute Pay.
+
+    Normal central users still require an explicit product-local link. Only a
+    token pair that independently carries the protected ``is_platform_admin``
+    claim in both the access and ID token can enter this path.
+    """
+    if access_claims.get('is_platform_admin') is not True or id_claims.get('is_platform_admin') is not True:
+        return None
+
+    access_email = _claim_email(access_claims)
+    id_email = _claim_email(id_claims)
+    if not access_email or access_email != id_email:
+        return None
+
+    linked_user = db.scalar(select(User).where(User.auth_user_id == central_sub))
+    email_user = db.scalar(select(User).where(User.email == id_email))
+
+    # Never collapse two product rows or steal a row already linked to another
+    # central identity. Those cases require an explicit administrative repair.
+    if linked_user is not None and email_user is not None and linked_user.id != email_user.id:
+        return None
+
+    user = linked_user or email_user
+    if user is not None and user.auth_user_id not in (None, central_sub):
+        return None
+
+    changed = False
+    if user is None:
+        display_name = str(id_claims.get('name') or '').strip() or 'Ithute System Owner'
+        user = User(
+            auth_user_id=central_sub,
+            email=id_email,
+            password_hash=hash_password(secrets.token_urlsafe(48)),
+            full_name=display_name,
+            role=SYSTEM_OWNER_ROLE,
+            is_active=True,
+        )
+        db.add(user)
+        db.flush()
+        changed = True
+    else:
+        if user.auth_user_id != central_sub:
+            user.auth_user_id = central_sub
+            changed = True
+        if user.role != SYSTEM_OWNER_ROLE:
+            user.role = SYSTEM_OWNER_ROLE
+            changed = True
+        if not user.is_active:
+            user.is_active = True
+            changed = True
+        if not user.full_name.strip():
+            user.full_name = str(id_claims.get('name') or '').strip() or 'Ithute System Owner'
+            changed = True
+
+    if changed:
+        db.add(
+            AuditLog(
+                actor_type='user',
+                actor_id=user.id,
+                action='auth.ithute.system_owner_projected',
+                resource_type='user',
+                resource_id=user.id,
+                metadata_json={'auth_user_id': central_sub, 'central_email': id_email},
+            )
+        )
+        db.commit()
+        db.refresh(user)
+
+    return user
 
 
 def _oidc_parameters(mode: str) -> tuple[str, str, str, str, str]:
@@ -170,6 +253,8 @@ def ithute_callback(
         id_claims = decode_id_token(str(payload['id_token']), nonce=nonce)
         if str(access_claims['sub']) != str(id_claims['sub']) or str(access_claims['sid']) != str(id_claims['sid']):
             raise jwt.InvalidTokenError('access/id token identity mismatch')
+        if bool(access_claims.get('is_platform_admin')) != bool(id_claims.get('is_platform_admin')):
+            raise jwt.InvalidTokenError('access/id token platform-admin mismatch')
     except IthuteAuthDisabled:
         response = _login_redirect_error('central_auth_disabled')
         _clear_oidc_cookies(response)
@@ -185,6 +270,16 @@ def ithute_callback(
 
     central_sub = str(access_claims['sub'])
     linked_user = db.scalar(select(User).where(User.auth_user_id == central_sub))
+
+    if mode == 'login':
+        projected_owner = _project_system_owner(
+            db,
+            central_sub=central_sub,
+            access_claims=access_claims,
+            id_claims=id_claims,
+        )
+        if projected_owner is not None:
+            linked_user = projected_owner
 
     if mode == 'link':
         local_token = request.cookies.get('ipb_access') or ''
