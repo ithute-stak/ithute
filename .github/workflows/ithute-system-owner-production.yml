@@ -2,7 +2,7 @@ name: Synchronize Ithute System Owner
 
 on:
   workflow_run:
-    workflows: ["Enforce Production Domain Identity"]
+    workflows: ["Deploy Shared TLS Edge Production"]
     types: [completed]
     branches: [main]
   workflow_dispatch:

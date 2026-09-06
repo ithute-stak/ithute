@@ -6,6 +6,10 @@ on:
     paths:
       - 'products/LoanHub/infra/caddy/Caddyfile'
       - '.github/workflows/shared-tls-edge-production.yml'
+  workflow_run:
+    workflows: ["Enforce Production Domain Identity"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -19,10 +23,15 @@ env:
   VPS_HOST: 204.12.205.224
   VPS_USER: administrator
   LOANHUB_RUNTIME_DIR: /home/administrator/mailbox-dns/loanhub
+  RELEASE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
 jobs:
   deploy:
     name: Deploy and verify shared HTTPS edge
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
@@ -33,6 +42,7 @@ jobs:
       - name: Check out exact edge configuration
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ env.RELEASE_SHA }}
           persist-credentials: false
 
       - name: Validate deployment credentials
@@ -69,13 +79,13 @@ jobs:
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
-          scp products/LoanHub/infra/caddy/Caddyfile "$remote:/tmp/ithute-shared-edge-${GITHUB_SHA}.Caddyfile"
+          scp products/LoanHub/infra/caddy/Caddyfile "$remote:/tmp/ithute-shared-edge-${RELEASE_SHA}.Caddyfile"
 
       - name: Validate, reload and verify HTTPS edge
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "APP_DIR='$LOANHUB_RUNTIME_DIR' EDGE_SHA='$GITHUB_SHA' sh -s" <<'REMOTE'
+          ssh "$remote" "APP_DIR='$LOANHUB_RUNTIME_DIR' EDGE_SHA='$RELEASE_SHA' sh -s" <<'REMOTE'
           set -eu
           cd "$APP_DIR"
           [ -s .env.production ] || { echo 'LoanHub production environment is missing' >&2; exit 1; }
@@ -106,6 +116,7 @@ jobs:
           fail_with_restore() {
             message="$1"
             echo "$message" >&2
+            docker compose --env-file .env.production --profile production logs --tail=200 caddy >&2 || true
             restore_edge
             exit 1
           }
@@ -142,6 +153,20 @@ jobs:
             fi
             echo "HTTPS verified: $url"
           done
+
+          auth_healthy=false
+          for attempt in $(seq 1 36); do
+            if curl -fsS --connect-timeout 5 --max-time 15 \
+              https://auth.ithute.co.ls/healthz >/dev/null; then
+              auth_healthy=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$auth_healthy" != true ]; then
+            fail_with_restore 'Central Auth HTTPS certificate/health verification failed: https://auth.ithute.co.ls/healthz'
+          fi
+          echo 'HTTPS verified: https://auth.ithute.co.ls/healthz'
 
           trap - HUP INT TERM
           rm -f "$backup"
