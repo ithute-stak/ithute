@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     sms_webhook_url: str = ""
     sms_webhook_token: str = ""
 
+    # One global human owner is provisioned only inside central !thute Auth.
+    # Products receive only the signed is_platform_admin claim and never this
+    # password. The production password must be injected at runtime.
+    system_owner_email: str = ""
+    system_owner_password: str = ""
+
     model_config = SettingsConfigDict(env_prefix="AUTH_", case_sensitive=False)
 
     @property
