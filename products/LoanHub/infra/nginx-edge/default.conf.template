@@ -17,7 +17,6 @@ add_header Permissions-Policy "camera=(), microphone=(self), geolocation=()" alw
 add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
 add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' wss: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
 
-# Local container health only. Public traffic is handled by the named hosts below.
 server {
     listen 80 default_server;
     server_name _;
@@ -33,7 +32,6 @@ server {
     }
 }
 
-# HTTP-01 validation and HTTPS redirect for every hostname owned by this edge.
 server {
     listen 80;
     server_name
@@ -67,7 +65,6 @@ server {
     }
 }
 
-# LoanHub canonical web application.
 server {
     listen 443 ssl;
     http2 on;
@@ -78,11 +75,10 @@ server {
 
     location / {
         proxy_pass http://frontend:3000;
-        include /etc/nginx/snippets/proxy-common.conf;
+        include /etc/nginx/proxy-common.conf;
     }
 }
 
-# LoanHub canonical API.
 server {
     listen 443 ssl;
     http2 on;
@@ -93,11 +89,10 @@ server {
 
     location / {
         proxy_pass http://backend:8000;
-        include /etc/nginx/snippets/proxy-common.conf;
+        include /etc/nginx/proxy-common.conf;
     }
 }
 
-# LoanHub www permanently redirects to the canonical application hostname.
 server {
     listen 443 ssl;
     http2 on;
@@ -108,7 +103,6 @@ server {
     return 308 https://${APP_DOMAIN}$request_uri;
 }
 
-# LoanHub sandbox application and API stay isolated on the sandbox network.
 server {
     listen 443 ssl;
     http2 on;
@@ -120,7 +114,7 @@ server {
 
     location / {
         proxy_pass http://sandbox_frontend:3000;
-        include /etc/nginx/snippets/proxy-common.conf;
+        include /etc/nginx/proxy-common.conf;
     }
 }
 
@@ -135,13 +129,10 @@ server {
 
     location / {
         proxy_pass http://sandbox_backend:8000;
-        include /etc/nginx/snippets/proxy-common.conf;
+        include /etc/nginx/proxy-common.conf;
     }
 }
 
-# The Ithute platform and product hostnames continue through the existing
-# Mailbox-DNS gateway. It remains the host-aware application router; this Nginx
-# instance replaces only Caddy's public TLS/port-80/443 responsibility.
 server {
     listen 443 ssl;
     http2 on;
@@ -163,7 +154,7 @@ server {
 
     location / {
         proxy_pass http://nginx:80;
-        include /etc/nginx/snippets/proxy-common.conf;
+        include /etc/nginx/proxy-common.conf;
     }
 }
 
@@ -177,9 +168,6 @@ server {
     return 308 https://ithute.co.ls$request_uri;
 }
 
-# HTTPS on the mail hostname exists only to retain a complete public TLS identity.
-# The same certificate is deployed into Postfix and Dovecot by the production
-# edge workflow for SMTP submission and IMAPS.
 server {
     listen 443 ssl;
     http2 on;
