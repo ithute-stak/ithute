@@ -156,13 +156,13 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml config >/dev/null
           docker compose -f docker-compose.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml config >/dev/null
           docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.commercial-prod.yml config >/dev/null
-          docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.commercial-prod.yml -f docker-compose.deploy.yml config >/dev/null
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.commercial-prod.yml -f docker-compose.ithute-platform.yml -f docker-compose.deploy.yml config >/dev/null
           # Shared-VPS production path: commercial features stay in the images,
           # while the Mailbox-DNS Caddy overlay is intentionally omitted so an
           # existing host reverse proxy can continue to own ports 80/443.
-          docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.deploy.yml config >/dev/null
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.ithute-platform.yml -f docker-compose.deploy.yml config >/dev/null
           docker compose -f docker-compose.yml -f docker-compose.phase6-mail.yml -f docker-compose.ha-mail.yml config >/dev/null
-          docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.commercial-prod.yml -f docker-compose.deploy.yml -f docker-compose.ha-mail.yml -f docker-compose.deploy-ha.yml config >/dev/null
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.commercial-prod.yml -f docker-compose.ithute-platform.yml -f docker-compose.deploy.yml -f docker-compose.ha-mail.yml -f docker-compose.deploy-ha.yml config >/dev/null
 
       - name: Run commercial full regression
         env:
