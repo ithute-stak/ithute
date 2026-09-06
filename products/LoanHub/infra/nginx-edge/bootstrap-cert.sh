@@ -49,7 +49,7 @@ for domain in $candidates; do
   fi
 done
 
-for required in auth.ithute.co.ls pay.ithute.co.ls api.pay.ithute.co.ls portal.pay.ithute.co.ls; do
+for required in auth.ithute.co.ls pay.ithute.co.ls api.pay.ithute.co.ls portal.pay.ithute.co.ls mail.ithute.co.ls; do
   case " $domains " in
     *" $required "*) ;;
     *) echo "Required production hostname is not pointed at $EDGE_PUBLIC_IP: $required" >&2; exit 1 ;;
