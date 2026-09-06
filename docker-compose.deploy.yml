@@ -1,6 +1,12 @@
 services:
   backend:
     image: ${MAILBOX_DNS_BACKEND_IMAGE:-ghcr.io/ithute-stak/mailbox-dns-backend}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+    environment:
+      ITHUTE_AUTH_ENABLED: ${ITHUTE_AUTH_ENABLED:-true}
+      ITHUTE_AUTH_ISSUER: ${ITHUTE_AUTH_ISSUER:-https://auth.ithute.co.ls}
+      ITHUTE_AUTH_AUDIENCE: mailbox-dns
+      ITHUTE_AUTH_JWKS_URL: ${ITHUTE_AUTH_JWKS_URL:-http://ithute-auth:8080/.well-known/jwks.json}
+      ITHUTE_AUTH_INTERNAL_URL: ${ITHUTE_AUTH_INTERNAL_URL:-http://ithute-auth:8080}
 
   frontend:
     image: ${MAILBOX_DNS_FRONTEND_IMAGE:-ghcr.io/ithute-stak/mailbox-dns-frontend}:${MAILBOX_DNS_IMAGE_TAG:-latest}
