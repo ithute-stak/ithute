@@ -19,6 +19,7 @@ services:
     networks: [ithute_tutor_private]
 
   tutor-backend:
+    image: ghcr.io/ithute-stak/ithute-tutor-backend:${ITHUTE_TUTOR_IMAGE_TAG:-local}
     build:
       context: ./products/ithute-tutor/sms_back_end
     restart: always
@@ -69,6 +70,7 @@ services:
     networks: [ithute_tutor_private, mailbox_dns]
 
   tutor-frontend:
+    image: ghcr.io/ithute-stak/ithute-tutor-frontend:${ITHUTE_TUTOR_IMAGE_TAG:-local}
     build:
       context: ./products/ithute-tutor/sms-frontend
       args:
