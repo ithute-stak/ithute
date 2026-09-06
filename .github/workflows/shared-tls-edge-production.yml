@@ -18,18 +18,25 @@ env:
   VPS_HOST: 204.12.205.224
   VPS_USER: administrator
   LOANHUB_RUNTIME_DIR: /home/administrator/mailbox-dns/loanhub
+  EDGE_SHA: ${{ github.sha }}
 
 jobs:
   recover:
-    name: Restore public ports 80 and 443
+    name: Restore and validate Nginx HTTPS edge
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     environment: production
     env:
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
 
     steps:
+      - name: Check out exact recovery configuration
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.EDGE_SHA }}
+          persist-credentials: false
+
       - name: Validate deployment credentials
         run: |
           set -eu
@@ -60,15 +67,33 @@ jobs:
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Restore an HTTPS listener on the VPS
+      - name: Stage exact Nginx edge files
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "APP_DIR='$LOANHUB_RUNTIME_DIR' sh -s" <<'REMOTE'
+          stage="/tmp/ithute-edge-recovery-${EDGE_SHA}"
+          ssh "$remote" "rm -rf '$stage' && mkdir -p '$stage/infra/nginx-edge'"
+          scp products/LoanHub/compose.edge-nginx.yml "$remote:$stage/compose.edge-nginx.yml"
+          scp products/LoanHub/infra/nginx-edge/default.conf.template "$remote:$stage/infra/nginx-edge/default.conf.template"
+          scp products/LoanHub/infra/nginx-edge/ithute-tls.conf "$remote:$stage/infra/nginx-edge/ithute-tls.conf"
+
+      - name: Prevalidate and switch the VPS edge
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "APP_DIR='$LOANHUB_RUNTIME_DIR' EDGE_SHA='$EDGE_SHA' sh -s" <<'REMOTE'
           set -eu
           cd "$APP_DIR"
           [ -s .env.production ] || { echo 'LoanHub production environment is missing' >&2; exit 1; }
           [ -s compose.yaml ] || { echo 'LoanHub production compose.yaml is missing' >&2; exit 1; }
+
+          stage="/tmp/ithute-edge-recovery-${EDGE_SHA}"
+          [ -s "$stage/compose.edge-nginx.yml" ] || { echo 'Staged edge override is missing' >&2; exit 1; }
+          mkdir -p infra/nginx-edge
+          cp "$stage/compose.edge-nginx.yml" compose.edge-nginx.yml
+          cp "$stage/infra/nginx-edge/default.conf.template" infra/nginx-edge/default.conf.template
+          cp "$stage/infra/nginx-edge/ithute-tls.conf" infra/nginx-edge/ithute-tls.conf
+          rm -rf "$stage"
 
           set -a
           . ./.env.production
@@ -79,82 +104,86 @@ jobs:
           edge() {
             docker compose --env-file .env.production -f compose.yaml -f compose.edge-nginx.yml --profile production "$@"
           }
-
+          caddy_restore() {
+            edge rm -sf edge-nginx certbot >/dev/null 2>&1 || true
+            docker compose --env-file .env.production --profile production up -d caddy >/dev/null 2>&1 || true
+          }
           listener_ok() {
             curl -ksS --resolve panel.ithute.co.ls:443:127.0.0.1 \
               --connect-timeout 3 --max-time 10 -o /dev/null https://panel.ithute.co.ls/
           }
 
-          nginx_recovered=false
-          if [ -s compose.edge-nginx.yml ] && [ -s infra/nginx-edge/default.conf.template ]; then
-            if edge run --rm --no-deps --entrypoint /bin/sh certbot \
-              -c 'test -s /etc/letsencrypt/live/ithute-edge/fullchain.pem && test -s /etc/letsencrypt/live/ithute-edge/privkey.pem'; then
-              echo 'Existing Nginx certificate found; force-recreating Nginx so the current Ithute template is rendered.'
-              docker ps \
-                --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
-                --filter 'label=com.docker.compose.service=caddy' \
-                -q | xargs -r docker rm -f
-
-              if edge up -d --no-build --no-deps --force-recreate edge-nginx certbot \
-                && edge exec -T edge-nginx nginx -t \
-                && edge exec -T edge-nginx nginx -T 2>/dev/null | grep -Fq 'auth.ithute.co.ls' \
-                && edge exec -T edge-nginx nginx -T 2>/dev/null | grep -Fq 'panel.ithute.co.ls' \
-                && listener_ok; then
-                nginx_recovered=true
-                echo 'Nginx HTTPS listener restored with the Ithute virtual-host configuration.'
-              else
-                echo 'Nginx recovery did not become healthy; falling back to the previous Caddy edge.' >&2
-                edge logs --tail=200 edge-nginx certbot >&2 || true
-                edge rm -sf edge-nginx certbot >/dev/null 2>&1 || true
-              fi
-            fi
+          # Do all template/certificate validation while Caddy is still serving
+          # production. Nothing below this point needs ports 80/443 yet.
+          edge pull edge-nginx certbot >/dev/null
+          if ! edge run --rm --no-deps --entrypoint /bin/sh certbot \
+            -c 'test -s /etc/letsencrypt/live/ithute-edge/fullchain.pem && test -s /etc/letsencrypt/live/ithute-edge/privkey.pem'; then
+            echo 'Nginx certificate volume is missing; retaining Caddy and aborting the cutover.' >&2
+            exit 1
           fi
 
-          if [ "$nginx_recovered" != true ]; then
-            if [ -s compose.edge-nginx.yml ]; then
-              edge rm -sf edge-nginx certbot >/dev/null 2>&1 || true
-            fi
-            docker compose --env-file .env.production --profile production up -d caddy
-
-            healthy=false
-            for attempt in $(seq 1 20); do
-              if listener_ok; then
-                healthy=true
-                break
-              fi
-              sleep 2
-            done
-            if [ "$healthy" != true ]; then
-              docker compose --env-file .env.production --profile production logs --tail=250 caddy >&2 || true
-              echo 'Could not restore a listener on port 443.' >&2
+          rendered="/tmp/ithute-nginx-rendered-${EDGE_SHA}.txt"
+          if ! edge run --rm --no-deps --entrypoint /bin/sh edge-nginx -c \
+            '/docker-entrypoint.d/20-envsubst-on-templates.sh >/dev/null && nginx -t && nginx -T' >"$rendered" 2>&1; then
+            cat "$rendered" >&2 || true
+            echo 'Offline Nginx configuration validation failed; Caddy was left untouched.' >&2
+            exit 1
+          fi
+          for required in 'auth.ithute.co.ls' 'panel.ithute.co.ls' 'portal.pay.ithute.co.ls' 'listen 443 ssl'; do
+            if ! grep -Fq "$required" "$rendered"; then
+              cat "$rendered" >&2 || true
+              echo "Offline Nginx configuration is missing: $required" >&2
               exit 1
             fi
-            echo 'Legacy Caddy HTTPS listener restored as an emergency fallback.'
+          done
+          rm -f "$rendered"
+          echo 'Offline Nginx template and certificate validation passed while Caddy remained online.'
+
+          trap 'caddy_restore; exit 1' HUP INT TERM
+          docker ps \
+            --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+            --filter 'label=com.docker.compose.service=caddy' \
+            -q | xargs -r docker rm -f
+
+          if ! edge up -d --no-build --no-deps --force-recreate edge-nginx certbot; then
+            caddy_restore
+            echo 'Nginx failed to start; Caddy restored.' >&2
+            exit 1
+          fi
+          if ! edge exec -T edge-nginx nginx -t \
+            || ! edge exec -T edge-nginx nginx -T 2>/dev/null | grep -Fq 'auth.ithute.co.ls' \
+            || ! listener_ok; then
+            edge logs --tail=250 edge-nginx certbot >&2 || true
+            caddy_restore
+            echo 'Nginx runtime verification failed; Caddy restored.' >&2
+            exit 1
           fi
 
+          trap - HUP INT TERM
           ss -lnt | grep -E ':(80|443)[[:space:]]' || true
-          listener_ok
+          echo 'Nginx is now the active shared HTTPS edge.'
           REMOTE
 
-      - name: Verify recovery from the public Internet
+      - name: Verify Nginx from the public Internet
         run: |
           set -eu
           for url in \
             https://panel.ithute.co.ls/ \
             https://pay.ithute.co.ls/ \
-            https://portal.pay.ithute.co.ls/portal; do
+            https://portal.pay.ithute.co.ls/portal \
+            https://auth.ithute.co.ls/healthz; do
             healthy=false
-            for attempt in $(seq 1 12); do
-              if curl -sS --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
+            for attempt in $(seq 1 15); do
+              if curl -fsS --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
                 healthy=true
                 break
               fi
               sleep 3
             done
-            [ "$healthy" = true ] || { echo "::error::Public HTTPS recovery failed: $url"; exit 1; }
-            echo "Recovered: $url"
+            [ "$healthy" = true ] || { echo "::error::Public Nginx verification failed: $url"; exit 1; }
+            echo "Nginx verified: $url"
           done
 
-          echo | openssl s_client -connect panel.ithute.co.ls:443 -servername panel.ithute.co.ls 2>/dev/null \
+          echo | openssl s_client -connect auth.ithute.co.ls:443 -servername auth.ithute.co.ls 2>/dev/null \
             | openssl x509 -noout -subject -issuer -dates
-          echo 'Public HTTPS listener recovery completed.'
+          echo 'Nginx shared HTTPS edge is publicly healthy.'
