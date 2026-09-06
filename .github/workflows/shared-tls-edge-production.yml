@@ -1,10 +1,11 @@
-name: Deploy Shared TLS Edge Production
+name: Deploy Nginx TLS Edge Production
 
 on:
   push:
     branches: [main]
     paths:
-      - 'products/LoanHub/infra/caddy/Caddyfile'
+      - 'products/LoanHub/compose.edge-nginx.yml'
+      - 'products/LoanHub/infra/nginx-edge/**'
       - '.github/workflows/shared-tls-edge-production.yml'
   workflow_run:
     workflows: ["Enforce Production Domain Identity"]
@@ -22,22 +23,24 @@ permissions:
 env:
   VPS_HOST: 204.12.205.224
   VPS_USER: administrator
+  PLATFORM_ROOT: /home/administrator/mailbox-dns
   LOANHUB_RUNTIME_DIR: /home/administrator/mailbox-dns/loanhub
   RELEASE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
 jobs:
   deploy:
-    name: Deploy and verify shared HTTPS edge
+    name: Migrate and verify Nginx HTTPS edge
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     environment: production
     env:
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+
     steps:
       - name: Check out exact edge configuration
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -55,120 +58,134 @@ jobs:
           set -eu
           mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
-          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/shared_tls_edge"
-          chmod 600 "$HOME/.ssh/shared_tls_edge"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/nginx_edge"
+          chmod 600 "$HOME/.ssh/nginx_edge"
           eval "$(ssh-agent -s)"
           printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
           printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
           if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
-            cat > /tmp/shared-tls-edge-askpass.sh <<'SH'
+            cat > /tmp/nginx-edge-askpass.sh <<'SH'
           #!/usr/bin/env sh
           printf '%s\n' "$VPS_SSH_PASSPHRASE"
           SH
-            chmod 700 /tmp/shared-tls-edge-askpass.sh
-            SSH_ASKPASS=/tmp/shared-tls-edge-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
-              setsid -w ssh-add "$HOME/.ssh/shared_tls_edge" </dev/null
-            rm -f /tmp/shared-tls-edge-askpass.sh
+            chmod 700 /tmp/nginx-edge-askpass.sh
+            SSH_ASKPASS=/tmp/nginx-edge-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+              setsid -w ssh-add "$HOME/.ssh/nginx_edge" </dev/null
+            rm -f /tmp/nginx-edge-askpass.sh
           else
-            ssh-add "$HOME/.ssh/shared_tls_edge" </dev/null
+            ssh-add "$HOME/.ssh/nginx_edge" </dev/null
           fi
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Stage shared Caddyfile
+      - name: Stage Nginx edge configuration
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
-          scp products/LoanHub/infra/caddy/Caddyfile "$remote:/tmp/ithute-shared-edge-${RELEASE_SHA}.Caddyfile"
+          stage="/tmp/ithute-nginx-edge-${RELEASE_SHA}"
+          ssh "$remote" "rm -rf '$stage' && mkdir -p '$stage/infra/nginx-edge'"
+          scp products/LoanHub/compose.edge-nginx.yml "$remote:$stage/compose.edge-nginx.yml"
+          scp products/LoanHub/infra/nginx-edge/default.conf.template "$remote:$stage/infra/nginx-edge/default.conf.template"
+          scp products/LoanHub/infra/nginx-edge/ithute-tls.conf "$remote:$stage/infra/nginx-edge/ithute-tls.conf"
+          scp products/LoanHub/infra/nginx-edge/bootstrap-cert.sh "$remote:$stage/infra/nginx-edge/bootstrap-cert.sh"
 
-      - name: Validate, reload and verify HTTPS edge
+      - name: Migrate, validate and verify HTTPS edge
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "APP_DIR='$LOANHUB_RUNTIME_DIR' EDGE_SHA='$RELEASE_SHA' sh -s" <<'REMOTE'
+          ssh "$remote" "APP_DIR='$LOANHUB_RUNTIME_DIR' PLATFORM_ROOT='$PLATFORM_ROOT' EDGE_SHA='$RELEASE_SHA' EDGE_PUBLIC_IP='$VPS_HOST' sh -s" <<'REMOTE'
           set -eu
           cd "$APP_DIR"
           [ -s .env.production ] || { echo 'LoanHub production environment is missing' >&2; exit 1; }
           [ -s compose.yaml ] || { echo 'LoanHub production compose.yaml is missing' >&2; exit 1; }
 
-          candidate="/tmp/ithute-shared-edge-${EDGE_SHA}.Caddyfile"
-          target="$APP_DIR/infra/caddy/Caddyfile"
-          backup="$APP_DIR/infra/caddy/Caddyfile.before-${EDGE_SHA}"
-          [ -s "$candidate" ] || { echo 'Staged Caddyfile is missing' >&2; exit 1; }
-          mkdir -p "$APP_DIR/infra/caddy"
-          [ -f "$target" ] && cp -p "$target" "$backup"
-          cp "$candidate" "$target"
-          rm -f "$candidate"
+          stage="/tmp/ithute-nginx-edge-${EDGE_SHA}"
+          [ -s "$stage/compose.edge-nginx.yml" ] || { echo 'Staged Nginx edge compose override is missing' >&2; exit 1; }
+          mkdir -p infra/nginx-edge
+          cp "$stage/compose.edge-nginx.yml" compose.edge-nginx.yml
+          cp "$stage/infra/nginx-edge/default.conf.template" infra/nginx-edge/default.conf.template
+          cp "$stage/infra/nginx-edge/ithute-tls.conf" infra/nginx-edge/ithute-tls.conf
+          cp "$stage/infra/nginx-edge/bootstrap-cert.sh" infra/nginx-edge/bootstrap-cert.sh
+          chmod 700 infra/nginx-edge/bootstrap-cert.sh
+          rm -rf "$stage"
 
           set -a
           . ./.env.production
           set +a
           export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-loanhub}"
           export LOANHUB_ENV_FILE=.env.production
+          export TLS_EMAIL="${TLS_EMAIL:-admin@ithute.co.ls}"
 
-          restore_edge() {
-            if [ -s "$backup" ]; then
-              cp "$backup" "$target"
-              docker compose --env-file .env.production --profile production exec -T caddy \
-                caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || true
-            fi
+          compose() {
+            docker compose --env-file .env.production -f compose.yaml -f compose.edge-nginx.yml --profile production "$@"
+          }
+
+          restore_caddy() {
+            compose rm -sf edge-nginx certbot >/dev/null 2>&1 || true
+            docker compose --env-file .env.production --profile production up -d caddy >/dev/null 2>&1 || true
           }
           fail_with_restore() {
             message="$1"
             echo "$message" >&2
-            docker compose --env-file .env.production --profile production logs --tail=200 caddy >&2 || true
-            restore_edge
+            compose logs --tail=250 edge-nginx certbot >&2 || true
+            restore_caddy
             exit 1
           }
-          trap 'restore_edge; exit 1' HUP INT TERM
+          trap 'restore_caddy; exit 1' HUP INT TERM
 
-          caddy_id="$(docker compose --env-file .env.production --profile production ps -q caddy)"
-          [ -n "$caddy_id" ] || fail_with_restore 'Shared Caddy edge is not running'
-          caddy_status="$(docker inspect -f '{{.State.Status}}' "$caddy_id")"
-          [ "$caddy_status" = running ] || fail_with_restore "Shared Caddy edge state is $caddy_status"
+          compose config -q || fail_with_restore 'Nginx edge Compose configuration is invalid'
+          compose pull edge-nginx certbot || fail_with_restore 'Could not pull Nginx/Certbot images'
 
-          if ! docker compose --env-file .env.production --profile production exec -T caddy \
-            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile; then
-            fail_with_restore 'Caddy configuration validation failed'
+          if ! EDGE_PUBLIC_IP="$EDGE_PUBLIC_IP" TLS_EMAIL="$TLS_EMAIL" infra/nginx-edge/bootstrap-cert.sh; then
+            fail_with_restore 'Initial Nginx edge certificate issuance failed'
           fi
-          if ! docker compose --env-file .env.production --profile production exec -T caddy \
-            caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile; then
-            fail_with_restore 'Caddy reload failed'
-          fi
+
+          compose up -d --no-build edge-nginx certbot || fail_with_restore 'Nginx edge failed to start'
+          sleep 3
+          compose exec -T edge-nginx nginx -t || fail_with_restore 'Nginx configuration validation failed'
 
           for url in \
+            https://ithute.co.ls/ \
+            https://panel.ithute.co.ls/ \
             https://pay.ithute.co.ls/ \
             https://api.pay.ithute.co.ls/ \
-            https://portal.pay.ithute.co.ls/portal; do
+            https://portal.pay.ithute.co.ls/portal \
+            https://auth.ithute.co.ls/healthz \
+            https://api.loanhub.co.ls/health/ready \
+            https://loanhub.co.ls/; do
             healthy=false
             for attempt in $(seq 1 36); do
-              if curl -sS --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
+              if curl -fsS --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
                 healthy=true
                 break
               fi
               sleep 5
             done
-            if [ "$healthy" != true ]; then
-              fail_with_restore "Public HTTPS edge verification failed: $url"
-            fi
+            [ "$healthy" = true ] || fail_with_restore "Public HTTPS verification failed: $url"
             echo "HTTPS verified: $url"
           done
 
-          auth_healthy=false
-          for attempt in $(seq 1 36); do
-            if curl -fsS --connect-timeout 5 --max-time 15 \
-              https://auth.ithute.co.ls/healthz >/dev/null; then
-              auth_healthy=true
-              break
-            fi
-            sleep 5
-          done
-          if [ "$auth_healthy" != true ]; then
-            fail_with_restore 'Central Auth HTTPS certificate/health verification failed: https://auth.ithute.co.ls/healthz'
-          fi
-          echo 'HTTPS verified: https://auth.ithute.co.ls/healthz'
+          echo | openssl s_client -connect auth.ithute.co.ls:443 -servername auth.ithute.co.ls 2>/dev/null \
+            | openssl x509 -noout -subject -issuer -dates \
+            || fail_with_restore 'Auth TLS certificate could not be read from the Nginx edge'
+
+          # Reuse the same public certificate for SMTP/IMAPS so removal of Caddy
+          # does not regress mail TLS.
+          cert_tmp="/tmp/ithute-edge-${EDGE_SHA}-fullchain.pem"
+          key_tmp="/tmp/ithute-edge-${EDGE_SHA}-privkey.pem"
+          compose run --rm --no-deps --entrypoint cat certbot /etc/letsencrypt/live/ithute-edge/fullchain.pem > "$cert_tmp"
+          compose run --rm --no-deps --entrypoint cat certbot /etc/letsencrypt/live/ithute-edge/privkey.pem > "$key_tmp"
+          chmod 600 "$key_tmp"
+          (cd "$PLATFORM_ROOT" && scripts/deploy-mail-tls.sh "$cert_tmp" "$key_tmp") \
+            || fail_with_restore 'Mail TLS deployment from the Nginx edge certificate failed'
+          rm -f "$cert_tmp" "$key_tmp"
+
+          # Caddy no longer owns any production port after this point.
+          docker ps \
+            --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+            --filter 'label=com.docker.compose.service=caddy' \
+            -q | xargs -r docker rm -f
 
           trap - HUP INT TERM
-          rm -f "$backup"
-          echo 'Shared TLS edge deployment completed successfully.'
+          echo 'Nginx + Certbot shared TLS edge deployment completed successfully.'
           REMOTE
