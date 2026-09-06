@@ -20,7 +20,7 @@ services:
       - "443:443"
     volumes:
       - ./infra/nginx-edge/default.conf.template:/etc/nginx/templates/default.conf.template:ro
-      - ./infra/nginx-edge/proxy-common.conf:/etc/nginx/snippets/proxy-common.conf:ro
+      - ./infra/nginx-edge/proxy-common.conf:/etc/nginx/proxy-common.conf:ro
       - ${EDGE_CERTBOT_CONFIG_DIR:-/var/lib/ithute/letsencrypt}:/etc/letsencrypt:ro
       - ${EDGE_ACME_WEBROOT:-/var/lib/ithute/acme-webroot}:/var/www/certbot:ro
     healthcheck:
