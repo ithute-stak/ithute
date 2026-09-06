@@ -1,20 +1,14 @@
-name: Deploy Shared TLS Edge Production
+name: Recover Shared HTTPS Edge
 
 on:
   push:
     branches: [main]
     paths:
-      - 'products/LoanHub/compose.edge-nginx.yml'
-      - 'products/LoanHub/infra/nginx-edge/**'
       - '.github/workflows/shared-tls-edge-production.yml'
-  workflow_run:
-    workflows: ["Enforce Production Domain Identity"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: ithute-edge-production
+  group: ithute-edge-recovery
   cancel-in-progress: false
 
 permissions:
@@ -23,31 +17,19 @@ permissions:
 env:
   VPS_HOST: 204.12.205.224
   VPS_USER: administrator
-  PLATFORM_ROOT: /home/administrator/mailbox-dns
   LOANHUB_RUNTIME_DIR: /home/administrator/mailbox-dns/loanhub
-  RELEASE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
 jobs:
-  deploy:
-    name: Migrate and verify Nginx HTTPS edge
-    if: >-
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+  recover:
+    name: Restore public ports 80 and 443
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     environment: production
     env:
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
 
     steps:
-      - name: Check out exact edge configuration
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          ref: ${{ env.RELEASE_SHA }}
-          persist-credentials: false
-
       - name: Validate deployment credentials
         run: |
           set -eu
@@ -58,215 +40,121 @@ jobs:
           set -eu
           mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
-          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/nginx_edge"
-          chmod 600 "$HOME/.ssh/nginx_edge"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_edge_recovery"
+          chmod 600 "$HOME/.ssh/ithute_edge_recovery"
           eval "$(ssh-agent -s)"
           printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
           printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
           if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
-            cat > /tmp/nginx-edge-askpass.sh <<'SH'
+            cat > /tmp/ithute-edge-recovery-askpass.sh <<'SH'
           #!/usr/bin/env sh
           printf '%s\n' "$VPS_SSH_PASSPHRASE"
           SH
-            chmod 700 /tmp/nginx-edge-askpass.sh
-            SSH_ASKPASS=/tmp/nginx-edge-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
-              setsid -w ssh-add "$HOME/.ssh/nginx_edge" </dev/null
-            rm -f /tmp/nginx-edge-askpass.sh
+            chmod 700 /tmp/ithute-edge-recovery-askpass.sh
+            SSH_ASKPASS=/tmp/ithute-edge-recovery-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+              setsid -w ssh-add "$HOME/.ssh/ithute_edge_recovery" </dev/null
+            rm -f /tmp/ithute-edge-recovery-askpass.sh
           else
-            ssh-add "$HOME/.ssh/nginx_edge" </dev/null
+            ssh-add "$HOME/.ssh/ithute_edge_recovery" </dev/null
           fi
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Stage Nginx edge configuration
+      - name: Restore an HTTPS listener on the VPS
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
-          stage="/tmp/ithute-nginx-edge-${RELEASE_SHA}"
-          ssh "$remote" "rm -rf '$stage' && mkdir -p '$stage/infra/nginx-edge'"
-          scp products/LoanHub/compose.edge-nginx.yml "$remote:$stage/compose.edge-nginx.yml"
-          scp products/LoanHub/infra/nginx-edge/default.conf.template "$remote:$stage/infra/nginx-edge/default.conf.template"
-          scp products/LoanHub/infra/nginx-edge/ithute-tls.conf "$remote:$stage/infra/nginx-edge/ithute-tls.conf"
-          scp products/LoanHub/infra/nginx-edge/bootstrap-cert.sh "$remote:$stage/infra/nginx-edge/bootstrap-cert.sh"
-
-      - name: Migrate and validate Nginx edge on VPS
-        run: |
-          set -eu
-          remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "APP_DIR='$LOANHUB_RUNTIME_DIR' PLATFORM_ROOT='$PLATFORM_ROOT' EDGE_SHA='$RELEASE_SHA' EDGE_PUBLIC_IP='$VPS_HOST' sh -s" <<'REMOTE'
+          ssh "$remote" "APP_DIR='$LOANHUB_RUNTIME_DIR' sh -s" <<'REMOTE'
           set -eu
           cd "$APP_DIR"
           [ -s .env.production ] || { echo 'LoanHub production environment is missing' >&2; exit 1; }
           [ -s compose.yaml ] || { echo 'LoanHub production compose.yaml is missing' >&2; exit 1; }
-
-          stage="/tmp/ithute-nginx-edge-${EDGE_SHA}"
-          [ -s "$stage/compose.edge-nginx.yml" ] || { echo 'Staged Nginx edge compose override is missing' >&2; exit 1; }
-          mkdir -p infra/nginx-edge
-          cp "$stage/compose.edge-nginx.yml" compose.edge-nginx.yml
-          cp "$stage/infra/nginx-edge/default.conf.template" infra/nginx-edge/default.conf.template
-          cp "$stage/infra/nginx-edge/ithute-tls.conf" infra/nginx-edge/ithute-tls.conf
-          cp "$stage/infra/nginx-edge/bootstrap-cert.sh" infra/nginx-edge/bootstrap-cert.sh
-          chmod 700 infra/nginx-edge/bootstrap-cert.sh
-          rm -rf "$stage"
 
           set -a
           . ./.env.production
           set +a
           export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-loanhub}"
           export LOANHUB_ENV_FILE=.env.production
-          export TLS_EMAIL="${TLS_EMAIL:-admin@ithute.co.ls}"
 
-          compose() {
+          edge() {
             docker compose --env-file .env.production -f compose.yaml -f compose.edge-nginx.yml --profile production "$@"
           }
 
-          restore_caddy() {
-            compose rm -sf edge-nginx certbot >/dev/null 2>&1 || true
-            docker compose --env-file .env.production --profile production up -d caddy >/dev/null 2>&1 || true
+          listener_ok() {
+            curl -ksS --resolve panel.ithute.co.ls:443:127.0.0.1 \
+              --connect-timeout 3 --max-time 10 -o /dev/null https://panel.ithute.co.ls/
           }
-          fail_with_restore() {
-            message="$1"
-            echo "$message" >&2
-            compose logs --tail=250 edge-nginx certbot >&2 || true
-            restore_caddy
-            exit 1
-          }
-          trap 'restore_caddy; exit 1' HUP INT TERM
 
-          compose config -q || fail_with_restore 'Nginx edge Compose configuration is invalid'
-          compose pull edge-nginx certbot || fail_with_restore 'Could not pull Nginx/Certbot images'
-
-          if ! EDGE_PUBLIC_IP="$EDGE_PUBLIC_IP" TLS_EMAIL="$TLS_EMAIL" infra/nginx-edge/bootstrap-cert.sh; then
-            fail_with_restore 'Nginx edge certificate issuance/validation failed'
+          # Prefer Nginx when the Certbot volume already contains a certificate.
+          nginx_recovered=false
+          if [ -s compose.edge-nginx.yml ] && [ -s infra/nginx-edge/default.conf.template ]; then
+            if edge run --rm --no-deps --entrypoint /bin/sh certbot \
+              -c 'test -s /etc/letsencrypt/live/ithute-edge/fullchain.pem && test -s /etc/letsencrypt/live/ithute-edge/privkey.pem'; then
+              echo 'Existing Nginx certificate found; attempting Nginx recovery.'
+              docker ps \
+                --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+                --filter 'label=com.docker.compose.service=caddy' \
+                -q | xargs -r docker rm -f
+              if edge up -d --no-build edge-nginx certbot \
+                && edge exec -T edge-nginx nginx -t \
+                && listener_ok; then
+                nginx_recovered=true
+                echo 'Nginx HTTPS listener restored.'
+              else
+                echo 'Nginx recovery did not become healthy; falling back to the previous Caddy edge.' >&2
+                edge logs --tail=200 edge-nginx certbot >&2 || true
+                edge rm -sf edge-nginx certbot >/dev/null 2>&1 || true
+              fi
+            fi
           fi
 
-          compose up -d --no-build edge-nginx certbot || fail_with_restore 'Nginx edge failed to start'
-          sleep 3
-          compose exec -T edge-nginx nginx -t || fail_with_restore 'Nginx configuration validation failed'
-          compose exec -T edge-nginx nginx -T 2>/dev/null | grep -Fq 'auth.ithute.co.ls' \
-            || fail_with_restore 'Rendered Nginx configuration does not contain auth.ithute.co.ls'
+          if [ "$nginx_recovered" != true ]; then
+            # Emergency fallback only. This restores the hostnames Caddy already
+            # served before the migration; it does not perform any ACME changes.
+            if [ -s compose.edge-nginx.yml ]; then
+              edge rm -sf edge-nginx certbot >/dev/null 2>&1 || true
+            fi
+            docker compose --env-file .env.production --profile production up -d caddy
 
-          # This VPS cannot reliably hairpin through its own public IPv4. Verify
-          # the published listener through loopback while preserving each SNI and
-          # Host name with curl --resolve.
-          local_check() {
-            url="$1"
-            require_success="$2"
-            host="$(printf '%s' "$url" | sed -E 's#^https://([^/]+).*$#\1#')"
-            attempt=1
-            while [ "$attempt" -le 18 ]; do
-              if [ "$require_success" = true ]; then
-                if curl -fsS --resolve "$host:443:127.0.0.1" --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
-                  return 0
-                fi
-              else
-                if curl -sS --resolve "$host:443:127.0.0.1" --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
-                  return 0
-                fi
+            healthy=false
+            for attempt in $(seq 1 20); do
+              if listener_ok; then
+                healthy=true
+                break
               fi
-              sleep 3
-              attempt=$((attempt + 1))
+              sleep 2
             done
-            return 1
-          }
+            if [ "$healthy" != true ]; then
+              docker compose --env-file .env.production --profile production logs --tail=250 caddy >&2 || true
+              echo 'Could not restore a listener on port 443.' >&2
+              exit 1
+            fi
+            echo 'Legacy Caddy HTTPS listener restored as an emergency fallback.'
+          fi
 
-          for url in \
-            https://ithute.co.ls/ \
-            https://panel.ithute.co.ls/ \
-            https://pay.ithute.co.ls/ \
-            https://api.pay.ithute.co.ls/ \
-            https://portal.pay.ithute.co.ls/portal \
-            https://loanhub.co.ls/; do
-            local_check "$url" false || fail_with_restore "Local TLS/route verification failed: $url"
-            echo "Local TLS route verified: $url"
-          done
-
-          for url in \
-            https://auth.ithute.co.ls/healthz \
-            https://api.loanhub.co.ls/health/ready; do
-            local_check "$url" true || fail_with_restore "Local application health verification failed: $url"
-            echo "Local application health verified: $url"
-          done
-
-          echo | openssl s_client -connect 127.0.0.1:443 -servername auth.ithute.co.ls 2>/dev/null \
-            | openssl x509 -noout -subject -issuer -dates \
-            || fail_with_restore 'Auth TLS certificate could not be read from the Nginx edge'
-
-          # Reuse the same public certificate for SMTP/IMAPS so removal of Caddy
-          # does not regress mail TLS.
-          cert_tmp="/tmp/ithute-edge-${EDGE_SHA}-fullchain.pem"
-          key_tmp="/tmp/ithute-edge-${EDGE_SHA}-privkey.pem"
-          compose run --rm --no-deps --entrypoint cat certbot /etc/letsencrypt/live/ithute-edge/fullchain.pem > "$cert_tmp"
-          compose run --rm --no-deps --entrypoint cat certbot /etc/letsencrypt/live/ithute-edge/privkey.pem > "$key_tmp"
-          chmod 600 "$key_tmp"
-          (cd "$PLATFORM_ROOT" && scripts/deploy-mail-tls.sh "$cert_tmp" "$key_tmp") \
-            || fail_with_restore 'Mail TLS deployment from the Nginx edge certificate failed'
-          rm -f "$cert_tmp" "$key_tmp"
-
-          docker ps \
-            --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
-            --filter 'label=com.docker.compose.service=caddy' \
-            -q | xargs -r docker rm -f
-
-          trap - HUP INT TERM
-          echo 'Nginx + Certbot edge passed VPS-local validation.'
+          ss -lnt | grep -E ':(80|443)[[:space:]]' || true
+          listener_ok
           REMOTE
 
-      - name: Verify Nginx edge from the public Internet
+      - name: Verify recovery from the public Internet
         run: |
           set -eu
-          external_check() {
-            url="$1"
-            require_success="$2"
-            attempt=1
-            while [ "$attempt" -le 18 ]; do
-              if [ "$require_success" = true ]; then
-                if curl -fsS --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
-                  return 0
-                fi
-              else
-                if curl -sS --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
-                  return 0
-                fi
-              fi
-              sleep 3
-              attempt=$((attempt + 1))
-            done
-            return 1
-          }
-
-          failed=false
           for url in \
-            https://ithute.co.ls/ \
             https://panel.ithute.co.ls/ \
             https://pay.ithute.co.ls/ \
-            https://api.pay.ithute.co.ls/ \
-            https://portal.pay.ithute.co.ls/portal \
-            https://loanhub.co.ls/; do
-            if external_check "$url" false; then
-              echo "Public TLS route verified: $url"
-            else
-              echo "::error::Public TLS/route verification failed: $url"
-              failed=true
-            fi
-          done
-          for url in \
-            https://auth.ithute.co.ls/healthz \
-            https://api.loanhub.co.ls/health/ready; do
-            if external_check "$url" true; then
-              echo "Public application health verified: $url"
-            else
-              echo "::error::Public application health verification failed: $url"
-              failed=true
-            fi
+            https://portal.pay.ithute.co.ls/portal; do
+            healthy=false
+            for attempt in $(seq 1 12); do
+              if curl -sS --connect-timeout 5 --max-time 15 -o /dev/null "$url"; then
+                healthy=true
+                break
+              fi
+              sleep 3
+            done
+            [ "$healthy" = true ] || { echo "::error::Public HTTPS recovery failed: $url"; exit 1; }
+            echo "Recovered: $url"
           done
 
-          if [ "$failed" = true ]; then
-            remote="${VPS_USER}@${VPS_HOST}"
-            ssh "$remote" "cd '$LOANHUB_RUNTIME_DIR' && docker compose --env-file .env.production -f compose.yaml -f compose.edge-nginx.yml --profile production rm -sf edge-nginx certbot >/dev/null 2>&1 || true; cd '$LOANHUB_RUNTIME_DIR' && docker compose --env-file .env.production --profile production up -d caddy >/dev/null 2>&1 || true"
-            exit 1
-          fi
-
-          echo | openssl s_client -connect auth.ithute.co.ls:443 -servername auth.ithute.co.ls 2>/dev/null \
+          echo | openssl s_client -connect panel.ithute.co.ls:443 -servername panel.ithute.co.ls 2>/dev/null \
             | openssl x509 -noout -subject -issuer -dates
-          echo 'Nginx + Certbot shared TLS edge deployment completed successfully.'
+          echo 'Public HTTPS listener recovery completed.'
