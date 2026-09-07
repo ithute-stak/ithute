@@ -1,6 +1,13 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 import { refreshAccessToken } from "@/lib/refresh_access_token";
 
+declare module "axios" {
+    interface AxiosRequestConfig {
+        _retry?: boolean;
+        skipAuthRefresh?: boolean;
+    }
+}
+
 const api = axios.create({
     withCredentials: true,
     timeout: 15000,
