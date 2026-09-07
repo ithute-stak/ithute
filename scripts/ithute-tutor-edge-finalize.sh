@@ -69,16 +69,26 @@ edge_compose run --rm --no-deps --entrypoint /bin/sh edge-nginx -c \
 awk 'NF && !seen[$0]++ { print }' "$required_sans" > "$required_tmp"
 mv "$required_tmp" "$required_sans"
 
-# Certbot owns the shared Let's Encrypt volume, so use its own certificate
-# inventory to inspect the canonical certificate. The minimal nginx:alpine edge
-# image intentionally does not ship the openssl CLI, and a running Nginx
-# container may also retain an old certificate symlink target after Certbot
-# atomically replaces it.
+# Certbot owns the shared Let's Encrypt volume, so use its own complete
+# certificate inventory. Do not pass --cert-name to `certbot certificates`:
+# Certbot versions in production do not all accept that filter. Instead, parse
+# the named certificate block from the stable inventory output.
 certbot_domains() {
-  edge_compose run --rm --no-deps --entrypoint certbot certbot \
-    certificates --cert-name ithute-edge 2>/dev/null \
-    | sed -n 's/^[[:space:]]*Domains:[[:space:]]*//p' \
-    | head -n1
+  inventory="$(edge_compose run --rm --no-deps --entrypoint certbot certbot certificates 2>/dev/null || true)"
+  printf '%s\n' "$inventory" | awk '
+    /^[[:space:]]*Certificate Name:[[:space:]]*ithute-edge[[:space:]]*$/ {
+      in_cert = 1
+      next
+    }
+    in_cert && /^[[:space:]]*Domains:[[:space:]]*/ {
+      sub(/^[[:space:]]*Domains:[[:space:]]*/, "")
+      print
+      exit
+    }
+    in_cert && /^[[:space:]]*Certificate Name:/ {
+      exit
+    }
+  '
 }
 
 current_domains="$(certbot_domains || true)"
@@ -132,6 +142,7 @@ fi
 cert_domains="$(certbot_domains || true)"
 [ -n "$cert_domains" ] || {
   echo 'Certbot cannot report the canonical ithute-edge certificate domains.' >&2
+  edge_compose run --rm --no-deps --entrypoint certbot certbot certificates || true
   exit 1
 }
 printf 'Canonical certificate domains: %s\n' "$cert_domains"
