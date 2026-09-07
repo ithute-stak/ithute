@@ -1,13 +1,14 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
-import {refreshAccessToken} from "@/lib/refresh_access_token";
+import { refreshAccessToken } from "@/lib/refresh_access_token";
 
 const api = axios.create({
     withCredentials: true,
     timeout: 15000,
 });
 
-interface RetryAxiosRequestConfig extends InternalAxiosRequestConfig {
+interface TutorAxiosRequestConfig extends InternalAxiosRequestConfig {
     _retry?: boolean;
+    skipAuthRefresh?: boolean;
 }
 
 /* ---------------- TOKEN INJECTION ---------------- */
@@ -38,58 +39,61 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 
 /* ---------------- RESPONSE INTERCEPTOR ---------------- */
 
-let isRefreshing = false;
-let queue: ((token: string) => void)[] = [];
+// One shared refresh promise prevents refresh storms and guarantees that every
+// request waiting on a rotated token resolves or rejects together.
+let refreshPromise: Promise<string> | null = null;
+
+function refreshOnce(): Promise<string> {
+    if (!refreshPromise) {
+        refreshPromise = refreshAccessToken()
+            .then((token) => {
+                if (!token) throw new Error("Tutor refresh returned no access token");
+                setToken(token);
+                return token;
+            })
+            .catch((error) => {
+                // Only a definite expired/invalid session clears auth. A temporary
+                // central Auth outage must not silently log the user out.
+                if (axios.isAxiosError(error) && error.response?.status === 401) {
+                    setToken(null);
+                }
+                throw error;
+            })
+            .finally(() => {
+                refreshPromise = null;
+            });
+    }
+
+    return refreshPromise;
+}
 
 api.interceptors.response.use(
-    (res) => res,
-
+    (response) => response,
     async (error: AxiosError) => {
-        const original = error.config as RetryAxiosRequestConfig;
+        const original = error.config as TutorAxiosRequestConfig | undefined;
 
-        if (error.response?.status !== 401 || original._retry) {
+        if (
+            !original ||
+            error.response?.status !== 401 ||
+            original._retry ||
+            original.skipAuthRefresh
+        ) {
             return Promise.reject(error);
         }
 
-        if (isRefreshing) {
-            return new Promise((resolve) => {
-                queue.push((token) => {
-                    original.headers = original.headers ?? {};
-                    original.headers.Authorization = `Bearer ${token}`;
-                    resolve(api(original));
-                });
-            });
-        }
-
         original._retry = true;
-        isRefreshing = true;
 
         try {
-            const newToken = await refreshAccessToken();
-
-            setToken(newToken);
-
-            queue.forEach((cb) => cb(newToken));
-            queue = [];
-
+            const newToken = await refreshOnce();
             original.headers = original.headers ?? {};
             original.headers.Authorization = `Bearer ${newToken}`;
-
             return api(original);
-        } catch (err) {
-            setToken(null);
-            queue = [];
-
-            if (typeof window !== "undefined") {
-                localStorage.removeItem("persist:auth");
-                window.location.href = "/login";
-            }
-
-            return Promise.reject(err);
-        } finally {
-            isRefreshing = false;
+        } catch (refreshError) {
+            // AuthProvider is the single owner of navigation. The HTTP layer never
+            // hard-redirects, avoiding competing login/session redirect loops.
+            return Promise.reject(refreshError);
         }
-    }
+    },
 );
 
 export default api;
