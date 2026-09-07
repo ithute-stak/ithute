@@ -147,6 +147,11 @@ jobs:
           grep -q 'python3 -m py_compile scripts/ithute-tutor-sync-env.py' .github/workflows/ithute-tutor-production.yml
           ! grep -q 'ithute-tutor-edge-finalize' .github/workflows/ithute-tutor-production.yml
 
+          # Tutor production is released by Tutor's own successful validation,
+          # not by the monolithic platform deployment workflow.
+          grep -q 'workflows: \["Ithute Tutor"\]' .github/workflows/ithute-tutor-production.yml
+          ! grep -q 'Build and Deploy Production' .github/workflows/ithute-tutor-production.yml
+
           # Tutor keeps its own GitHub queue while the shared VPS mutation is
           # protected by the runtime host lock in the checked-in deploy script.
           grep -q 'group: ithute-tutor-production' .github/workflows/ithute-tutor-production.yml
