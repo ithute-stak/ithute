@@ -1,0 +1,345 @@
+/*
+ * Live hosted-Webmail presentation fix.
+ *
+ * PR #50 originally targeted MailClient as a direct child of .imail-route-webmail.
+ * The live tree is route -> page wrapper -> shell -> entry -> MailClient, so those
+ * direct-child selectors never matched. These descendant selectors intentionally
+ * mirror the external iMail workspace and are loaded last.
+ */
+
+.imail-route-webmail div.h-screen.overflow-hidden {
+  background: #0f1715 !important;
+  color: #e8f3ef !important;
+}
+
+/* Header: same light control-bar language as external iMail. */
+.imail-route-webmail div.h-screen.overflow-hidden > header {
+  height: 64px !important;
+  min-height: 64px !important;
+  padding-inline: 12px !important;
+  border-bottom: 1px solid #d9e4df !important;
+  background: rgba(250, 252, 251, 0.98) !important;
+  color: #183d33 !important;
+  box-shadow: none !important;
+  backdrop-filter: blur(16px);
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > header button,
+.imail-route-webmail div.h-screen.overflow-hidden > header a {
+  color: #64776f !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > header button:hover,
+.imail-route-webmail div.h-screen.overflow-hidden > header a:hover {
+  color: #0b6f55 !important;
+  background: #edf6f2 !important;
+}
+
+/* Replace the old !T tile with the approved iMail artwork where there is room. */
+.imail-route-webmail div.h-screen.overflow-hidden > header > div:nth-child(2) > div:first-child {
+  width: 112px !important;
+  min-width: 112px !important;
+  height: 40px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  color: transparent !important;
+  background-image: var(--imail-logo-image) !important;
+  background-repeat: no-repeat !important;
+  background-size: contain !important;
+  background-position: left center !important;
+  box-shadow: none !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > header > div:nth-child(2) > div:nth-child(2) {
+  display: none !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > header > div.relative.mx-auto {
+  max-width: 760px !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > header > div.relative.mx-auto > form {
+  height: 44px !important;
+  border: 1px solid #d8e4df !important;
+  border-radius: 14px !important;
+  background: #edf4f1 !important;
+  box-shadow: none !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > header > div.relative.mx-auto > form:focus-within {
+  border-color: #71bca2 !important;
+  background: #ffffff !important;
+  box-shadow: 0 0 0 4px rgba(16, 125, 92, 0.08) !important;
+}
+
+/* Workspace */
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex {
+  position: relative;
+  height: calc(100vh - 64px) !important;
+  min-height: 0;
+  padding: 0 !important;
+  background: #111a18 !important;
+}
+
+/* Sidebar: copy the external mailbox's dark green rail. */
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > aside {
+  border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+  background: #111b18 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > aside > div {
+  margin: 0 !important;
+  padding: 10px 10px 12px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: #111b18 !important;
+  color: #d9e8e2 !important;
+  box-shadow: none !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > aside > div > button[title="Compose"] {
+  width: 100% !important;
+  min-width: 0 !important;
+  height: 46px !important;
+  margin: 0 0 12px !important;
+  padding: 0 16px !important;
+  border: 1px solid rgba(99, 224, 180, 0.14) !important;
+  border-radius: 14px !important;
+  background: #0f5b49 !important;
+  color: #eefbf6 !important;
+  box-shadow: none !important;
+  font-weight: 800 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > aside > div > button[title="Compose"]:hover {
+  background: #126a55 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > aside button,
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > aside a {
+  border-radius: 11px !important;
+  color: #c7d8d1 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > aside button:hover,
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > aside a:hover {
+  background: rgba(255, 255, 255, 0.065) !important;
+  color: #ffffff !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > aside button[class*="bg-[#d3e3fd]"] {
+  background: #12483b !important;
+  color: #f1fbf7 !important;
+  box-shadow: inset 3px 0 0 #49c79e !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > aside svg {
+  color: #a9c6bc !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > aside button[class*="bg-[#d3e3fd]"] svg {
+  color: #62d8b0 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > aside > div > div.mt-auto {
+  border-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > aside > div > div.mt-auto p:first-child {
+  color: #eef8f4 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > aside > div > div.mt-auto p:last-child {
+  color: #88a89c !important;
+}
+
+/* Inbox / reader surface */
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main {
+  position: relative;
+  min-width: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: #111b18 !important;
+  color: #e9f3ef !important;
+  box-shadow: none !important;
+}
+
+/* On desktop, give an unselected inbox the same list + reading-pane composition
+   as external iMail. The right pane is a branded idle reader; when a message is
+   opened the real reader expands to use the workspace. */
+@media (min-width: 1024px) {
+  .imail-route-webmail div.h-screen.overflow-hidden > div.flex:has(> main > div.flex.h-full.flex-col) > main {
+    flex: 0 0 min(47%, 690px) !important;
+    width: min(47%, 690px) !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.09) !important;
+  }
+
+  .imail-route-webmail div.h-screen.overflow-hidden > div.flex:has(> main > div.flex.h-full.flex-col)::after {
+    content: "Your message opens here\A Choose a message from the inbox to read it without leaving your workspace.";
+    white-space: pre-line;
+    display: grid;
+    flex: 1 1 auto;
+    place-items: center;
+    padding: 40px;
+    text-align: center;
+    color: #7f9990;
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1.65;
+    background:
+      radial-gradient(circle at 50% 43%, rgba(30, 140, 106, 0.13), transparent 15%),
+      linear-gradient(145deg, #151e31, #11192a);
+  }
+}
+
+/* Toolbar and tabs */
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main > div.flex.h-full.flex-col > div:first-child,
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main > div.h-full.overflow-y-auto > div:first-child {
+  height: 48px !important;
+  min-height: 48px !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  background: #162033 !important;
+  color: #aebccf !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main button[class*="hover:bg-[#f1f3f4]"] {
+  color: #93a5a0 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main button[class*="hover:bg-[#f1f3f4]"]:hover {
+  color: #6de1ba !important;
+  background: rgba(255, 255, 255, 0.07) !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main div[class*="h-14"][class*="items-end"] {
+  height: 52px !important;
+  min-height: 52px !important;
+  align-items: center !important;
+  gap: 4px;
+  padding-inline: 8px !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  background: #151f31 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main div[class*="h-14"][class*="items-end"] > button {
+  min-width: 0 !important;
+  flex: 1 1 0;
+  height: 40px !important;
+  border-radius: 10px !important;
+  color: #9cadb9 !important;
+  font-weight: 750 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main div[class*="h-14"][class*="items-end"] > button[class*="text-[#0b57d0]"] {
+  color: #77dfba !important;
+  background: rgba(42, 177, 132, 0.11) !important;
+  box-shadow: inset 0 -2px 0 #49c79e !important;
+}
+
+/* Message rows: external-style dark cards with stronger unread hierarchy. */
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main .group.relative.border-b {
+  margin: 0 !important;
+  border: 0 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.075) !important;
+  border-radius: 0 !important;
+  background: #111b18 !important;
+  color: #d9e7e2 !important;
+  box-shadow: none !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main .group.relative.border-b[class*="bg-[#f7faff]"] {
+  background: #13241f !important;
+  box-shadow: inset 3px 0 0 #38b98e !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main .group.relative.border-b:hover {
+  background: #172621 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main .group.relative.border-b button,
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main .group.relative.border-b span,
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main .group.relative.border-b p {
+  color: inherit;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main .group.relative.border-b p[class*="text-[#6f777b]"],
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main .group.relative.border-b span[class*="text-[#6f777b]"] {
+  color: #7f9990 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main .group.relative.border-b div[class*="bg-[#d3e3fd]"] {
+  background: #0e4538 !important;
+  color: #73dfba !important;
+}
+
+/* Selected message reader. */
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main > div.h-full.overflow-y-auto {
+  background: linear-gradient(145deg, #151e31, #11192a) !important;
+  color: #e6edf7 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main article {
+  color: #e6edf7 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main article h1,
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main article p,
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main article div[class*="whitespace-pre-wrap"] {
+  color: #e7edf6 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main article p[class*="text-[#6f777b]"] {
+  color: #8da0b5 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main article div[class*="bg-[#d3e3fd]"] {
+  background: #0d493b !important;
+  color: #70dfb8 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main article button {
+  border-color: rgba(255, 255, 255, 0.14) !important;
+  background: rgba(255, 255, 255, 0.035) !important;
+  color: #e2eaf4 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main article button:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Empty and loading states */
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main div[class*="place-items-center"] {
+  color: #839a92 !important;
+}
+
+.imail-route-webmail div.h-screen.overflow-hidden > div.flex > main svg[class*="animate-spin"],
+.imail-route-webmail div.h-screen.overflow-hidden > header svg[class*="animate-spin"] {
+  color: #5bd2aa !important;
+}
+
+/* Mobile keeps the single-pane workflow, but with the same external-mail colors. */
+@media (max-width: 1023px) {
+  .imail-route-webmail div.h-screen.overflow-hidden > header > div:nth-child(2) > div:first-child {
+    width: 42px !important;
+    min-width: 42px !important;
+    background-size: 116px auto !important;
+    background-position: left center !important;
+  }
+
+  .imail-route-webmail div.h-screen.overflow-hidden > div.flex > aside > div {
+    width: min(84vw, 290px) !important;
+  }
+
+  .imail-route-webmail div.h-screen.overflow-hidden > div.flex > main {
+    width: 100% !important;
+    flex: 1 1 auto !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .imail-route-webmail * {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
