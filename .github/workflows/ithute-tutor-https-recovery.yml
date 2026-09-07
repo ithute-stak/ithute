@@ -51,6 +51,7 @@ jobs:
           grep -Fq 'push.ithute.co.ls' scripts/ithute-tutor-edge-finalize.sh
           grep -Fq 'realtime.ithute.co.ls' scripts/ithute-tutor-edge-finalize.sh
           grep -Fq 'nginx -t' scripts/ithute-tutor-edge-finalize.sh
+          grep -Fq 'EDGE_HEALTH_HOST:-panel.ithute.co.ls' scripts/ithute-tutor-edge-finalize.sh
           if grep -Eq 'docker[[:space:]]+volume[[:space:]]+(rm|prune)|--remove-orphans|--volumes' scripts/ithute-tutor-edge-finalize.sh; then
             echo '::error::Tutor HTTPS recovery must not remove shared product containers or persistent volumes.'
             exit 1
@@ -141,16 +142,12 @@ jobs:
             done
           fi
 
-          for service in mailbox-dns-tutor-backend-1 mailbox-dns-tutor-frontend-1; do
-            state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$service" 2>/dev/null || true)"
-            case "$state" in
-              healthy|running) ;;
-              *) echo "$service is not ready (state: ${state:-missing})" >&2; exit 1 ;;
-            esac
-          done
-
+          # TLS recovery owns only the shared certificate/edge lifecycle. It is
+          # deliberately independent of Tutor container health so a single
+          # product outage cannot leave Panel/Auth/Pay/LoanHub on a stale cert.
           TUTOR_EDGE_TEMPLATE="/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf" \
             EDGE_DIR="$EDGE_DIR" DEPLOY_SHA="$DEPLOY_SHA" TUTOR_HOST="$TUTOR_HOST" \
+            EDGE_HEALTH_HOST='panel.ithute.co.ls' \
             sh "$finalizer"
           rm -f "$finalizer"
           REMOTE
