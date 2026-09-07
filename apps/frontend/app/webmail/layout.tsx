@@ -10,6 +10,7 @@ import "./mobile-responsive-polish.css";
 import "./approved-webmail.css";
 import "./approved-settings.css";
 import "./external-workspace-fix.css";
+import "./external-connect-premium.css";
 
 export default function WebmailLayout({ children }: { children: ReactNode }) {
   return (
