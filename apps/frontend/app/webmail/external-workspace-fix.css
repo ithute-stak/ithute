@@ -39,6 +39,24 @@
     width: 100% !important;
     max-width: none !important;
   }
+
+  /* The message list sits inside a grid cell. Make that cell a flex column so
+     the list's flex-1 background fills the complete workspace height instead
+     of stopping after the last loaded message. */
+  .imail-route-external main[class*="min-h-screen"]:has(> header) div[class*="lg:grid-cols-[minmax(390px,46%)_1fr]"] > div:first-child,
+  .imail-route-external main[class*="min-h-screen"]:has(> header) div[class*="grid-rows-[minmax(300px,48%)_1fr]"] > div:first-child {
+    display: flex !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    flex-direction: column !important;
+  }
+
+  .imail-route-external main[class*="min-h-screen"]:has(> header) div[class*="lg:grid-cols-[minmax(390px,46%)_1fr]"] > div:first-child > section,
+  .imail-route-external main[class*="min-h-screen"]:has(> header) div[class*="grid-rows-[minmax(300px,48%)_1fr]"] > div:first-child > section {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+  }
 }
 
 @media (max-width: 639.98px) {

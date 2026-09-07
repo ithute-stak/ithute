@@ -15,7 +15,6 @@ from app.services.external_webmail import (
     delete_session,
     folder_counts,
     folders,
-    message,
     messages,
     move_message,
     save_draft,
@@ -23,6 +22,7 @@ from app.services.external_webmail import (
     session_config,
     set_flags,
 )
+from app.services.external_webmail_read import message as read_message
 from app.services.external_webmail_setup import ExternalSetupError, connect_external_account
 from app.services.security_audit import record_webmail_security_event
 from app.services.security_controls import (
@@ -282,7 +282,7 @@ def get_message(
     token: Annotated[str | None, Cookie(alias=EXTERNAL_COOKIE)] = None,
 ):
     try:
-        return message(_config(token), _uid(uid), folder=folder)
+        return read_message(_config(token), _uid(uid), folder=folder)
     except ExternalWebmailError as exc:
         raise _failure(exc) from exc
 
