@@ -34,13 +34,15 @@ jobs:
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     environment: production
     permissions:
       contents: read
       packages: write
     env:
       DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
 
     steps:
       - name: Checkout exact release commit
@@ -63,21 +65,66 @@ jobs:
       - name: Build and publish Tutor backend
         run: |
           set -eu
-          docker buildx build --platform linux/amd64 --pull --push \
+          docker buildx build --platform linux/amd64 --pull --load \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --label "org.opencontainers.image.revision=${DEPLOY_SHA}" \
             -t "${BACKEND_IMAGE}:${DEPLOY_SHA}" -t "${BACKEND_IMAGE}:latest" \
             ./products/ithute-tutor/sms_back_end
+          docker push "${BACKEND_IMAGE}:${DEPLOY_SHA}"
+          docker push "${BACKEND_IMAGE}:latest"
 
       - name: Build and publish Tutor frontend
         run: |
           set -eu
-          docker buildx build --platform linux/amd64 --pull --push \
+          docker buildx build --platform linux/amd64 --pull --load \
             --build-arg NEXT_PUBLIC_TUTOR_API_URL=/api \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --label "org.opencontainers.image.revision=${DEPLOY_SHA}" \
             -t "${FRONTEND_IMAGE}:${DEPLOY_SHA}" -t "${FRONTEND_IMAGE}:latest" \
             ./products/ithute-tutor/sms-frontend
+          docker push "${FRONTEND_IMAGE}:${DEPLOY_SHA}"
+          docker push "${FRONTEND_IMAGE}:latest"
+
+      - name: Stage exact Tutor images on production VPS
+        run: |
+          set -eu
+          [ -n "${VPS_SSH_KEY:-}" ] || { echo "::error::VPS_SSH_KEY is required"; exit 1; }
+          docker image inspect "${BACKEND_IMAGE}:${DEPLOY_SHA}" >/dev/null
+          docker image inspect "${FRONTEND_IMAGE}:${DEPLOY_SHA}" >/dev/null
+
+          bundle="/tmp/ithute-tutor-images-${DEPLOY_SHA}.tar.gz"
+          docker save \
+            "${BACKEND_IMAGE}:${DEPLOY_SHA}" \
+            "${FRONTEND_IMAGE}:${DEPLOY_SHA}" \
+            | gzip -1 > "$bundle"
+          test -s "$bundle"
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_tutor_build_deploy"
+          chmod 600 "$HOME/.ssh/ithute_tutor_build_deploy"
+          eval "$(ssh-agent -s)"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/ithute-tutor-build-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/ithute-tutor-build-askpass.sh
+            SSH_ASKPASS=/tmp/ithute-tutor-build-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+              setsid -w ssh-add "$HOME/.ssh/ithute_tutor_build_deploy" </dev/null
+            rm -f /tmp/ithute-tutor-build-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/ithute_tutor_build_deploy" </dev/null
+          fi
+          cp scripts/production-ssh-keepalive.conf "$HOME/.ssh/config"
+          chmod 600 "$HOME/.ssh/config"
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          remote="${VPS_USER}@${VPS_HOST}"
+          scp "$bundle" "$remote:/tmp/ithute-tutor-images-${DEPLOY_SHA}.tar.gz"
+          ssh "$remote" "test -s '/tmp/ithute-tutor-images-${DEPLOY_SHA}.tar.gz'"
+          rm -f "$bundle"
 
   deploy:
     name: Deploy Tutor, DNS and HTTPS
@@ -87,7 +134,6 @@ jobs:
     environment: production
     permissions:
       contents: read
-      packages: read
     env:
       DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
@@ -141,14 +187,11 @@ jobs:
           scp infrastructure/ithute-edge/default.conf.template "$remote:/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf"
 
       - name: Deploy Tutor and register authoritative DNS
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
-          printf '%s' "$GHCR_TOKEN" | ssh "$remote" "docker login '$REGISTRY' -u '$GHCR_USERNAME' --password-stdin"
 
-          ssh "$remote" "APP_DIR='$VPS_APP_DIR' EDGE_DIR='$VPS_EDGE_DIR' DEPLOY_SHA='$DEPLOY_SHA' TUTOR_HOST='$TUTOR_HOST' VPS_HOST='$VPS_HOST' sh -s" <<'REMOTE'
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' EDGE_DIR='$VPS_EDGE_DIR' DEPLOY_SHA='$DEPLOY_SHA' TUTOR_HOST='$TUTOR_HOST' VPS_HOST='$VPS_HOST' BACKEND_IMAGE='$BACKEND_IMAGE' FRONTEND_IMAGE='$FRONTEND_IMAGE' sh -s" <<'REMOTE'
           set -eu
 
           if command -v flock >/dev/null 2>&1; then
@@ -165,6 +208,14 @@ jobs:
             done
             echo "Acquired shared Ithute production lock."
           fi
+
+          image_bundle="/tmp/ithute-tutor-images-${DEPLOY_SHA}.tar.gz"
+          [ -s "$image_bundle" ] || { echo "Exact Tutor image bundle is missing: $image_bundle" >&2; exit 1; }
+          echo "Loading exact Tutor ${DEPLOY_SHA} images delivered by the trusted build runner."
+          gzip -dc "$image_bundle" | docker load
+          rm -f "$image_bundle"
+          docker image inspect "${BACKEND_IMAGE}:${DEPLOY_SHA}" >/dev/null
+          docker image inspect "${FRONTEND_IMAGE}:${DEPLOY_SHA}" >/dev/null
 
           cd "$APP_DIR"
           [ -f .env ] || { echo "Ithute production .env is missing" >&2; exit 1; }
@@ -307,7 +358,9 @@ jobs:
             wait_service ithute-push-worker 90
           fi
 
-          compose pull tutor-backend tutor-frontend
+          # Exact SHA-tagged Tutor images were loaded above from the build runner.
+          # Do not pull here: private GHCR package permissions on the VPS must not
+          # be able to block an otherwise verified production release.
           compose up -d --no-build tutor-db
           wait_service tutor-db 60
 
@@ -412,8 +465,6 @@ jobs:
           edge_compose logs --tail=250 edge-nginx || true
           exit 1
           REMOTE
-
-          ssh "$remote" "docker logout '$REGISTRY' >/dev/null 2>&1 || true"
 
       - name: Require public Tutor DNS and HTTPS
         run: |
