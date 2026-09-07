@@ -11,6 +11,7 @@ import "./approved-webmail.css";
 import "./approved-settings.css";
 import "./external-workspace-fix.css";
 import "./external-connect-premium.css";
+import "./internal-webmail-premium.css";
 
 export default function WebmailLayout({ children }: { children: ReactNode }) {
   return (
