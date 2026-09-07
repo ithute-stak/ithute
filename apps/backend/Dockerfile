@@ -10,7 +10,8 @@ WORKDIR /app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser
 
 COPY requirements.txt .
 RUN set -eux; \
@@ -24,7 +25,8 @@ RUN set -eux; \
         sleep 10; \
     done
 
-COPY . .
+COPY --chown=appuser:appuser . .
 
+USER appuser
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
