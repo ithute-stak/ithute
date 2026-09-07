@@ -12,7 +12,10 @@ FILES="
 .github/workflows/ithute-tutor-production.yml
 .github/workflows/loanhub-product-production.yml
 .github/workflows/shared-tls-edge-production.yml
+.github/workflows/production-storage-recovery.yml
 scripts/prod-deploy.sh
+scripts/prod-preflight.sh
+scripts/prod-storage-preflight.sh
 "
 
 for file in $FILES; do
@@ -48,13 +51,23 @@ grep -Fq 'Creating pre-release !thute Auth database backup' scripts/prod-deploy.
 grep -Fq 'Creating pre-release !thute Push database backup' scripts/prod-deploy.sh
 grep -Fq 'Creating pre-release !thute Realtime database backup' scripts/prod-deploy.sh
 
+# Production storage recovery may reclaim reproducible images/build cache and
+# expired pre-release rollback snapshots, but it must remain volume-safe and the
+# normal production preflight must require it before pulling a new release.
+grep -Fq 'prod-storage-preflight.sh cleanup' scripts/prod-preflight.sh
+grep -Fq 'Persistent Docker volumes are never pruned' scripts/prod-storage-preflight.sh
+grep -Fq 'docker builder prune -af' scripts/prod-storage-preflight.sh
+grep -Fq 'docker image prune -af' scripts/prod-storage-preflight.sh
+grep -Fq 'No persistent volume or live database data was deleted.' scripts/prod-storage-preflight.sh
+
 # All production-mutating paths must continue to use the shared VPS lock.
 for file in \
   scripts/prod-deploy.sh \
   .github/workflows/ithute-pay-production.yml \
   .github/workflows/ithute-tutor-production.yml \
   .github/workflows/loanhub-product-production.yml \
-  .github/workflows/shared-tls-edge-production.yml; do
+  .github/workflows/shared-tls-edge-production.yml \
+  .github/workflows/production-storage-recovery.yml; do
   grep -Fq '/tmp/ithute-production.lock' "$file" || {
     echo "Missing shared production host lock in $file" >&2
     exit 1
