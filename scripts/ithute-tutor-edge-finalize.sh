@@ -70,9 +70,9 @@ awk 'NF && !seen[$0]++ { print }' "$required_sans" > "$required_tmp"
 mv "$required_tmp" "$required_sans"
 
 # Certbot owns the shared Let's Encrypt volume, so use its own complete
-# certificate inventory. Do not pass --cert-name to `certbot certificates`:
-# Certbot versions in production do not all accept that filter. Instead, parse
-# the named certificate block from the stable inventory output.
+# certificate inventory. Certbot versions differ in the label used for the SAN
+# list: current production reports `Identifiers:`, while other releases report
+# `Domains:`. Accept either label inside the named ithute-edge block.
 certbot_domains() {
   inventory="$(edge_compose run --rm --no-deps --entrypoint certbot certbot certificates 2>/dev/null || true)"
   printf '%s\n' "$inventory" | awk '
@@ -80,8 +80,8 @@ certbot_domains() {
       in_cert = 1
       next
     }
-    in_cert && /^[[:space:]]*Domains:[[:space:]]*/ {
-      sub(/^[[:space:]]*Domains:[[:space:]]*/, "")
+    in_cert && /^[[:space:]]*(Domains|Identifiers):[[:space:]]*/ {
+      sub(/^[[:space:]]*(Domains|Identifiers):[[:space:]]*/, "")
       print
       exit
     }
