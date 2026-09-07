@@ -2,7 +2,7 @@ name: Deploy Ithute Pay Production
 
 on:
   workflow_run:
-    workflows: ["Build and Deploy Production"]
+    workflows: ["Ithute Pay"]
     types: [completed]
     branches: [main]
   workflow_dispatch:
@@ -134,7 +134,17 @@ jobs:
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
+          logged_in=false
+          cleanup_registry() {
+            if [ "$logged_in" = true ]; then
+              ssh "$remote" "docker logout '$REGISTRY' >/dev/null 2>&1 || true" || true
+            fi
+          }
+          trap cleanup_registry EXIT HUP INT TERM
+
           printf '%s' "$GHCR_TOKEN" | ssh "$remote" "docker login '$REGISTRY' -u '$GHCR_USERNAME' --password-stdin"
+          logged_in=true
+
           ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' BOOTSTRAP_ADMIN_EMAIL='$BOOTSTRAP_ADMIN_EMAIL' BOOTSTRAP_ADMIN_PASSWORD='$BOOTSTRAP_ADMIN_PASSWORD' sh -s" <<'REMOTE'
           set -eu
 
@@ -239,7 +249,6 @@ jobs:
 
           echo "Ithute Pay deployed at immutable image ${DEPLOY_SHA}; central platform services were left untouched."
           REMOTE
-          ssh "$remote" "docker logout '$REGISTRY' >/dev/null 2>&1 || true"
 
       - name: Require public domain health
         run: |
