@@ -29,25 +29,65 @@ edge_compose() {
 
 edge_compose config >/dev/null
 
-san_file="$(mktemp)"
+current_sans="$(mktemp)"
+required_sans="$(mktemp)"
+required_tmp="$(mktemp)"
 cleanup() {
-  rm -f "$san_file"
+  rm -f "$current_sans" "$required_sans" "$required_tmp"
 }
 trap cleanup EXIT HUP INT TERM
 
-# Read the current shared certificate SANs. Existing names are preserved when
-# Tutor is added, so this operation cannot replace the shared certificate with
-# a Tutor-only certificate.
+# The ithute-edge certificate is shared by every HTTPS virtual host. Never
+# derive the next certificate only from the currently served SAN set because a
+# damaged or product-only certificate would then become the new source of
+# truth. Start from the complete Ithute edge identity instead.
+cat > "$required_sans" <<EOF
+ithute.co.ls
+www.ithute.co.ls
+panel.ithute.co.ls
+api.ithute.co.ls
+auth.ithute.co.ls
+push.ithute.co.ls
+realtime.ithute.co.ls
+groupware.ithute.co.ls
+mail.ithute.co.ls
+pay.ithute.co.ls
+api.pay.ithute.co.ls
+portal.pay.ithute.co.ls
+tutor.ithute.co.ls
+$TUTOR_HOST
+EOF
+
+# The same edge also terminates LoanHub production and sandbox TLS. Resolve the
+# effective Compose environment rather than hard-coding values that operators
+# may override on the VPS.
+edge_compose run --rm --no-deps --entrypoint /bin/sh edge-nginx -c \
+  'printf "%s\n" "$APP_DOMAIN" "$WWW_DOMAIN" "$API_DOMAIN" "$SANDBOX_APP_DOMAIN" "$SANDBOX_API_DOMAIN"' \
+  >> "$required_sans"
+
+awk 'NF && !seen[$0]++ { print }' "$required_sans" > "$required_tmp"
+mv "$required_tmp" "$required_sans"
+
+# Read the certificate currently mounted into the edge only for comparison.
+# It is deliberately not used as the authoritative domain list.
 edge_compose exec -T edge-nginx openssl x509 \
   -in /etc/letsencrypt/live/ithute-edge/fullchain.pem \
   -noout -ext subjectAltName \
   | tr ',' '\n' \
   | sed -n 's/^[[:space:]]*DNS://p' \
   | sed 's/[[:space:]]//g' \
-  | sed '/^$/d' > "$san_file"
+  | sed '/^$/d' > "$current_sans"
 
-if ! grep -Fxq "$TUTOR_HOST" "$san_file"; then
-  printf '%s\n' "$TUTOR_HOST" >> "$san_file"
+needs_issue=false
+while IFS= read -r domain; do
+  [ -n "$domain" ] || continue
+  if ! grep -Fxq "$domain" "$current_sans"; then
+    echo "Shared certificate is missing required SAN: $domain"
+    needs_issue=true
+  fi
+done < "$required_sans"
+
+if [ "$needs_issue" = true ]; then
   attempt=1
   issued=false
 
@@ -57,7 +97,7 @@ if ! grep -Fxq "$TUTOR_HOST" "$san_file"; then
       if [ -n "$domain" ]; then
         set -- "$@" -d "$domain"
       fi
-    done < "$san_file"
+    done < "$required_sans"
 
     if edge_compose run --rm --no-deps --entrypoint certbot certbot \
       certonly --webroot -w /var/www/certbot \
@@ -66,16 +106,31 @@ if ! grep -Fxq "$TUTOR_HOST" "$san_file"; then
       break
     fi
 
-    echo "Tutor certificate expansion attempt $attempt failed; retrying after DNS propagation."
+    echo "Shared certificate reconciliation attempt $attempt failed; retrying after DNS propagation."
     sleep 15
     attempt=$((attempt + 1))
   done
 
   if [ "$issued" != true ]; then
-    echo "Could not extend ithute-edge TLS certificate for Tutor" >&2
+    echo "Could not reconcile the shared ithute-edge TLS certificate" >&2
     exit 1
   fi
 fi
+
+# Refuse to restart the edge with a certificate that does not cover every
+# configured public hostname. This prevents one product deployment from
+# silently breaking Panel, Auth, Pay, Tutor, or LoanHub TLS.
+cert_sans="$(edge_compose exec -T edge-nginx openssl x509 \
+  -in /etc/letsencrypt/live/ithute-edge/fullchain.pem \
+  -noout -ext subjectAltName)"
+printf '%s\n' "$cert_sans"
+while IFS= read -r domain; do
+  [ -n "$domain" ] || continue
+  printf '%s\n' "$cert_sans" | grep -Fq "DNS:$domain" || {
+    echo "Reconciled certificate is still missing required SAN: $domain" >&2
+    exit 1
+  }
+done < "$required_sans"
 
 edge_compose up -d --no-build --no-deps --force-recreate edge-nginx certbot
 edge_compose exec -T edge-nginx nginx -t
