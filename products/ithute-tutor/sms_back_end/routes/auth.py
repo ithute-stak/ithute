@@ -19,7 +19,12 @@ from database.multi_tenant_school_management.schemas.user import UserLogin, User
 from database.session import get_db
 from utils.auth.password_hash_verify import hash_password, verify_password
 from utils.auth.tokens import authenticate_user, get_current_user
-from utils.central_auth import project_platform_owner, require_central_claims, validate_central_access_token
+from utils.central_auth import (
+    CentralAuthError,
+    project_platform_owner,
+    require_central_claims,
+    validate_central_access_token,
+)
 from utils.school_context import (
     SCHOOL_WORKSPACE_COOKIE,
     SchoolContext,
@@ -76,6 +81,24 @@ def _clear_session_cookies(response) -> None:
         response.delete_cookie(name, path="/")
 
 
+def _no_store(response):
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return response
+
+
+def _auth_json(
+    payload: dict[str, object],
+    *,
+    status_code: int = 200,
+    clear_session: bool = False,
+) -> JSONResponse:
+    response = JSONResponse(payload, status_code=status_code)
+    if clear_session:
+        _clear_session_cookies(response)
+    return _no_store(response)
+
+
 def _role_value(user: User) -> str:
     return getattr(user.role, "value", str(user.role))
 
@@ -122,7 +145,7 @@ def oidc_login() -> RedirectResponse:
     response.set_cookie(settings.AUTH_OIDC_STATE_COOKIE_NAME, state_value, **short_cookie)
     response.set_cookie(settings.AUTH_OIDC_NONCE_COOKIE_NAME, nonce, **short_cookie)
     response.set_cookie(settings.AUTH_OIDC_VERIFIER_COOKIE_NAME, verifier, **short_cookie)
-    return response
+    return _no_store(response)
 
 
 @router.get("/oidc/callback")
@@ -208,7 +231,7 @@ def oidc_callback(
         settings.AUTH_OIDC_VERIFIER_COOKIE_NAME,
     ):
         response.delete_cookie(name, path="/")
-    return response
+    return _no_store(response)
 
 
 @router.post("/link-central")
@@ -245,7 +268,14 @@ def me(current_user: User = Depends(get_current_user)):
 def refresh(request: Request):
     refresh_token = request.cookies.get(settings.AUTH_REFRESH_COOKIE_NAME)
     if not refresh_token:
-        raise HTTPException(status_code=401, detail="missing central refresh token")
+        # A missing/expired local refresh cookie is a definite ended session.
+        # Clear any stale access/workspace cookies so the browser cannot loop on
+        # the same invalid state during the next bootstrap.
+        return _auth_json(
+            {"detail": "missing central refresh token"},
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            clear_session=True,
+        )
 
     try:
         auth_response = httpx.post(
@@ -253,18 +283,62 @@ def refresh(request: Request):
             json={"client_id": settings.AUTH_AUDIENCE, "refresh_token": refresh_token},
             timeout=10.0,
         )
-        auth_response.raise_for_status()
+    except httpx.RequestError:
+        # A central Auth/network outage is not proof that the user's refresh
+        # token expired. Preserve the session cookies and let the UI retry.
+        response = _auth_json(
+            {"detail": "central Auth is temporarily unavailable"},
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+        response.headers["Retry-After"] = "5"
+        return response
+
+    if auth_response.status_code in (400, 401, 403):
+        return _auth_json(
+            {"detail": "central Auth session expired"},
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            clear_session=True,
+        )
+
+    if auth_response.status_code >= 500:
+        response = _auth_json(
+            {"detail": "central Auth is temporarily unavailable"},
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+        response.headers["Retry-After"] = "5"
+        return response
+
+    if not 200 <= auth_response.status_code < 300:
+        return _auth_json(
+            {"detail": "central Auth refresh failed"},
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    try:
         token_data = auth_response.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(status_code=401, detail="central Auth session expired") from exc
+    except ValueError:
+        return _auth_json(
+            {"detail": "central Auth returned an invalid refresh response"},
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        )
 
     access_token = str(token_data.get("access_token") or "")
     new_refresh = str(token_data.get("refresh_token") or "")
     if not access_token or not new_refresh:
-        raise HTTPException(status_code=502, detail="central Auth refresh response incomplete")
+        return _auth_json(
+            {"detail": "central Auth refresh response incomplete"},
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        )
 
-    validate_central_access_token(access_token)
-    response = JSONResponse({"access_token": access_token, "token_type": "bearer"})
+    try:
+        validate_central_access_token(access_token)
+    except CentralAuthError:
+        return _auth_json(
+            {"detail": "central Auth returned an invalid access token"},
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    response = _auth_json({"access_token": access_token, "token_type": "bearer"})
     _set_session_cookies(response, access_token, new_refresh)
     return response
 
@@ -281,7 +355,7 @@ def logout(request: Request):
             )
         except httpx.HTTPError:
             pass
-    response = JSONResponse({"message": "Logged out successfully"})
+    response = _auth_json({"message": "Logged out successfully"})
     _clear_session_cookies(response)
     return response
 
