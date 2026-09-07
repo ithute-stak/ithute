@@ -1,11 +1,9 @@
 name: Register Ithute Pay DNS
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/ithute-pay-dns.yml"
-      - "apps/backend/app/product_dns.py"
+  # DNS reconciliation depends on the matching production backend image being
+  # live because app.product_dns is executed inside that backend container.
+  # Do not run directly on a main push; wait for Pay production to succeed.
   workflow_run:
     workflows: ["Deploy Ithute Pay Production"]
     types: [completed]
@@ -28,7 +26,6 @@ jobs:
   register:
     name: Reconcile Ithute Pay authoritative DNS
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
