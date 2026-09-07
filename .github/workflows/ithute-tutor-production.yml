@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # Keep Tutor runs from being evicted by sibling production workflows. The
-  # actual VPS mutation is still serialized by /tmp/ithute-production.lock.
+  # Tutor has its own workflow queue. VPS mutations are serialized by the
+  # shared production lock inside the Tutor deploy script.
   group: ithute-tutor-production
   cancel-in-progress: false
 
@@ -24,7 +24,6 @@ env:
   VPS_HOST: 204.12.205.224
   VPS_USER: administrator
   VPS_APP_DIR: /home/administrator/mailbox-dns
-  VPS_EDGE_DIR: /home/administrator/ithute-edge
   TUTOR_HOST: tutor.ithute.co.ls
 
 jobs:
@@ -127,7 +126,7 @@ jobs:
           rm -f "$bundle"
 
   deploy:
-    name: Deploy Tutor, DNS and HTTPS
+    name: Deploy Ithute Tutor only
     needs: build-and-publish
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -146,11 +145,20 @@ jobs:
           ref: ${{ env.DEPLOY_SHA }}
           persist-credentials: false
 
-      - name: Validate deployment credentials
+      - name: Validate Tutor deployment assets
         run: |
           set -eu
           [ -n "${VPS_SSH_KEY:-}" ] || { echo "::error::VPS_SSH_KEY is required"; exit 1; }
-          sh -n scripts/ithute-tutor-edge-finalize.sh
+          sh -n scripts/ithute-tutor-deploy.sh
+          python3 -m py_compile scripts/ithute-tutor-sync-env.py
+          docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.prod.yml \
+            -f docker-compose.ithute-platform.yml \
+            -f docker-compose.ithute-tutor.yml \
+            -f docker-compose.ithute-tutor-prod.yml \
+            -f docker-compose.deploy.yml \
+            config >/dev/null
 
       - name: Configure SSH identity
         run: |
@@ -179,225 +187,24 @@ jobs:
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Stage Tutor production manifests
+      - name: Stage Tutor-only production assets
         run: |
           set -eu
-          sh -n scripts/ithute-tutor-edge-finalize.sh
           remote="${VPS_USER}@${VPS_HOST}"
           scp docker-compose.ithute-tutor.yml "$remote:/tmp/docker-compose.ithute-tutor-${DEPLOY_SHA}.yml"
           scp docker-compose.ithute-tutor-prod.yml "$remote:/tmp/docker-compose.ithute-tutor-prod-${DEPLOY_SHA}.yml"
-          scp infrastructure/ithute-edge/default.conf.template "$remote:/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf"
-          scp scripts/ithute-tutor-edge-finalize.sh "$remote:/tmp/ithute-tutor-edge-finalize-${DEPLOY_SHA}.sh"
+          scp scripts/ithute-tutor-deploy.sh "$remote:/tmp/ithute-tutor-deploy-${DEPLOY_SHA}.sh"
+          scp scripts/ithute-tutor-sync-env.py "$remote:/tmp/ithute-tutor-sync-env-${DEPLOY_SHA}.py"
 
-      - name: Deploy Tutor and register authoritative DNS
+          ssh "$remote" \
+            "sh -n '/tmp/ithute-tutor-deploy-${DEPLOY_SHA}.sh' && python3 -m py_compile '/tmp/ithute-tutor-sync-env-${DEPLOY_SHA}.py'"
+
+      - name: Deploy Tutor and register Tutor DNS
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
-
-          ssh "$remote" "APP_DIR='$VPS_APP_DIR' EDGE_DIR='$VPS_EDGE_DIR' DEPLOY_SHA='$DEPLOY_SHA' TUTOR_HOST='$TUTOR_HOST' VPS_HOST='$VPS_HOST' BACKEND_IMAGE='$BACKEND_IMAGE' FRONTEND_IMAGE='$FRONTEND_IMAGE' sh -s" <<'REMOTE'
-          set -eu
-
-          if command -v flock >/dev/null 2>&1; then
-            exec 9>/tmp/ithute-production.lock
-            lock_attempt=1
-            while ! flock -n 9; do
-              if [ "$lock_attempt" -ge 120 ]; then
-                echo "Timed out waiting for the shared Ithute production lock." >&2
-                exit 1
-              fi
-              echo "Waiting for shared Ithute production lock (attempt $lock_attempt/120)..."
-              sleep 10
-              lock_attempt=$((lock_attempt + 1))
-            done
-            echo "Acquired shared Ithute production lock."
-          fi
-
-          image_bundle="/tmp/ithute-tutor-images-${DEPLOY_SHA}.tar.gz"
-          [ -s "$image_bundle" ] || { echo "Exact Tutor image bundle is missing: $image_bundle" >&2; exit 1; }
-          echo "Loading exact Tutor ${DEPLOY_SHA} images delivered by the trusted build runner."
-          gzip -dc "$image_bundle" | docker load
-          rm -f "$image_bundle"
-          docker image inspect "${BACKEND_IMAGE}:${DEPLOY_SHA}" >/dev/null
-          docker image inspect "${FRONTEND_IMAGE}:${DEPLOY_SHA}" >/dev/null
-
-          cd "$APP_DIR"
-          [ -f .env ] || { echo "Ithute production .env is missing" >&2; exit 1; }
-          cp "/tmp/docker-compose.ithute-tutor-${DEPLOY_SHA}.yml" docker-compose.ithute-tutor.yml
-          cp "/tmp/docker-compose.ithute-tutor-prod-${DEPLOY_SHA}.yml" docker-compose.ithute-tutor-prod.yml
-          rm -f "/tmp/docker-compose.ithute-tutor-${DEPLOY_SHA}.yml" "/tmp/docker-compose.ithute-tutor-prod-${DEPLOY_SHA}.yml"
-          chmod 600 .env
-
-          # Synchronize the Tutor product secret with central Auth and preserve all
-          # existing product registrations. This block changes only Tutor entries.
-          CENTRAL_CHANGED="$(DEPLOY_SHA="$DEPLOY_SHA" python3 - <<'PY'
-          import json
-          import os
-          import secrets
-          from pathlib import Path
-
-          path = Path('.env')
-          original = path.read_text().splitlines()
-          values = {}
-          for line in original:
-              if line and not line.lstrip().startswith('#') and '=' in line:
-                  key, value = line.split('=', 1)
-                  values[key] = value
-
-          updates = {}
-          central_changed = False
-
-          def placeholder(value: str) -> bool:
-              text = (value or '').lower()
-              return not text or 'replace-with' in text or 'replace-this' in text or 'changeme' in text
-
-          def ensure_csv(key: str, entry: str, central: bool = False):
-              global central_changed
-              parts = [item.strip() for item in values.get(key, '').split(',') if item.strip()]
-              if entry not in parts:
-                  parts.append(entry)
-                  updates[key] = ','.join(parts)
-                  values[key] = updates[key]
-                  if central:
-                      central_changed = True
-
-          tutor_secret = values.get('ITHUTE_TUTOR_PUSH_SERVICE_CLIENT_SECRET', '')
-          if placeholder(tutor_secret):
-              tutor_secret = secrets.token_hex(32)
-              updates['ITHUTE_TUTOR_PUSH_SERVICE_CLIENT_SECRET'] = tutor_secret
-              values['ITHUTE_TUTOR_PUSH_SERVICE_CLIENT_SECRET'] = tutor_secret
-
-          db_password = values.get('ITHUTE_TUTOR_DB_PASSWORD', '')
-          if placeholder(db_password):
-              updates['ITHUTE_TUTOR_DB_PASSWORD'] = secrets.token_hex(32)
-              values['ITHUTE_TUTOR_DB_PASSWORD'] = updates['ITHUTE_TUTOR_DB_PASSWORD']
-
-          updates.update({
-              'ITHUTE_TUTOR_IMAGE_TAG': os.environ['DEPLOY_SHA'],
-              'ITHUTE_TUTOR_PUBLIC_URL': 'https://tutor.ithute.co.ls',
-              'ITHUTE_TUTOR_FRONTEND_URL': 'https://tutor.ithute.co.ls',
-              'ITHUTE_TUTOR_OIDC_REDIRECT_URI': 'https://tutor.ithute.co.ls/api/auth/oidc/callback',
-              'ITHUTE_TUTOR_COOKIE_SECURE': 'true',
-              'ITHUTE_TUTOR_LEGACY_AUTH_ENABLED': 'false',
-          })
-
-          ensure_csv('ITHUTE_AUTH_FIRST_PARTY_CLIENTS', 'ithute-tutor:Ithute Tutor', True)
-          ensure_csv('ITHUTE_PUSH_ALLOWED_USER_CLIENTS', 'ithute-tutor', True)
-          ensure_csv('ITHUTE_PUSH_ALLOWED_SERVICE_CLIENTS', 'ithute-tutor', True)
-          ensure_csv('ITHUTE_AUTH_CORS_ORIGINS', 'https://tutor.ithute.co.ls', True)
-
-          try:
-              redirects = json.loads(values.get('ITHUTE_AUTH_REDIRECT_URIS_JSON') or '{}')
-          except json.JSONDecodeError as exc:
-              raise SystemExit(f'Invalid ITHUTE_AUTH_REDIRECT_URIS_JSON: {exc}')
-          callback = 'https://tutor.ithute.co.ls/api/auth/oidc/callback'
-          current_callbacks = redirects.get('ithute-tutor') or []
-          if callback not in current_callbacks:
-              redirects['ithute-tutor'] = [*current_callbacks, callback]
-              updates['ITHUTE_AUTH_REDIRECT_URIS_JSON'] = json.dumps(redirects, separators=(',', ':'))
-              values['ITHUTE_AUTH_REDIRECT_URIS_JSON'] = updates['ITHUTE_AUTH_REDIRECT_URIS_JSON']
-              central_changed = True
-
-          try:
-              service_secrets = json.loads(values.get('ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON') or '{}')
-          except json.JSONDecodeError as exc:
-              raise SystemExit(f'Invalid ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON: {exc}')
-          if service_secrets.get('ithute-tutor') != tutor_secret:
-              service_secrets['ithute-tutor'] = tutor_secret
-              updates['ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON'] = json.dumps(service_secrets, separators=(',', ':'))
-              values['ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON'] = updates['ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON']
-              central_changed = True
-
-          if updates:
-              seen = set()
-              rendered = []
-              for line in original:
-                  if line and not line.lstrip().startswith('#') and '=' in line:
-                      key = line.split('=', 1)[0]
-                      if key in updates:
-                          rendered.append(f'{key}={updates[key]}')
-                          seen.add(key)
-                          continue
-                  rendered.append(line)
-              for key, value in updates.items():
-                  if key not in seen:
-                      rendered.append(f'{key}={value}')
-              path.write_text('\n'.join(rendered) + '\n')
-
-          print('true' if central_changed else 'false')
-          PY
-          )"
-          chmod 600 .env
-
-          COMPOSE_FILES="-f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.phase6-mail.yml -f docker-compose.phase11-backup.yml -f docker-compose.phase12-monitoring.yml -f docker-compose.ithute-platform.yml -f docker-compose.ithute-tutor.yml -f docker-compose.ithute-tutor-prod.yml -f docker-compose.deploy.yml"
-          compose() { docker compose $COMPOSE_FILES "$@"; }
-          wait_service() {
-            service="$1"; attempts="${2:-90}"; n=1
-            while [ "$n" -le "$attempts" ]; do
-              status="not-started"
-              id="$(compose ps -q "$service" 2>/dev/null || true)"
-              if [ -n "$id" ]; then
-                status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id" 2>/dev/null || true)"
-                case "$status" in
-                  healthy|running) return 0 ;;
-                  exited|dead|unhealthy) compose logs --tail=250 "$service" || true; return 1 ;;
-                esac
-              fi
-              if [ $((n % 10)) -eq 0 ]; then
-                echo "Waiting for $service (status: $status, attempt $n/$attempts)..."
-              fi
-              sleep 2; n=$((n + 1))
-            done
-            compose logs --tail=250 "$service" || true
-            return 1
-          }
-
-          compose config >/dev/null
-
-          if [ "$CENTRAL_CHANGED" = "true" ]; then
-            echo "Tutor central identity registration changed; refreshing Auth/Push processes once."
-            compose up -d --no-build --no-deps --force-recreate ithute-auth ithute-push ithute-push-worker
-            wait_service ithute-auth 90
-            wait_service ithute-push 90
-            wait_service ithute-push-worker 90
-          fi
-
-          # Exact SHA-tagged Tutor images were loaded above from the build runner.
-          # Do not pull here: private GHCR package permissions on the VPS must not
-          # be able to block an otherwise verified production release.
-          compose up -d --no-build tutor-db
-          wait_service tutor-db 60
-
-          mkdir -p backups
-          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-          tutor_backup="backups/ithute-tutor-before-${timestamp}.dump"
-          compose exec -T tutor-db pg_dump --format=custom --no-owner --no-privileges \
-            -U "${ITHUTE_TUTOR_DB_USER:-ithute_tutor}" "${ITHUTE_TUTOR_DB_NAME:-ithute_tutor}" > "$tutor_backup"
-          test -s "$tutor_backup"
-
-          compose up -d --no-build --no-deps --force-recreate tutor-backend
-          wait_service tutor-backend 120
-          compose up -d --no-build --no-deps --force-recreate tutor-frontend
-          wait_service tutor-frontend 120
-
-          compose exec -T tutor-backend curl -fsS http://127.0.0.1:8000/readyz >/dev/null
-          compose exec -T nginx wget -qO- --header='Host: tutor.ithute.co.ls' http://127.0.0.1/ >/dev/null
-
-          # Authoritative DNS belongs to the existing Ithute PowerDNS service.
-          compose exec -T backend python -m app.product_dns \
-            --zone ithute.co.ls \
-            --host tutor.ithute.co.ls
-
-          # The post-DNS HTTPS finalizer is a checked-in POSIX shell script. It is
-          # syntax-validated both on the runner and again on the VPS before use,
-          # avoiding the fragile nested shell block that previously failed here.
-          finalizer="/tmp/ithute-tutor-edge-finalize-${DEPLOY_SHA}.sh"
-          [ -s "$finalizer" ] || { echo "Missing staged Tutor HTTPS finalizer: $finalizer" >&2; exit 1; }
-          sh -n "$finalizer"
-          TUTOR_EDGE_TEMPLATE="/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf" \
-            EDGE_DIR="$EDGE_DIR" DEPLOY_SHA="$DEPLOY_SHA" TUTOR_HOST="$TUTOR_HOST" \
-            sh "$finalizer"
-          rm -f "$finalizer"
-          REMOTE
+          ssh "$remote" \
+            "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' TUTOR_HOST='$TUTOR_HOST' VPS_HOST='$VPS_HOST' BACKEND_IMAGE='$BACKEND_IMAGE' FRONTEND_IMAGE='$FRONTEND_IMAGE' TUTOR_SYNC_SCRIPT='/tmp/ithute-tutor-sync-env-${DEPLOY_SHA}.py' sh '/tmp/ithute-tutor-deploy-${DEPLOY_SHA}.sh'"
 
       - name: Require public Tutor DNS and HTTPS
         run: |
