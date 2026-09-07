@@ -1,11 +1,10 @@
 name: LoanHub Product Production
 
 on:
-  push:
+  workflow_run:
+    workflows: ["LoanHub Quality"]
+    types: [completed]
     branches: [main]
-    paths:
-      - 'products/LoanHub/**'
-      - '.github/workflows/loanhub-product-production.yml'
   workflow_dispatch:
 
 concurrency:
@@ -28,14 +27,21 @@ env:
   PRODUCT_DIR: products/LoanHub
   PRODUCTION_API_URL: https://api.loanhub.co.ls/api/v1
   GHCR_USERNAME: ithute-stak
+  DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
 jobs:
   validate:
     name: Validate LoanHub product deployment
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
-      - name: Check out Ithute repository
-        uses: actions/checkout@v6
+      - name: Check out exact LoanHub release
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          persist-credentials: false
 
       - name: Validate product Compose manifest
         working-directory: products/LoanHub
@@ -61,8 +67,11 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     steps:
-      - name: Check out Ithute repository
-        uses: actions/checkout@v6
+      - name: Check out exact LoanHub release
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -84,7 +93,7 @@ jobs:
           pull: true
           tags: |
             ${{ env.BACKEND_IMAGE }}:latest
-            ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+            ${{ env.BACKEND_IMAGE }}:${{ env.DEPLOY_SHA }}
 
       - name: Build and push LoanHub frontend
         uses: docker/build-push-action@v7
@@ -98,15 +107,18 @@ jobs:
             NEXT_PUBLIC_API_URL=${{ env.PRODUCTION_API_URL }}
           tags: |
             ${{ env.FRONTEND_IMAGE }}:latest
-            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+            ${{ env.FRONTEND_IMAGE }}:${{ env.DEPLOY_SHA }}
 
   deploy-to-existing-loanhub-vps:
     name: Deploy LoanHub under Ithute platform root
     needs: build-and-publish
     runs-on: ubuntu-latest
     steps:
-      - name: Check out Ithute repository
-        uses: actions/checkout@v6
+      - name: Check out exact LoanHub release
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          persist-credentials: false
 
       - name: Validate deployment secrets
         env:
@@ -126,7 +138,7 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }}
           source: products/LoanHub/compose.yaml,products/LoanHub/compose.shared-edge.yml
-          target: /tmp/ithute-loanhub-${{ github.sha }}
+          target: /tmp/ithute-loanhub-${{ env.DEPLOY_SHA }}
           overwrite: true
 
       - name: Deploy only LoanHub product services
@@ -146,13 +158,21 @@ jobs:
 
             if command -v flock >/dev/null 2>&1; then
               exec 9>/tmp/ithute-production.lock
-              flock 9
+              lock_attempt=1
+              while ! flock -n 9; do
+                if [ "$lock_attempt" -ge 120 ]; then
+                  echo 'Timed out waiting for the shared Ithute production lock.' >&2
+                  exit 1
+                fi
+                sleep 5
+                lock_attempt=$((lock_attempt + 1))
+              done
             fi
 
             PLATFORM_ROOT='${{ env.VPS_PLATFORM_ROOT }}'
             APP_DIR="$PLATFORM_ROOT/${{ env.LOANHUB_RUNTIME_DIR }}"
             LEGACY_APP_DIR='${{ env.LEGACY_LOANHUB_DIR }}'
-            SRC='/tmp/ithute-loanhub-${{ github.sha }}/products/LoanHub'
+            SRC='/tmp/ithute-loanhub-${{ env.DEPLOY_SHA }}/products/LoanHub'
 
             test -d "$PLATFORM_ROOT"
             test -f "$SRC/compose.yaml"
@@ -183,7 +203,7 @@ jobs:
             export LOANHUB_ENV_FILE=.env.production
             export LOANHUB_BACKEND_IMAGE='${{ env.BACKEND_IMAGE }}'
             export LOANHUB_FRONTEND_IMAGE='${{ env.FRONTEND_IMAGE }}'
-            export LOANHUB_IMAGE_TAG='${{ github.sha }}'
+            export LOANHUB_IMAGE_TAG='${{ env.DEPLOY_SHA }}'
 
             compose() {
               docker compose --env-file .env.production -f compose.yaml -f compose.shared-edge.yml "$@"
@@ -197,6 +217,7 @@ jobs:
             fi
 
             printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u '${{ env.GHCR_USERNAME }}' --password-stdin
+            trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT HUP INT TERM
 
             compose config -q
             compose pull backend frontend db redis
@@ -216,7 +237,7 @@ jobs:
             fi
 
             BACKUP_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-            BACKUP_FILE="$APP_DIR/backups/loanhub-pre-migrate-${BACKUP_STAMP}-${{ github.sha }}.dump"
+            BACKUP_FILE="$APP_DIR/backups/loanhub-pre-migrate-${BACKUP_STAMP}-${{ env.DEPLOY_SHA }}.dump"
             compose exec -T db \
               pg_dump -U "${DB_USER:-loanhub}" -d "${DB_NAME:-loan_db}" -Fc > "$BACKUP_FILE"
             if [ ! -s "$BACKUP_FILE" ]; then
@@ -246,7 +267,6 @@ jobs:
             done
 
             curl -fsS --retry 12 --retry-delay 5 https://auth.ithute.co.ls/healthz >/dev/null
-            docker logout ghcr.io >/dev/null 2>&1 || true
             printf '%s\n' \
               "LoanHub runtime: $APP_DIR" \
               "Preserved database volume: $EXPECTED_DB_VOLUME" \
