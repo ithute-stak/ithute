@@ -147,6 +147,16 @@ jobs:
           grep -q '/tmp/ithute-production.lock' .github/workflows/ithute-tutor-production.yml
           ! grep -q 'group: ithute-production-vps' .github/workflows/ithute-tutor-production.yml
 
+          # Production must not depend on the VPS being authorized to pull private
+          # GHCR packages. Build the exact SHA images once, stage them over the
+          # authenticated SSH channel, and load them locally before Compose starts.
+          grep -q 'Stage exact Tutor images on production VPS' .github/workflows/ithute-tutor-production.yml
+          grep -q 'docker save' .github/workflows/ithute-tutor-production.yml
+          grep -q 'gzip -dc.*docker load' .github/workflows/ithute-tutor-production.yml
+          grep -q 'docker image inspect.*BACKEND_IMAGE.*DEPLOY_SHA' .github/workflows/ithute-tutor-production.yml
+          grep -q 'docker image inspect.*FRONTEND_IMAGE.*DEPLOY_SHA' .github/workflows/ithute-tutor-production.yml
+          ! grep -q 'compose pull tutor-backend tutor-frontend' .github/workflows/ithute-tutor-production.yml
+
       - name: Build Tutor containers
         run: |
           set -eu
