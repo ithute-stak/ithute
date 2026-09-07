@@ -14,7 +14,7 @@ export function WebmailShell() {
 
     const sync = () => {
       const text = root.textContent || "";
-      setChecking(text.includes("Opening !THUTE Mail"));
+      setChecking(text.includes("Opening Ithute Mail"));
     };
 
     sync();

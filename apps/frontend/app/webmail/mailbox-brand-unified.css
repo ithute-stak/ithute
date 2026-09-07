@@ -1,0 +1,210 @@
+/* Unified iMail branding and loading presentation.
+   Uses the approved user-provided iMail logo and scopes all loader styling to Webmail. */
+
+.imail-approved-ui {
+  --imail-logo-image: url("data:image/webp;base64,UklGRrAWAABXRUJQVlA4IKQWAADQrgCdASpYAlgCPolEn0ulI6MhohMY2KARCWdu8p8eJGs7N8Gv9//eed7vTygp++4XOX/xvV74rvTw8yHm3enL++79BvS2Qhejf8n3E/6rp1/entvzhHp/wn+i4f+AR6z/x+/WgC/Mf6P/0vEY/ufR7xAODKoDfnr0RdCH6J/oPYR/XcNnIaZ8MvkFTm13AehfIKnNruA9C+QVObXcB6F8gqc2u4D0L5BU5tdwHoXyCpza7gPQvkFTm13AehfIKnNruA9C+QVObXcB6F8gqc2u4D0L5BU5tdwHoXyCpza7gPQvkFTm13AehfIKnNruA9C+QVObXcB6F8gqc2u4D0L5BU5tdwHoXyCpza7gPQvkFTm13AehfIKnNruA9C+QVObXcB6F8gqc2u4D0L5BU5tdwHoXyCpza7gPQvkFTm13AehfIKnNruA9C+QVObXcB6F8gqc2u4D0L42AAA/v+qYAAAAAAAAAAAAAAAAAAAAAAAAAA4XKy7wrFKV1b/hmTcTWPDSGvTrxWNqEvN9L7AArF0DfUwwH5anfXTA+jdBEMTGkWRgWuTCKjEnlLYCTRIGOiMe9PP3vaH/4ohcRE4nQlIavdXIVF+NoMuUXKEKbb3V6VPjnXEvUafv+ja3YBHxomvq05ja2ELh0K53++QlI7JdRGDVmKFgFaB6lEcvPDuhCr7+j4kzFUmHfsCNtNPQYBPA0QuaZviX4q5ee34uBrkJlXdaTJIAtedqMbej7DLkSr+u1wDHbBwXDp6JQPZSJYzLY6dbh2riz2PV0qTHRukTRgljTaQv4s1+Ya1r+domH5JIfnw3rTxHNQBREOanSivhchyP9KFsn/WG8JD/q33X3khyrH943pexIeTWTq1rvNBufmAbTIRVI4TkmnC54RVh/3qs1I8o9pzpHWzRfwU78NItTmHlk6JRwfltVWvKjX1iDsiJ6EKKJIcX1L1WEUQLLrz6BcbrmiE0m6VG0W3XAp1X9l/3CGJHXU1VINSYjJ04zoewnmBjVrKcZS9G9rctJdJAhIU+kgg131ipZJkzI/D05i6+gXPcOaOeX2RKa3ILuOQ3IvhDuTAk7AOclqxw1kXOKA3X4+JuQeELau9NSH7P33Tn5bnpmqVpgUfzPvg6pgLoCS+75PAC7QXm0qPfClKD4MbTuTtNL+DpRiEkSes2xRF2LFJXQ5RavOnfEKTQOpWF5/LL+otTj6GhUKg89ZjQ61+ZR5Mg7AB1VItKwkKjGOf70KOYv/2x6Q83zIT5LJAAGSrunRbV09d8cfYcVV8uHda3Rh8bdoQj4LkfgKq9XIeGn7/TZi3ztBzXdFQdJ6HULcuP1yuI/OLmN4OvnxmlHRDGcv1FyO2Cq/77YaLC/lf4Jqnu/udggneX7J7EOpFxMHi6zAdmdUek+y3h/6o4yqo79gx8woek3zD21n9GZMfr8DwYLAJHLMW5ieT4MaI73r3pctVZecr1kV0O+POjVAey3rr3Sz7ZnlZa8gZFeaiRPFdppdH7O9f9lh+Z1fJxaPc5ojmkAyR4ETJENiVB00eIKlPSiKydTAZGLgpzkFfGRe6GH1QPtWqZelzilf7cw4oBQ7al+ZwEytKWyczZt8CrNbhIrKFHYSgtABd0JgjOgb+ILbwswvukSsVrCNw9zhsne6HLYGzEpFV4et63vqrPrPu1agoLIb2TgJQAVgWKajkAgpQX/uVlCn+y1UUapNmKskhF76dkWLJX4mStPWpRfXkJuw0B1YtMI6xDsnQ/yMiW21cY01x9A0a9eCN8s+k4EKXViZp5LtJcZIlgnqflJKcKLMIOsIedUDxqTLRac9DBHiU3TIesbNoOkDG7Fonh+2WURXVqVKZOo4Fq7MokSsRswkUvRmfDYRefA3o3YKj5jQDtJeBKKLcJRhCwRQD//Ck8N5NoLukKDKzD1JMPFrZ1dJnCuKsx/+wA4n9x72S77DlqFSRVEibkZqgASBT1Ea+JN7SL8Pa9agZroMvgOzBmKI/o2DPvKl+5Krj+R97v16r2Yf9HZIvfvfhQphFsHd/1cHZhEd0SMFrQLYkEc7rkWbQWJECFvUYVsYI/rA9077J0PviauM+YiQVajJPehsTXjAvn93ZNP4kxrQOnWiZcp/p5tuziYc7rXWc/VUx55egJjyfASP5zx36lNBUnrdaKr4yfqY7ZYqT91SDifvELqf5o2pqIVfVJa22+aSRT+dj+ACogIVGh+NHZwyDpeIX5BxzUIQOcsVoGVi3aoaXN6tfEna3n/z8DaCdrZwx7H1D2pxyGU+RVVWYcexGub8l1qjago52YPKduuIWTcOGAlh8Xa3+7sF0HBCE96V3myKRn8r1r9zBx0JwX2kAmnIthfXFYl2h2EEag8WPrFYiQPytWbHoGQb2ScojKA/vLCSL1yHKxKfV8dFHIcfSfmCGFCbSF6dRpZ2RWfpngIvO8wF8bIZ7AFPlnfwjaPrM5pSX+fP9pDIJiiiRmiSM+DuDuwgmsxDJA3Qz+YQ8Yc0OfJXhIAOlylfwQ2FoodEBXJ7vhERRSozanpHPaLGnmbL2NdG14eCYZueNJuYHtbdX6OYjTZt/v/OWLoiUrxmUW6/vQP/98lNInO870nEUfxDIE456GT7K7Wm5kGDwzTNqR/RUVdpuaLwfCuFO2mkBpxFBSMqXfR/6ze1MRolmOVM+0WJNXlDxavtaS4ziA55SGwbfSj2oVRPDr/N2xZ5QUvEN/1ENVIV/JUUKbrs5dHnMWedSI0AKnNhBCgvChGRrsK4SjkfzZQ69fVmYbpP9WCDY0Iu4FEkPvLvbsLsfcXh0o19wMIYd1MMn36XHyn7mvdbzcluET9VxRVnr+ovldbpQlmuVty9vkrsgQNRPDcUfx7F6EGVsGsfcLiO/dunWISQ32JUwv4tsF5+QFT5ZuYTP5DPi3qPusWowebNs709FmbfOFjK5mnC5dqwgFdBsrU4+xDo8arLn6fDTaH9K2u8ozhyIfprJZVh6aJjFS5CnDi5rjrx3OIBFzLd8dHZpdkyf6b21Bc+BGeyrhs3G/8pX5XgQe74x3CpZoC+8lcB57xktoLYGl7pz4/Xtez69eWaJ+9heWotADnBxwjc1U2UY8NeVn6tDUhZlCFNJkgMb5vZpUP2XRSNCTi2I+Uu/wKOdXCXxb3D17QmitYvXQ47cN+1D2I4NsT+qHanum0HZIEUERHf2KbCsx7POExsJKhLRBre/EhVSNasex3yjdxl2pXA8TL7DY4qnO3q3fmOATzF5shD3PVUSrdqjcgFXJjz3X3KV+k135uZW7dCfxXgjEWhMsxgSRh/N2tP81DfW6ruSQ+MviClv4aVr3ge/ldpdR48+3n5Lftpvfaz9XO+cl9KqjhwCpHi/C6vfFwKdFxH0CHJyQNc2hNR/3sWd72Tg4LtTdGeib0lbzQlA4qkA+QRNgPyfYPIuv0xz/R3xs3R4dvfC/LJibvgQctPL/IWjSGRctUYkOP0PbBYIeesz5C85ek835rAFF7N3/RR82jnUvsLQvlcoJd1H2cxxqwL3zuMbOwdo0ryt8Qf+F4LyPIOIwzDS4R8kL0s3QYuW4ENYhNDAi+ANpd5EiKpcoCnq3WpSmB0uh9tmAFVbblCkVYO+lcAKmrXkgAT6PoebHZfFGMBEjH2o4StcoaosPKYEdocoAvWJo9ZDRvbY1eH4WRQHXdllTWSbRTVvv34+MfxTv5gYB1l2H5ti73KTWSgy/X8DMs8c1W+uuJ4e4CgW/CsoRa7PKbT4PxfrRCoc4HPXlbDGOOUI01m/c7u8aCdalGBUzNpJ8Ow45ja/Al27zWEjMC1Wp9CM0cDJ/exLuyOg54Fjg4mubex4qqPQHI5VmVd1Srpultpy7C4LtNWPsHS/ZiK2/te5zKEDvW25Lxctr0syC2Rk+vCHyiRNV9VmXNScjp6KklVlEJYWS/ChxfhcsBlWXpNZdQH99gaez6sypOnXwhUVT+ro7XQy3KqNzixJ6VlagQCrkx6KhmG5BzM137j2pSlpprg5N1MHWp1tJNJsNZTNSx9qSKXTf3H7O00tNNbba1PBYY01S203MEe4NJErWC0qMIIlXOhdzX7DI78y662y+fpBf/UhJ5SjE6u8c/DOuWrwm9+Xw2h0eEi0VlNEBCwPgzTh/eCrBxYHu1+yokp4fMUeMqQ/ghd0ZzXkf6FyhEB2Imke1w0dj5vh1L5ga9fBviPyNYxGwixGkRcH4Mm07cEFNzPITE9YnzHxPvoJSBf4D7Ix74eP3Q1EUpXV6nF7cU+TDcD3rWUTZcFf4qIJsxQl5RLGfFSMhqWB371vR+mV9+DUgxwITmF59GEhtJfMT36afVjRUY9hQCDqbfL9uEf2grBj4QfeYdFiZ9LBF9Y91zICE61Tev9zzzETcsYTQMhXw0G56reOvzVDKK2FCMjtxd7Erd78LmzHdb5ihVTy14BwOhDEJR31a2ZE0+MtqMoVIevoxSkUkm6pfalnqPrcs1Agf7ThdS+95p1ardMGJ0nAv50/z3nDyTO6wrqPOdTtd4Nd3l2sf3DYXkUqir4Xrl4ApD+NxF3lxgjI3fcJHdhllgFoxM38EHgdBVNaeF+NmlFrS/RY6x/LoJUYFrpbgLNZzHTwVGGr942N6Gm7XdxWpJVrtFpFHzSsbF9bb27QUgbQEgj99r4N+AETkGTOFOoGLEq/DkWpfacBMvqz1n2qvWx6Ynv2jHk8M5/wyUjQTcKYQcWYBe4YttWFXA33MAijiveJMzDPuhLl+/9+cgT7TUtpusLDeVvVkF99IuPpjrqO+fnB1jnttfP9GVorr2xTXg5zn/GKxK01NFVY4A+/B4Xx8l2fQbNW2t0Bz7UdNS1ZzOHB/JNHyjoH2jMnwH9cQcDKXRsFDG5NPnqJt7VR7SaWEbduT48Swzt0ix4K9OfsgE+PlLJ20zThjOnRujIrOoCFPTKrSnupqS2DYJzuMrfezmMjEzmj6nFRFpsZJ2zIx4/4rr3Gl4NUcTpKf1Ro4l1ibk0tgCxeheHmowaBD9PkYmSro8NYIYpsgOasH6N8Kj1vE6tev5o3yZ1coPYy92FIISMYTqw1CeCmuIm4DQuvKx0Qnnd+hUpkOj2/VVNp7TuSq/XW995KkNRaHH9sPWY6/bkyTpOC2sFLK6ZwnzJP6KQVvOdjmRVhgCheajx0Ymqm9FymtFaottBymhhZQinY+WfmSkbL2gieEEjlvOR+swNBXpzevjZtLoA5saE8t+JaeTCYISLxWrXJ8QeRL+/zbmhP6bmPLFAe010IJxTI55/N+HWMmvpUyvMm27//IUV+edaiMx46k2PMZPF2D+VgHcNVQxq1TMllk6UikDBtigVlelQzh0iZwNM9fcLsKF002AkyyWorH4QeCz5Tfuow6kTVb+GSSjOvGPBtXB9AY6OuIyMumubgIje9f6K/PckrbLKiRGQIo3y83x8CrDVDUAwIrLLniosi14L+T1IEQVoVB3gwdi56t7XX+Ort45Ntlt1+mlS32BZtxiqK7eJXvMzowFGqJk3YjAu+5LK0fum1sjDXnAnj8jcfO4vijmjuPoNhwA50PXzNv90jgN2rX//mIKS6SHzesPq5Ob/dXNyqr5Zs2blV1KDV95Wr/XeKVORfbtfS1KxQiRQbIDrNx/HvbDplhogOxLatIX9vd+uUWHrfwK5+YeUJtinqfm73xpIqGrOvoYDv7DERVp663KLrBwo164AD17p8rI5nD8YtY1fR9/Je+j8OFNo96dsq3yjBsk8Ea0LUYYnnnqSgZ+CdsipPq42r+nt4sp8VehrBrFf3jSBeLfuZbxFQ2uli1hnUaRrNQ27lBZyqvlCK+9kAgQwxewX6e9gmnPrvHMiNcP1QEWkoGD+ZCyrUrPV5swWpT+4nyx9tBPtdWvdfAncx0O6B4+BY7ZDNDgDLUH1+A69qCx6kKot885VRJNSHAjniIqZ/ABNIC+XB2fPzh3a8XhjE96R0DirZ4AahujusUCVGY5W5677VkeacW1xnYdt19wecZ9dc6EM7RP74rYK1EVOW9rDe4Qfi97BEW5LBZ/ReLK+rlRrzox60dbDJ06T/k/80etMZgTZslkfe0U1D/0nlM1FKmzqoA7tkaESw1JWbiW4g5VLEmi33UzokQ7zJSCZlvXi8uJgVpvmJKz/SrEhmEJb5kIE+WiOildlHSX5JGnIUCvUHbBeAVhQXqDX9g78Y+jajI5+k1oX7z8k71OXamYSjUjzqG8jmbdeCLa5coA8kdo+YgIZn5FfdByYcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+}
+
+/* Use the approved logo in the places with enough room. */
+.imail-login-hero .imail-brand-row,
+.imail-login-mobile-brand .imail-brand-row {
+  min-height: 62px;
+}
+
+.imail-login-hero .imail-brand-mark,
+.imail-login-mobile-brand .imail-brand-mark {
+  width: 154px !important;
+  height: 58px !important;
+  flex-basis: 154px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: var(--imail-logo-image) center / contain no-repeat !important;
+  box-shadow: none !important;
+  color: transparent !important;
+  font-size: 0 !important;
+}
+
+.imail-login-hero .imail-brand-row > div:last-child,
+.imail-login-mobile-brand .imail-brand-row > div:last-child {
+  display: none;
+}
+
+/* Hosted mailbox header: replace the temporary !T mark and duplicate text. */
+.imail-route-webmail > div.h-screen.overflow-hidden > header > div:nth-child(2) > div:first-child {
+  width: 132px !important;
+  height: 44px !important;
+  flex: 0 0 132px !important;
+  border: 0 !important;
+  background: var(--imail-logo-image) center / contain no-repeat !important;
+  box-shadow: none !important;
+  color: transparent !important;
+  font-size: 0 !important;
+}
+
+.imail-route-webmail > div.h-screen.overflow-hidden > header > div:nth-child(2) > div:nth-child(2) {
+  display: none !important;
+}
+
+/* External connection hero: use the approved logo instead of the generic mail tile. */
+.imail-route-external main > div.mx-auto.max-w-4xl > div.mt-5 > div:first-child > div > div:first-child {
+  width: 172px !important;
+  height: 66px !important;
+  flex: 0 0 172px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: var(--imail-logo-image) center / contain no-repeat !important;
+  box-shadow: none !important;
+  color: transparent !important;
+}
+
+.imail-route-external main > div.mx-auto.max-w-4xl > div.mt-5 > div:first-child > div > div:first-child svg {
+  display: none !important;
+}
+
+/* Shared loader system */
+.imail-mail-loader {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 18% 8%, rgba(12, 115, 87, .10), transparent 30%),
+    radial-gradient(circle at 84% 12%, rgba(227, 200, 95, .14), transparent 25%),
+    linear-gradient(180deg, #f8fbfa, #eff5f2);
+  color: #16362d;
+}
+
+.imail-mail-loader-card {
+  width: min(430px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 34px 30px;
+  border: 1px solid #d9e6e0;
+  border-radius: 28px;
+  background: rgba(255,255,255,.96);
+  box-shadow: 0 28px 70px rgba(17, 59, 46, .13);
+  text-align: center;
+}
+
+.imail-mail-loader-logo {
+  width: 232px;
+  height: 102px;
+  background: var(--imail-logo-image) center / contain no-repeat;
+}
+
+.imail-mail-loader-ring {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  margin-top: 18px;
+  border: 3px solid #dceae4;
+  border-top-color: #08765a;
+  border-right-color: #d3ad37;
+  border-radius: 999px;
+  animation: imail-loader-spin .88s linear infinite;
+}
+
+.imail-mail-loader-title {
+  margin: 18px 0 0;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: -.02em;
+}
+
+.imail-mail-loader-detail {
+  margin: 6px 0 0;
+  max-width: 320px;
+  color: #6c7f77;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.65;
+}
+
+.imail-mail-loader[data-compact="true"] {
+  min-height: auto;
+  display: inline-grid;
+  padding: 0;
+  background: transparent;
+}
+
+.imail-mail-loader[data-compact="true"] .imail-mail-loader-card {
+  width: auto;
+  min-width: 240px;
+  flex-direction: row;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  text-align: left;
+}
+
+.imail-mail-loader[data-compact="true"] .imail-mail-loader-logo {
+  width: 82px;
+  height: 38px;
+  flex: 0 0 82px;
+}
+
+.imail-mail-loader[data-compact="true"] .imail-mail-loader-ring {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  flex: 0 0 24px;
+  border-width: 2px;
+}
+
+.imail-mail-loader[data-compact="true"] .imail-mail-loader-copy {
+  min-width: 0;
+}
+
+.imail-mail-loader[data-compact="true"] .imail-mail-loader-title {
+  margin: 0;
+  font-size: 13px;
+}
+
+.imail-mail-loader[data-compact="true"] .imail-mail-loader-detail {
+  margin-top: 2px;
+  font-size: 10px;
+}
+
+/* Every mailbox spinner now uses the same timing and brand colors. */
+.imail-approved-ui .animate-spin,
+.imail-approved-ui [class*="animate-[spin_"] {
+  animation-duration: .88s !important;
+  animation-timing-function: linear !important;
+  color: #08765a !important;
+}
+
+.imail-approved-ui button:disabled .animate-spin,
+.imail-approved-ui button:disabled [class*="animate-[spin_"] {
+  color: currentColor !important;
+}
+
+@keyframes imail-loader-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 639.98px) {
+  .imail-mail-loader { padding: 18px; }
+  .imail-mail-loader-card { padding: 28px 22px; border-radius: 24px; }
+  .imail-mail-loader-logo { width: 210px; height: 92px; }
+
+  .imail-route-webmail > div.h-screen.overflow-hidden > header > div:nth-child(2) > div:first-child {
+    width: 96px !important;
+    height: 38px !important;
+    flex-basis: 96px !important;
+  }
+
+  .imail-route-external main > div.mx-auto.max-w-4xl > div.mt-5 > div:first-child > div > div:first-child {
+    width: 142px !important;
+    height: 58px !important;
+    flex-basis: 142px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .imail-mail-loader-ring,
+  .imail-approved-ui .animate-spin,
+  .imail-approved-ui [class*="animate-[spin_"] {
+    animation-duration: 1.6s !important;
+  }
+}
