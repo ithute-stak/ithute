@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/enforce-production-domain-identity.sh'
+      - 'scripts/ithute-tutor-edge-finalize.sh'
       - '.github/workflows/enforce-production-domain-identity.yml'
       - 'infrastructure/caddy/Caddyfile'
   workflow_dispatch:
@@ -124,7 +125,7 @@ jobs:
           soa="$(dig +short @"$VPS_HOST" "$PLATFORM_DOMAIN" SOA)"
           set -- $soa
           [ "${1:-}" = "$ns1" ] || { echo "::error::Public SOA primary is ${1:-missing}, expected $ns1"; exit 1; }
-          [ "${2:-}" = "hostmaster.${PLATFORM_DOMAIN}." ] || { echo "::error::Public SOA hostmaster is ${2:-missing}"; exit 1; }
+          [ "${2:-}" = "hostmaster.${PLATFORM_DOMAIN}." ] || { echo "::error::Public SOA hostmaster is ${2:-missing}" >&2; exit 1; }
 
           ns="$(dig +short @"$VPS_HOST" "$PLATFORM_DOMAIN" NS | sort)"
           printf '%s\n' "$ns" | grep -Fx "$ns1" >/dev/null
