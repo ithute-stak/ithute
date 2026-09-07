@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/production-ssh-keepalive.conf'
+      - 'scripts/ithute-tutor-deploy.sh'
       - '.github/workflows/ithute-pay-production.yml'
       - '.github/workflows/ithute-tutor-production.yml'
       - '.github/workflows/production-ssh-reliability-contract.yml'
@@ -12,6 +13,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/production-ssh-keepalive.conf'
+      - 'scripts/ithute-tutor-deploy.sh'
       - '.github/workflows/ithute-pay-production.yml'
       - '.github/workflows/ithute-tutor-production.yml'
       - '.github/workflows/production-ssh-reliability-contract.yml'
@@ -39,17 +41,28 @@ jobs:
           printf '%s\n' "$resolved" | grep -Eq '^serveralivecountmax 90$'
           printf '%s\n' "$resolved" | grep -Eq '^tcpkeepalive yes$'
 
-      - name: Require Pay and Tutor to install keepalive profile
+      - name: Require Pay and Tutor SSH reliability protections
         run: |
           set -eu
-          for file in \
-            .github/workflows/ithute-pay-production.yml \
-            .github/workflows/ithute-tutor-production.yml; do
-            grep -Fq 'cp scripts/production-ssh-keepalive.conf "$HOME/.ssh/config"' "$file"
-            grep -Fq 'Waiting for shared Ithute production lock' "$file"
-            grep -Fq 'Acquired shared Ithute production lock.' "$file"
-            grep -Fq 'Waiting for $service (status:' "$file"
-          done
+
+          pay=.github/workflows/ithute-pay-production.yml
+          tutor_workflow=.github/workflows/ithute-tutor-production.yml
+          tutor_script=scripts/ithute-tutor-deploy.sh
+
+          # Pay still keeps its long-running remote loop inline.
+          grep -Fq 'cp scripts/production-ssh-keepalive.conf "$HOME/.ssh/config"' "$pay"
+          grep -Fq 'Waiting for shared Ithute production lock' "$pay"
+          grep -Fq 'Acquired shared Ithute production lock.' "$pay"
+          grep -Fq 'Waiting for $service (status:' "$pay"
+
+          # Tutor installs the same SSH keepalive profile in its workflow, but
+          # its production lock and health waits now live in a checked-in,
+          # syntax-validated remote deploy script instead of a fragile heredoc.
+          grep -Fq 'cp scripts/production-ssh-keepalive.conf "$HOME/.ssh/config"' "$tutor_workflow"
+          grep -Fq 'Waiting for shared Ithute production lock' "$tutor_script"
+          grep -Fq 'Acquired shared Ithute production lock for Tutor deployment.' "$tutor_script"
+          grep -Fq 'Waiting for $service (runtime: $runtime, health:' "$tutor_script"
+          sh -n "$tutor_script"
 
       - name: Keep persistent-data protections intact
         run: |
