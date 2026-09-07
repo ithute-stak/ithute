@@ -150,6 +150,7 @@ jobs:
         run: |
           set -eu
           [ -n "${VPS_SSH_KEY:-}" ] || { echo "::error::VPS_SSH_KEY is required"; exit 1; }
+          sh -n scripts/ithute-tutor-edge-finalize.sh
 
       - name: Configure SSH identity
         run: |
@@ -181,10 +182,12 @@ jobs:
       - name: Stage Tutor production manifests
         run: |
           set -eu
+          sh -n scripts/ithute-tutor-edge-finalize.sh
           remote="${VPS_USER}@${VPS_HOST}"
           scp docker-compose.ithute-tutor.yml "$remote:/tmp/docker-compose.ithute-tutor-${DEPLOY_SHA}.yml"
           scp docker-compose.ithute-tutor-prod.yml "$remote:/tmp/docker-compose.ithute-tutor-prod-${DEPLOY_SHA}.yml"
           scp infrastructure/ithute-edge/default.conf.template "$remote:/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf"
+          scp scripts/ithute-tutor-edge-finalize.sh "$remote:/tmp/ithute-tutor-edge-finalize-${DEPLOY_SHA}.sh"
 
       - name: Deploy Tutor and register authoritative DNS
         run: |
@@ -384,60 +387,16 @@ jobs:
             --zone ithute.co.ls \
             --host tutor.ithute.co.ls
 
-          # Keep the checked-in edge template authoritative even if workflow order
-          # means the generic edge recovery job has not run yet.
-          mkdir -p "$EDGE_DIR/infrastructure/ithute-edge"
-          cp "/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf" "$EDGE_DIR/infrastructure/ithute-edge/default.conf.template"
-          rm -f "/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf"
-
-          cd "$EDGE_DIR"
-          edge_compose() { docker compose -p ithute-edge -f docker-compose.ithute-edge.yml "$@"; }
-          edge_compose config >/dev/null
-
-          # Extend the existing shared certificate only when Tutor is absent from
-          # its SAN list. Existing SANs are preserved dynamically.
-          san_file="$(mktemp)"
-          edge_compose exec -T edge-nginx openssl x509 \
-            -in /etc/letsencrypt/live/ithute-edge/fullchain.pem -noout -ext subjectAltName \
-            | tr ',' '\n' | sed -n 's/^[[:space:]]*DNS://p' | sed 's/[[:space:]]//g' | sed '/^$/d' > "$san_file"
-
-          if ! grep -Fxq "$TUTOR_HOST" "$san_file"; then
-            echo "$TUTOR_HOST" >> "$san_file"
-            attempt=1
-            issued=false
-            while [ "$attempt" -le 5 ]; do
-              set --
-              while IFS= read -r domain; do
-                [ -n "$domain" ] && set -- "$@" -d "$domain"
-              done < "$san_file"
-              if edge_compose run --rm --no-deps --entrypoint certbot certbot \
-                certonly --webroot -w /var/www/certbot --cert-name ithute-edge \
-                --non-interactive --expand "$@"; then
-                issued=true
-                break
-              fi
-              echo "Tutor certificate expansion attempt $attempt failed; retrying after DNS propagation."
-              sleep 15
-              attempt=$((attempt + 1))
-            done
-            [ "$issued" = true ] || { echo "Could not extend ithute-edge TLS certificate for Tutor" >&2; exit 1; }
-          fi
-          rm -f "$san_file"
-
-          edge_compose up -d --no-build --no-deps --force-recreate edge-nginx certbot
-          edge_compose exec -T edge-nginx nginx -t
-
-          for attempt in $(seq 1 30); do
-            if curl -fsS --resolve "$TUTOR_HOST:443:127.0.0.1" \
-              --connect-timeout 5 --max-time 15 "https://$TUTOR_HOST/" >/dev/null; then
-              echo "Tutor origin is healthy through the shared HTTPS edge."
-              exit 0
-            fi
-            echo "Waiting for Tutor HTTPS origin ($attempt/30)..."
-            sleep 3
-          done
-          edge_compose logs --tail=250 edge-nginx || true
-          exit 1
+          # The post-DNS HTTPS finalizer is a checked-in POSIX shell script. It is
+          # syntax-validated both on the runner and again on the VPS before use,
+          # avoiding the fragile nested shell block that previously failed here.
+          finalizer="/tmp/ithute-tutor-edge-finalize-${DEPLOY_SHA}.sh"
+          [ -s "$finalizer" ] || { echo "Missing staged Tutor HTTPS finalizer: $finalizer" >&2; exit 1; }
+          sh -n "$finalizer"
+          TUTOR_EDGE_TEMPLATE="/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf" \
+            EDGE_DIR="$EDGE_DIR" DEPLOY_SHA="$DEPLOY_SHA" TUTOR_HOST="$TUTOR_HOST" \
+            sh "$finalizer"
+          rm -f "$finalizer"
           REMOTE
 
       - name: Require public Tutor DNS and HTTPS
@@ -466,6 +425,10 @@ jobs:
           done
           [ "$https_ready" = true ] || { echo "::error::Public Tutor HTTPS route is unhealthy"; exit 1; }
 
-          echo | openssl s_client -connect "$TUTOR_HOST:443" -servername "$TUTOR_HOST" 2>/dev/null \
-            | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+          cert="$(echo | openssl s_client -connect "$TUTOR_HOST:443" -servername "$TUTOR_HOST" 2>/dev/null | openssl x509 -noout -ext subjectAltName)"
+          printf '%s\n' "$cert"
+          printf '%s\n' "$cert" | grep -Fq "DNS:$TUTOR_HOST" || {
+            echo "::error::Tutor hostname is missing from the public TLS certificate."
+            exit 1
+          }
           echo "Ithute Tutor is publicly available at https://$TUTOR_HOST"
