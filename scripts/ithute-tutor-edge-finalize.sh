@@ -68,8 +68,8 @@ edge_compose run --rm --no-deps --entrypoint /bin/sh edge-nginx -c \
 awk 'NF && !seen[$0]++ { print }' "$required_sans" > "$required_tmp"
 mv "$required_tmp" "$required_sans"
 
-# Read the certificate currently mounted into the edge only for comparison.
-# It is deliberately not used as the authoritative domain list.
+# Read the certificate currently mounted into the live edge only for
+# comparison. It is deliberately not used as the authoritative domain list.
 edge_compose exec -T edge-nginx openssl x509 \
   -in /etc/letsencrypt/live/ithute-edge/fullchain.pem \
   -noout -ext subjectAltName \
@@ -117,12 +117,12 @@ if [ "$needs_issue" = true ]; then
   fi
 fi
 
-# Refuse to restart the edge with a certificate that does not cover every
-# configured public hostname. This prevents one product deployment from
-# silently breaking Panel, Auth, Pay, Tutor, or LoanHub TLS.
-cert_sans="$(edge_compose exec -T edge-nginx openssl x509 \
-  -in /etc/letsencrypt/live/ithute-edge/fullchain.pem \
-  -noout -ext subjectAltName)"
+# Inspect the certificate from a fresh one-shot edge container. Do not depend
+# on the already-running Nginx container after Certbot has atomically replaced
+# certificate symlinks. Only restart the public listener after this complete
+# SAN check succeeds.
+cert_sans="$(edge_compose run --rm --no-deps --entrypoint /bin/sh edge-nginx -c \
+  'command -v openssl >/dev/null 2>&1 || { echo "openssl is unavailable in edge image" >&2; exit 1; }; exec openssl x509 -in /etc/letsencrypt/live/ithute-edge/fullchain.pem -noout -ext subjectAltName')"
 printf '%s\n' "$cert_sans"
 while IFS= read -r domain; do
   [ -n "$domain" ] || continue
@@ -132,6 +132,7 @@ while IFS= read -r domain; do
   }
 done < "$required_sans"
 
+echo 'Canonical shared certificate SAN set verified before edge restart.'
 edge_compose up -d --no-build --no-deps --force-recreate edge-nginx certbot
 edge_compose exec -T edge-nginx nginx -t
 
