@@ -1,0 +1,52 @@
+/* External Webmail workspace sizing guard.
+   The approved connection-form skin intentionally caps the guest connection
+   card, but the authenticated mailbox must always consume the full viewport. */
+
+.imail-route-external main[class*="min-h-screen"]:has(> header) {
+  width: 100% !important;
+  max-width: none !important;
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.imail-route-external main[class*="min-h-screen"]:has(> header) > div.flex {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+}
+
+.imail-route-external main[class*="min-h-screen"]:has(> header) > div.flex > div[class*="flex-1"] {
+  width: auto !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  flex: 1 1 0% !important;
+}
+
+/* Do not let connection-form input sizing leak into the authenticated inbox
+   search field. */
+.imail-route-external main[class*="min-h-screen"]:has(> header) section form input {
+  min-height: 0 !important;
+}
+
+@media (min-width: 1024px) {
+  .imail-route-external main[class*="min-h-screen"]:has(> header) > div.flex > aside {
+    width: 244px !important;
+    min-width: 244px !important;
+    max-width: 244px !important;
+  }
+
+  .imail-route-external main[class*="min-h-screen"]:has(> header) div[class*="lg:grid-cols-[minmax(390px,46%)_1fr]"] {
+    width: 100% !important;
+    max-width: none !important;
+  }
+}
+
+@media (max-width: 639.98px) {
+  .imail-route-external main[class*="min-h-screen"]:has(> header) {
+    min-height: 100dvh !important;
+  }
+
+  .imail-route-external main[class*="min-h-screen"]:has(> header) > div.flex {
+    height: calc(100dvh - 64px) !important;
+  }
+}
