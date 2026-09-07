@@ -120,8 +120,9 @@ fi
 # Refuse to restart the edge with a certificate that does not cover every
 # configured public hostname. This prevents one product deployment from
 # silently breaking Panel, Auth, Pay, Tutor, or LoanHub TLS.
-cert_sans="$(edge_compose run --rm --no-deps --entrypoint openssl certbot \
-  x509 -in /etc/letsencrypt/live/ithute-edge/fullchain.pem -noout -ext subjectAltName)"
+cert_sans="$(edge_compose exec -T edge-nginx openssl x509 \
+  -in /etc/letsencrypt/live/ithute-edge/fullchain.pem \
+  -noout -ext subjectAltName)"
 printf '%s\n' "$cert_sans"
 while IFS= read -r domain; do
   [ -n "$domain" ] || continue
