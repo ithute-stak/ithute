@@ -5,6 +5,12 @@ on:
     workflows: ["Build and Deploy Production"]
     types: [completed]
     branches: [main]
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/enforce-production-domain-identity.sh'
+      - '.github/workflows/enforce-production-domain-identity.yml'
+      - 'infrastructure/caddy/Caddyfile'
   workflow_dispatch:
 
 concurrency:
@@ -25,6 +31,7 @@ jobs:
     name: Reconcile public DNS and mail identity
     if: >-
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -71,6 +78,8 @@ jobs:
             ssh-add "$HOME/.ssh/mailbox_dns_identity" </dev/null
           fi
 
+          cp scripts/production-ssh-keepalive.conf "$HOME/.ssh/config"
+          chmod 600 "$HOME/.ssh/config"
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
@@ -85,7 +94,16 @@ jobs:
           set -eu
           if command -v flock >/dev/null 2>&1; then
             exec 9>/tmp/ithute-production.lock
-            flock 9
+            attempt=1
+            while ! flock -n 9; do
+              if [ "$attempt" -ge 120 ]; then
+                echo "Timed out waiting for shared Ithute production lock." >&2
+                exit 1
+              fi
+              echo "Waiting for shared Ithute production lock ($attempt/120)..."
+              sleep 5
+              attempt=$((attempt + 1))
+            done
           fi
           cd "$APP_DIR"
           PLATFORM_DOMAIN="$PLATFORM_DOMAIN" PUBLIC_IP="$PUBLIC_IP" sh scripts/enforce-production-domain-identity.sh
@@ -111,10 +129,24 @@ jobs:
           ns="$(dig +short @"$VPS_HOST" "$PLATFORM_DOMAIN" NS | sort)"
           printf '%s\n' "$ns" | grep -Fx "$ns1" >/dev/null
           printf '%s\n' "$ns" | grep -Fx "$ns2" >/dev/null
-          dig +short @"$VPS_HOST" "ns1.${PLATFORM_DOMAIN}" A | grep -Fx "$VPS_HOST" >/dev/null
-          dig +short @"$VPS_HOST" "ns2.${PLATFORM_DOMAIN}" A | grep -Fx "$VPS_HOST" >/dev/null
-          dig +short @"$VPS_HOST" "mail.${PLATFORM_DOMAIN}" A | grep -Fx "$VPS_HOST" >/dev/null
-          dig +short @"$VPS_HOST" "auth.${PLATFORM_DOMAIN}" A | grep -Fx "$VPS_HOST" >/dev/null
+
+          for host in \
+            "$PLATFORM_DOMAIN" \
+            "www.${PLATFORM_DOMAIN}" \
+            "panel.${PLATFORM_DOMAIN}" \
+            "api.${PLATFORM_DOMAIN}" \
+            "auth.${PLATFORM_DOMAIN}" \
+            "push.${PLATFORM_DOMAIN}" \
+            "realtime.${PLATFORM_DOMAIN}" \
+            "groupware.${PLATFORM_DOMAIN}" \
+            "ns1.${PLATFORM_DOMAIN}" \
+            "ns2.${PLATFORM_DOMAIN}" \
+            "mail.${PLATFORM_DOMAIN}"; do
+            dig +short @"$VPS_HOST" "$host" A | grep -Fx "$VPS_HOST" >/dev/null || {
+              echo "::error::Authoritative DNS is missing $host -> $VPS_HOST"
+              exit 1
+            }
+          done
 
           mx="$(dig +short @"$VPS_HOST" "$PLATFORM_DOMAIN" MX)"
           set -- $mx
@@ -124,7 +156,7 @@ jobs:
           set -- $tcp_soa
           [ "${1:-}" = "$ns1" ] || { echo "::error::TCP authoritative DNS failed"; exit 1; }
 
-          echo "Public authoritative DNS identity verified."
+          echo "Public authoritative DNS identity verified, including Push and Realtime."
 
       - name: Report PTR readiness
         run: |

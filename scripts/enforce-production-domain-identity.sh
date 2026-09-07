@@ -23,6 +23,8 @@ MAIL_HOST="mail.${PLATFORM_DOMAIN}"
 PANEL_HOST="panel.${PLATFORM_DOMAIN}"
 API_HOST="api.${PLATFORM_DOMAIN}"
 AUTH_HOST="auth.${PLATFORM_DOMAIN}"
+PUSH_HOST="push.${PLATFORM_DOMAIN}"
+REALTIME_HOST="realtime.${PLATFORM_DOMAIN}"
 GROUPWARE_HOST="groupware.${PLATFORM_DOMAIN}"
 WWW_HOST="www.${PLATFORM_DOMAIN}"
 
@@ -115,6 +117,8 @@ mail = f"mail.{zone}"
 panel = f"panel.{zone}"
 api = f"api.{zone}"
 auth = f"auth.{zone}"
+push = f"push.{zone}"
+realtime = f"realtime.{zone}"
 groupware = f"groupware.{zone}"
 www = f"www.{zone}"
 client = PowerDNSClient()
@@ -127,7 +131,7 @@ except PowerDNSError as exc:
     client.create_zone_with_nameservers(zone, [ns1, ns2])
 
 client.reconcile_authority(zone, [ns1, ns2])
-for hostname in (zone, www, panel, api, auth, groupware, ns1, ns2, mail):
+for hostname in (zone, www, panel, api, auth, push, realtime, groupware, ns1, ns2, mail):
     client.replace_rrset(zone, hostname, "A", 3600, [public_ip])
 client.replace_rrset(zone, zone, "MX", 3600, [f"10 {mail}."])
 client.replace_rrset(zone, zone, "TXT", 3600, ['"v=spf1 mx -all"'])
@@ -150,7 +154,7 @@ ns="$(dig +short @"$PUBLIC_IP" "$PLATFORM_DOMAIN" NS | sort)"
 printf '%s\n' "$ns" | grep -Fx "${NS1}." >/dev/null
 printf '%s\n' "$ns" | grep -Fx "${NS2}." >/dev/null
 
-for host in "$PLATFORM_DOMAIN" "$WWW_HOST" "$PANEL_HOST" "$API_HOST" "$AUTH_HOST" "$GROUPWARE_HOST" "$NS1" "$NS2" "$MAIL_HOST"; do
+for host in "$PLATFORM_DOMAIN" "$WWW_HOST" "$PANEL_HOST" "$API_HOST" "$AUTH_HOST" "$PUSH_HOST" "$REALTIME_HOST" "$GROUPWARE_HOST" "$NS1" "$NS2" "$MAIL_HOST"; do
   dig +short @"$PUBLIC_IP" "$host" A | grep -Fx "$PUBLIC_IP" >/dev/null
 done
 

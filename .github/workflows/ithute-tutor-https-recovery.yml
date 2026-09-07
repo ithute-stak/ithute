@@ -5,18 +5,19 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/ithute-tutor-https-recovery.yml'
+      - '.github/workflows/enforce-production-domain-identity.yml'
       - 'scripts/ithute-tutor-edge-finalize.sh'
+      - 'scripts/enforce-production-domain-identity.sh'
       - 'infrastructure/ithute-edge/default.conf.template'
-  push:
+      - 'infrastructure/caddy/Caddyfile'
+  workflow_run:
+    workflows: ["Enforce Production Domain Identity"]
+    types: [completed]
     branches: [main]
-    paths:
-      - '.github/workflows/ithute-tutor-https-recovery.yml'
-      - 'scripts/ithute-tutor-edge-finalize.sh'
-      - 'infrastructure/ithute-edge/default.conf.template'
   workflow_dispatch:
 
 concurrency:
-  group: ithute-tutor-https-recovery
+  group: ithute-production-vps
   cancel-in-progress: false
 
 permissions:
@@ -44,7 +45,11 @@ jobs:
         run: |
           set -eu
           sh -n scripts/ithute-tutor-edge-finalize.sh
+          sh -n scripts/enforce-production-domain-identity.sh
           grep -Fq 'cert-name ithute-edge' scripts/ithute-tutor-edge-finalize.sh
+          grep -Fq 'panel.ithute.co.ls' scripts/ithute-tutor-edge-finalize.sh
+          grep -Fq 'push.ithute.co.ls' scripts/ithute-tutor-edge-finalize.sh
+          grep -Fq 'realtime.ithute.co.ls' scripts/ithute-tutor-edge-finalize.sh
           grep -Fq 'nginx -t' scripts/ithute-tutor-edge-finalize.sh
           if grep -Eq 'docker[[:space:]]+volume[[:space:]]+(rm|prune)|--remove-orphans|--volumes' scripts/ithute-tutor-edge-finalize.sh; then
             echo '::error::Tutor HTTPS recovery must not remove shared product containers or persistent volumes.'
@@ -52,20 +57,23 @@ jobs:
           fi
 
   recover:
-    name: Finalize Tutor DNS and HTTPS
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    name: Finalize canonical Ithute DNS and HTTPS
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
     env:
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
-      DEPLOY_SHA: ${{ github.sha }}
+      DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
     steps:
-      - name: Checkout
+      - name: Checkout exact DNS-verified release
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ env.DEPLOY_SHA }}
           persist-credentials: false
 
       - name: Validate finalizer before contacting production
@@ -101,7 +109,7 @@ jobs:
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Stage validated Tutor HTTPS finalizer
+      - name: Stage validated shared HTTPS finalizer
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
@@ -147,40 +155,58 @@ jobs:
           rm -f "$finalizer"
           REMOTE
 
-      - name: Require public Tutor DNS and HTTPS
+      - name: Require canonical public DNS and HTTPS
         run: |
           set -eu
-          dns_ready=false
-          attempt=1
-          while [ "$attempt" -le 30 ]; do
-            answer="$(dig +short A "$TUTOR_HOST" | tail -n1 || true)"
-            if [ "$answer" = "$VPS_HOST" ]; then
-              dns_ready=true
-              break
-            fi
-            echo "Waiting for Tutor DNS ($attempt/30): ${answer:-no answer}"
-            sleep 5
-            attempt=$((attempt + 1))
-          done
-          [ "$dns_ready" = true ] || { echo "::error::$TUTOR_HOST does not resolve to $VPS_HOST"; exit 1; }
 
-          https_ready=false
-          attempt=1
-          while [ "$attempt" -le 24 ]; do
-            if curl --fail --silent --show-error --connect-timeout 8 --max-time 20 "https://$TUTOR_HOST/" >/dev/null; then
-              https_ready=true
-              break
-            fi
-            echo "Waiting for public Tutor HTTPS ($attempt/24)..."
-            sleep 5
-            attempt=$((attempt + 1))
+          for host in ithute.co.ls panel.ithute.co.ls auth.ithute.co.ls push.ithute.co.ls realtime.ithute.co.ls tutor.ithute.co.ls; do
+            dns_ready=false
+            attempt=1
+            while [ "$attempt" -le 30 ]; do
+              answer="$(dig +short A "$host" | tail -n1 || true)"
+              if [ "$answer" = "$VPS_HOST" ]; then
+                dns_ready=true
+                break
+              fi
+              echo "Waiting for $host DNS ($attempt/30): ${answer:-no answer}"
+              sleep 5
+              attempt=$((attempt + 1))
+            done
+            [ "$dns_ready" = true ] || { echo "::error::$host does not resolve to $VPS_HOST"; exit 1; }
           done
-          [ "$https_ready" = true ] || { echo '::error::Public Tutor HTTPS route is unhealthy'; exit 1; }
 
-          cert="$(echo | openssl s_client -connect "$TUTOR_HOST:443" -servername "$TUTOR_HOST" 2>/dev/null | openssl x509 -noout -ext subjectAltName)"
+          for url in \
+            https://ithute.co.ls/ \
+            https://panel.ithute.co.ls/ \
+            https://auth.ithute.co.ls/healthz \
+            https://tutor.ithute.co.ls/; do
+            https_ready=false
+            attempt=1
+            while [ "$attempt" -le 24 ]; do
+              if curl --fail --silent --show-error --connect-timeout 8 --max-time 20 "$url" >/dev/null; then
+                https_ready=true
+                break
+              fi
+              echo "Waiting for public HTTPS: $url ($attempt/24)..."
+              sleep 5
+              attempt=$((attempt + 1))
+            done
+            [ "$https_ready" = true ] || { echo "::error::Public HTTPS route is unhealthy: $url"; exit 1; }
+          done
+
+          effective="$(curl --fail --silent --show-error -L --max-redirs 5 -o /dev/null -w '%{url_effective}' https://ithute.co.ls/)"
+          case "$effective" in
+            https://ithute.co.ls/*) ;;
+            *) echo "::error::Ithute apex redirected away from its public homepage: $effective"; exit 1 ;;
+          esac
+
+          cert="$(echo | openssl s_client -connect panel.ithute.co.ls:443 -servername panel.ithute.co.ls 2>/dev/null | openssl x509 -noout -ext subjectAltName)"
           printf '%s\n' "$cert"
-          printf '%s\n' "$cert" | grep -Fq "DNS:$TUTOR_HOST" || {
-            echo '::error::Tutor hostname is missing from the public TLS certificate.'
-            exit 1
-          }
-          echo "Ithute Tutor HTTPS recovery completed: https://$TUTOR_HOST"
+          for host in ithute.co.ls panel.ithute.co.ls auth.ithute.co.ls push.ithute.co.ls realtime.ithute.co.ls tutor.ithute.co.ls; do
+            printf '%s\n' "$cert" | grep -Fq "DNS:$host" || {
+              echo "::error::Shared TLS certificate is missing DNS:$host"
+              exit 1
+            }
+          done
+
+          echo 'Canonical Ithute DNS, apex routing and shared HTTPS certificate are healthy.'
