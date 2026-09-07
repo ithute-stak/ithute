@@ -180,6 +180,8 @@ jobs:
             ssh-add "$HOME/.ssh/ithute_deploy" </dev/null
           fi
 
+          cp scripts/production-ssh-keepalive.conf "$HOME/.ssh/config"
+          chmod 600 "$HOME/.ssh/config"
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
@@ -398,13 +400,15 @@ jobs:
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "cd '$VPS_APP_DIR' && grep '^MAILBOX_DNS_IMAGE_TAG=' .env | grep -F '$DEPLOY_SHA' >/dev/null && grep '^SHARED_HTTP_EDGE=true$' .env >/dev/null && grep '^PROXY_PORT=127.0.0.1:8086$' .env >/dev/null && grep '^FRONTEND_PORT=127.0.0.1:3006$' .env >/dev/null && grep '^BACKEND_PORT=127.0.0.1:8006$' .env >/dev/null && curl -fsS http://127.0.0.1:8086/ >/dev/null && curl -fsS -H 'Host: auth.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null && curl -fsS -H 'Host: push.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null && curl -fsS -H 'Host: realtime.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null"
+          ssh "$remote" "cd '$VPS_APP_DIR' && grep '^MAILBOX_DNS_IMAGE_TAG=' .env | grep -F '$DEPLOY_SHA' >/dev/null && grep '^SHARED_HTTP_EDGE=true$' .env >/dev/null && grep '^PROXY_PORT=127.0.0.1:8086$' .env >/dev/null && grep '^FRONTEND_PORT=127.0.0.1:3006$' .env >/dev/null && grep '^BACKEND_PORT=127.0.0.1:8006$' .env >/dev/null && curl -fsS -H 'Host: panel.ithute.co.ls' http://127.0.0.1:8086/ >/dev/null && curl -fsS -H 'Host: auth.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null && curl -fsS -H 'Host: push.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null && curl -fsS -H 'Host: realtime.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null"
 
-          curl --fail --silent --show-error --retry 8 --retry-delay 5 --connect-timeout 10 "https://panel.ithute.co.ls/" >/dev/null
-
+          # Public HTTPS belongs to the dedicated shared edge. It is verified
+          # downstream after authoritative DNS and the canonical certificate
+          # have been reconciled; gating this core deploy on TLS would prevent
+          # that recovery workflow from ever running when the certificate is stale.
           if curl --fail --silent --show-error --connect-timeout 5 "http://${VPS_HOST}:3006/" >/dev/null 2>&1; then
             echo "::error::Temporary public IP access on ${VPS_HOST}:3006 is still reachable."
             exit 1
           fi
 
-          echo "Production panel and internal !thute Auth/Push/Realtime routes verified; direct public IP access on port 3006 is closed."
+          echo "Internal production panel and Ithute Auth/Push/Realtime routes verified; shared-edge public TLS recovery may proceed, and direct public IP access on port 3006 is closed."
