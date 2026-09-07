@@ -69,22 +69,23 @@ edge_compose run --rm --no-deps --entrypoint /bin/sh edge-nginx -c \
 awk 'NF && !seen[$0]++ { print }' "$required_sans" > "$required_tmp"
 mv "$required_tmp" "$required_sans"
 
-# Read the certificate directly from the shared Let's Encrypt volume through a
-# fresh one-shot edge container. A running Nginx container can retain the old
-# certificate symlink target after Certbot atomically replaces it; using that
-# stale view here would cause unnecessary issuance and, more importantly, can
-# hide the fact that a correct certificate is already ready to be activated.
-current_cert="$(edge_compose run --rm --no-deps --entrypoint /bin/sh edge-nginx -c \
-  'command -v openssl >/dev/null 2>&1 || exit 127; openssl x509 -in /etc/letsencrypt/live/ithute-edge/fullchain.pem -noout -ext subjectAltName' \
-  2>/dev/null || true)"
-printf '%s\n' "$current_cert" \
-  | tr ',' '\n' \
-  | sed -n 's/^[[:space:]]*DNS://p' \
-  | sed 's/[[:space:]]//g' \
-  | sed '/^$/d' > "$current_sans"
+# Certbot owns the shared Let's Encrypt volume, so use its own certificate
+# inventory to inspect the canonical certificate. The minimal nginx:alpine edge
+# image intentionally does not ship the openssl CLI, and a running Nginx
+# container may also retain an old certificate symlink target after Certbot
+# atomically replaces it.
+certbot_domains() {
+  edge_compose run --rm --no-deps --entrypoint certbot certbot \
+    certificates --cert-name ithute-edge 2>/dev/null \
+    | sed -n 's/^[[:space:]]*Domains:[[:space:]]*//p' \
+    | head -n1
+}
+
+current_domains="$(certbot_domains || true)"
+printf '%s\n' "$current_domains" | tr ' ' '\n' | sed '/^$/d' > "$current_sans"
 
 if [ ! -s "$current_sans" ]; then
-  echo 'No readable canonical certificate was found in the shared volume; issuance will be attempted.'
+  echo 'No readable canonical certificate was found in the shared Certbot inventory; issuance will be attempted.'
 fi
 
 needs_issue=false
@@ -126,16 +127,18 @@ if [ "$needs_issue" = true ]; then
   fi
 fi
 
-# Inspect the certificate from a fresh one-shot edge container. Do not depend
-# on the already-running Nginx container after Certbot has atomically replaced
-# certificate symlinks. Only restart the public listener after this complete
-# SAN check succeeds.
-cert_sans="$(edge_compose run --rm --no-deps --entrypoint /bin/sh edge-nginx -c \
-  'command -v openssl >/dev/null 2>&1 || { echo "openssl is unavailable in edge image" >&2; exit 1; }; exec openssl x509 -in /etc/letsencrypt/live/ithute-edge/fullchain.pem -noout -ext subjectAltName')"
-printf '%s\n' "$cert_sans"
+# Re-read Certbot's canonical certificate inventory after any issuance and
+# require the complete shared SAN set before the public listener is recreated.
+cert_domains="$(certbot_domains || true)"
+[ -n "$cert_domains" ] || {
+  echo 'Certbot cannot report the canonical ithute-edge certificate domains.' >&2
+  exit 1
+}
+printf 'Canonical certificate domains: %s\n' "$cert_domains"
+printf '%s\n' "$cert_domains" | tr ' ' '\n' | sed '/^$/d' > "$current_sans"
 while IFS= read -r domain; do
   [ -n "$domain" ] || continue
-  printf '%s\n' "$cert_sans" | grep -Fq "DNS:$domain" || {
+  grep -Fxq "$domain" "$current_sans" || {
     echo "Reconciled certificate is still missing required SAN: $domain" >&2
     exit 1
   }
