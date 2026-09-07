@@ -50,6 +50,13 @@ def request_access_token(request: Request) -> str | None:
 
 
 def require_central_claims(request: Request) -> dict[str, Any]:
+    # AuthContextMiddleware validates the same bearer/cookie token before the
+    # route runs. Reuse those verified claims instead of fetching JWKS and
+    # validating the JWT twice for every authenticated Tutor request.
+    cached_claims = getattr(request.state, "central_claims", None)
+    if isinstance(cached_claims, dict):
+        return cached_claims
+
     token = request_access_token(request)
     if not token:
         raise HTTPException(
@@ -57,7 +64,9 @@ def require_central_claims(request: Request) -> dict[str, Any]:
             detail="missing central auth access token",
         )
     try:
-        return validate_central_access_token(token)
+        claims = validate_central_access_token(token)
+        request.state.central_claims = claims
+        return claims
     except CentralAuthError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
