@@ -3,7 +3,7 @@ set -eu
 
 mode="${1:-check}"
 minimum_free_mb="${2:-2048}"
-release_backup_keep="${ITHUTE_RELEASE_BACKUP_KEEP:-5}"
+release_backup_keep="${ITHUTE_RELEASE_BACKUP_KEEP:-3}"
 
 case "$mode" in
   cleanup|check) ;;
@@ -93,7 +93,7 @@ if [ "$mode" = "cleanup" ]; then
   remove_invalid_release_backups
 
   # Build cache and images not referenced by running containers are disposable.
-  # Never use docker system prune --volumes or docker volume prune here.
+  # Persistent storage deletion commands are intentionally never used here.
   docker builder prune -af >/dev/null 2>&1 || true
   docker image prune -af >/dev/null 2>&1 || true
 
