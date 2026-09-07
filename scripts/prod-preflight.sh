@@ -156,4 +156,14 @@ fi
 
 [ "$fail" -eq 0 ] || { echo "Production preflight FAILED."; exit 1; }
 
+# Production pulls temporarily need both the running release images and the new
+# immutable release images on disk. Reclaim only reproducible artifacts and
+# short-lived deployment snapshots before pulling; persistent volumes and live
+# database data are never pruned.
+[ -f scripts/prod-storage-preflight.sh ] || {
+  echo "ERROR: scripts/prod-storage-preflight.sh is required for production" >&2
+  exit 1
+}
+sh scripts/prod-storage-preflight.sh cleanup "${PRODUCTION_MIN_FREE_MB:-4096}"
+
 echo "Production preflight PASSED (${PLATFORM_MODE:-bootstrap} mode, central Auth/Push/Realtime enabled)."

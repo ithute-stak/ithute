@@ -1,0 +1,166 @@
+name: Recover Production Storage
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/production-storage-recovery.yml'
+      - 'scripts/prod-storage-preflight.sh'
+  workflow_dispatch:
+
+concurrency:
+  group: ithute-production-storage-recovery
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 204.12.205.224
+  VPS_USER: administrator
+  VPS_APP_DIR: /home/administrator/mailbox-dns
+
+jobs:
+  recover:
+    name: Reclaim disposable VPS storage safely
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+
+    steps:
+      - name: Validate production SSH credentials
+        run: |
+          set -eu
+          [ -n "${VPS_SSH_KEY:-}" ] || { echo '::error::VPS_SSH_KEY is required'; exit 1; }
+
+      - name: Configure SSH identity
+        run: |
+          set -eu
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_storage_recovery"
+          chmod 600 "$HOME/.ssh/ithute_storage_recovery"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/ithute-storage-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/ithute-storage-askpass.sh
+            SSH_ASKPASS=/tmp/ithute-storage-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+              setsid -w ssh-add "$HOME/.ssh/ithute_storage_recovery" </dev/null
+            rm -f /tmp/ithute-storage-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/ithute_storage_recovery" </dev/null
+          fi
+          printf '%s\n' \
+            'Host *' \
+            '  ServerAliveInterval 30' \
+            '  ServerAliveCountMax 20' \
+            '  TCPKeepAlive yes' > "$HOME/.ssh/config"
+          chmod 600 "$HOME/.ssh/config"
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Recover disposable VPS storage
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' sh -s" <<'REMOTE'
+          set -eu
+
+          if command -v flock >/dev/null 2>&1; then
+            exec 9>/tmp/ithute-production.lock
+            attempt=1
+            while ! flock -n 9; do
+              if [ "$attempt" -ge 120 ]; then
+                echo 'Timed out waiting for the shared Ithute production lock.' >&2
+                exit 1
+              fi
+              echo "Waiting for shared Ithute production lock ($attempt/120)..."
+              sleep 5
+              attempt=$((attempt + 1))
+            done
+          fi
+
+          free_mb() {
+            df -Pk "$APP_DIR" | awk 'NR == 2 { print int($4 / 1024) }'
+          }
+
+          echo '=== Storage before safe recovery ==='
+          df -h "$APP_DIR" || true
+          docker system df || true
+
+          # Remove only old deployment staging artifacts. Persistent application
+          # files and all Docker volumes are outside this cleanup.
+          find /tmp -maxdepth 1 -type f \
+            \( -name 'ithute-*.tgz' \
+               -o -name 'ithute-overrides-*.env' \
+               -o -name 'ithute-tutor-images-*.tar.gz' \
+               -o -name 'docker-compose.ithute-tutor-*.yml' \
+               -o -name 'ithute-edge-tutor-*.conf' \) \
+            -mmin +180 -print -delete 2>/dev/null || true
+
+          # Build cache and unused images are reproducible artifacts. Running
+          # containers keep their referenced images. Volumes are never pruned.
+          docker builder prune -af >/dev/null 2>&1 || true
+          docker image prune -af >/dev/null 2>&1 || true
+
+          if [ -d "$APP_DIR/backups" ]; then
+            cd "$APP_DIR"
+
+            # Delete only failed/incomplete pre-release dump artifacts.
+            find backups -maxdepth 1 -type f -name '*-before-*.dump' -size 0 -print -delete 2>/dev/null || true
+            pg_container="$(docker ps -q --filter label=com.docker.compose.service=postgres | head -n1 || true)"
+            if [ -n "$pg_container" ]; then
+              find backups -maxdepth 1 -type f -name '*-before-*.dump' -print 2>/dev/null | while IFS= read -r file; do
+                [ -s "$file" ] || continue
+                if ! docker exec -i "$pg_container" pg_restore -l >/dev/null 2>&1 < "$file"; then
+                  echo "Removing incomplete pre-release database snapshot: $file"
+                  rm -f -- "$file"
+                fi
+              done
+            fi
+
+            # Under disk pressure, retain the newest three short-lived rollback
+            # snapshots per database. Scheduled backups and live data are untouched.
+            if [ "$(free_mb)" -lt 4096 ]; then
+              prune_family() {
+                pattern="$1"
+                find backups -maxdepth 1 -type f -name "$pattern" -printf '%T@ %p\n' 2>/dev/null \
+                  | sort -nr \
+                  | awk 'NR > 3 { sub(/^[^ ]+ /, ""); print }' \
+                  | while IFS= read -r file; do
+                      [ -n "$file" ] || continue
+                      echo "Removing expired pre-release snapshot: $file"
+                      rm -f -- "$file"
+                    done
+              }
+              prune_family 'app-before-*.dump'
+              prune_family 'powerdns-before-*.dump'
+              prune_family 'ithute-auth-before-*.dump'
+              prune_family 'ithute-push-before-*.dump'
+              prune_family 'ithute-realtime-before-*.dump'
+              prune_family 'ithute-tutor-before-*.dump'
+            fi
+          fi
+
+          echo '=== Storage after safe recovery ==='
+          df -h "$APP_DIR" || true
+          docker system df || true
+          [ -d "$APP_DIR/backups" ] && du -sh "$APP_DIR/backups" 2>/dev/null || true
+
+          available="$(free_mb)"
+          if [ "$available" -lt 4096 ]; then
+            echo "Production storage recovery left only ${available} MiB free; 4096 MiB is required before the next deployment." >&2
+            echo 'No Docker volume or live database data was deleted.' >&2
+            exit 1
+          fi
+          echo "Production storage recovery passed with ${available} MiB free."
+          REMOTE
