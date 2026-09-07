@@ -3,37 +3,93 @@ updates:
   - package-ecosystem: pip
     directory: /apps/backend
     target-branch: development
-    schedule:
-      interval: weekly
-      day: monday
-      time: "06:00"
-      timezone: Africa/Maseru
+    schedule: {interval: weekly, day: monday, time: "06:00", timezone: Africa/Maseru}
     open-pull-requests-limit: 5
     groups:
-      python-maintenance:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
+      core-python: {patterns: ["*"], update-types: ["minor", "patch"]}
 
   - package-ecosystem: npm
     directory: /apps/frontend
     target-branch: development
-    schedule:
-      interval: weekly
-      day: monday
-      time: "06:15"
-      timezone: Africa/Maseru
+    schedule: {interval: weekly, day: monday, time: "06:05", timezone: Africa/Maseru}
     open-pull-requests-limit: 5
     groups:
-      frontend-maintenance:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
+      core-frontend: {patterns: ["*"], update-types: ["minor", "patch"]}
+
+  - package-ecosystem: pip
+    directory: /platform/ithute-auth
+    target-branch: development
+    schedule: {interval: weekly, day: monday, time: "06:10", timezone: Africa/Maseru}
+    groups:
+      auth-python: {patterns: ["*"], update-types: ["minor", "patch"]}
+
+  - package-ecosystem: pip
+    directory: /platform/ithute-push
+    target-branch: development
+    schedule: {interval: weekly, day: monday, time: "06:15", timezone: Africa/Maseru}
+    groups:
+      push-python: {patterns: ["*"], update-types: ["minor", "patch"]}
+
+  - package-ecosystem: pip
+    directory: /platform/ithute-realtime
+    target-branch: development
+    schedule: {interval: weekly, day: monday, time: "06:20", timezone: Africa/Maseru}
+    groups:
+      realtime-python: {patterns: ["*"], update-types: ["minor", "patch"]}
+
+  - package-ecosystem: pip
+    directory: /products/ithute-pay/apps/backend
+    target-branch: development
+    schedule: {interval: weekly, day: monday, time: "06:25", timezone: Africa/Maseru}
+    groups:
+      pay-python: {patterns: ["*"], update-types: ["minor", "patch"]}
+
+  - package-ecosystem: npm
+    directory: /products/ithute-pay
+    target-branch: development
+    schedule: {interval: weekly, day: monday, time: "06:30", timezone: Africa/Maseru}
+    groups:
+      pay-node: {patterns: ["*"], update-types: ["minor", "patch"]}
+
+  - package-ecosystem: pip
+    directory: /products/ithute-tutor/sms_back_end
+    target-branch: development
+    schedule: {interval: weekly, day: monday, time: "06:35", timezone: Africa/Maseru}
+    groups:
+      tutor-python: {patterns: ["*"], update-types: ["minor", "patch"]}
+
+  - package-ecosystem: npm
+    directory: /products/ithute-tutor/sms-frontend
+    target-branch: development
+    schedule: {interval: weekly, day: monday, time: "06:40", timezone: Africa/Maseru}
+    groups:
+      tutor-node: {patterns: ["*"], update-types: ["minor", "patch"]}
+
+  - package-ecosystem: pip
+    directory: /products/LoanHub/apps/backend
+    target-branch: development
+    schedule: {interval: weekly, day: monday, time: "06:45", timezone: Africa/Maseru}
+    groups:
+      loanhub-python: {patterns: ["*"], update-types: ["minor", "patch"]}
+
+  - package-ecosystem: npm
+    directory: /products/LoanHub/apps/frontend
+    target-branch: development
+    schedule: {interval: weekly, day: monday, time: "06:50", timezone: Africa/Maseru}
+    groups:
+      loanhub-node: {patterns: ["*"], update-types: ["minor", "patch"]}
+
+  - package-ecosystem: pub
+    directory: /products/LoanHub/apps/call_mobile
+    target-branch: development
+    schedule: {interval: weekly, day: monday, time: "06:55", timezone: Africa/Maseru}
+    groups:
+      loanhub-mobile: {patterns: ["*"], update-types: ["minor", "patch"]}
 
   - package-ecosystem: github-actions
     directory: /
     target-branch: development
-    schedule:
-      interval: weekly
-      day: monday
-      time: "06:30"
-      timezone: Africa/Maseru
-    open-pull-requests-limit: 3
+    schedule: {interval: weekly, day: monday, time: "07:00", timezone: Africa/Maseru}
+    open-pull-requests-limit: 5
+    groups:
+      actions: {patterns: ["*"], update-types: ["minor", "patch"]}
