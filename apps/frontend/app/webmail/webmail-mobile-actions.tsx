@@ -36,10 +36,12 @@ function openCompose() {
 export function WebmailMobileActions() {
   const pathname = usePathname();
   const [mailboxReady, setMailboxReady] = useState(false);
+  const [messageOpen, setMessageOpen] = useState(false);
 
   useEffect(() => {
     if (pathname !== "/webmail") {
       setMailboxReady(false);
+      setMessageOpen(false);
       return;
     }
 
@@ -47,6 +49,7 @@ export function WebmailMobileActions() {
       const root = document.querySelector(".imail-route-webmail");
       const authenticatedShell = root?.querySelector("header") && root?.querySelector("main");
       setMailboxReady(Boolean(authenticatedShell));
+      setMessageOpen(Boolean(root?.querySelector("main article")));
     };
 
     sync();
@@ -56,7 +59,7 @@ export function WebmailMobileActions() {
     return () => observer.disconnect();
   }, [pathname]);
 
-  if (pathname !== "/webmail" || !mailboxReady) return null;
+  if (pathname !== "/webmail" || !mailboxReady || messageOpen) return null;
 
   return (
     <>
