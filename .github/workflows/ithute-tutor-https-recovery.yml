@@ -1,0 +1,186 @@
+name: Recover Ithute Tutor HTTPS
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/ithute-tutor-https-recovery.yml'
+      - 'scripts/ithute-tutor-edge-finalize.sh'
+      - 'infrastructure/ithute-edge/default.conf.template'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ithute-tutor-https-recovery.yml'
+      - 'scripts/ithute-tutor-edge-finalize.sh'
+      - 'infrastructure/ithute-edge/default.conf.template'
+  workflow_dispatch:
+
+concurrency:
+  group: ithute-tutor-https-recovery
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 204.12.205.224
+  VPS_USER: administrator
+  VPS_EDGE_DIR: /home/administrator/ithute-edge
+  TUTOR_HOST: tutor.ithute.co.ls
+
+jobs:
+  validate:
+    name: Validate Tutor HTTPS finalizer
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Validate POSIX shell and safety invariants
+        run: |
+          set -eu
+          sh -n scripts/ithute-tutor-edge-finalize.sh
+          grep -Fq 'cert-name ithute-edge' scripts/ithute-tutor-edge-finalize.sh
+          grep -Fq 'nginx -t' scripts/ithute-tutor-edge-finalize.sh
+          if grep -Eq 'docker[[:space:]]+volume[[:space:]]+(rm|prune)|--remove-orphans|--volumes' scripts/ithute-tutor-edge-finalize.sh; then
+            echo '::error::Tutor HTTPS recovery must not remove shared product containers or persistent volumes.'
+            exit 1
+          fi
+
+  recover:
+    name: Finalize Tutor DNS and HTTPS
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+      DEPLOY_SHA: ${{ github.sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Validate finalizer before contacting production
+        run: |
+          set -eu
+          [ -n "${VPS_SSH_KEY:-}" ] || { echo '::error::VPS_SSH_KEY is required'; exit 1; }
+          sh -n scripts/ithute-tutor-edge-finalize.sh
+
+      - name: Configure SSH identity
+        run: |
+          set -eu
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_tutor_https_recovery"
+          chmod 600 "$HOME/.ssh/ithute_tutor_https_recovery"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/ithute-tutor-https-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/ithute-tutor-https-askpass.sh
+            SSH_ASKPASS=/tmp/ithute-tutor-https-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+              setsid -w ssh-add "$HOME/.ssh/ithute_tutor_https_recovery" </dev/null
+            rm -f /tmp/ithute-tutor-https-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/ithute_tutor_https_recovery" </dev/null
+          fi
+          cp scripts/production-ssh-keepalive.conf "$HOME/.ssh/config"
+          chmod 600 "$HOME/.ssh/config"
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Stage validated Tutor HTTPS finalizer
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          scp scripts/ithute-tutor-edge-finalize.sh "$remote:/tmp/ithute-tutor-edge-finalize-${DEPLOY_SHA}.sh"
+          scp infrastructure/ithute-edge/default.conf.template "$remote:/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf"
+
+      - name: Finalize shared HTTPS edge
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" \
+            "EDGE_DIR='$VPS_EDGE_DIR' DEPLOY_SHA='$DEPLOY_SHA' TUTOR_HOST='$TUTOR_HOST' sh -s" <<'REMOTE'
+          set -eu
+          finalizer="/tmp/ithute-tutor-edge-finalize-${DEPLOY_SHA}.sh"
+          [ -s "$finalizer" ] || { echo "Missing staged Tutor HTTPS finalizer" >&2; exit 1; }
+          sh -n "$finalizer"
+
+          if command -v flock >/dev/null 2>&1; then
+            exec 9>/tmp/ithute-production.lock
+            attempt=1
+            while ! flock -n 9; do
+              if [ "$attempt" -ge 120 ]; then
+                echo "Timed out waiting for shared Ithute production lock." >&2
+                exit 1
+              fi
+              echo "Waiting for shared Ithute production lock ($attempt/120)..."
+              sleep 5
+              attempt=$((attempt + 1))
+            done
+          fi
+
+          for service in mailbox-dns-tutor-backend-1 mailbox-dns-tutor-frontend-1; do
+            state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$service" 2>/dev/null || true)"
+            case "$state" in
+              healthy|running) ;;
+              *) echo "$service is not ready (state: ${state:-missing})" >&2; exit 1 ;;
+            esac
+          done
+
+          TUTOR_EDGE_TEMPLATE="/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf" \
+            EDGE_DIR="$EDGE_DIR" DEPLOY_SHA="$DEPLOY_SHA" TUTOR_HOST="$TUTOR_HOST" \
+            sh "$finalizer"
+          rm -f "$finalizer"
+          REMOTE
+
+      - name: Require public Tutor DNS and HTTPS
+        run: |
+          set -eu
+          dns_ready=false
+          attempt=1
+          while [ "$attempt" -le 30 ]; do
+            answer="$(dig +short A "$TUTOR_HOST" | tail -n1 || true)"
+            if [ "$answer" = "$VPS_HOST" ]; then
+              dns_ready=true
+              break
+            fi
+            echo "Waiting for Tutor DNS ($attempt/30): ${answer:-no answer}"
+            sleep 5
+            attempt=$((attempt + 1))
+          done
+          [ "$dns_ready" = true ] || { echo "::error::$TUTOR_HOST does not resolve to $VPS_HOST"; exit 1; }
+
+          https_ready=false
+          attempt=1
+          while [ "$attempt" -le 24 ]; do
+            if curl --fail --silent --show-error --connect-timeout 8 --max-time 20 "https://$TUTOR_HOST/" >/dev/null; then
+              https_ready=true
+              break
+            fi
+            echo "Waiting for public Tutor HTTPS ($attempt/24)..."
+            sleep 5
+            attempt=$((attempt + 1))
+          done
+          [ "$https_ready" = true ] || { echo '::error::Public Tutor HTTPS route is unhealthy'; exit 1; }
+
+          cert="$(echo | openssl s_client -connect "$TUTOR_HOST:443" -servername "$TUTOR_HOST" 2>/dev/null | openssl x509 -noout -ext subjectAltName)"
+          printf '%s\n' "$cert"
+          printf '%s\n' "$cert" | grep -Fq "DNS:$TUTOR_HOST" || {
+            echo '::error::Tutor hostname is missing from the public TLS certificate.'
+            exit 1
+          }
+          echo "Ithute Tutor HTTPS recovery completed: https://$TUTOR_HOST"
