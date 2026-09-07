@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/ithute-pay-dns.yml"
+      - "apps/backend/app/product_dns.py"
   workflow_run:
     workflows: ["Deploy Ithute Pay Production"]
     types: [completed]
@@ -31,7 +32,7 @@ jobs:
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     environment: production
     env:
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
@@ -64,6 +65,12 @@ jobs:
           else
             ssh-add "$HOME/.ssh/ithute_pay_dns" </dev/null
           fi
+          printf '%s\n' \
+            'Host *' \
+            '  ServerAliveInterval 30' \
+            '  ServerAliveCountMax 20' \
+            '  TCPKeepAlive yes' > "$HOME/.ssh/config"
+          chmod 600 "$HOME/.ssh/config"
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
@@ -75,8 +82,19 @@ jobs:
           set -eu
           if command -v flock >/dev/null 2>&1; then
             exec 9>/tmp/ithute-production.lock
-            flock 9
+            lock_attempt=1
+            while ! flock -n 9; do
+              if [ "$lock_attempt" -ge 120 ]; then
+                echo "Timed out waiting for the shared Ithute production lock." >&2
+                exit 1
+              fi
+              echo "Waiting for shared Ithute production lock (attempt $lock_attempt/120)..."
+              sleep 10
+              lock_attempt=$((lock_attempt + 1))
+            done
+            echo "Acquired shared Ithute production lock."
           fi
+
           cd "$APP_DIR"
           [ -f .env ] || { echo "Ithute production .env is missing" >&2; exit 1; }
 
@@ -91,60 +109,9 @@ jobs:
             exit 1
           }
 
-          compose exec -T backend python - <<'PY'
-          from ipaddress import ip_address
-
-          from app.core.config import settings
-          from app.services.powerdns import PowerDNSClient
-
-          zone_name = "ithute.co.ls"
-          hosts = (
-              "pay.ithute.co.ls",
-              "api.pay.ithute.co.ls",
-              "portal.pay.ithute.co.ls",
-          )
-
-          if not settings.bootstrap_public_ip:
-              raise SystemExit("BOOTSTRAP_PUBLIC_IP is required to register product routes")
-
-          address = ip_address(settings.bootstrap_public_ip.strip())
-          record_type = "A" if address.version == 4 else "AAAA"
-          target = str(address)
-          client = PowerDNSClient()
-
-          client.get_zone(zone_name)
-          for hostname in hosts:
-              client.replace_rrset(
-                  zone_name,
-                  hostname,
-                  record_type,
-                  settings.powerdns_default_ttl,
-                  [target],
-              )
-          client.rectify_zone(zone_name)
-
-          zone = client.get_zone(zone_name)
-          rrsets = zone.get("rrsets", []) if isinstance(zone, dict) else []
-          expected = {hostname.rstrip(".").lower() for hostname in hosts}
-          observed = {}
-          for rrset in rrsets:
-              if not isinstance(rrset, dict) or str(rrset.get("type", "")).upper() != record_type:
-                  continue
-              name = str(rrset.get("name", "")).rstrip(".").lower()
-              if name not in expected:
-                  continue
-              values = [
-                  str(record.get("content", "")).strip()
-                  for record in rrset.get("records", [])
-                  if isinstance(record, dict) and not record.get("disabled", False)
-              ]
-              observed[name] = values
-
-          missing = [hostname for hostname in hosts if target not in observed.get(hostname, [])]
-          if missing:
-              raise SystemExit(f"PowerDNS verification failed for: {', '.join(missing)}")
-
-          for hostname in hosts:
-              print(f"DNS registered: {hostname} {record_type} {target}")
-          PY
+          compose exec -T backend python -m app.product_dns \
+            --zone ithute.co.ls \
+            --host pay.ithute.co.ls \
+            --host api.pay.ithute.co.ls \
+            --host portal.pay.ithute.co.ls
           REMOTE
