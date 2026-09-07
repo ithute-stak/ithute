@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Building2, Loader2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
@@ -21,16 +21,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/customUI/password-input";
-import { getDashboardRoute } from "@/lib/dashbaoardRoutes";
-import { getCurrentUserThunk } from "@/store/features/thunks/authThunks";
-import { useAppDispatch } from "@/store/hooks";
 
 
 type Mode = "choose" | "link" | "new";
 
 export const LoginCard = () => {
-    const dispatch = useAppDispatch();
-    const router = useRouter();
     const searchParams = useSearchParams();
     const linkRequired = searchParams.get("link_required") === "1";
     const [mode, setMode] = useState<Mode>("choose");
@@ -50,16 +45,14 @@ export const LoginCard = () => {
         setLoading(true);
         try {
             await linkCentralAccount(email, password);
-            // Synchronize Redux auth before entering a protected route. Previously
-            // the provider still considered the user anonymous and immediately
-            // bounced /dashboard back to /login, producing a redirect loop.
-            const resolvedUser = await dispatch(getCurrentUserThunk()).unwrap();
             toast.success("Tutor profile linked to your !thute account");
-            router.replace(getDashboardRoute(resolvedUser.role));
+            // Treat identity/profile linking as an authentication boundary. A full
+            // replace starts the dashboard with a fresh Redux/session bootstrap
+            // from the authoritative HttpOnly cookies and cannot race AuthProvider.
+            window.location.replace("/dashboard");
         } catch (error) {
             const message = error instanceof Error ? error.message : "Unable to link Tutor profile";
             toast.error(message);
-        } finally {
             setLoading(false);
         }
     };
@@ -69,13 +62,13 @@ export const LoginCard = () => {
         setLoading(true);
         try {
             await provisionTutorProfile(username, email);
-            await dispatch(getCurrentUserThunk()).unwrap();
             toast.success("Your !thute Tutor profile is ready");
-            router.replace("/onboarding/school");
+            // Reload into onboarding so AuthProvider bootstraps against the newly
+            // created profile before rendering this protected route.
+            window.location.replace("/onboarding/school");
         } catch (error) {
             const message = error instanceof Error ? error.message : "Unable to create Tutor profile";
             toast.error(message);
-        } finally {
             setLoading(false);
         }
     };
