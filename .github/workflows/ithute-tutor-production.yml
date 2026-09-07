@@ -2,7 +2,7 @@ name: Deploy Ithute Tutor Production
 
 on:
   workflow_run:
-    workflows: ["Build and Deploy Production"]
+    workflows: ["Ithute Tutor"]
     types: [completed]
     branches: [main]
   workflow_dispatch:
