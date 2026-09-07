@@ -13,7 +13,10 @@ on:
       - '.github/workflows/ithute-tutor-production.yml'
       - '.github/workflows/loanhub-product-production.yml'
       - '.github/workflows/shared-tls-edge-production.yml'
+      - '.github/workflows/production-storage-recovery.yml'
       - 'scripts/prod-deploy.sh'
+      - 'scripts/prod-preflight.sh'
+      - 'scripts/prod-storage-preflight.sh'
       - 'scripts/verify-force-redeploy-safety.sh'
   push:
     branches: [main]
@@ -27,7 +30,10 @@ on:
       - '.github/workflows/ithute-tutor-production.yml'
       - '.github/workflows/loanhub-product-production.yml'
       - '.github/workflows/shared-tls-edge-production.yml'
+      - '.github/workflows/production-storage-recovery.yml'
       - 'scripts/prod-deploy.sh'
+      - 'scripts/prod-preflight.sh'
+      - 'scripts/prod-storage-preflight.sh'
       - 'scripts/verify-force-redeploy-safety.sh'
 
 permissions:
