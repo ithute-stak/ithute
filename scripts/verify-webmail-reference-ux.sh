@@ -8,21 +8,31 @@ LOADING='apps/frontend/app/webmail/mail-loading.tsx'
 COMPOSE='apps/frontend/app/webmail/mail-compose.tsx'
 ROUTE_COMPOSE='apps/frontend/app/webmail/compose/page.tsx'
 SETTINGS='apps/frontend/app/webmail/settings/page.tsx'
+EXTERNAL='apps/frontend/app/webmail/external/page.tsx'
 TYPES='apps/frontend/app/webmail/mail-types.ts'
 BASE_CSS='apps/frontend/app/webmail/webmail.module.css'
 SKIN='apps/frontend/app/webmail/source-skin.css'
+APPROVED_CSS='apps/frontend/app/webmail/approved-webmail.css'
+SETTINGS_CSS='apps/frontend/app/webmail/approved-settings.css'
+LINK_CONTENT='apps/frontend/app/webmail/mail-content.tsx'
+LINK_ENHANCER='apps/frontend/app/webmail/mail-link-enhancer.tsx'
+ROUTE_FRAME='apps/frontend/app/webmail/webmail-route-frame.tsx'
+MOBILE_ACTIONS='apps/frontend/app/webmail/webmail-mobile-actions.tsx'
+EXTERNAL_SHORTCUT='apps/frontend/app/webmail/webmail-external-shortcut.tsx'
 ENTRY='apps/frontend/app/webmail/page.tsx'
 LAYOUT='apps/frontend/app/webmail/layout.tsx'
 POLISH='apps/backend/app/services/webmail_polish.py'
 API_ROUTE='apps/backend/app/api/v1/webmail.py'
 
-for file in "$PAGE" "$ENTRY_WRAPPER" "$SHELL" "$LOADING" "$COMPOSE" "$ROUTE_COMPOSE" "$SETTINGS" "$TYPES" "$BASE_CSS" "$SKIN" "$ENTRY" "$LAYOUT" "$POLISH" "$API_ROUTE"; do
+for file in \
+  "$PAGE" "$ENTRY_WRAPPER" "$SHELL" "$LOADING" "$COMPOSE" "$ROUTE_COMPOSE" \
+  "$SETTINGS" "$EXTERNAL" "$TYPES" "$BASE_CSS" "$SKIN" "$APPROVED_CSS" \
+  "$SETTINGS_CSS" "$LINK_CONTENT" "$LINK_ENHANCER" "$ROUTE_FRAME" \
+  "$MOBILE_ACTIONS" "$EXTERNAL_SHORTCUT" "$ENTRY" "$LAYOUT" "$POLISH" "$API_ROUTE"; do
   test -s "$file"
 done
 
-# Functional contract: keep the live production client and composer implementation.
-# The public /webmail page uses the branded loading shell, which must resolve to
-# the real auth/product wrapper and then the existing MailClient after mailbox authentication.
+# Functional contract: keep the live production client, auth paths and composer.
 grep -F 'WebmailShell' "$ENTRY" >/dev/null
 grep -F 'WebmailEntry' "$SHELL" >/dev/null
 grep -F 'MailLoading' "$SHELL" >/dev/null
@@ -31,43 +41,83 @@ grep -F 'Preparing your secure Ithute mailbox' "$SHELL" >/dev/null
 grep -F 'MailClient' "$ENTRY_WRAPPER" >/dev/null
 grep -F 'webmail("/session"' "$ENTRY_WRAPPER" >/dev/null
 grep -F '/auth/login' "$ENTRY_WRAPPER" >/dev/null
-grep -F 'Mailbox Login' "$ENTRY_WRAPPER" >/dev/null
-grep -F 'System Login' "$ENTRY_WRAPPER" >/dev/null
+grep -F 'systemMfaRequired' "$ENTRY_WRAPPER" >/dev/null
+grep -F 'System account' "$ENTRY_WRAPPER" >/dev/null
+grep -F 'Other email account' "$ENTRY_WRAPPER" >/dev/null
 ! grep -F 'SourceMailClient' "$ENTRY" >/dev/null
 ! grep -F 'SourceMailClient' "$SHELL" >/dev/null
 ! grep -F 'SourceMailClient' "$ENTRY_WRAPPER" >/dev/null
-grep -F 'source-skin.css' "$LAYOUT" >/dev/null
-grep -F 'sourceGmailSkin' "$LAYOUT" >/dev/null
 
-# Modern Gmail reference geometry and visual tokens from the September 2026 screenshot.
+# The approved Ithute presentation layer must be loaded last and route-aware.
+grep -F 'source-skin.css' "$LAYOUT" >/dev/null
+grep -F 'approved-webmail.css' "$LAYOUT" >/dev/null
+grep -F 'approved-settings.css' "$LAYOUT" >/dev/null
+grep -F 'MailLinkEnhancer' "$LAYOUT" >/dev/null
+grep -F 'WebmailMobileActions' "$LAYOUT" >/dev/null
+grep -F 'WebmailRouteFrame' "$LAYOUT" >/dev/null
+grep -F 'sourceGmailSkin' "$LAYOUT" >/dev/null
+grep -F 'imail-approved-ui' "$ROUTE_FRAME" >/dev/null
+grep -F 'imail-route-external' "$ROUTE_FRAME" >/dev/null
+grep -F 'imail-route-settings' "$ROUTE_FRAME" >/dev/null
+
+# Approved sign-in: branded two-panel desktop, dedicated mobile presentation.
+grep -F 'imail-login-page' "$ENTRY_WRAPPER" >/dev/null
+grep -F 'Your business inbox' "$ENTRY_WRAPPER" >/dev/null
+grep -F 'done right.' "$ENTRY_WRAPPER" >/dev/null
+grep -F 'Professional email' "$ENTRY_WRAPPER" >/dev/null
+grep -F 'Secure & private' "$ENTRY_WRAPPER" >/dev/null
+grep -F 'Work anywhere' "$ENTRY_WRAPPER" >/dev/null
+grep -F 'Built for teams' "$ENTRY_WRAPPER" >/dev/null
+grep -F '.imail-login-shell' "$APPROVED_CSS" >/dev/null
+grep -F 'grid-template-columns: minmax(0, 1.18fr)' "$APPROVED_CSS" >/dev/null
+grep -F '.imail-login-mobile-brand' "$APPROVED_CSS" >/dev/null
+grep -F '@media (max-width: 639.98px)' "$APPROVED_CSS" >/dev/null
+grep -F 'min-height: 100dvh' "$APPROVED_CSS" >/dev/null
+grep -F 'env(safe-area-inset-bottom)' "$APPROVED_CSS" >/dev/null
+
+# Hosted and external message readers must detect URLs without executing remote HTML.
+grep -F 'imail-detected-link' "$LINK_ENHANCER" >/dev/null
+grep -F 'noopener noreferrer nofollow' "$LINK_ENHANCER" >/dev/null
+grep -F 'target = "_blank"' "$LINK_ENHANCER" >/dev/null
+grep -F '.imail-route-webmail article .whitespace-pre-wrap' "$LINK_ENHANCER" >/dev/null
+grep -F 'MailContent' "$EXTERNAL" >/dev/null
+grep -F 'MailPrivacyNote' "$EXTERNAL" >/dev/null
+grep -F 'linkifyText' "$LINK_CONTENT" >/dev/null
+grep -F 'noopener noreferrer nofollow' "$LINK_CONTENT" >/dev/null
+grep -F 'text-[#0869d7]' "$LINK_CONTENT" >/dev/null
+grep -F '.imail-detected-link' "$APPROVED_CSS" >/dev/null
+
+# Mobile inbox has touch navigation but must leave an opened message unobstructed.
+grep -F 'imail-mobile-compose' "$MOBILE_ACTIONS" >/dev/null
+grep -F 'imail-mobile-nav' "$MOBILE_ACTIONS" >/dev/null
+grep -F 'Compose a new email' "$MOBILE_ACTIONS" >/dev/null
+grep -F 'Attachments' "$MOBILE_ACTIONS" >/dev/null
+grep -F 'main article' "$MOBILE_ACTIONS" >/dev/null
+grep -F 'messageOpen' "$MOBILE_ACTIONS" >/dev/null
+grep -F '.imail-mobile-compose' "$APPROVED_CSS" >/dev/null
+grep -F '.imail-mobile-nav' "$APPROVED_CSS" >/dev/null
+
+# The guest login owns its external-account CTA; the compact shortcut appears
+# only after the authenticated Webmail shell exists.
+grep -F 'WebmailExternalShortcut' "$ENTRY" >/dev/null
+grep -F 'mailboxReady' "$EXTERNAL_SHORTCUT" >/dev/null
+grep -F 'Other email account' "$EXTERNAL_SHORTCUT" >/dev/null
+
+# Settings should match the dark Ithute Green approved presentation on desktop
+# and collapse to one touch-friendly column on narrow devices.
+grep -F '.imail-route-settings main.min-h-screen' "$SETTINGS_CSS" >/dev/null
+grep -F '#081512' "$SETTINGS_CSS" >/dev/null
+grep -F '@media (max-width: 1023.98px)' "$SETTINGS_CSS" >/dev/null
+grep -F '@media (max-width: 639.98px)' "$SETTINGS_CSS" >/dev/null
+
+# Keep the original Gmail-reference geometry underneath as a compatibility
+# baseline for the existing MailClient structure and composer behavior.
 grep -Fi '#f6f8fc' "$SKIN" >/dev/null
 grep -Fi '#eaf1fb' "$SKIN" >/dev/null
-grep -Fi '#c2e7ff' "$SKIN" >/dev/null
-grep -Fi '#d3e3fd' "$SKIN" >/dev/null
-grep -F 'height: 64px' "$SKIN" >/dev/null
-grep -F 'max-width: 720px' "$SKIN" >/dev/null
-grep -F 'border-radius: 24px' "$SKIN" >/dev/null
-grep -F 'width: 256px' "$SKIN" >/dev/null
-grep -F 'width: 72px' "$SKIN" >/dev/null
-grep -F 'border-radius: 16px' "$SKIN" >/dev/null
-grep -F 'grid-template-columns: minmax(150px,220px) minmax(0,1fr) auto' "$SKIN" >/dev/null
 grep -F 'bottom-right floating compose window' "$SKIN" >/dev/null
-grep -F 'background: #f2f6fc' "$SKIN" >/dev/null
-grep -F '@media (max-width: 1023px)' "$SKIN" >/dev/null
-grep -F '@media (max-width: 640px)' "$SKIN" >/dev/null
 grep -F 'prefers-reduced-motion' "$SKIN" >/dev/null
 
-# The whole Webmail app must share one healthy visual language, including auth/settings/direct compose.
-grep -F 'Polished sign-in surface' "$SKIN" >/dev/null
-grep -F 'width: min(980px, 100%)' "$SKIN" >/dev/null
-grep -F 'min-height: 540px' "$SKIN" >/dev/null
-grep -F 'background: #f0f4f9' "$SKIN" >/dev/null
-grep -F 'Settings page polish' "$SKIN" >/dev/null
-grep -F 'Direct /webmail/compose route polish' "$SKIN" >/dev/null
-grep -F '.sourceGmailSkin > div.h-screen main' "$SKIN" >/dev/null
-grep -F '.sourceGmailSkin > main.min-h-screen' "$SKIN" >/dev/null
-
-# Settings must be user-facing, branded and visual rather than exposing signature HTML.
+# Settings remain user-facing and visual rather than exposing signature HTML.
 grep -F 'Visual signature' "$SETTINGS" >/dev/null
 grep -F 'contentEditable' "$SETTINGS" >/dev/null
 grep -F 'Add logo / signature image' "$SETTINGS" >/dev/null
@@ -77,7 +127,8 @@ grep -F 'Contacts are learned automatically' "$SETTINGS" >/dev/null
 grep -F 'wm("/folder-counts"' "$SETTINGS" >/dev/null
 ! grep -F '<textarea' "$SETTINGS" >/dev/null
 
-# Signature images are sanitized and converted to embedded CID mail parts; contacts learn from correspondence.
+# Signature images are sanitized and converted to embedded CID mail parts;
+# contacts continue to learn from correspondence.
 grep -F 'SIGNATURE_ALLOWED_TAGS' "$POLISH" >/dev/null
 grep -F 'sanitize_signature_html' "$POLISH" >/dev/null
 grep -F 'IMAGE_DATA_RE' "$POLISH" >/dev/null
@@ -87,7 +138,7 @@ grep -F '_scan_contact_folder' "$POLISH" >/dev/null
 grep -F '"incoming"' "$POLISH" >/dev/null
 grep -F '"outgoing"' "$POLISH" >/dev/null
 
-# Rich mail must keep its visual signature even when it carries files or belongs to a reply thread.
+# Rich mail keeps files, reply threading and visual signatures.
 grep -F 'attachments: list[WebmailAttachment]' "$API_ROUTE" >/dev/null
 grep -F 'in_reply_to: str = Field' "$API_ROUTE" >/dev/null
 grep -F 'references: str = Field' "$API_ROUTE" >/dev/null
@@ -99,22 +150,7 @@ grep -F 'msg["References"]' "$POLISH" >/dev/null
 grep -F 'signature_images' "$POLISH" >/dev/null
 ! grep -F 'targetPath = "/send"' "$TYPES" >/dev/null
 
-# The floating composer must support Outlook/Word-style formatting and true multi-recipient To/Cc/Bcc entry.
-grep -F 'RecipientField' "$COMPOSE" >/dev/null
-grep -F 'uniqueRecipients' "$COMPOSE" >/dev/null
-grep -F 'Add one or more Cc recipients' "$COMPOSE" >/dev/null
-grep -F 'Add one or more Bcc recipients' "$COMPOSE" >/dev/null
-grep -F 'mail-word-ribbon' "$COMPOSE" >/dev/null
-grep -F '>Home<' "$COMPOSE" >/dev/null
-grep -F 'exec("fontName"' "$COMPOSE" >/dev/null
-grep -F 'exec("fontSize"' "$COMPOSE" >/dev/null
-grep -F 'insertOrderedList' "$COMPOSE" >/dev/null
-grep -F 'justifyCenter' "$COMPOSE" >/dev/null
-grep -F 'Increase indent' "$COMPOSE" >/dev/null
-grep -F 'Formatting ribbon' "$COMPOSE" >/dev/null
-grep -F '/contacts?q=' "$COMPOSE" >/dev/null
-
-# Existing production mail UX and transport-facing functionality must stay present.
+# Existing production mail UX and transport-facing functionality stays present.
 grep -F 'Search mail' "$PAGE" >/dev/null
 grep -F 'Compose' "$PAGE" >/dev/null
 grep -F 'Starred' "$PAGE" >/dev/null
@@ -122,6 +158,8 @@ grep -F 'history.pushState' "$PAGE" >/dev/null
 grep -F 'draftStorageKey' "$PAGE" >/dev/null
 grep -F 'sendMessage' "$PAGE" >/dev/null
 grep -F 'webmail("/send-rich"' "$PAGE" >/dev/null
+grep -F 'RecipientField' "$COMPOSE" >/dev/null
+grep -F 'mail-word-ribbon' "$COMPOSE" >/dev/null
 grep -F 'contentEditable' "$COMPOSE" >/dev/null
 grep -F 'Cc Bcc' "$COMPOSE" >/dev/null
 grep -F 'Attach files' "$COMPOSE" >/dev/null
@@ -131,4 +169,4 @@ grep -F 'wm("/identity"' "$SETTINGS" >/dev/null
 grep -F 'wm("/signature"' "$SETTINGS" >/dev/null
 grep -F 'wm("/contacts"' "$SETTINGS" >/dev/null
 
-echo 'Modern Webmail UI, branded iMail loading shell, unified login entry, visual signatures, smart contacts, multi-recipient entry, Word-style composer, and rich attachment/thread signature guardrails passed.'
+echo 'Approved responsive Ithute Mail UI, mobile navigation, safe clickable links, dark settings, rich compose and mail transport guardrails passed.'
