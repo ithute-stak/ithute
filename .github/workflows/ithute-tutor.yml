@@ -12,6 +12,8 @@ on:
       - 'infrastructure/nginx/default.conf'
       - 'infrastructure/ithute-edge/**'
       - 'infrastructure/caddy/bootstrap.sh'
+      - 'scripts/ithute-tutor-deploy.sh'
+      - 'scripts/ithute-tutor-sync-env.py'
       - '.env.example'
       - '.github/workflows/ithute-tutor.yml'
       - '.github/workflows/ithute-tutor-production.yml'
@@ -27,6 +29,8 @@ on:
       - 'infrastructure/nginx/default.conf'
       - 'infrastructure/ithute-edge/**'
       - 'infrastructure/caddy/bootstrap.sh'
+      - 'scripts/ithute-tutor-deploy.sh'
+      - 'scripts/ithute-tutor-sync-env.py'
       - '.env.example'
       - '.github/workflows/ithute-tutor.yml'
       - '.github/workflows/ithute-tutor-production.yml'
@@ -121,9 +125,6 @@ jobs:
           docker compose \
             -f docker-compose.yml \
             -f docker-compose.prod.yml \
-            -f docker-compose.phase6-mail.yml \
-            -f docker-compose.phase11-backup.yml \
-            -f docker-compose.phase12-monitoring.yml \
             -f docker-compose.ithute-platform.yml \
             -f docker-compose.ithute-tutor.yml \
             -f docker-compose.ithute-tutor-prod.yml \
@@ -138,24 +139,44 @@ jobs:
           grep -q 'ghcr.io/ithute-stak/ithute-tutor-backend' /tmp/ithute-tutor-compose.yml
           grep -q 'ghcr.io/ithute-stak/ithute-tutor-frontend' /tmp/ithute-tutor-compose.yml
           grep -q 'tutor.ithute.co.ls' infrastructure/ithute-edge/default.conf.template
-          grep -q 'Deploy Tutor, DNS and HTTPS' .github/workflows/ithute-tutor-production.yml
 
-          # Tutor needs its own GitHub queue so sibling production workflows
-          # cannot evict it before jobs start. The shared VPS is still protected
-          # by the runtime host lock inside the deploy step.
+          # The production workflow is product-scoped. Its large remote heredoc
+          # was replaced by syntax-validated checked-in scripts.
+          grep -q 'Deploy Ithute Tutor only' .github/workflows/ithute-tutor-production.yml
+          grep -q 'sh -n scripts/ithute-tutor-deploy.sh' .github/workflows/ithute-tutor-production.yml
+          grep -q 'python3 -m py_compile scripts/ithute-tutor-sync-env.py' .github/workflows/ithute-tutor-production.yml
+          ! grep -q 'ithute-tutor-edge-finalize' .github/workflows/ithute-tutor-production.yml
+
+          # Tutor production is released by Tutor's own successful validation,
+          # not by the monolithic platform deployment workflow.
+          grep -q 'workflows: \["Ithute Tutor"\]' .github/workflows/ithute-tutor-production.yml
+          ! grep -q 'Build and Deploy Production' .github/workflows/ithute-tutor-production.yml
+
+          # Tutor keeps its own GitHub queue while the shared VPS mutation is
+          # protected by the runtime host lock in the checked-in deploy script.
           grep -q 'group: ithute-tutor-production' .github/workflows/ithute-tutor-production.yml
-          grep -q '/tmp/ithute-production.lock' .github/workflows/ithute-tutor-production.yml
+          grep -q '/tmp/ithute-production.lock' scripts/ithute-tutor-deploy.sh
           ! grep -q 'group: ithute-production-vps' .github/workflows/ithute-tutor-production.yml
 
-          # Production must not depend on the VPS being authorized to pull private
-          # GHCR packages. Build the exact SHA images once, stage them over the
-          # authenticated SSH channel, and load them locally before Compose starts.
+          # Exact Tutor images are staged over SSH and loaded locally. The VPS
+          # does not need private GHCR pull permission for a Tutor release.
           grep -q 'Stage exact Tutor images on production VPS' .github/workflows/ithute-tutor-production.yml
           grep -q 'docker save' .github/workflows/ithute-tutor-production.yml
-          grep -q 'gzip -dc.*docker load' .github/workflows/ithute-tutor-production.yml
-          grep -q 'docker image inspect.*BACKEND_IMAGE.*DEPLOY_SHA' .github/workflows/ithute-tutor-production.yml
-          grep -q 'docker image inspect.*FRONTEND_IMAGE.*DEPLOY_SHA' .github/workflows/ithute-tutor-production.yml
-          ! grep -q 'compose pull tutor-backend tutor-frontend' .github/workflows/ithute-tutor-production.yml
+          grep -q 'gzip -dc.*docker load' scripts/ithute-tutor-deploy.sh
+          grep -q 'docker image inspect.*BACKEND_IMAGE.*DEPLOY_SHA' scripts/ithute-tutor-deploy.sh
+          grep -q 'docker image inspect.*FRONTEND_IMAGE.*DEPLOY_SHA' scripts/ithute-tutor-deploy.sh
+          ! grep -q 'compose pull tutor-backend tutor-frontend' scripts/ithute-tutor-deploy.sh
+
+          # A normal release recreates only Tutor containers and must never
+          # remove sibling product containers just because Compose sees orphans.
+          grep -q 'COMPOSE_IGNORE_ORPHANS=true' scripts/ithute-tutor-deploy.sh
+          grep -q 'force-recreate tutor-backend' scripts/ithute-tutor-deploy.sh
+          grep -q 'force-recreate tutor-frontend' scripts/ithute-tutor-deploy.sh
+          ! grep -Eq '^[[:space:]]*(docker compose|compose).*--remove-orphans' scripts/ithute-tutor-deploy.sh
+          ! grep -q 'ithute-pay' scripts/ithute-tutor-deploy.sh
+
+          sh -n scripts/ithute-tutor-deploy.sh
+          python3 -m py_compile scripts/ithute-tutor-sync-env.py
 
       - name: Build Tutor containers
         run: |
