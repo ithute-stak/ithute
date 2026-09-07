@@ -6,6 +6,7 @@ on:
     paths:
       - 'scripts/production-ssh-keepalive.conf'
       - 'scripts/ithute-tutor-deploy.sh'
+      - 'scripts/verify-force-redeploy-safety.sh'
       - '.github/workflows/ithute-pay-production.yml'
       - '.github/workflows/ithute-tutor-production.yml'
       - '.github/workflows/production-ssh-reliability-contract.yml'
@@ -14,6 +15,7 @@ on:
     paths:
       - 'scripts/production-ssh-keepalive.conf'
       - 'scripts/ithute-tutor-deploy.sh'
+      - 'scripts/verify-force-redeploy-safety.sh'
       - '.github/workflows/ithute-pay-production.yml'
       - '.github/workflows/ithute-tutor-production.yml'
       - '.github/workflows/production-ssh-reliability-contract.yml'
