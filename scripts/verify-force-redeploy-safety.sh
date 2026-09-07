@@ -13,6 +13,7 @@ FILES="
 .github/workflows/loanhub-product-production.yml
 .github/workflows/shared-tls-edge-production.yml
 .github/workflows/production-storage-recovery.yml
+scripts/ithute-tutor-deploy.sh
 scripts/prod-deploy.sh
 scripts/prod-preflight.sh
 scripts/prod-storage-preflight.sh
@@ -60,11 +61,13 @@ grep -Fq 'docker builder prune -af' scripts/prod-storage-preflight.sh
 grep -Fq 'docker image prune -af' scripts/prod-storage-preflight.sh
 grep -Fq 'No persistent volume or live database data was deleted.' scripts/prod-storage-preflight.sh
 
-# All production-mutating paths must continue to use the shared VPS lock.
+# All production-mutating paths must continue to use the shared VPS lock. Tutor
+# now owns that lock inside its checked-in remote deploy script rather than in a
+# large inline GitHub Actions heredoc.
 for file in \
   scripts/prod-deploy.sh \
   .github/workflows/ithute-pay-production.yml \
-  .github/workflows/ithute-tutor-production.yml \
+  scripts/ithute-tutor-deploy.sh \
   .github/workflows/loanhub-product-production.yml \
   .github/workflows/shared-tls-edge-production.yml \
   .github/workflows/production-storage-recovery.yml; do
@@ -75,9 +78,11 @@ for file in \
 done
 
 # Pay and Tutor explicitly recreate their application containers while leaving
-# their data services/volumes intact.
+# their data services/volumes intact. Tutor's recreation commands now live in
+# the checked-in deploy script that executes on the VPS.
 grep -Fq -- '--force-recreate' .github/workflows/ithute-pay-production.yml
-grep -Fq -- '--force-recreate' .github/workflows/ithute-tutor-production.yml
+grep -Fq -- '--force-recreate tutor-backend' scripts/ithute-tutor-deploy.sh
+grep -Fq -- '--force-recreate tutor-frontend' scripts/ithute-tutor-deploy.sh
 
 # LoanHub uses an even stricter preservation path: it refuses to deploy if the
 # existing PostgreSQL volume is missing or mounted under an unexpected name,
