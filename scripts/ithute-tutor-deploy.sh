@@ -150,9 +150,12 @@ wait_service tutor-db 60
 mkdir -p backups
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 tutor_backup="backups/ithute-tutor-before-${timestamp}.dump"
-compose exec -T tutor-db pg_dump --format=custom --no-owner --no-privileges \
-  -U "${ITHUTE_TUTOR_DB_USER:-ithute_tutor}" \
-  "${ITHUTE_TUTOR_DB_NAME:-ithute_tutor}" > "$tutor_backup"
+# Read PostgreSQL identity from the running Tutor database container so custom
+# production DB/user values cannot make the pre-release backup target the wrong
+# role or database.
+compose exec -T tutor-db sh -c \
+  'exec pg_dump --format=custom --no-owner --no-privileges -U "$POSTGRES_USER" "$POSTGRES_DB"' \
+  > "$tutor_backup"
 test -s "$tutor_backup"
 echo "Tutor database backup created: $tutor_backup"
 
