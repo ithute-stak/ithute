@@ -7,6 +7,7 @@ set -eu
 
 staged_template="${TUTOR_EDGE_TEMPLATE:-/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf}"
 live_template="$EDGE_DIR/infrastructure/ithute-edge/default.conf.template"
+health_host="${EDGE_HEALTH_HOST:-panel.ithute.co.ls}"
 
 mkdir -p "$EDGE_DIR/infrastructure/ithute-edge"
 if [ -s "$staged_template" ]; then
@@ -68,15 +69,23 @@ edge_compose run --rm --no-deps --entrypoint /bin/sh edge-nginx -c \
 awk 'NF && !seen[$0]++ { print }' "$required_sans" > "$required_tmp"
 mv "$required_tmp" "$required_sans"
 
-# Read the certificate currently mounted into the live edge only for
-# comparison. It is deliberately not used as the authoritative domain list.
-edge_compose exec -T edge-nginx openssl x509 \
-  -in /etc/letsencrypt/live/ithute-edge/fullchain.pem \
-  -noout -ext subjectAltName \
+# Read the certificate directly from the shared Let's Encrypt volume through a
+# fresh one-shot edge container. A running Nginx container can retain the old
+# certificate symlink target after Certbot atomically replaces it; using that
+# stale view here would cause unnecessary issuance and, more importantly, can
+# hide the fact that a correct certificate is already ready to be activated.
+current_cert="$(edge_compose run --rm --no-deps --entrypoint /bin/sh edge-nginx -c \
+  'command -v openssl >/dev/null 2>&1 || exit 127; openssl x509 -in /etc/letsencrypt/live/ithute-edge/fullchain.pem -noout -ext subjectAltName' \
+  2>/dev/null || true)"
+printf '%s\n' "$current_cert" \
   | tr ',' '\n' \
   | sed -n 's/^[[:space:]]*DNS://p' \
   | sed 's/[[:space:]]//g' \
   | sed '/^$/d' > "$current_sans"
+
+if [ ! -s "$current_sans" ]; then
+  echo 'No readable canonical certificate was found in the shared volume; issuance will be attempted.'
+fi
 
 needs_issue=false
 while IFS= read -r domain; do
@@ -136,21 +145,24 @@ echo 'Canonical shared certificate SAN set verified before edge restart.'
 edge_compose up -d --no-build --no-deps --force-recreate edge-nginx certbot
 edge_compose exec -T edge-nginx nginx -t
 
+# Shared TLS recovery must not depend on a single product being healthy. Verify
+# the panel through the new local edge certificate; product-specific workflows
+# keep their own application health gates.
 attempt=1
 while [ "$attempt" -le 30 ]; do
   if curl -fsS \
-    --resolve "$TUTOR_HOST:443:127.0.0.1" \
+    --resolve "$health_host:443:127.0.0.1" \
     --connect-timeout 5 --max-time 15 \
-    "https://$TUTOR_HOST/" >/dev/null; then
-    echo "Tutor origin is healthy through the shared HTTPS edge."
+    "https://$health_host/" >/dev/null; then
+    echo "Shared HTTPS edge is healthy for $health_host."
     exit 0
   fi
 
-  echo "Waiting for Tutor HTTPS origin ($attempt/30)..."
+  echo "Waiting for shared HTTPS edge ($health_host, $attempt/30)..."
   sleep 3
   attempt=$((attempt + 1))
 done
 
 edge_compose logs --tail=250 edge-nginx || true
-echo "Tutor HTTPS origin did not become healthy." >&2
+echo "Shared HTTPS edge did not become healthy for $health_host." >&2
 exit 1
