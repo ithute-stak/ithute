@@ -39,7 +39,7 @@ export function linkifyText(value: string, openLinksNewTab = true): ReactNode[] 
           href={href}
           target={external && openLinksNewTab ? "_blank" : undefined}
           rel={external ? "noopener noreferrer nofollow" : undefined}
-          className="font-medium text-emerald-700 underline decoration-emerald-500/30 underline-offset-2 transition hover:text-emerald-900 hover:decoration-emerald-700 dark:text-emerald-300 dark:hover:text-emerald-200"
+          className="break-words font-semibold text-[#0869d7] underline decoration-[#0869d7]/35 underline-offset-2 transition hover:text-[#064ca4] hover:decoration-current dark:text-[#68aaff] dark:hover:text-[#9ac7ff]"
         >
           {token}
         </a>,
