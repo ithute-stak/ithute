@@ -80,13 +80,13 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         [students, classes, teachers, schools, grade, feePlans, schoolFeeConfigs],
     )
 
-    return (
-        <AppDataContext.Provider value={value}>
-            <WebSocketProvider>
-                <NotificationProvider>{children}</NotificationProvider>
-            </WebSocketProvider>
-        </AppDataContext.Provider>
-    )
+    const content = user ? (
+        <WebSocketProvider>
+            <NotificationProvider>{children}</NotificationProvider>
+        </WebSocketProvider>
+    ) : children
+
+    return <AppDataContext.Provider value={value}>{content}</AppDataContext.Provider>
 }
 
 export function useAppData() {
