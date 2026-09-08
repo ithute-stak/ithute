@@ -2,7 +2,6 @@ import hashlib
 import imaplib
 import os
 import re
-import time
 from pathlib import Path
 
 from app.core.config import settings
@@ -27,15 +26,22 @@ def _xoauth2(username: str, token: str) -> bytes:
     return f"user={username}\x01auth=Bearer {token}\x01\x01".encode("utf-8")
 
 
-def _folder_name(raw: bytes | str) -> str:
-    text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
-    match = re.search(r' (?:"([^"]+)"|([^\s]+))$', text)
-    folder = (match.group(1) or match.group(2)) if match else "INBOX"
-    if folder.upper() == "INBOX":
-        return ""
-    safe = folder.replace("/", ".").replace("\\", ".")
+def _folder_pair(raw: bytes | str) -> tuple[str, str]:
+    """Return the original IMAP folder name plus a safe Maildir folder name.
+
+    Keeping the original source name is important for Gmail special folders such
+    as ``[Gmail]/All Mail``; the previous migration code sanitized the name and
+    then attempted to SELECT the sanitized value on Gmail.
+    """
+    text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+    match = re.search(r' (?:"((?:[^"\\]|\\.)*)"|([^\s]+))$', text)
+    source = (match.group(1) or match.group(2)) if match else "INBOX"
+    source = source.replace('\\"', '"').replace("\\\\", "\\")
+    if source.upper() == "INBOX":
+        return "INBOX", ""
+    safe = source.replace("/", ".").replace("\\", ".")
     safe = re.sub(r"[^A-Za-z0-9_. -]+", "_", safe).strip(". ")
-    return safe[:180]
+    return source, safe[:180] or "Imported"
 
 
 def _maildir_for(address: str, folder: str) -> Path:
@@ -44,20 +50,64 @@ def _maildir_for(address: str, folder: str) -> Path:
     return base if not folder else base / f".{folder}"
 
 
-def _write_maildir_message(target: Path, raw_message: bytes) -> bool:
+def _maildir_flags(meta: bytes | str) -> str:
+    text = meta.decode("utf-8", "replace") if isinstance(meta, bytes) else str(meta)
+    mapping = (
+        ("\\Draft", "D"),
+        ("\\Flagged", "F"),
+        ("\\Answered", "R"),
+        ("\\Seen", "S"),
+        ("\\Deleted", "T"),
+    )
+    return "".join(letter for flag, letter in mapping if flag in text)
+
+
+def _ensure_maildir(target: Path) -> None:
+    target.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chown(target, 5000, 5000)
+    except FileNotFoundError:
+        pass
     for sub in ("tmp", "new", "cur"):
         path = target / sub
         path.mkdir(parents=True, exist_ok=True)
-        os.chown(target, 5000, 5000)
         os.chown(path, 5000, 5000)
+
+
+def _already_imported(target: Path, marker: str) -> bool:
+    for sub in ("new", "cur"):
+        path = target / sub
+        if path.exists() and any(path.glob(f"migrated.{marker}.migration*")):
+            return True
+    return False
+
+
+def _write_maildir_message(target: Path, raw_message: bytes, meta: bytes | str = b"") -> bool:
+    """Write one raw message using a deterministic migration marker.
+
+    Deterministic filenames make migrations safe to resume or repeat: the same
+    source message in the same destination folder is skipped rather than copied
+    again. Standard IMAP flags are carried into the Maildir ``:2,`` suffix.
+    """
+    _ensure_maildir(target)
     digest = hashlib.sha256(raw_message).hexdigest()
-    filename = f"{int(time.time())}.{digest[:24]}.migration"
-    path = target / "new" / filename
-    if path.exists():
+    marker = digest[:32]
+    if _already_imported(target, marker):
         return False
+
+    flags = _maildir_flags(meta)
+    filename = f"migrated.{marker}.migration"
+    sub = "cur" if flags else "new"
+    if flags:
+        filename += f":2,{flags}"
+    path = target / sub / filename
     path.write_bytes(raw_message)
     os.chown(path, 5000, 5000)
     return True
+
+
+def _quote_folder(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def migrate_imap_mailbox(
@@ -83,15 +133,23 @@ def migrate_imap_mailbox(
         status, rows = client.list()
         if status != "OK":
             raise RuntimeError("Unable to list source IMAP folders")
-        folders = [_folder_name(row) for row in (rows or [])]
-        if "" not in folders:
-            folders.insert(0, "")
+
+        folder_pairs: list[tuple[str, str]] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        for row in rows or []:
+            pair = _folder_pair(row)
+            if pair not in seen_pairs:
+                folder_pairs.append(pair)
+                seen_pairs.add(pair)
+        if not any(target == "" for _, target in folder_pairs):
+            folder_pairs.insert(0, ("INBOX", ""))
+
         copied = 0
+        skipped = 0
         copied_bytes = 0
         folder_count = 0
-        for folder in folders:
-            source_name = "INBOX" if folder == "" else folder.replace(".", "/")
-            status, _ = client.select(f'"{source_name}"', readonly=True)
+        for source_name, folder in folder_pairs:
+            status, _ = client.select(_quote_folder(source_name), readonly=True)
             if status != "OK":
                 continue
             folder_count += 1
@@ -101,16 +159,35 @@ def migrate_imap_mailbox(
             uid_list = ids[0].split()
             target = _maildir_for(destination_address, folder)
             for uid in uid_list:
-                status, fetched = client.uid("fetch", uid, "(RFC822)")
+                status, fetched = client.uid("fetch", uid, "(BODY.PEEK[] FLAGS)")
                 if status != "OK" or not fetched:
                     continue
-                raw = next((part[1] for part in fetched if isinstance(part, tuple) and isinstance(part[1], bytes)), None)
-                if raw is None:
+                pair = next(
+                    (
+                        part
+                        for part in fetched
+                        if isinstance(part, tuple)
+                        and len(part) >= 2
+                        and isinstance(part[1], bytes)
+                    ),
+                    None,
+                )
+                if pair is None:
                     continue
-                if _write_maildir_message(target, raw):
+                raw = pair[1]
+                meta = pair[0]
+                if _write_maildir_message(target, raw, meta):
                     copied += 1
                     copied_bytes += len(raw)
-        return {"folders_total": len(folders), "folders_done": folder_count, "messages_copied": copied, "bytes_copied": copied_bytes}
+                else:
+                    skipped += 1
+        return {
+            "folders_total": len(folder_pairs),
+            "folders_done": folder_count,
+            "messages_copied": copied,
+            "messages_skipped": skipped,
+            "bytes_copied": copied_bytes,
+        }
     finally:
         try:
             client.logout()
