@@ -26,10 +26,20 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatMoney, titleCase } from "@/lib/format";
 import { INTEREST_METHOD_OPTIONS } from "@/lib/interest-methods";
+import {
+  BANK_NAMES,
+  DEFAULT_BANK_BRANCH,
+  bankAccountPrefixHint,
+  bankAccountValidationMessage,
+  bankDetails,
+  isBankName,
+  normalizeBankAccountNumber,
+} from "@/lib/banking";
 import type { LegacyCashoutCapture, LegacyCashoutCaptureInput } from "@/types/legacyCashout";
 import type { InterestMethod, LoanCalculation } from "@/types/loan";
 import { getErrorMessage } from "@/utils/apiError";
@@ -295,6 +305,12 @@ export default function LegacyCashoutRegisterPage() {
     () => /^\d+$/.test(form.identity_number.trim()),
     [form.identity_number],
   );
+  const selectedBankDetails = useMemo(() => bankDetails(form.bank_name), [form.bank_name]);
+  const bankAccountError = useMemo(
+    () => bankAccountValidationMessage(form.bank_name, form.bank_account_number),
+    [form.bank_name, form.bank_account_number],
+  );
+  const legacyBank = form.bank_name && !isBankName(form.bank_name) ? form.bank_name : null;
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     const calculatorFields: Array<keyof FormState> = [
@@ -378,6 +394,19 @@ export default function LegacyCashoutRegisterPage() {
         toast.error("Calculate the original loan with LoanHub before saving this entry.");
         return;
       }
+      if (!isBankName(form.bank_name)) {
+        toast.error("Select FNB, PB, STD or NB before saving this entry.");
+        return;
+      }
+      if (bankAccountError) {
+        toast.error(bankAccountError);
+        return;
+      }
+      const banking = bankDetails(form.bank_name);
+      if (!banking) {
+        toast.error("Select a supported bank before saving this entry.");
+        return;
+      }
 
       const payload: LegacyCashoutCaptureInput = {
         folio_number: form.folio_number,
@@ -398,11 +427,11 @@ export default function LegacyCashoutRegisterPage() {
         emergency_cell_phone: optional(form.emergency_cell_phone),
         emergency_work_phone: optional(form.emergency_work_phone),
         emergency_relationship: optional(form.emergency_relationship),
-        bank_name: form.bank_name,
+        bank_name: banking.name,
         bank_account_holder: form.bank_account_holder,
-        bank_account_number: form.bank_account_number,
-        bank_branch_name: optional(form.bank_branch_name),
-        bank_branch_code: optional(form.bank_branch_code),
+        bank_account_number: normalizeBankAccountNumber(form.bank_account_number),
+        bank_branch_name: banking.branch,
+        bank_branch_code: banking.code,
         bank_account_type: form.bank_account_type,
         amount_taken: asNumber(form.amount_taken),
         total_repayable: asNumber(form.total_repayable),
@@ -527,11 +556,46 @@ export default function LegacyCashoutRegisterPage() {
 
         <FormSection icon={ShieldCheck} title="Banking details" description={editingId ? "Re-enter the account number to confirm this update. LoanHub encrypts it and never displays it again." : "These are required for every saved cash-out entry. LoanHub encrypts the account number and only shows the last four digits later."}>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Field label="Bank name" required><Input required value={form.bank_name} onChange={(event) => update("bank_name", event.target.value)} /></Field>
+            <Field label="Bank name" required>
+              <NativeSelect
+                required
+                value={form.bank_name}
+                onChange={(event) => {
+                  const bankName = event.target.value;
+                  const details = bankDetails(bankName);
+                  setForm((current) => ({
+                    ...current,
+                    bank_name: bankName,
+                    bank_branch_name: details?.branch ?? current.bank_branch_name,
+                    bank_branch_code: details?.code ?? current.bank_branch_code,
+                  }));
+                }}
+              >
+                <option value="">Select bank</option>
+                {legacyBank ? <option value={legacyBank}>Legacy — {legacyBank} (select a supported bank to save)</option> : null}
+                {BANK_NAMES.map((bankName) => <option key={bankName} value={bankName}>{bankName}</option>)}
+              </NativeSelect>
+            </Field>
             <Field label="Account holder" required><Input required value={form.bank_account_holder} onChange={(event) => update("bank_account_holder", event.target.value)} /></Field>
-            <Field label={editingId ? "Account number (re-enter to update)" : "Account number"} required><Input required type="password" autoComplete="off" placeholder={editingId ? "Enter the account number again" : undefined} value={form.bank_account_number} onChange={(event) => update("bank_account_number", event.target.value)} /></Field>
-            <Field label="Branch name"><Input value={form.bank_branch_name} onChange={(event) => update("bank_branch_name", event.target.value)} /></Field>
-            <Field label="Branch code"><Input value={form.bank_branch_code} onChange={(event) => update("bank_branch_code", event.target.value)} /></Field>
+            <Field label={editingId ? "Account number (re-enter to update)" : "Account number"} required>
+              <div className="space-y-1">
+                <Input
+                  required
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  aria-invalid={Boolean(bankAccountError)}
+                  placeholder={editingId ? "Enter the account number again" : undefined}
+                  value={form.bank_account_number}
+                  onChange={(event) => update("bank_account_number", event.target.value)}
+                />
+                <p className={`text-xs ${bankAccountError ? "text-destructive" : "text-muted-foreground"}`}>
+                  {bankAccountError ?? bankAccountPrefixHint(form.bank_name)}
+                </p>
+              </div>
+            </Field>
+            <Field label="Branch name"><Input readOnly value={selectedBankDetails?.branch ?? (form.bank_branch_name || DEFAULT_BANK_BRANCH)} /></Field>
+            <Field label="Branch code"><Input readOnly value={selectedBankDetails?.code ?? form.bank_branch_code} /></Field>
             <Field label="Account type"><Input value={form.bank_account_type} onChange={(event) => update("bank_account_type", event.target.value)} /></Field>
           </div>
         </FormSection>
