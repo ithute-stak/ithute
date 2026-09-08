@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { MailLinkEnhancer } from "./mail-link-enhancer";
 import { MailRealtime } from "./mail-realtime";
+import { MailSettingsThemeEnhancer } from "./mail-settings-theme-enhancer";
+import { MailThemeBridge } from "./mail-theme-bridge";
 import { WebmailMobileActions } from "./webmail-mobile-actions";
 import { WebmailRouteFrame } from "./webmail-route-frame";
 import styles from "./webmail.module.css";
@@ -15,10 +17,13 @@ import "./internal-webmail-premium.css";
 import "./mailbox-brand-unified.css";
 import "./internal-webmail-live-scope.css";
 import "./mail-settings-responsive.css";
+import "./mail-theme-unified.css";
 
 export default function WebmailLayout({ children }: { children: ReactNode }) {
   return (
     <div className={`${styles.surface} sourceGmailSkin`}>
+      <MailThemeBridge />
+      <MailSettingsThemeEnhancer />
       <MailRealtime />
       <MailLinkEnhancer />
       <WebmailRouteFrame>{children}</WebmailRouteFrame>
