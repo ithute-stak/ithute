@@ -1,0 +1,61 @@
+name: LoanHub Legacy Account Number Visible
+
+on:
+  push:
+    branches:
+      - loanhub-legacy-account-visible
+    paths:
+      - '.github/workflows/loanhub-legacy-account-visible.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v6
+        with:
+          ref: loanhub-legacy-account-visible
+
+      - name: Make Legacy account number visible while typing
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('products/LoanHub/apps/frontend/app/(dashboard)/company/legacy-cashout-register/page.tsx')
+          text = path.read_text()
+          old = 'type="password"\n                  inputMode="numeric"'
+          new = 'type="text"\n                  inputMode="numeric"'
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one Legacy account-number password input, found {count}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Install frontend dependencies
+        working-directory: products/LoanHub/apps/frontend
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Typecheck frontend
+        working-directory: products/LoanHub/apps/frontend
+        run: pnpm typecheck
+
+      - name: Commit validated UI change
+        run: |
+          set -euo pipefail
+          git config user.name 'ithute-stak'
+          git config user.email 'thekoetlisi@ithute.co.ls'
+          git add 'products/LoanHub/apps/frontend/app/(dashboard)/company/legacy-cashout-register/page.tsx'
+          git diff --cached --check
+          git diff --cached --stat
+          if git diff --cached --quiet; then
+            echo 'No account-number visibility change to commit.'
+            exit 1
+          fi
+          git commit -m 'fix(loanhub): show legacy account number while typing'
+          git push origin HEAD:loanhub-legacy-account-visible
