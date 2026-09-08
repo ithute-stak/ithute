@@ -41,6 +41,7 @@ from app.api.v1 import (
     webmail_content,
     webmail_drafts_plus,
     webmail_events,
+    webmail_productivity,
 )
 
 api_router = APIRouter()
@@ -73,6 +74,7 @@ api_router.include_router(platform_setup.router)
 api_router.include_router(transactional.router)
 api_router.include_router(webmail.router)
 api_router.include_router(webmail_connected_accounts.router)
+api_router.include_router(webmail_productivity.router)
 # Exact counts, smart provider setup and rich compose aliases are registered
 # before the legacy external router so the newer behavior wins for identical
 # paths while the established session/message contract remains unchanged.
