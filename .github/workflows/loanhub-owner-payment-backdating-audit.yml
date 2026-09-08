@@ -18,12 +18,12 @@ jobs:
         run: |
           cd products/LoanHub
           echo '=== CashRepaymentCreate ==='
-          rg -n 'CashRepaymentCreate|cash.?repayment|repayment.*cash' apps/backend apps/frontend || true
+          grep -RInE 'CashRepaymentCreate|cash.?repayment|repayment.*cash' apps/backend apps/frontend || true
           echo '=== Opening fee settlement ==='
-          rg -n 'CashOpeningFeeSettlementCreate|opening.?fee.*settle|settle.*opening.?fee' apps/backend apps/frontend || true
+          grep -RInE 'CashOpeningFeeSettlementCreate|opening.?fee.*settle|settle.*opening.?fee' apps/backend apps/frontend || true
           echo '=== External debt payments ==='
-          rg -n 'ExternalDebtPaymentCreate|paid_on' apps/backend apps/frontend || true
+          grep -RInE 'ExternalDebtPaymentCreate|paid_on' apps/backend apps/frontend || true
           echo '=== PaymentTransaction writes ==='
-          rg -n 'PaymentTransaction\(' apps/backend | head -n 200 || true
+          grep -RIn 'PaymentTransaction(' apps/backend | head -n 200 || true
           echo '=== Payment API calls / UI ==='
-          rg -n 'repayment|opening-fee|external-debt|payment_date|paid_on' apps/frontend/app apps/frontend/components apps/frontend/lib | head -n 500 || true
+          grep -RInE 'repayment|opening-fee|external-debt|payment_date|paid_on' apps/frontend/app apps/frontend/components apps/frontend/lib | head -n 500 || true
