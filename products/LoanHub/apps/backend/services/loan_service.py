@@ -34,6 +34,7 @@ from database.models.payment import PaymentTransaction
 from database.models.repayment import PaymentAllocation, RepaymentInstallment
 from services.accounting_service import record_payment_accounting
 from services.interest_calculation_service import calculate_loan_terms
+from utils.payment_dates import payment_date_to_utc
 
 
 MONEY = Decimal("0.01")
@@ -360,6 +361,7 @@ def preview_cash_repayment(
     amount_tendered: Decimal,
     overpayment_action: str,
     installment_number: int | None = None,
+    payment_date: date | None = None,
 ) -> dict[str, Any]:
     if loan.status not in {LoanStatus.ACTIVE, LoanStatus.DEFAULTED}:
         raise HTTPException(status_code=409, detail="This loan is not accepting repayments")
@@ -407,6 +409,7 @@ def preview_cash_repayment(
     early_settlement_required, future_installments = early_settlement_required_for_payoff(
         loan,
         amount_applied=applied,
+        as_of_date=payment_date,
     )
 
     person = loan.borrower.user.person if loan.borrower and loan.borrower.user else None
@@ -763,6 +766,8 @@ def record_cash_repayment(
     proof_notes: str | None = None,
     notes: str | None = None,
     idempotency_key: str | None = None,
+    payment_date: date | None = None,
+    backdated_by_company_owner: bool = False,
 ) -> tuple[PaymentTransaction, CashTransaction | None, dict[str, Any]]:
     """Post a loan repayment through cash or a manually verified channel."""
     if payment_method != PaymentMethod.CASH and overpayment_action == "give_change":
@@ -776,6 +781,7 @@ def record_cash_repayment(
         amount_tendered=amount_tendered,
         overpayment_action=overpayment_action,
         installment_number=installment_number,
+        payment_date=payment_date,
     )
     if preview["early_settlement_required"]:
         count = preview["future_installments_in_payoff"]
@@ -823,6 +829,7 @@ def record_cash_repayment(
     settings = get_or_create_settings(db, loan.company_id)
     validate_manual_proof(settings, payment_method, proof_reference, proof_url)
     now = datetime.now(timezone.utc)
+    effective_at = payment_date_to_utc(payment_date) if payment_date else now
     reference = _recorded_payment_reference(payment_method, PaymentDirection.INBOUND, proof_reference)
     payment = PaymentTransaction(
         company_id=loan.company_id,
@@ -851,8 +858,10 @@ def record_cash_repayment(
             "change_amount": str(preview["change_amount"]),
             "forward_amount": str(preview["forward_amount"]),
             "notes": notes,
+            "effective_payment_date": payment_date.isoformat() if payment_date else None,
+            "backdated_by_company_owner": backdated_by_company_owner,
         },
-        completed_at=now,
+        completed_at=effective_at,
     )
     db.add(payment)
     db.flush()
@@ -912,6 +921,8 @@ def record_installment_repayment(
     proof_notes: str | None = None,
     notes: str | None = None,
     idempotency_key: str | None = None,
+    payment_date: date | None = None,
+    backdated_by_company_owner: bool = False,
 ) -> tuple[PaymentTransaction, CashTransaction | None, dict[str, Any]]:
     """Record a payment against the current installment only.
 
@@ -980,6 +991,8 @@ def record_installment_repayment(
         proof_notes=proof_notes,
         notes=notes,
         idempotency_key=idempotency_key,
+        payment_date=payment_date,
+        backdated_by_company_owner=backdated_by_company_owner,
     )
 
 
@@ -1016,7 +1029,7 @@ def allocate_repayment(db: Session, payment: PaymentTransaction) -> None:
         db.add(PaymentAllocation(payment_id=payment.id, installment_id=installment.id, amount=allocated))
         if Decimal(installment.paid_amount) >= Decimal(installment.total_due):
             installment.status = InstallmentStatus.PAID
-            installment.paid_at = datetime.now(timezone.utc)
+            installment.paid_at = payment.completed_at or datetime.now(timezone.utc)
         else:
             installment.status = InstallmentStatus.PARTIALLY_PAID
 

@@ -64,14 +64,22 @@ function dayBeforeIsoDate(value: string): string {
   return previous.toISOString().slice(0, 10);
 }
 
+function localTodayIsoDate(): string {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
+
 export default function CompanyCashierPage() {
   const { activeRole } = useTenant();
   const canAdjustDueDates = hasRole(activeRole, LENDING_ROLES);
   const canSettleEarly = hasRole(activeRole, FINANCE_ROLES);
+  const canBackdatePayments = activeRole === "company_owner";
 
   const [loanReference, setLoanReference] = useState("");
   const [loan, setLoan] = useState<Loan | null>(null);
   const [amount, setAmount] = useState("");
+  const [paymentDate, setPaymentDate] = useState(localTodayIsoDate);
   const [action, setAction] = useState<OverpaymentAction>("carry_forward");
   const [evidence, setEvidence] = useState<PaymentEvidence>(EMPTY_PAYMENT_EVIDENCE);
   const [methods, setMethods] = useState<PaymentMethodOption[]>(DEFAULT_PAYMENT_METHOD_OPTIONS);
@@ -195,6 +203,7 @@ export default function CompanyCashierPage() {
 
   const resetPayment = useCallback(() => {
     setAmount("");
+    setPaymentDate(localTodayIsoDate());
     setPreview(null);
     setAction("carry_forward");
     setEvidence(EMPTY_PAYMENT_EVIDENCE);
@@ -291,6 +300,7 @@ export default function CompanyCashierPage() {
         overpayment_action: isCash ? action : "carry_forward",
         installment_number: selectedInstallment?.installment_number,
         payment_method: evidence.payment_method,
+        payment_date: canBackdatePayments ? paymentDate : null,
       });
       setPreview(calculated);
       setConfirmOpen(true);
@@ -341,6 +351,7 @@ export default function CompanyCashierPage() {
         proof_notes: evidence.proof_notes.trim() || null,
         notes: evidence.proof_notes.trim() || undefined,
         idempotency_key: createIdempotencyKey(`repayment-${evidence.payment_method}-${loan.id}`),
+        payment_date: canBackdatePayments ? paymentDate : null,
       });
       setReceipt(result);
       setConfirmOpen(false);
@@ -590,6 +601,19 @@ export default function CompanyCashierPage() {
             <CardHeader><CardTitle className="flex items-center gap-2"><CreditCard className="h-5 w-5 text-primary" />Payment received</CardTitle><CardDescription>Select the actual channel. Non-cash methods are recorded only after staff verify the submitted proof.</CardDescription></CardHeader>
             <CardContent className="space-y-5">
               <PaymentMethodFields methods={methods} value={evidence} onChange={updateEvidence} />
+              {canBackdatePayments ? (
+                <div className="space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+                  <Label htmlFor="payment-date">Payment date</Label>
+                  <Input
+                    id="payment-date"
+                    type="date"
+                    max={localTodayIsoDate()}
+                    value={paymentDate}
+                    onChange={(event) => { setPaymentDate(event.target.value); setPreview(null); }}
+                  />
+                  <p className="text-xs text-muted-foreground">Company Owner control: choose the actual historical payment date for legacy records. Future dates are never allowed.</p>
+                </div>
+              ) : null}
               <div className="space-y-2"><Label htmlFor="amount">Amount received</Label><Input id="amount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => { setAmount(event.target.value); setPreview(null); }} placeholder="0.00" className="h-14 text-2xl font-black" /></div>
               <div className="space-y-2"><Label>When payment exceeds the current instalment</Label><Select value={isCash ? action : "carry_forward"} disabled={!isCash} onValueChange={(value) => { setAction(value as OverpaymentAction); setPreview(null); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="carry_forward">Keep excess as forward payment</SelectItem><SelectItem value="give_change">Apply current instalment and give cash change</SelectItem></SelectContent></Select>{!isCash ? <p className="text-xs text-muted-foreground">Non-cash overpayments are carried forward; the system cannot issue electronic change.</p> : null}</div>
               <LoadingButton className="h-12 w-full" loading={previewLoading} loadingText="Calculating..." onClick={() => void calculatePreview()} disabled={!selectedInstallment}><Calculator className="h-4 w-4" />Preview allocation</LoadingButton>
