@@ -14,6 +14,7 @@ import "./external-connect-premium.css";
 import "./internal-webmail-premium.css";
 import "./mailbox-brand-unified.css";
 import "./internal-webmail-live-scope.css";
+import "./mail-settings-responsive.css";
 
 export default function WebmailLayout({ children }: { children: ReactNode }) {
   return (
