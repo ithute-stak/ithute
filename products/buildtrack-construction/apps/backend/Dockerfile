@@ -18,10 +18,13 @@ RUN set -eux; \
         fi; \
         echo "pip install failed (attempt ${attempt}/3); retrying in 10 seconds..." >&2; \
         sleep 10; \
-    done
+    done; \
+    useradd --create-home --uid 10001 --shell /usr/sbin/nologin buildtrack
 
 COPY . .
+RUN mkdir -p /app/media && chown -R buildtrack:buildtrack /app
 
+USER buildtrack
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
