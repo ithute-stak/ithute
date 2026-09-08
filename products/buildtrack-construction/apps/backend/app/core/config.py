@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     push_base_url: str = "http://ithute-push:8080"
     push_service_client_id: str = "buildtrack-construction"
     push_service_client_secret: str = ""
+    push_timeout_seconds: float = 10.0
     realtime_base_url: str = "http://ithute-realtime:8080"
     realtime_public_url: str = "https://realtime.ithute.co.ls"
 
@@ -70,6 +71,10 @@ class Settings(BaseSettings):
     @property
     def auth_logout_url(self) -> str:
         return f"{self.auth_internal_base_url.rstrip('/')}/v1/auth/logout"
+
+    @property
+    def auth_service_token_url(self) -> str:
+        return f"{self.auth_internal_base_url.rstrip('/')}/v1/auth/service-token"
 
 
 @lru_cache
