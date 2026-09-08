@@ -27,16 +27,53 @@ export const defaultMailPreferences: MailPreferences = {
   fontScale: "normal",
 };
 
-const STORAGE_KEY = "ithute-imail-preferences-v3";
-const LEGACY_STORAGE_KEY = "ithute-imail-preferences-v2";
+const STORAGE_KEY = "ithute-imail-preferences-v4";
+const LEGACY_STORAGE_KEYS = ["ithute-imail-preferences-v3", "ithute-imail-preferences-v2"] as const;
+const LEGACY_DENSITY_KEY = "ithute-webmail-density";
+const PREFERENCES_EVENT = "ithute-imail-preferences-changed";
+const THEMES: MailTheme[] = ["system", "light", "dark", "ithute"];
 
-function normalizeStoredPreferences(stored: Partial<MailPreferences>, legacy = false): MailPreferences {
-  const theme = legacy && stored.theme === "ithute" ? "light" : stored.theme;
+function normalizeStoredPreferences(stored: Partial<MailPreferences>, migrateSystemToUniversal = false): MailPreferences {
+  let theme = stored.theme;
+  if (migrateSystemToUniversal && theme === "system") theme = "light";
+  if (!theme || !THEMES.includes(theme)) theme = defaultMailPreferences.theme;
+
   return {
     ...defaultMailPreferences,
     ...stored,
-    theme: theme && ["system", "light", "dark", "ithute"].includes(theme) ? theme : defaultMailPreferences.theme,
-  } as MailPreferences;
+    theme,
+    density: stored.density === "compact" ? "compact" : "comfortable",
+    readingPane: ["right", "bottom", "none"].includes(String(stored.readingPane)) ? stored.readingPane as ReadingPane : defaultMailPreferences.readingPane,
+    fontScale: ["small", "normal", "large"].includes(String(stored.fontScale)) ? stored.fontScale as MailPreferences["fontScale"] : defaultMailPreferences.fontScale,
+  };
+}
+
+function readPreferences(): MailPreferences {
+  const current = window.localStorage.getItem(STORAGE_KEY);
+  if (current) return normalizeStoredPreferences(JSON.parse(current) as Partial<MailPreferences>);
+
+  for (const key of LEGACY_STORAGE_KEYS) {
+    const legacy = window.localStorage.getItem(key);
+    if (!legacy) continue;
+    const parsed = JSON.parse(legacy) as Partial<MailPreferences>;
+    const migrated = normalizeStoredPreferences(parsed, true);
+    const oldDensity = window.localStorage.getItem(LEGACY_DENSITY_KEY);
+    if (oldDensity === "compact" || oldDensity === "comfortable") migrated.density = oldDensity;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+    return migrated;
+  }
+
+  const oldDensity = window.localStorage.getItem(LEGACY_DENSITY_KEY);
+  const initial = { ...defaultMailPreferences };
+  if (oldDensity === "compact" || oldDensity === "comfortable") initial.density = oldDensity;
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
+  return initial;
+}
+
+function persistPreferences(next: MailPreferences) {
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  window.localStorage.setItem(LEGACY_DENSITY_KEY, next.density);
+  window.dispatchEvent(new CustomEvent(PREFERENCES_EVENT));
 }
 
 export function useMailPreferences() {
@@ -44,33 +81,38 @@ export function useMailPreferences() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    try {
-      const current = window.localStorage.getItem(STORAGE_KEY);
-      if (current) {
-        setPreferencesState(normalizeStoredPreferences(JSON.parse(current) as Partial<MailPreferences>));
-      } else {
-        const legacy = window.localStorage.getItem(LEGACY_STORAGE_KEY);
-        if (legacy) {
-          const migrated = normalizeStoredPreferences(JSON.parse(legacy) as Partial<MailPreferences>, true);
-          setPreferencesState(migrated);
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
-        }
+    const sync = () => {
+      try {
+        setPreferencesState(readPreferences());
+      } catch {
+        setPreferencesState(defaultMailPreferences);
       }
-    } catch {
-      // Local preferences are optional; fall back to the universal light defaults.
-    } finally {
-      setReady(true);
-    }
+    };
+
+    sync();
+    setReady(true);
+
+    const onStorage = (event: StorageEvent) => {
+      if (!event.key || event.key === STORAGE_KEY || LEGACY_STORAGE_KEYS.includes(event.key as typeof LEGACY_STORAGE_KEYS[number]) || event.key === LEGACY_DENSITY_KEY) sync();
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(PREFERENCES_EVENT, sync);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(PREFERENCES_EVENT, sync);
+    };
   }, []);
 
   const setPreferences = useCallback((value: MailPreferences | ((current: MailPreferences) => MailPreferences)) => {
     setPreferencesState((current) => {
       const next = typeof value === "function" ? value(current) : value;
-      try {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        // The browser may block local storage; the current session still updates.
-      }
+      queueMicrotask(() => {
+        try {
+          persistPreferences(next);
+        } catch {
+          // Browser storage can be blocked; the current mounted instance still updates.
+        }
+      });
       return next;
     });
   }, []);
@@ -151,10 +193,10 @@ export function MailSettingsPanel({
           <section className="imail-settings-section">
             <h2 className="imail-settings-section-title text-xs font-black uppercase tracking-[.15em] text-slate-500 dark:text-slate-400">Appearance</h2>
             <div className="imail-settings-grid imail-settings-grid-appearance mt-3 grid grid-cols-2 gap-2">
-              <OptionButton active={preferences.theme === "light"} title="Universal" subtitle="Clean, familiar light workspace" onClick={() => update("theme", "light")} icon={<Sun size={16} />} />
+              <OptionButton active={preferences.theme === "light"} title="Universal Gmail" subtitle="Default · familiar light workspace" onClick={() => update("theme", "light")} icon={<Sun size={16} />} />
               <OptionButton active={preferences.theme === "ithute"} title="Ithute Green" subtitle="Brand-forward workspace" onClick={() => update("theme", "ithute")} icon={<span className="text-xs font-black text-emerald-800">!T</span>} />
               <OptionButton active={preferences.theme === "dark"} title="Dark" subtitle="Low-light mode" onClick={() => update("theme", "dark")} icon={<Moon size={16} />} />
-              <OptionButton active={preferences.theme === "system"} title="System" subtitle="Follow device" onClick={() => update("theme", "system")} icon={<Monitor size={16} />} />
+              <OptionButton active={preferences.theme === "system"} title="System" subtitle="Follow device only when selected" onClick={() => update("theme", "system")} icon={<Monitor size={16} />} />
             </div>
           </section>
 
