@@ -37,6 +37,7 @@ from app.api.v1 import (
     tenants,
     transactional,
     webmail,
+    webmail_connected_accounts,
     webmail_content,
     webmail_drafts_plus,
     webmail_events,
@@ -71,6 +72,7 @@ api_router.include_router(hosting.router)
 api_router.include_router(platform_setup.router)
 api_router.include_router(transactional.router)
 api_router.include_router(webmail.router)
+api_router.include_router(webmail_connected_accounts.router)
 # Exact counts, smart provider setup and rich compose aliases are registered
 # before the legacy external router so the newer behavior wins for identical
 # paths while the established session/message contract remains unchanged.
