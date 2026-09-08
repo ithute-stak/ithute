@@ -21,6 +21,7 @@ import "./internal-webmail-live-scope.css";
 import "./mail-settings-responsive.css";
 import "./mail-theme-unified.css";
 import "./mail-white600.css";
+import "./mail-workspace-unified.css";
 
 export default function WebmailLayout({ children }: { children: ReactNode }) {
   return (
