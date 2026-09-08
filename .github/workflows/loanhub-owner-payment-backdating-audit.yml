@@ -1,4 +1,4 @@
-name: LoanHub Owner Payment Backdating Audit
+name: LoanHub Owner Payment Backdating Validation
 
 on:
   push:
@@ -6,24 +6,72 @@ on:
       - loanhub-owner-payment-backdating
     paths:
       - '.github/workflows/loanhub-owner-payment-backdating-audit.yml'
+      - '.github/scripts/loanhub_owner_payment_backdating.py'
+
+permissions:
+  contents: write
 
 jobs:
-  audit:
+  patch-test-commit:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
         with:
           ref: loanhub-owner-payment-backdating
-      - name: Locate payment write paths
+
+      - name: Apply owner-only payment backdating policy
+        run: python3 .github/scripts/loanhub_owner_payment_backdating.py
+
+      - name: Compile backend
+        working-directory: products/LoanHub/apps/backend
+        run: python -m compileall -q .
+
+      - name: Install backend dependencies and tests
+        working-directory: products/LoanHub/apps/backend
+        run: pip install -r requirements.txt pytest
+
+      - name: Verify one Alembic head
+        working-directory: products/LoanHub/apps/backend
         run: |
-          cd products/LoanHub
-          echo '=== CashRepaymentCreate ==='
-          grep -RInE 'CashRepaymentCreate|cash.?repayment|repayment.*cash' apps/backend apps/frontend || true
-          echo '=== Opening fee settlement ==='
-          grep -RInE 'CashOpeningFeeSettlementCreate|opening.?fee.*settle|settle.*opening.?fee' apps/backend apps/frontend || true
-          echo '=== External debt payments ==='
-          grep -RInE 'ExternalDebtPaymentCreate|paid_on' apps/backend apps/frontend || true
-          echo '=== PaymentTransaction writes ==='
-          grep -RIn 'PaymentTransaction(' apps/backend | head -n 200 || true
-          echo '=== Payment API calls / UI ==='
-          grep -RInE 'repayment|opening-fee|external-debt|payment_date|paid_on' apps/frontend/app apps/frontend/components apps/frontend/lib | head -n 500 || true
+          test "$(alembic heads | wc -l)" -eq 1
+          alembic heads
+
+      - name: Run payment-date and repayment regression tests
+        working-directory: products/LoanHub/apps/backend
+        run: python -m pytest -q tests/test_payment_date_policy.py tests/test_micro_loan_and_cash.py tests/test_installment_payment_action.py tests/test_lelefapaygate_payment_rails.py
+
+      - name: Install frontend dependencies
+        working-directory: products/LoanHub/apps/frontend
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Typecheck frontend
+        working-directory: products/LoanHub/apps/frontend
+        run: pnpm typecheck
+
+      - name: Lint frontend
+        working-directory: products/LoanHub/apps/frontend
+        run: pnpm lint
+
+      - name: Build production frontend
+        working-directory: products/LoanHub/apps/frontend
+        env:
+          NEXT_PUBLIC_API_URL: https://api.loanhub.co.ls/api/v1
+        run: pnpm build
+
+      - name: Commit validated product changes
+        run: |
+          set -euo pipefail
+          git config user.name 'ithute-stak'
+          git config user.email 'thekoetlisi@ithute.co.ls'
+          git add products/LoanHub
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'No product changes to commit.'
+            exit 1
+          fi
+          git diff --cached --stat
+          git commit -m 'feat(loanhub): allow owner-only payment backdating'
+          git push origin HEAD:loanhub-owner-payment-backdating
