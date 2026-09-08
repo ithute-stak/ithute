@@ -20,14 +20,16 @@ jobs:
         with:
           ref: loanhub-owner-payment-backdating
 
-      - name: Disambiguate ordinary repayment patch
+      - name: Disambiguate repayment endpoint patches
         run: |
           python3 <<'PY'
           from pathlib import Path
           path = Path('.github/scripts/loanhub_owner_payment_backdating.py')
           lines = path.read_text().splitlines()
           output = []
-          replaced = False
+          replaced_cash = False
+          skipping_installment = False
+          replaced_installment = False
           for line in lines:
               if '"cash route pass date")' in line:
                   output.extend([
@@ -39,11 +41,33 @@ jobs:
                       '    raise SystemExit("cash route pass date anchor missing")',
                       'loans_router.write_text(text[:index] + replacement + text[index + len(needle):])',
                   ])
-                  replaced = True
-              else:
-                  output.append(line)
-          if not replaced:
-              raise SystemExit('cash route patch line was not found')
+                  replaced_cash = True
+                  continue
+              if line.startswith('# Use last installment call occurrence before receipt.'):
+                  skipping_installment = True
+                  output.extend([
+                      '# Target the installment endpoint after its service-call anchor.',
+                      'text = loans_router.read_text()',
+                      'call_index = text.find("record_installment_repayment(")',
+                      'if call_index < 0:',
+                      '    raise SystemExit("installment service-call anchor missing")',
+                      'needle = "        notes=payload.notes,\\n        idempotency_key=payload.idempotency_key,\\n    )\\n    receipt_number, receipt_file = payment_receipt_payload(db, payment.id)\\n"',
+                      'index = text.find(needle, call_index)',
+                      'if index < 0:',
+                      '    raise SystemExit("installment route pass date anchor missing")',
+                      'replacement = "        notes=payload.notes,\\n        idempotency_key=payload.idempotency_key,\\n        effective_date=effective_date,\\n    )\\n    receipt_number, receipt_file = payment_receipt_payload(db, payment.id)\\n"',
+                      'loans_router.write_text(text[:index] + replacement + text[index + len(needle):])',
+                  ])
+                  replaced_installment = True
+                  continue
+              if skipping_installment:
+                  if line.startswith('clients_router = '):
+                      skipping_installment = False
+                      output.append(line)
+                  continue
+              output.append(line)
+          if not replaced_cash or not replaced_installment:
+              raise SystemExit(f'patch preprocessing incomplete: cash={replaced_cash}, installment={replaced_installment}')
           path.write_text('\n'.join(output) + '\n')
           PY
 
