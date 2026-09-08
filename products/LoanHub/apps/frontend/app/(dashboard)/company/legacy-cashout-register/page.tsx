@@ -581,7 +581,7 @@ export default function LegacyCashoutRegisterPage() {
               <div className="space-y-1">
                 <Input
                   required
-                  type="password"
+                  type="text"
                   inputMode="numeric"
                   autoComplete="off"
                   aria-invalid={Boolean(bankAccountError)}
