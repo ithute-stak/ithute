@@ -131,7 +131,7 @@ jobs:
           find infra infrastructure -type f -name '*.sh' -print -exec sh -n {} \;
 
       - name: Verify reference-grade Webmail UX
-        run: sh scripts/verify-webmail-reference-ux.sh
+        run: sh -x scripts/verify-webmail-reference-ux.sh
 
       - name: Verify platform UX integration
         run: sh scripts/verify-platform-ux.sh
