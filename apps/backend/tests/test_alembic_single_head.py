@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0015_mail_intelligence"
+LATEST_MIGRATION_HEAD = "0017_webmail_productivity"
 
 
 def test_alembic_has_one_consolidated_head():

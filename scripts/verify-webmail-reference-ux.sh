@@ -18,6 +18,7 @@ LINK_CONTENT='apps/frontend/app/webmail/mail-content.tsx'
 LINK_ENHANCER='apps/frontend/app/webmail/mail-link-enhancer.tsx'
 ROUTE_FRAME='apps/frontend/app/webmail/webmail-route-frame.tsx'
 MOBILE_ACTIONS='apps/frontend/app/webmail/webmail-mobile-actions.tsx'
+NEXT_MOBILE_CSS='apps/frontend/app/webmail/next-generation-mobile-nav.css'
 EXTERNAL_SHORTCUT='apps/frontend/app/webmail/webmail-external-shortcut.tsx'
 ENTRY='apps/frontend/app/webmail/page.tsx'
 LAYOUT='apps/frontend/app/webmail/layout.tsx'
@@ -28,7 +29,7 @@ for file in \
   "$PAGE" "$ENTRY_WRAPPER" "$SHELL" "$LOADING" "$COMPOSE" "$ROUTE_COMPOSE" \
   "$SETTINGS" "$EXTERNAL" "$TYPES" "$BASE_CSS" "$SKIN" "$APPROVED_CSS" \
   "$SETTINGS_CSS" "$LINK_CONTENT" "$LINK_ENHANCER" "$ROUTE_FRAME" \
-  "$MOBILE_ACTIONS" "$EXTERNAL_SHORTCUT" "$ENTRY" "$LAYOUT" "$POLISH" "$API_ROUTE"; do
+  "$MOBILE_ACTIONS" "$NEXT_MOBILE_CSS" "$EXTERNAL_SHORTCUT" "$ENTRY" "$LAYOUT" "$POLISH" "$API_ROUTE"; do
   test -s "$file"
 done
 
@@ -87,15 +88,28 @@ grep -F 'noopener noreferrer nofollow' "$LINK_CONTENT" >/dev/null
 grep -F 'text-[#0869d7]' "$LINK_CONTENT" >/dev/null
 grep -F '.imail-detected-link' "$APPROVED_CSS" >/dev/null
 
-# Mobile inbox has touch navigation but must leave an opened message unobstructed.
-grep -F 'imail-mobile-compose' "$MOBILE_ACTIONS" >/dev/null
+# Current mobile inbox contract: purpose-built phone actions stay available on
+# the mailbox list and disappear while a message reader is open.
+grep -F 'imail-mobile-primary-compose' "$MOBILE_ACTIONS" >/dev/null
+grep -F 'imail-mobile-home-actions' "$MOBILE_ACTIONS" >/dev/null
+grep -F 'imail-mobile-profile' "$MOBILE_ACTIONS" >/dev/null
+grep -F 'imail-mobile-search-filter' "$MOBILE_ACTIONS" >/dev/null
 grep -F 'imail-mobile-nav' "$MOBILE_ACTIONS" >/dev/null
-grep -F 'Compose a new email' "$MOBILE_ACTIONS" >/dev/null
-grep -F 'Attachments' "$MOBILE_ACTIONS" >/dev/null
-grep -F 'main article' "$MOBILE_ACTIONS" >/dev/null
+grep -F '<span>Inbox</span>' "$MOBILE_ACTIONS" >/dev/null
+grep -F '<span>Starred</span>' "$MOBILE_ACTIONS" >/dev/null
+grep -F '<span>Drafts</span>' "$MOBILE_ACTIONS" >/dev/null
+grep -F '<span>Sent</span>' "$MOBILE_ACTIONS" >/dev/null
+grep -F '<span>Attachments</span>' "$MOBILE_ACTIONS" >/dev/null
+grep -F '<span>More</span>' "$MOBILE_ACTIONS" >/dev/null
+grep -F 'article.imail-message-reader' "$MOBILE_ACTIONS" >/dev/null
 grep -F 'messageOpen' "$MOBILE_ACTIONS" >/dev/null
-grep -F '.imail-mobile-compose' "$APPROVED_CSS" >/dev/null
-grep -F '.imail-mobile-nav' "$APPROVED_CSS" >/dev/null
+grep -F 'min-height: 100dvh' "$NEXT_MOBILE_CSS" >/dev/null
+grep -F 'env(safe-area-inset-bottom)' "$NEXT_MOBILE_CSS" >/dev/null
+grep -F '.imail-mobile-primary-compose' "$NEXT_MOBILE_CSS" >/dev/null
+grep -F '.imail-mobile-home-actions' "$NEXT_MOBILE_CSS" >/dev/null
+grep -F '.imail-mobile-profile' "$NEXT_MOBILE_CSS" >/dev/null
+grep -F '.imail-mobile-search-filter' "$NEXT_MOBILE_CSS" >/dev/null
+grep -F '.imail-mobile-nav' "$NEXT_MOBILE_CSS" >/dev/null
 
 # The guest login owns its external-account CTA; the compact shortcut appears
 # only after the authenticated Webmail shell exists.
@@ -159,7 +173,11 @@ grep -F 'draftStorageKey' "$PAGE" >/dev/null
 grep -F 'sendMessage' "$PAGE" >/dev/null
 grep -F 'webmail("/send-rich"' "$PAGE" >/dev/null
 grep -F 'RecipientField' "$COMPOSE" >/dev/null
-grep -F 'mail-word-ribbon' "$COMPOSE" >/dev/null
+grep -F 'mail-rich-editor' "$COMPOSE" >/dev/null
+grep -F 'aria-label="Font family"' "$COMPOSE" >/dev/null
+grep -F 'title="Send options"' "$COMPOSE" >/dev/null
+grep -F 'Send immediately' "$COMPOSE" >/dev/null
+grep -F 'Undo send' "$COMPOSE" >/dev/null
 grep -F 'contentEditable' "$COMPOSE" >/dev/null
 grep -F 'Cc Bcc' "$COMPOSE" >/dev/null
 grep -F 'Attach files' "$COMPOSE" >/dev/null
