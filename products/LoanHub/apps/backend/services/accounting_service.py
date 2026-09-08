@@ -172,10 +172,12 @@ def create_entry(
     reference_type: str | None = None,
     reference_id: str | None = None,
     status_value: str = "draft",
+    allow_closed_period: bool = False,
 ) -> JournalEntry:
     from services.governance_control_service import ensure_accounting_period_open
 
-    ensure_accounting_period_open(db, company_id=company_id, entry_date=entry_date)
+    if not allow_closed_period:
+        ensure_accounting_period_open(db, company_id=company_id, entry_date=entry_date)
     key, scope_type = scope_key(company_id)
     ensure_chart(db, company_id=company_id)
 
@@ -258,6 +260,7 @@ def _post_source_entry(
         reference_type="payment_transaction",
         reference_id=str(source.id),
         status_value="posted",
+        allow_closed_period=bool((source.provider_payload or {}).get("backdated_by_company_owner")),
         lines=[
             {"account_id": debit_account.id, "debit": source.amount, "credit": 0},
             {"account_id": credit_account.id, "debit": 0, "credit": source.amount},
