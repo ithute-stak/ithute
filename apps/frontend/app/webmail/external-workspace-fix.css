@@ -29,7 +29,10 @@
 }
 
 @media (min-width: 1024px) {
-  .imail-route-external main[class*="min-h-screen"]:has(> header) > div.flex > aside {
+  /* Scope the 244px width only to the real mailbox folder sidebar. The settings
+     overlay is also a flex container with an aside, and must never inherit this
+     workspace-sidebar width. */
+  .imail-route-external main[class*="min-h-screen"]:has(> header) > div.flex:not(.imail-settings-overlay) > aside {
     width: 244px !important;
     min-width: 244px !important;
     max-width: 244px !important;
