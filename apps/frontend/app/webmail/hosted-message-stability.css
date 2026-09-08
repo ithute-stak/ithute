@@ -1,0 +1,130 @@
+/*
+ * Hosted-message layout stability.
+ *
+ * Rich HTML is loaded asynchronously after the plain-text preview. Email HTML
+ * commonly contains fixed-width tables and inline widths. Those intrinsic sizes
+ * must never be allowed to resize the three-pane iMail workspace after render.
+ */
+
+.imail-route-webmail .imail-hosted-workspace {
+  min-width: 0;
+}
+
+.imail-route-webmail .imail-hosted-workspace > div.flex,
+.imail-route-webmail .imail-hosted-workspace > div.flex > div.min-w-0.flex-1.overflow-hidden {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/* The message list and reader are grid/flex children. Explicitly opt them out
+   of the browser's automatic min-content width so a 600/800px email template
+   cannot widen the reader track after the safe HTML part arrives. */
+.imail-route-webmail .imail-hosted-workspace section,
+.imail-route-webmail .imail-hosted-workspace .imail-message-reader,
+.imail-route-webmail .imail-hosted-workspace .imail-message-reader > *,
+.imail-route-webmail .imail-hosted-workspace .imail-message-reader .whitespace-pre-wrap {
+  min-width: 0 !important;
+  max-width: 100% !important;
+}
+
+@media (min-width: 1024px) {
+  .imail-route-webmail .imail-hosted-workspace div.hidden.h-full.min-h-0.lg\:grid {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
+  }
+
+  .imail-route-webmail .imail-hosted-workspace div.hidden.h-full.min-h-0.lg\:grid > section {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
+  }
+
+  /* Right-pane mode: the second track must be shrinkable. This is the key
+     protection against post-render expansion from fixed-width HTML email. */
+  .imail-route-webmail .imail-hosted-workspace div.hidden.h-full.min-h-0.lg\:grid[class*="grid-cols-"] {
+    grid-template-columns: minmax(340px, 46%) minmax(0, 1fr) !important;
+  }
+}
+
+/* Rich-content boundary. `contain:inline-size` prevents descendants from
+   contributing an oversized intrinsic width to the surrounding grid track. */
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message {
+  contain: inline-size;
+  display: block;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  overflow-y: visible;
+  box-sizing: border-box;
+}
+
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message *,
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message *::before,
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message *::after {
+  box-sizing: border-box !important;
+  max-width: 100% !important;
+}
+
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message div,
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message section,
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message article,
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message header,
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message footer,
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message p,
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message blockquote,
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message pre {
+  min-width: 0 !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word;
+}
+
+/* HTML newsletters and GitHub/Gmail notifications frequently use fixed-width
+   layout tables. Fit them to the reader rather than letting them resize it. */
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message table {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  table-layout: fixed !important;
+}
+
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message td,
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message th {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+}
+
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message a,
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message .imail-detected-link {
+  max-width: 100% !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+}
+
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message pre,
+.imail-route-webmail .imail-hosted-workspace .imail-rich-message code {
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+}
+
+/* The asynchronous plain-text -> rich-HTML swap may change message height,
+   but it must never move the list/reader divider or create a page scrollbar. */
+.imail-route-webmail .imail-hosted-workspace section:has(.imail-message-reader) {
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+}
+
+.imail-route-webmail .imail-hosted-workspace section:has(.imail-message-reader) > div:last-child {
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  scrollbar-gutter: stable;
+}
