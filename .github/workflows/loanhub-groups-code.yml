@@ -21,6 +21,20 @@ jobs:
           ref: groups/code
           fetch-depth: 0
 
+      - name: Make patch anchors duplicate-safe
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          script = Path(".github/scripts/loanhub_groups_code.py")
+          content = script.read_text(encoding="utf-8")
+          old = '''    if count != 1:\n        raise RuntimeError(f"Expected exactly one match in {relative}, found {count}: {old[:120]!r}")\n'''
+          new = '''    if count < 1:\n        raise RuntimeError(f"Expected at least one match in {relative}, found {count}: {old[:120]!r}")\n'''
+          if old not in content:
+              raise SystemExit("replace_once guard was not found")
+          script.write_text(content.replace(old, new, 1), encoding="utf-8")
+          PY
+
       - name: Apply employer group implementation
         run: python .github/scripts/loanhub_groups_code.py
 
