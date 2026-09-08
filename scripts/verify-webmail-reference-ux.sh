@@ -173,7 +173,11 @@ grep -F 'draftStorageKey' "$PAGE" >/dev/null
 grep -F 'sendMessage' "$PAGE" >/dev/null
 grep -F 'webmail("/send-rich"' "$PAGE" >/dev/null
 grep -F 'RecipientField' "$COMPOSE" >/dev/null
-grep -F 'mail-word-ribbon' "$COMPOSE" >/dev/null
+grep -F 'mail-rich-editor' "$COMPOSE" >/dev/null
+grep -F 'aria-label="Font family"' "$COMPOSE" >/dev/null
+grep -F 'title="Send options"' "$COMPOSE" >/dev/null
+grep -F 'Send immediately' "$COMPOSE" >/dev/null
+grep -F 'Undo send' "$COMPOSE" >/dev/null
 grep -F 'contentEditable' "$COMPOSE" >/dev/null
 grep -F 'Cc Bcc' "$COMPOSE" >/dev/null
 grep -F 'Attach files' "$COMPOSE" >/dev/null
