@@ -182,9 +182,9 @@ export function CompanyClientProfileEditorCards({
         account_status: client.status as CompanyClientProfileUpdate["account_status"],
         bank_account: {
           account_holder: client.bank_account_holder || client.full_name,
-          bank_name: details?.name ?? null,
-          branch_name: details?.branch ?? DEFAULT_BANK_BRANCH,
-          branch_code: details?.code ?? null,
+          bank_name: details?.name ?? client.bank_name ?? null,
+          branch_name: details?.branch ?? client.bank_branch_name ?? DEFAULT_BANK_BRANCH,
+          branch_code: details?.code ?? client.bank_branch_code ?? null,
           account_type: client.bank_account_type || "savings",
           currency: client.bank_currency || "LSL",
           account_number: null,
@@ -210,30 +210,40 @@ export function CompanyClientProfileEditorCards({
       } else if (payload.bank_account) {
         const bankName = payload.bank_account.bank_name;
         const accountNumber = payload.bank_account.account_number;
-        if (!bankName || !isBankName(bankName)) {
-          toast.warning("Select FNB, PB, STD or NB before saving banking details.");
-          return;
+        const legacyBankUnchanged = Boolean(
+          client.has_bank_account
+          && client.bank_name
+          && !isBankName(client.bank_name)
+          && bankName === client.bank_name
+          && !String(accountNumber || "").trim(),
+        );
+
+        if (!legacyBankUnchanged) {
+          if (!bankName || !isBankName(bankName)) {
+            toast.warning("Select FNB, PB, STD or NB before saving banking details.");
+            return;
+          }
+          if (!client.has_bank_account && !String(accountNumber || "").trim()) {
+            toast.warning("Enter the bank account number before creating the banking profile.");
+            return;
+          }
+          if (client.has_bank_account && client.bank_name !== bankName && !String(accountNumber || "").trim()) {
+            toast.warning("Changing the bank also requires the matching new account number.");
+            return;
+          }
+          const accountError = bankAccountValidationMessage(bankName, accountNumber);
+          if (accountError) {
+            toast.warning(accountError);
+            return;
+          }
+          const details = bankDetails(bankName);
+          payload.bank_account = {
+            ...payload.bank_account,
+            bank_name: bankName,
+            branch_name: details?.branch ?? DEFAULT_BANK_BRANCH,
+            branch_code: details?.code ?? null,
+          };
         }
-        if (!client.has_bank_account && !String(accountNumber || "").trim()) {
-          toast.warning("Enter the bank account number before creating the banking profile.");
-          return;
-        }
-        if (client.has_bank_account && client.bank_name !== bankName && !String(accountNumber || "").trim()) {
-          toast.warning("Changing the bank also requires the matching new account number.");
-          return;
-        }
-        const accountError = bankAccountValidationMessage(bankName, accountNumber);
-        if (accountError) {
-          toast.warning(accountError);
-          return;
-        }
-        const details = bankDetails(bankName);
-        payload.bank_account = {
-          ...payload.bank_account,
-          bank_name: bankName,
-          branch_name: details?.branch ?? DEFAULT_BANK_BRANCH,
-          branch_code: details?.code ?? null,
-        };
       }
       if (!permissions.can_edit_account_status) delete payload.account_status;
     }
@@ -301,6 +311,7 @@ export function CompanyClientProfileEditorCards({
   const draftBankName = draft.bank_account?.bank_name ?? null;
   const draftAccountNumber = draft.bank_account?.account_number ?? null;
   const draftBankError = bankAccountValidationMessage(draftBankName, draftAccountNumber);
+  const legacyDraftBank = draftBankName && !isBankName(draftBankName) ? draftBankName : null;
 
   return (
     <div className="grid gap-5 lg:grid-cols-2">
@@ -447,6 +458,7 @@ export function CompanyClientProfileEditorCards({
                       }}
                     >
                       <option value="">Select bank</option>
+                      {legacyDraftBank ? <option value={legacyDraftBank}>Legacy: {legacyDraftBank}</option> : null}
                       {BANK_NAMES.map((bankName) => <option key={bankName} value={bankName}>{bankName}</option>)}
                     </NativeSelect>
                   </Field>
@@ -462,7 +474,11 @@ export function CompanyClientProfileEditorCards({
                       aria-invalid={draftBankError ? true : undefined}
                       onChange={(event) => setDraft((current) => ({ ...current, bank_account: { ...(current.bank_account ?? {}), account_number: event.target.value } }))}
                     />
-                    <p className="text-xs text-muted-foreground">{bankAccountPrefixHint(draftBankName)}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {legacyDraftBank
+                        ? "Historical bank remains unchanged until you select FNB, PB, STD or NB and enter a matching new account number."
+                        : bankAccountPrefixHint(draftBankName)}
+                    </p>
                     {draftBankError ? <p className="text-xs font-semibold text-destructive">{draftBankError}</p> : null}
                   </Field>
                   <label className="flex items-center gap-3 rounded-xl border p-3 sm:col-span-2"><Checkbox checked={draft.bank_account?.salary_account === true} onCheckedChange={(checked) => setDraft((current) => ({ ...current, bank_account: { ...(current.bank_account ?? {}), salary_account: checked === true } }))} /><span className="text-sm font-bold">Salary is paid into this account</span></label>
