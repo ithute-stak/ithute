@@ -104,3 +104,28 @@ def test_employee_bank_account_requires_supported_bank_and_matching_prefix():
             bank_name="PB",
             bank_account_number="6123456789",
         )
+
+
+def test_employee_partial_update_keeps_omitted_banking_fields_unset():
+    profile = EmployeeProfileUpdate(
+        employee_number="EMP-004",
+        job_title="Credit Analyst",
+    )
+
+    update = profile.model_dump(exclude_unset=True)
+    assert update["employee_number"] == "EMP-004"
+    assert update["job_title"] == "Credit Analyst"
+    assert "bank_name" not in update
+    assert "bank_account_number" not in update
+
+
+def test_employee_can_explicitly_clear_bank_pair_without_partial_inconsistency():
+    profile = EmployeeProfileUpdate(
+        employee_number="EMP-005",
+        bank_name=None,
+        bank_account_number=None,
+    )
+
+    update = profile.model_dump(exclude_unset=True)
+    assert update["bank_name"] is None
+    assert update["bank_account_number"] is None
