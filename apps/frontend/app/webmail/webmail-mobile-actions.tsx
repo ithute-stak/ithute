@@ -5,6 +5,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
+type MobileView = "inbox" | "starred" | "attachments";
+
 function buttonsInMail() {
   return Array.from(document.querySelectorAll<HTMLButtonElement>(".imail-route-webmail button"));
 }
@@ -37,11 +39,13 @@ export function WebmailMobileActions() {
   const pathname = usePathname();
   const [mailboxReady, setMailboxReady] = useState(false);
   const [messageOpen, setMessageOpen] = useState(false);
+  const [activeView, setActiveView] = useState<MobileView>("inbox");
 
   useEffect(() => {
     if (pathname !== "/webmail") {
       setMailboxReady(false);
       setMessageOpen(false);
+      setActiveView("inbox");
       return;
     }
 
@@ -68,15 +72,30 @@ export function WebmailMobileActions() {
         Compose
       </button>
       <nav className="imail-mobile-nav" aria-label="Mobile mailbox navigation">
-        <button type="button" data-active="true" onClick={openInbox}>
+        <button
+          type="button"
+          data-active={activeView === "inbox"}
+          aria-current={activeView === "inbox" ? "page" : undefined}
+          onClick={() => { setActiveView("inbox"); openInbox(); }}
+        >
           <Inbox size={19} />
           Inbox
         </button>
-        <button type="button" onClick={openStarred}>
+        <button
+          type="button"
+          data-active={activeView === "starred"}
+          aria-current={activeView === "starred" ? "page" : undefined}
+          onClick={() => { setActiveView("starred"); openStarred(); }}
+        >
           <Star size={19} />
           Starred
         </button>
-        <button type="button" onClick={openAttachments}>
+        <button
+          type="button"
+          data-active={activeView === "attachments"}
+          aria-current={activeView === "attachments" ? "page" : undefined}
+          onClick={() => { setActiveView("attachments"); openAttachments(); }}
+        >
           <Paperclip size={19} />
           Attachments
         </button>
