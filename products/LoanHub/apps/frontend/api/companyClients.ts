@@ -57,7 +57,24 @@ export async function updateCompanyClientProfile(
   accountId: string,
   payload: CompanyClientProfileUpdate,
 ): Promise<CompanyClientProfile> {
-  return (await api.patch<CompanyClientProfile>(`/company-clients/${accountId}/profile`, payload)).data;
+  let requestPayload = payload;
+  if (payload.bank_account && !String(payload.bank_account.account_number || "").trim()) {
+    // A blank account number means "keep the encrypted account already on file".
+    // Do not resend bank/routing fields in that case: the backend deliberately
+    // requires a matching new account number whenever those fields are changed.
+    const {
+      bank_name: _bankName,
+      branch_name: _branchName,
+      branch_code: _branchCode,
+      account_number: _accountNumber,
+      ...unchangedBankFields
+    } = payload.bank_account;
+    requestPayload = {
+      ...payload,
+      bank_account: unchangedBankFields,
+    };
+  }
+  return (await api.patch<CompanyClientProfile>(`/company-clients/${accountId}/profile`, requestPayload)).data;
 }
 
 export async function requestCompanyClientNationalIdChange(
