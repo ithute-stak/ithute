@@ -38,6 +38,20 @@ jobs:
       - name: Apply employer group implementation
         run: python .github/scripts/loanhub_groups_code.py
 
+      - name: Align borrower registration form typing
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          target = Path("products/LoanHub/apps/frontend/types/borrower.ts")
+          content = target.read_text(encoding="utf-8")
+          old = "    employer_name: string;\n    employer_group_id: string | null;\n"
+          new = "    employer_name: string | null;\n    employer_group_id: string | null;\n"
+          if old not in content:
+              raise SystemExit("CreateBorrowerPayload employer_name anchor was not found")
+          target.write_text(content.replace(old, new, 1), encoding="utf-8")
+          PY
+
       - name: Compile LoanHub backend
         working-directory: products/LoanHub/apps/backend
         run: python -m compileall -q .
