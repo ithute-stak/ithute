@@ -15,7 +15,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { MailClient } from "./mail-client";
+import { HostedMailWorkspace } from "./hosted-workspace";
 import { API, webmail } from "./mail-types";
 
 type LoginMode = "mailbox" | "system";
@@ -202,7 +202,7 @@ export function WebmailEntry() {
     );
   }
 
-  if (sessionState === "mailbox") return <MailClient />;
+  if (sessionState === "mailbox") return <HostedMailWorkspace />;
 
   return (
     <main className="imail-login-page">
