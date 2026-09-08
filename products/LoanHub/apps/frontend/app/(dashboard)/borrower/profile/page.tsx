@@ -2,6 +2,7 @@
 
 import { originationApi } from "@/api/origination";
 import { BorrowerEvaluationEvidence } from "@/components/borrower/borrower-evaluation-evidence";
+import { BankAccountsStep } from "@/components/clients/bank-accounts-step";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -144,25 +145,6 @@ const emptyDebt = (): DebtObligationInput => ({
   notes: null,
 });
 
-const emptyBank = (name: string): BankAccountInput => ({
-  id: null,
-  account_holder: name,
-  bank_name: "",
-  branch_name: null,
-  branch_code: null,
-  account_type: "savings",
-  currency: "LSL",
-  account_number: null,
-  salary_account: false,
-  verification_status: "unverified",
-  verification_reference: null,
-  tokenized_card_provider: null,
-  tokenized_card_reference: null,
-  masked_card_number: null,
-  card_brand: null,
-  card_expiry_month: null,
-  card_expiry_year: null,
-});
 
 const emptyBorrower = {
   consent_to_share_profile: false,
@@ -531,16 +513,14 @@ function BankingStep({ values, onChange, identityName }: {
   onChange: (value: BankAccountInput[]) => void;
   identityName: string;
 }) {
-  const update = (index: number, patch: Partial<BankAccountInput>) => onChange(values.map((row, i) => {
-    if (patch.salary_account && i !== index) return { ...row, salary_account: false };
-    return i === index ? { ...row, ...patch } : row;
-  }));
-  return <div className="space-y-5">
-    <div className="rounded-2xl border bg-muted/20 p-4"><p className="font-black">Multiple protected bank accounts</p><p className="mt-1 text-sm text-muted-foreground">Full account numbers are encrypted. LoanHub never accepts CVV, CVC or PIN. Lenders control verification status.</p></div>
-    <ArrayHeader title="My bank accounts" action="Add account" onAdd={() => onChange([...values, emptyBank(identityName)])} />
-    {!values.length ? <div className="rounded-3xl border border-dashed p-10 text-center text-muted-foreground"><Landmark className="mx-auto mb-3 h-10 w-10 text-primary" />No bank accounts captured yet.</div> : null}
-    {values.map((item, index) => <div key={item.id ?? index} className="space-y-4 rounded-3xl border p-5"><div className="flex items-center justify-between"><div><p className="font-black">Account {index + 1}</p><Badge variant="outline">{titleCase(item.verification_status)}</Badge></div><Button type="button" variant="ghost" onClick={() => onChange(values.filter((_, i) => i !== index))}><Trash2 className="h-4 w-4" />Remove</Button></div><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><Field label="Account holder"><Input value={item.account_holder} onChange={(event) => update(index, { account_holder: event.target.value })} /></Field><Field label="Bank name"><Input value={item.bank_name} onChange={(event) => update(index, { bank_name: event.target.value })} /></Field><Field label="Account number"><Input type="password" value={item.account_number ?? ""} onChange={(event) => update(index, { account_number: event.target.value || null })} placeholder={item.id ? "Blank keeps encrypted number" : "Required"} /></Field><Field label="Branch name"><Input value={item.branch_name ?? ""} onChange={(event) => update(index, { branch_name: event.target.value || null })} /></Field><Field label="Branch code"><Input value={item.branch_code ?? ""} onChange={(event) => update(index, { branch_code: event.target.value || null })} /></Field><Field label="Account type"><NativeSelect value={item.account_type} onChange={(event) => update(index, { account_type: event.target.value })}><option value="savings">Savings</option><option value="current">Current</option><option value="transmission">Transmission</option></NativeSelect></Field><Consent label="Salary account" checked={item.salary_account} onChange={(salary_account) => update(index, { salary_account })} /></div></div>)}
-  </div>;
+  return (
+    <BankAccountsStep
+      values={values}
+      onChange={onChange}
+      identityName={identityName}
+      ownerLabel="My"
+    />
+  );
 }
 
 function AffordabilityStep({ declaredIncome, verifiedIncome, expenses, debts, disposable }: {
