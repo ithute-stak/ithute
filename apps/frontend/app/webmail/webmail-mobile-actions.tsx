@@ -49,7 +49,7 @@ export function WebmailMobileActions() {
       const root = document.querySelector(".imail-route-webmail");
       const authenticatedShell = root?.querySelector("header") && root?.querySelector("main");
       setMailboxReady(Boolean(authenticatedShell));
-      setMessageOpen(Boolean(root?.querySelector("main article")));
+      setMessageOpen(Boolean(root?.querySelector("main article.imail-message-reader")));
     };
 
     sync();
