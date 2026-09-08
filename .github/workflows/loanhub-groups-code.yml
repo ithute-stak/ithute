@@ -98,7 +98,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm .github/scripts/loanhub_groups_code.py .github/workflows/loanhub-groups-code.yml
+          git rm -f .github/scripts/loanhub_groups_code.py .github/workflows/loanhub-groups-code.yml
           git add products/LoanHub
           git commit -m "feat(loanhub): add employer groups and income pay-day classification"
           git push origin HEAD:groups/code
