@@ -78,8 +78,9 @@ export function MailContent({ text, openLinksNewTab = true, fontScale = "normal"
   );
 }
 
-export function MailPrivacyNote({ mode = "external" }: { mode?: "external" | "hosted" }) {
-  const copy = mode === "hosted"
+export function MailPrivacyNote({ mode }: { mode?: "external" | "hosted" } = {}) {
+  const hosted = mode === "hosted" || (!mode && typeof window !== "undefined" && window.location.pathname === "/webmail");
+  const copy = hosted
     ? "iMail renders hosted messages through the safe mail reader. Remote tracking content and executable email code stay blocked."
     : "iMail reads external messages as safe text. Links are detected and made clickable without executing remote email code or tracking images.";
 
