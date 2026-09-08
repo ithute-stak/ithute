@@ -1,10 +1,9 @@
 /*
  * iMail settings drawer responsiveness
  * -----------------------------------
- * The settings panel must remain usable on older laptop/desktop panels such as
- * 1366x768, 1280x720 and 1024x768 while still scaling cleanly to modern wide
- * displays and phones. These rules are intentionally scoped to semantic
- * settings classes so they cannot leak into the mailbox workspace.
+ * Keep the settings panel readable from older 1024/1280/1366-class PCs through
+ * modern desktops and phones. This layer is deliberately scoped to semantic
+ * settings classes so it cannot resize the mailbox workspace itself.
  */
 
 .imail-settings-overlay {
@@ -12,7 +11,9 @@
 }
 
 .imail-settings-drawer {
-  width: clamp(390px, 34vw, 470px) !important;
+  flex: 0 0 auto !important;
+  width: 470px !important;
+  min-width: 390px !important;
   max-width: min(470px, 100vw) !important;
   height: 100dvh !important;
   max-height: 100dvh !important;
@@ -41,17 +42,23 @@
   min-width: 0;
 }
 
+/* Never split ordinary setting labels into one-character columns. */
 .imail-settings-option-title,
 .imail-settings-option-subtitle,
-.imail-settings-toggle span {
-  overflow-wrap: anywhere;
+.imail-settings-toggle span,
+.imail-settings-header p,
+.imail-settings-section-title {
+  overflow-wrap: normal !important;
+  word-break: normal !important;
+  hyphens: none !important;
 }
 
-/* Common older widescreen laptops/desktops. Keep the drawer useful rather than
-   allowing the content cards to collapse into a narrow strip. */
-@media (max-width: 1366px) and (min-width: 901px) {
+/* 1366x768 / 1280x720 generation laptops. */
+@media (max-width: 1366px) and (min-width: 1101px) {
   .imail-settings-drawer {
-    width: clamp(410px, 36vw, 450px) !important;
+    width: 450px !important;
+    min-width: 420px !important;
+    max-width: 450px !important;
   }
 
   .imail-settings-body {
@@ -60,12 +67,13 @@
   }
 }
 
-/* 1024-class desktop/tablet landscape. The mailbox remains visible, but the
-   drawer gets enough width for readable controls. */
+/* 1024-class desktop/tablet landscape. Give the drawer a real readable width
+   and stack the choices that would otherwise become cramped. */
 @media (max-width: 1100px) and (min-width: 701px) {
   .imail-settings-drawer {
-    width: min(420px, 46vw) !important;
-    min-width: 370px;
+    width: 420px !important;
+    min-width: 390px !important;
+    max-width: 44vw !important;
   }
 
   .imail-settings-grid-appearance,
@@ -78,7 +86,7 @@
   }
 }
 
-/* Short-height screens: reduce decorative whitespace, not functionality. */
+/* Short-height screens: reduce decorative whitespace without removing controls. */
 @media (max-height: 800px) and (min-width: 641px) {
   .imail-settings-header {
     height: 54px !important;
@@ -159,8 +167,8 @@
   }
 }
 
-/* Very short old laptop/browser viewports. Hide explanatory copy that duplicates
-   the title so every control remains reachable without excessive scrolling. */
+/* Very short old laptop/browser viewports. Hide duplicated helper copy while
+   keeping every setting and every title visible. */
 @media (max-height: 680px) and (min-width: 641px) {
   .imail-settings-header-subtitle,
   .imail-settings-option-subtitle,
@@ -184,7 +192,7 @@
   }
 }
 
-/* Narrow screens use the settings panel as a full-screen sheet. */
+/* Phones and genuinely narrow windows use a full-screen settings sheet. */
 @media (max-width: 700px) {
   .imail-settings-overlay {
     background: rgba(8, 21, 18, .72) !important;
@@ -192,6 +200,7 @@
   }
 
   .imail-settings-drawer {
+    flex-basis: auto !important;
     width: 100vw !important;
     min-width: 0 !important;
     max-width: 100vw !important;
