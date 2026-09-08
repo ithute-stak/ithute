@@ -56,6 +56,7 @@ import { calculateLoan } from "@/api/loans";
 import { MicroLoanPreview } from "@/components/loans/micro-loan-preview";
 import { CompanyClientDirectoryWorkspace } from "@/components/clients/company-client-directory-workspace";
 import { CompanyClientProfileDialog } from "@/components/clients/company-client-profile-dialog";
+import { EmployerGroupRegistrationField } from "@/components/clients/employer-group-registration-field";
 import {
   ExternalDebtRegistrationFields,
   activeExternalDebtBalance,
@@ -123,6 +124,9 @@ const emptyClient: AssistedCompanyClientCreate = {
   physical_address: null,
   employment_status: "employed",
   employer_name: null,
+  employer_group_id: null,
+  new_employer_group: null,
+  income_day: null,
   job_title: null,
   monthly_income: null,
   salary_date: null,
@@ -649,6 +653,13 @@ export default function CompanyClientsPage() {
 
     if (step === 2) {
       if (Number(clientForm.monthly_income ?? 0) < 0) errors.push("Monthly income cannot be negative.");
+      const needsIncomeDay = ["employed", "self_employed", "pensioner"].includes(clientForm.employment_status);
+      if (clientForm.employment_status === "employed" && !clientForm.employer_group_id && !clientForm.new_employer_group) {
+        errors.push("Select the borrower’s employer/work group or add a new group.");
+      }
+      if (needsIncomeDay && !clientForm.income_day) {
+        errors.push("Enter the borrower’s normal income/pay day (1–31).");
+      }
       clientForm.external_debts.forEach((debt, index) => {
         const label = `Existing loan ${index + 1}`;
         if (!debt.creditor.trim()) errors.push(`${label}: enter the lender or creditor.`);
@@ -774,7 +785,7 @@ export default function CompanyClientsPage() {
         physical_address: optional(clientForm.physical_address),
         employer_name: optional(clientForm.employer_name),
         job_title: optional(clientForm.job_title),
-        salary_date: optional(clientForm.salary_date),
+        salary_date: clientForm.income_day ? String(clientForm.income_day) : optional(clientForm.salary_date),
       });
       setClients((current) => [created, ...current]);
       resetClientDialog();
@@ -1352,14 +1363,26 @@ export default function CompanyClientsPage() {
                             </SelectContent>
                           </Select>
                         </Field>
-                        <Field label="Employer or business">
-                          <Input className="h-11" autoFocus value={clientForm.employer_name ?? ""} onChange={(event) => updateClient("employer_name", event.target.value)} />
-                        </Field>
+                        <div className="md:col-span-2">
+                          <EmployerGroupRegistrationField
+                            employerGroupId={clientForm.employer_group_id}
+                            employerName={clientForm.employer_name}
+                            newEmployerGroup={clientForm.new_employer_group}
+                            required={clientForm.employment_status === "employed"}
+                            onChange={(selection) => {
+                              setClientStepErrors([]);
+                              setClientForm((current) => ({ ...current, ...selection }));
+                            }}
+                          />
+                        </div>
                         <Field label="Job title">
                           <Input className="h-11" value={clientForm.job_title ?? ""} onChange={(event) => updateClient("job_title", event.target.value)} />
                         </Field>
                         <Field label="Monthly income" description="Gross monthly income declared by the borrower.">
                           <Input className="h-11" type="number" min={0} step="0.01" inputMode="decimal" value={clientForm.monthly_income ?? ""} onChange={(event) => updateClient("monthly_income", event.target.value ? Number(event.target.value) : null)} />
+                        </Field>
+                        <Field label="Income / pay day" description="Day of the month the borrower normally receives income, for example 20 for the 20th.">
+                          <Input className="h-11" type="number" min={1} max={31} inputMode="numeric" value={clientForm.income_day ?? ""} onChange={(event) => updateClient("income_day", event.target.value ? Number(event.target.value) : null)} placeholder="1–31" />
                         </Field>
                       </div>
 
@@ -1400,7 +1423,8 @@ export default function CompanyClientsPage() {
                           </ReviewCard>
                           <ReviewCard icon={BriefcaseBusiness} title="Employment and affordability">
                             <ReviewItem label="Employment" value={titleCase(clientForm.employment_status)} />
-                            <ReviewItem label="Employer" value={clientForm.employer_name || "Not supplied"} />
+                            <ReviewItem label="Employer / work group" value={clientForm.new_employer_group ? `${clientForm.new_employer_group.code} — ${clientForm.new_employer_group.name}` : (clientForm.employer_name || "Not supplied")} />
+                            <ReviewItem label="Income / pay day" value={clientForm.income_day ? `Day ${clientForm.income_day} of each month` : "Not supplied"} />
                             <ReviewItem label="Monthly income" value={clientForm.monthly_income !== null ? formatMoney(clientForm.monthly_income) : "Not supplied"} />
                             <ReviewItem label="External loans" value={clientForm.external_debts.length > 0 ? `${clientForm.external_debts.length} tracked · ${formatMoney(externalDebtBalanceTotal)}` : "None recorded"} />
                             <ReviewItem label="Monthly debt commitment" value={formatMoney(externalDebtMonthlyCommitment)} />

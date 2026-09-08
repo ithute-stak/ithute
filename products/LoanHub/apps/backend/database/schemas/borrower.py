@@ -34,6 +34,8 @@ class BorrowerBase(BorrowerEvaluationFields):
 
     employment_status: EmploymentStatus
     employer_name: Optional[str] = None
+    employer_group_id: Optional[UUID] = None
+    income_day: Optional[int] = Field(default=None, ge=1, le=31)
     job_title: Optional[str] = None
     monthly_income: Optional[Decimal] = Field(default=None, ge=0)
     salary_date: Optional[str] = None
@@ -53,6 +55,8 @@ class BorrowerUpdate(BaseModel):
     employment_status: Optional[EmploymentStatus] = None
     employment_type: Optional[str] = Field(default=None, max_length=50)
     employer_name: Optional[str] = None
+    employer_group_id: Optional[UUID] = None
+    income_day: Optional[int] = Field(default=None, ge=1, le=31)
     job_title: Optional[str] = None
     employment_start_date: Optional[date] = None
     monthly_income: Optional[Decimal] = Field(default=None, ge=0)

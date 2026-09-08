@@ -35,6 +35,13 @@ class Borrower(Base):
     )
     employment_type = Column(String(50), nullable=True)
     employer_name = Column(String(200), nullable=True)
+    employer_group_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("employer_groups.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    income_day = Column(Integer, nullable=True)
     job_title = Column(String(150), nullable=True)
     employment_start_date = Column(Date, nullable=True)
 
@@ -64,6 +71,10 @@ class Borrower(Base):
     user = relationship(
         "User",
         back_populates="borrower_profile",
+    )
+    employer_group = relationship(
+        "EmployerGroup",
+        back_populates="borrowers",
     )
 
     loans = relationship(
