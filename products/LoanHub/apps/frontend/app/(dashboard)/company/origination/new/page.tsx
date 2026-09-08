@@ -35,6 +35,7 @@ import { listLoanProducts } from "@/api/loanProducts";
 import { uploadManagedFile } from "@/api/files";
 import { calculateLoan } from "@/api/loans";
 import { originationApi } from "@/api/origination";
+import { BankAccountsStep } from "@/components/clients/bank-accounts-step";
 import { MicroLoanPreview } from "@/components/loans/micro-loan-preview";
 import { InstallmentDueDateFields, installmentDueDatesComplete, resizeInstallmentDueDates } from "@/components/loans/installment-due-date-fields";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -169,25 +170,6 @@ const emptyDebt = (): DebtObligationInput => ({
   notes: null,
 });
 
-const emptyBank = (identityName: string): BankAccountInput => ({
-  id: null,
-  account_holder: identityName,
-  bank_name: "",
-  branch_name: null,
-  branch_code: null,
-  account_type: "savings",
-  currency: "LSL",
-  account_number: null,
-  salary_account: false,
-  verification_status: "unverified",
-  verification_reference: null,
-  tokenized_card_provider: null,
-  tokenized_card_reference: null,
-  masked_card_number: null,
-  card_brand: null,
-  card_expiry_month: null,
-  card_expiry_year: null,
-});
 
 export default function NewOriginationPage() {
   return <Suspense fallback={<PageLoader rows={10} />}><OriginationWizard /></Suspense>;
@@ -828,36 +810,16 @@ function BankingStep({
   onChange: (value: BankAccountInput[]) => void;
   identityName: string;
 }) {
-  const update = (index: number, patch: Partial<BankAccountInput>) => {
-    onChange(values.map((item, rowIndex) => {
-      if (patch.salary_account && rowIndex !== index) return { ...item, salary_account: false };
-      return rowIndex === index ? { ...item, ...patch } : item;
-    }));
-  };
-
-  return <div className="space-y-6">
-    <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Protected shared banking data</AlertTitle><AlertDescription>Borrowers can keep multiple accounts. Account numbers and provider tokens are encrypted, while CVV, CVC and PIN are never accepted. Leave an existing account number blank to retain it.</AlertDescription></Alert>
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><h3 className="font-black">Bank accounts</h3><p className="text-sm text-muted-foreground">This system-wide profile is visible to concerned lenders with borrower consent.</p></div>
-      <Button type="button" variant="outline" onClick={() => onChange([...values, emptyBank(identityName)])}><Plus className="h-4 w-4" />Add another account</Button>
-    </div>
-    {!values.length ? <div className="rounded-3xl border border-dashed p-10 text-center"><Landmark className="mx-auto h-10 w-10 text-primary" /><h3 className="mt-3 font-black">No bank accounts captured</h3><Button type="button" className="mt-5" onClick={() => onChange([emptyBank(identityName)])}><Plus className="h-4 w-4" />Add bank account</Button></div> : null}
-    {values.map((value, index) => <div key={value.id ?? `new-${index}`} className="space-y-5 rounded-3xl border bg-muted/10 p-5">
-      <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wider text-primary">Account {index + 1}</p><p className="text-sm text-muted-foreground">{value.id ? "Existing protected account" : "New account"}</p></div><Button variant="ghost" type="button" onClick={() => onChange(values.filter((_, rowIndex) => rowIndex !== index))}><Trash2 className="h-4 w-4" />Remove</Button></div>
-      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        <Field label="Account holder"><Input value={value.account_holder} onChange={(event) => update(index, { account_holder: event.target.value })} /></Field>
-        <Field label="Bank name"><Input value={value.bank_name} onChange={(event) => update(index, { bank_name: event.target.value })} /></Field>
-        <Field label="Account number"><Input type="password" value={value.account_number ?? ""} onChange={(event) => update(index, { account_number: event.target.value || null })} placeholder={value.id ? "Blank keeps encrypted number" : "Required for a new account"} /></Field>
-        <Field label="Branch name"><Input value={value.branch_name ?? ""} onChange={(event) => update(index, { branch_name: event.target.value || null })} /></Field>
-        <Field label="Branch code"><Input value={value.branch_code ?? ""} onChange={(event) => update(index, { branch_code: event.target.value || null })} /></Field>
-        <Field label="Account type"><Select value={value.account_type} onValueChange={(account_type) => update(index, { account_type })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="savings">Savings</SelectItem><SelectItem value="current">Current</SelectItem><SelectItem value="transmission">Transmission</SelectItem></SelectContent></Select></Field>
-        <Field label="Verification status"><Select value={value.verification_status} onValueChange={(verification_status: BankAccountInput["verification_status"]) => update(index, { verification_status })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["unverified", "pending", "verified", "failed"].map((item) => <SelectItem key={item} value={item}>{titleCase(item)}</SelectItem>)}</SelectContent></Select></Field>
-        <Field label="Verification reference"><Input value={value.verification_reference ?? ""} onChange={(event) => update(index, { verification_reference: event.target.value || null })} /></Field>
-        <div className="flex items-end"><Check label="Salary account" checked={value.salary_account} onChange={(salary_account) => update(index, { salary_account })} /></div>
-      </div>
-      <div className="rounded-3xl border bg-background p-5"><h3 className="font-black">Tokenized card reference (optional)</h3><p className="mt-1 text-xs text-muted-foreground">Only PCI-provider tokens and masked card metadata may be stored.</p><div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Input value={value.tokenized_card_provider ?? ""} onChange={(event) => update(index, { tokenized_card_provider: event.target.value || null })} placeholder="Provider" /><Input type="password" value={value.tokenized_card_reference ?? ""} onChange={(event) => update(index, { tokenized_card_reference: event.target.value || null })} placeholder="Provider token" /><Input value={value.masked_card_number ?? ""} onChange={(event) => update(index, { masked_card_number: event.target.value || null })} placeholder="Masked, e.g. **** 4832" /><Input value={value.card_brand ?? ""} onChange={(event) => update(index, { card_brand: event.target.value || null })} placeholder="Card brand" /></div></div>
-    </div>)}
-  </div>;
+  return (
+    <BankAccountsStep
+      values={values}
+      onChange={onChange}
+      identityName={identityName}
+      allowVerification
+      allowTokenizedCard
+      ownerLabel="Borrower"
+    />
+  );
 }
 
 function AffordabilityStep({ calculation, assessment, totalExpenses, totalDebts, verifiedIncome }: { calculation: MicroLoanCalculation | null; assessment: AffordabilityAssessment | null; totalExpenses: number; totalDebts: number; verifiedIncome: number }) {
