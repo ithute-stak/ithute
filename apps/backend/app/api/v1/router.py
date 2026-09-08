@@ -20,6 +20,7 @@ from app.api.v1 import (
     external_webmail_register,
     external_webmail_rich,
     external_webmail_rich_alias,
+    external_webmail_smart,
     hosting,
     identity,
     ithute_auth,
@@ -70,11 +71,12 @@ api_router.include_router(hosting.router)
 api_router.include_router(platform_setup.router)
 api_router.include_router(transactional.router)
 api_router.include_router(webmail.router)
-# Exact counts and rich compose aliases are registered before the legacy
-# external router so the newer behavior wins for identical paths while the
-# established session/message contract remains unchanged.
+# Exact counts, smart provider setup and rich compose aliases are registered
+# before the legacy external router so the newer behavior wins for identical
+# paths while the established session/message contract remains unchanged.
 api_router.include_router(external_webmail_counts.router)
 api_router.include_router(external_webmail_rich_alias.router)
+api_router.include_router(external_webmail_smart.router)
 api_router.include_router(external_webmail.router)
 api_router.include_router(external_webmail_rich.router)
 api_router.include_router(external_webmail_known.router)

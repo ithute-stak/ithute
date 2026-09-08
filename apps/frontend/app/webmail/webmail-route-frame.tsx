@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 function routeClass(pathname: string) {
+  if (pathname.startsWith("/webmail/migrate")) return "imail-route-migrate";
   if (pathname.startsWith("/webmail/external")) return "imail-route-external";
   if (pathname.startsWith("/webmail/settings")) return "imail-route-settings";
   if (pathname.startsWith("/webmail/compose")) return "imail-route-compose";
