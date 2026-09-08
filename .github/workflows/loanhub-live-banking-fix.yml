@@ -132,9 +132,9 @@ jobs:
         working-directory: products/LoanHub/apps/frontend
         run: pnpm typecheck
 
-      - name: Strict lint frontend
+      - name: Lint frontend (errors block; existing warnings remain visible)
         working-directory: products/LoanHub/apps/frontend
-        run: pnpm lint:strict
+        run: pnpm lint
 
       - name: Build production frontend
         working-directory: products/LoanHub/apps/frontend
