@@ -20,6 +20,33 @@ jobs:
         with:
           ref: loanhub-owner-payment-backdating
 
+      - name: Disambiguate ordinary repayment patch
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/loanhub_owner_payment_backdating.py')
+          lines = path.read_text().splitlines()
+          output = []
+          replaced = False
+          for line in lines:
+              if '"cash route pass date")' in line:
+                  output.extend([
+                      'text = loans_router.read_text()',
+                      'needle = "        notes=payload.notes,\\n        idempotency_key=payload.idempotency_key,\\n    )\\n    receipt_number, receipt_file = payment_receipt_payload(db, payment.id)\\n"',
+                      'replacement = "        notes=payload.notes,\\n        idempotency_key=payload.idempotency_key,\\n        effective_date=effective_date,\\n    )\\n    receipt_number, receipt_file = payment_receipt_payload(db, payment.id)\\n"',
+                      'index = text.find(needle)',
+                      'if index < 0:',
+                      '    raise SystemExit("cash route pass date anchor missing")',
+                      'loans_router.write_text(text[:index] + replacement + text[index + len(needle):])',
+                  ])
+                  replaced = True
+              else:
+                  output.append(line)
+          if not replaced:
+              raise SystemExit('cash route patch line was not found')
+          path.write_text('\n'.join(output) + '\n')
+          PY
+
       - name: Apply owner-only payment backdating policy
         run: python3 .github/scripts/loanhub_owner_payment_backdating.py
 
