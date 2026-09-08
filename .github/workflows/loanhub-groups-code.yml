@@ -57,24 +57,28 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: products/LoanHub/apps/frontend/package-lock.json
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.21.0 --activate
+          pnpm --version
 
       - name: Install frontend dependencies
         working-directory: products/LoanHub/apps/frontend
-        run: npm ci --no-audit --no-fund
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck frontend
         working-directory: products/LoanHub/apps/frontend
-        run: npm run typecheck --if-present
+        run: pnpm run typecheck
 
       - name: Lint frontend
         working-directory: products/LoanHub/apps/frontend
-        run: npm run lint --if-present
+        run: pnpm run lint
 
       - name: Build frontend
         working-directory: products/LoanHub/apps/frontend
-        run: npm run build
+        run: pnpm run build
 
       - name: Commit validated branch implementation
         run: |
