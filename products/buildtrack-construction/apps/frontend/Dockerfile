@@ -11,12 +11,12 @@ ENV NPM_CONFIG_FETCH_RETRIES=5 \
 COPY package.json package-lock.json ./
 RUN set -eux; \
     for attempt in 1 2 3; do \
-        npm install --package-lock=false --no-audit --no-fund && break; \
+        npm ci --no-audit --no-fund && break; \
         if [ "$attempt" -eq 3 ]; then \
-            echo "npm install failed after 3 attempts" >&2; \
+            echo "npm ci failed after 3 attempts" >&2; \
             exit 1; \
         fi; \
-        echo "npm install failed (attempt ${attempt}/3); retrying in 10 seconds..." >&2; \
+        echo "npm ci failed (attempt ${attempt}/3); retrying in 10 seconds..." >&2; \
         sleep 10; \
     done
 
@@ -28,9 +28,12 @@ COPY . .
 RUN npm run build
 
 FROM base AS runner
-ENV NODE_ENV=production
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+ENV NODE_ENV=production \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+COPY --from=builder --chown=node:node /app/public ./public
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+USER node
 EXPOSE 3000
 CMD ["node", "server.js"]
