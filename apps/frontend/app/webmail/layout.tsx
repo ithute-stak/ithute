@@ -15,6 +15,7 @@ import "./approved-settings.css";
 import "./external-workspace-fix.css";
 import "./external-connect-premium.css";
 import "./internal-webmail-premium.css";
+import "./internal-message-content.css";
 import "./mailbox-brand-unified.css";
 import "./internal-webmail-live-scope.css";
 import "./mail-settings-responsive.css";
