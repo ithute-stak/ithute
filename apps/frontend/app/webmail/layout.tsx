@@ -1,11 +1,14 @@
 import type { ReactNode } from "react";
+import { MailBrowserNotifications } from "./mail-browser-notifications";
 import { MailLinkEnhancer } from "./mail-link-enhancer";
-import { MailMigrationShortcut } from "./mail-migration-shortcut";
 import { MailRealtime } from "./mail-realtime";
 import { MailSettingsThemeEnhancer } from "./mail-settings-theme-enhancer";
 import { MailThemeBridge } from "./mail-theme-bridge";
+import { WebmailAutomationRunner } from "./webmail-automation-runner";
 import { WebmailMobileActions } from "./webmail-mobile-actions";
+import { WebmailNextNav } from "./webmail-next-nav";
 import { WebmailRouteFrame } from "./webmail-route-frame";
+import { WebmailServiceWorkerRegister } from "./webmail-sw-register";
 import styles from "./webmail.module.css";
 import "./source-skin.css";
 import "./mobile-responsive.css";
@@ -24,16 +27,21 @@ import "./mail-white600.css";
 import "./mail-workspace-unified.css";
 import "./hosted-workspace-polish.css";
 import "./hosted-message-stability.css";
+import "./next-generation-responsive.css";
+import "./next-generation-mobile-nav.css";
 
 export default function WebmailLayout({ children }: { children: ReactNode }) {
   return (
     <div className={`${styles.surface} sourceGmailSkin`}>
       <MailThemeBridge />
       <MailSettingsThemeEnhancer />
+      <WebmailServiceWorkerRegister />
       <MailRealtime />
+      <MailBrowserNotifications />
+      <WebmailAutomationRunner />
       <MailLinkEnhancer />
       <WebmailRouteFrame>{children}</WebmailRouteFrame>
-      <MailMigrationShortcut />
+      <WebmailNextNav />
       <WebmailMobileActions />
     </div>
   );
