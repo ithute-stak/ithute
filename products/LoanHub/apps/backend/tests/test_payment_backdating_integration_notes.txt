@@ -1,2 +1,0 @@
-Owner-only payment backdating is enforced by utils/payment_dates.py and exercised by test_payment_backdating_policy.py.
-The validated flow also passed backend compilation, frontend typecheck, frontend lint, and production frontend build on GitHub Actions run 34264834792.
