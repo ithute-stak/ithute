@@ -2,6 +2,7 @@ import hashlib
 import imaplib
 import os
 import re
+import shutil
 from pathlib import Path
 
 from app.core.config import settings
@@ -48,6 +49,23 @@ def _maildir_for(address: str, folder: str) -> Path:
     local, domain = address.lower().split("@", 1)
     base = Path(settings.mail_data_path) / domain / local / "Maildir"
     return base if not folder else base / f".{folder}"
+
+
+def _maildir_root(address: str) -> Path:
+    return _maildir_for(address, "")
+
+
+def _maildir_size(root: Path) -> int:
+    if not root.exists():
+        return 0
+    total = 0
+    for path in root.rglob("*"):
+        try:
+            if path.is_file():
+                total += path.stat().st_size
+        except (FileNotFoundError, PermissionError, OSError):
+            continue
+    return total
 
 
 def _maildir_flags(meta: bytes | str) -> str:
@@ -110,6 +128,38 @@ def _quote_folder(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def _ensure_capacity(
+    *,
+    root: Path,
+    current_bytes: int,
+    incoming_bytes: int,
+    destination_quota_bytes: int | None,
+) -> None:
+    if destination_quota_bytes is not None and destination_quota_bytes > 0:
+        if current_bytes + incoming_bytes > destination_quota_bytes:
+            remaining = max(0, destination_quota_bytes - current_bytes)
+            raise RuntimeError(
+                f"Destination mailbox quota would be exceeded. "
+                f"Remaining quota is {remaining} bytes; increase the mailbox quota or free space, then resume the migration."
+            )
+
+    # Keep a small operational reserve so a migration cannot consume the last
+    # bytes needed by Dovecot, indexes, logs and normal mail delivery.
+    probe = root if root.exists() else root.parent
+    while not probe.exists() and probe.parent != probe:
+        probe = probe.parent
+    try:
+        free = shutil.disk_usage(probe).free
+    except OSError:
+        return
+    reserve = max(256 * 1024 * 1024, incoming_bytes * 2)
+    if free < incoming_bytes + reserve:
+        raise RuntimeError(
+            "The mail server does not have enough safe free disk space to continue this migration. "
+            "Free storage and resume the migration; source messages have not been deleted."
+        )
+
+
 def migrate_imap_mailbox(
     *,
     destination_address: str,
@@ -119,9 +169,12 @@ def migrate_imap_mailbox(
     oauth2_token: str | None = None,
     source_host: str | None = None,
     source_port: int | None = None,
+    destination_quota_bytes: int | None = None,
 ) -> dict:
     host, port = provider_endpoint(source_provider, source_host, source_port)
     client = imaplib.IMAP4_SSL(host, port)
+    root = _maildir_root(destination_address)
+    destination_bytes = _maildir_size(root)
     try:
         if oauth2_token:
             client.authenticate("XOAUTH2", lambda _challenge: _xoauth2(source_username, oauth2_token))
@@ -176,6 +229,20 @@ def migrate_imap_mailbox(
                     continue
                 raw = pair[1]
                 meta = pair[0]
+
+                # Detect duplicates before capacity checks so a harmless resume
+                # does not fail merely because the destination is now near quota.
+                digest = hashlib.sha256(raw).hexdigest()[:32]
+                if _already_imported(target, digest):
+                    skipped += 1
+                    continue
+
+                _ensure_capacity(
+                    root=root,
+                    current_bytes=destination_bytes + copied_bytes,
+                    incoming_bytes=len(raw),
+                    destination_quota_bytes=destination_quota_bytes,
+                )
                 if _write_maildir_message(target, raw, meta):
                     copied += 1
                     copied_bytes += len(raw)
