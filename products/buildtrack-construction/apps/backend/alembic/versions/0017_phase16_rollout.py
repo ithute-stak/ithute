@@ -1,0 +1,18 @@
+"""Phase 16 professional rollout.
+
+Revision ID: 0017_phase16_rollout
+Revises: 0016_phase15_development
+"""
+from alembic import op
+import sqlalchemy as sa
+revision="0017_phase16_rollout";down_revision="0016_phase15_development";branch_labels=None;depends_on=None
+def upgrade()->None:
+ op.create_table("rollout_waves",sa.Column("id",sa.Integer(),primary_key=True),sa.Column("company_id",sa.Integer(),sa.ForeignKey("companies.id",ondelete="CASCADE"),nullable=False),sa.Column("branch_id",sa.Integer(),sa.ForeignKey("branches.id",ondelete="RESTRICT"),nullable=False),sa.Column("wave_number",sa.String(80),nullable=False),sa.Column("name",sa.String(240),nullable=False),sa.Column("planned_go_live_date",sa.Date(),nullable=False),sa.Column("actual_go_live_date",sa.Date()),sa.Column("owner",sa.String(255)),sa.Column("status",sa.String(24),nullable=False),sa.Column("created_by",sa.String(255),nullable=False),sa.Column("created_at",sa.DateTime(timezone=True),nullable=False),sa.Column("submitted_at",sa.DateTime(timezone=True)),sa.Column("reviewed_by",sa.String(255)),sa.Column("reviewed_at",sa.DateTime(timezone=True)),sa.Column("review_comment",sa.Text()),sa.UniqueConstraint("company_id","wave_number",name="uq_rollout_wave_number"))
+ op.create_table("rollout_control_items",sa.Column("id",sa.Integer(),primary_key=True),sa.Column("company_id",sa.Integer(),sa.ForeignKey("companies.id",ondelete="CASCADE"),nullable=False),sa.Column("branch_id",sa.Integer(),sa.ForeignKey("branches.id",ondelete="RESTRICT"),nullable=False),sa.Column("rollout_wave_id",sa.Integer(),sa.ForeignKey("rollout_waves.id",ondelete="CASCADE"),nullable=False),sa.Column("control_type",sa.String(80),nullable=False),sa.Column("title",sa.String(240),nullable=False),sa.Column("required",sa.Boolean(),nullable=False),sa.Column("due_date",sa.Date()),sa.Column("status",sa.String(24),nullable=False),sa.Column("evidence_document_id",sa.Integer(),sa.ForeignKey("documents.id",ondelete="SET NULL")),sa.Column("result_notes",sa.Text()),sa.Column("assigned_to",sa.String(255)),sa.Column("completed_by",sa.String(255)),sa.Column("completed_at",sa.DateTime(timezone=True)),sa.Column("created_at",sa.DateTime(timezone=True),nullable=False),sa.UniqueConstraint("rollout_wave_id","title",name="uq_rollout_control_title"))
+ op.create_table("rollout_audit_events",sa.Column("id",sa.Integer(),primary_key=True),sa.Column("company_id",sa.Integer(),sa.ForeignKey("companies.id",ondelete="CASCADE"),nullable=False),sa.Column("branch_id",sa.Integer(),sa.ForeignKey("branches.id",ondelete="RESTRICT"),nullable=False),sa.Column("rollout_wave_id",sa.Integer(),sa.ForeignKey("rollout_waves.id",ondelete="SET NULL")),sa.Column("actor",sa.String(255),nullable=False),sa.Column("action",sa.String(120),nullable=False),sa.Column("entity_type",sa.String(80),nullable=False),sa.Column("entity_id",sa.String(80),nullable=False),sa.Column("detail",sa.JSON(),nullable=False),sa.Column("occurred_at",sa.DateTime(timezone=True),nullable=False))
+ for table,cols in {"rollout_waves":("company_id","branch_id","wave_number","planned_go_live_date","actual_go_live_date","status"),"rollout_control_items":("company_id","branch_id","rollout_wave_id","control_type","due_date","status"),"rollout_audit_events":("company_id","branch_id","rollout_wave_id","action","occurred_at")}.items():
+  for c in cols:op.create_index(f"ix_{table}_{c}",table,[c])
+def downgrade()->None:
+ for table in ("rollout_audit_events","rollout_control_items","rollout_waves"):
+  for index in [r["name"] for r in sa.inspect(op.get_bind()).get_indexes(table)]:op.drop_index(index,table_name=table)
+  op.drop_table(table)
