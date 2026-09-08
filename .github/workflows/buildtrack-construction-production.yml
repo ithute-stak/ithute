@@ -1,0 +1,129 @@
+name: Deploy BuildTrack Construction
+
+on:
+  workflow_run:
+    workflows: ["BuildTrack Construction"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ithute-production-vps
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 204.12.205.224
+  VPS_USER: administrator
+  VPS_APP_DIR: /home/administrator/mailbox-dns
+  VPS_EDGE_DIR: /home/administrator/ithute-edge
+  PRODUCT_HOST: nbro.ithute.co.ls
+  BACKEND_IMAGE: ghcr.io/ithute-stak/buildtrack-backend
+  FRONTEND_IMAGE: ghcr.io/ithute-stak/buildtrack-frontend
+  BUILD_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  deploy:
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    env:
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+
+    steps:
+      - name: Validate deployment credentials
+        shell: bash
+        run: |
+          set -eu
+          test -n "${VPS_SSH_KEY:-}" || { echo "::error::VPS_SSH_KEY is required"; exit 1; }
+
+      - name: Check out exact validated revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.BUILD_SHA }}
+          persist-credentials: false
+
+      - name: Build immutable BuildTrack images
+        shell: bash
+        run: |
+          set -eu
+          docker build --pull \
+            -t "${BACKEND_IMAGE}:${BUILD_SHA}" \
+            products/buildtrack-construction/apps/backend
+          docker build --pull \
+            --build-arg NEXT_PUBLIC_API_URL=/api/v1 \
+            -t "${FRONTEND_IMAGE}:${BUILD_SHA}" \
+            products/buildtrack-construction/apps/frontend
+          docker save "${BACKEND_IMAGE}:${BUILD_SHA}" "${FRONTEND_IMAGE}:${BUILD_SHA}" \
+            | gzip -1 > "/tmp/buildtrack-images-${BUILD_SHA}.tar.gz"
+          test -s "/tmp/buildtrack-images-${BUILD_SHA}.tar.gz"
+
+      - name: Configure production SSH identity
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/buildtrack_deploy"
+          chmod 600 "$HOME/.ssh/buildtrack_deploy"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/buildtrack-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/buildtrack-askpass.sh
+            SSH_ASKPASS=/tmp/buildtrack-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+              setsid -w ssh-add "$HOME/.ssh/buildtrack_deploy" </dev/null
+            rm -f /tmp/buildtrack-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/buildtrack_deploy" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Stage exact product release
+        shell: bash
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          scp "/tmp/buildtrack-images-${BUILD_SHA}.tar.gz" "$remote:/tmp/buildtrack-images-${BUILD_SHA}.tar.gz"
+          scp docker-compose.buildtrack.yml "$remote:/tmp/docker-compose.buildtrack-${BUILD_SHA}.yml"
+          scp scripts/buildtrack-sync-env.py "$remote:/tmp/buildtrack-sync-env-${BUILD_SHA}.py"
+          scp scripts/buildtrack-deploy.sh "$remote:/tmp/buildtrack-deploy-${BUILD_SHA}.sh"
+          scp infrastructure/ithute-edge/default.conf.template "$remote:/tmp/buildtrack-edge-${BUILD_SHA}.conf.template"
+          rm -f "/tmp/buildtrack-images-${BUILD_SHA}.tar.gz"
+
+      - name: Deploy without mutating sibling product containers
+        shell: bash
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" \
+            "APP_DIR='$VPS_APP_DIR' EDGE_DIR='$VPS_EDGE_DIR' DEPLOY_SHA='$BUILD_SHA' PRODUCT_HOST='$PRODUCT_HOST' BACKEND_IMAGE='$BACKEND_IMAGE' FRONTEND_IMAGE='$FRONTEND_IMAGE' sh '/tmp/buildtrack-deploy-${BUILD_SHA}.sh'"
+          ssh "$remote" "rm -f '/tmp/buildtrack-deploy-${BUILD_SHA}.sh'"
+
+      - name: Verify public Nthane Brothers application
+        shell: bash
+        run: |
+          set -eu
+          for url in \
+            "https://${PRODUCT_HOST}/health/live" \
+            "https://${PRODUCT_HOST}/health/deployment" \
+            "https://${PRODUCT_HOST}/index" \
+            "https://${PRODUCT_HOST}/login"; do
+            curl --fail --silent --show-error --retry 10 --retry-delay 5 --connect-timeout 10 --max-time 30 \
+              -o /dev/null "$url"
+            echo "Verified: $url"
+          done
+          echo | openssl s_client -connect "${PRODUCT_HOST}:443" -servername "$PRODUCT_HOST" 2>/dev/null \
+            | openssl x509 -noout -subject -issuer -dates -ext subjectAltName \
+            | grep -F "$PRODUCT_HOST"
