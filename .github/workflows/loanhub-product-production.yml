@@ -2,7 +2,7 @@ name: LoanHub Product Production
 
 on:
   push:
-    branches: [main]
+    branches: [main, loanhub]
     paths:
       - 'products/LoanHub/**'
       - '.github/workflows/loanhub-product-production.yml'
