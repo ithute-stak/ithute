@@ -17,12 +17,14 @@ class User(Base):
     __table_args__ = (
         UniqueConstraint("company_id", "username", name="uq_user_company_username"),
         UniqueConstraint("company_id", "email", name="uq_user_company_email"),
+        UniqueConstraint("auth_user_id", name="uq_user_auth_user_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
     username: Mapped[str] = mapped_column(String(80), nullable=False)
     email: Mapped[str] = mapped_column(String(255), nullable=False)
+    auth_user_id: Mapped[str | None] = mapped_column(String(36), index=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(64))
     employee_number: Mapped[str | None] = mapped_column(String(64), index=True)
