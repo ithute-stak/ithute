@@ -3,7 +3,9 @@ import api from "@/lib/axios-setup";
 
 export const beginCentralLogin = () => {
     if (typeof window !== "undefined") {
-        window.location.assign(AUTH_ENDPOINTS.OIDC_LOGIN);
+        // Replace the local login entry instead of adding another history entry.
+        // This prevents browser-back/login bounce after the central OIDC round-trip.
+        window.location.replace(AUTH_ENDPOINTS.OIDC_LOGIN);
     }
 };
 
@@ -29,7 +31,7 @@ export const refreshToken = async () => {
     const response = await api.post(
         AUTH_ENDPOINTS.REFRESH,
         {},
-        { withCredentials: true },
+        { withCredentials: true, skipAuthRefresh: true },
     );
     return response.data;
 };
@@ -38,7 +40,9 @@ export const logout = async () => {
     const response = await api.post(
         AUTH_ENDPOINTS.LOGOUT,
         {},
-        { withCredentials: true },
+        // Logout is deliberately never refreshed/retried. It must remain an
+        // idempotent local session-clear operation even if central Auth expired.
+        { withCredentials: true, skipAuthRefresh: true },
     );
     return response.data;
 };

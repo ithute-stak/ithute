@@ -19,6 +19,9 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
         if token:
             try:
                 claims = validate_central_access_token(token)
+                # Make the already-verified claims available to dependencies so
+                # protected routes do not validate the same JWT a second time.
+                request.state.central_claims = claims
                 subject = uuid.UUID(str(claims["sub"]))
                 with SessionLocal() as db:
                     user = db.query(User).filter(User.auth_user_id == subject).first()

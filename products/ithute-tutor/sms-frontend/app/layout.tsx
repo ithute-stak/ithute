@@ -7,7 +7,7 @@ import {ThemeProvider} from "@/components/theme-provider";
 import ReduxProvider from "@/store";
 import AuthProvider from "@/provider/auth_provider";
 import {Toaster} from "sonner";
-import {AppDataProvider, useAppData} from "@/provider/dataProvider";
+import {AppDataProvider} from "@/provider/dataProvider";
 
 const geistSans = Geist({
     variable: "--font-geist-sans",
@@ -41,7 +41,7 @@ export default function RootLayout({
             enableSystem
             disableTransitionOnChange
         >
-            <TooltipProvider><ReduxProvider>
+            <ReduxProvider>
                 <AuthProvider>
                     <TooltipProvider>
                         <Toaster richColors position="top-right" />
@@ -50,7 +50,7 @@ export default function RootLayout({
                         </AppDataProvider>
                     </TooltipProvider>
                 </AuthProvider>
-            </ReduxProvider></TooltipProvider>
+            </ReduxProvider>
         </ThemeProvider>
         </body>
         </html>

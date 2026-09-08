@@ -7,6 +7,7 @@ import uuid
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from starlette.requests import Request
 
 from utils import central_auth
 
@@ -81,3 +82,29 @@ def test_rejects_non_uuid_subject(monkeypatch, rsa_keys):
 
     with pytest.raises(central_auth.CentralAuthError):
         central_auth.validate_central_access_token(make_token(private_key, sub="not-a-uuid"))
+
+
+def test_require_claims_reuses_middleware_verified_claims(monkeypatch):
+    request = Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "https",
+            "path": "/auth/me",
+            "raw_path": b"/auth/me",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 443),
+        }
+    )
+    expected = {"sub": str(SUBJECT), "aud": AUDIENCE, "token_use": "access"}
+    request.state.central_claims = expected
+
+    def should_not_validate(token: str):
+        raise AssertionError("JWT should not be validated twice within one request")
+
+    monkeypatch.setattr(central_auth, "validate_central_access_token", should_not_validate)
+
+    assert central_auth.require_central_claims(request) is expected

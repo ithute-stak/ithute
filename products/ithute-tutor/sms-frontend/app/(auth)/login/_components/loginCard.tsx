@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Building2, Loader2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
@@ -26,16 +26,16 @@ import { PasswordInput } from "@/components/customUI/password-input";
 type Mode = "choose" | "link" | "new";
 
 export const LoginCard = () => {
-    const router = useRouter();
     const searchParams = useSearchParams();
     const linkRequired = searchParams.get("link_required") === "1";
-    const [mode, setMode] = useState<Mode>(linkRequired ? "choose" : "choose");
+    const [mode, setMode] = useState<Mode>("choose");
     const [loading, setLoading] = useState(false);
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [username, setUsername] = useState("");
 
     const handleCentralLogin = () => {
+        if (loading) return;
         setLoading(true);
         beginCentralLogin();
     };
@@ -46,12 +46,13 @@ export const LoginCard = () => {
         try {
             await linkCentralAccount(email, password);
             toast.success("Tutor profile linked to your !thute account");
-            router.replace("/dashboard");
-            router.refresh();
+            // Treat identity/profile linking as an authentication boundary. A full
+            // replace starts the dashboard with a fresh Redux/session bootstrap
+            // from the authoritative HttpOnly cookies and cannot race AuthProvider.
+            window.location.replace("/dashboard");
         } catch (error) {
             const message = error instanceof Error ? error.message : "Unable to link Tutor profile";
             toast.error(message);
-        } finally {
             setLoading(false);
         }
     };
@@ -62,12 +63,12 @@ export const LoginCard = () => {
         try {
             await provisionTutorProfile(username, email);
             toast.success("Your !thute Tutor profile is ready");
-            router.replace("/onboarding/school");
-            router.refresh();
+            // Reload into onboarding so AuthProvider bootstraps against the newly
+            // created profile before rendering this protected route.
+            window.location.replace("/onboarding/school");
         } catch (error) {
             const message = error instanceof Error ? error.message : "Unable to create Tutor profile";
             toast.error(message);
-        } finally {
             setLoading(false);
         }
     };
