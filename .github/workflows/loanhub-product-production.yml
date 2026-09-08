@@ -229,6 +229,44 @@ jobs:
             compose up -d --no-build backend maintenance frontend
             compose ps
 
+            # The shared Ithute edge is long-running while LoanHub containers are
+            # recreated on every release. Its production upstream blocks resolve
+            # Docker DNS at nginx reload/start time, so wait for the replacement
+            # containers and then reload the existing edge before public checks.
+            for service in backend frontend; do
+              SERVICE_CONTAINER="$(compose ps -q "$service")"
+              if [ -z "$SERVICE_CONTAINER" ]; then
+                echo "LoanHub $service container did not start." >&2
+                exit 1
+              fi
+
+              service_healthy=false
+              for attempt in $(seq 1 40); do
+                SERVICE_STATE="$(docker inspect "$SERVICE_CONTAINER" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null || true)"
+                if [ "$SERVICE_STATE" = healthy ] || [ "$SERVICE_STATE" = running ]; then
+                  service_healthy=true
+                  break
+                fi
+                sleep 3
+              done
+              if [ "$service_healthy" != true ]; then
+                echo "LoanHub $service did not become healthy before edge refresh." >&2
+                compose logs --tail=200 "$service" >&2 || true
+                exit 1
+              fi
+            done
+
+            EDGE_CONTAINER="$(docker ps -q \
+              --filter label=com.docker.compose.project=ithute-edge \
+              --filter label=com.docker.compose.service=edge-nginx \
+              | head -n 1)"
+            if [ -z "$EDGE_CONTAINER" ]; then
+              echo 'Shared Ithute edge container is not running; cannot refresh LoanHub upstream DNS.' >&2
+              exit 1
+            fi
+            docker exec "$EDGE_CONTAINER" nginx -t
+            docker exec "$EDGE_CONTAINER" nginx -s reload
+
             for url in https://api.loanhub.co.ls/health/ready https://loanhub.co.ls/; do
               healthy=false
               for attempt in $(seq 1 30); do
@@ -252,5 +290,5 @@ jobs:
               "Preserved database volume: $EXPECTED_DB_VOLUME" \
               "Pre-migration backup: $BACKUP_FILE" \
               "Shared edge aliases: loanhub-frontend, loanhub-backend" \
-              "Shared edge owner: ithute-edge (unchanged)" \
+              "Shared edge owner: ithute-edge (reloaded after LoanHub container replacement)" \
               "Legacy runtime retained: $LEGACY_APP_DIR"
