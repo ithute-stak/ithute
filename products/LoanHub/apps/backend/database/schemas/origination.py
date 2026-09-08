@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from database.models.enums import LoanCalculationMethod
+from utils.banking import standard_bank_fields, validate_account_number_for_bank
 
 
 class OriginationPolicyUpdate(BaseModel):
@@ -176,6 +177,8 @@ class BankAccountInput(BaseModel):
     """Secure bank account and tokenized card data.
 
     CVV/CVC, PIN and a raw full payment-card number are deliberately rejected.
+    The supported Lesotho bank, routing code and account prefix are normalized
+    centrally so assisted onboarding and origination cannot drift apart.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -198,15 +201,14 @@ class BankAccountInput(BaseModel):
     card_expiry_month: int | None = Field(default=None, ge=1, le=12)
     card_expiry_year: int | None = Field(default=None, ge=2024, le=2200)
 
-    @field_validator("account_number")
-    @classmethod
-    def normalize_account_number(cls, value: str | None) -> str | None:
-        if value is None or not value.strip():
-            return None
-        cleaned = "".join(ch for ch in value if ch.isalnum())
-        if len(cleaned) < 4:
-            raise ValueError("A valid bank account number is required")
-        return cleaned
+    @model_validator(mode="after")
+    def enforce_supported_bank(self):
+        bank_name, branch_name, branch_code = standard_bank_fields(self.bank_name)
+        self.bank_name = bank_name
+        self.branch_name = branch_name
+        self.branch_code = branch_code
+        self.account_number = validate_account_number_for_bank(bank_name, self.account_number)
+        return self
 
     @field_validator("masked_card_number")
     @classmethod
