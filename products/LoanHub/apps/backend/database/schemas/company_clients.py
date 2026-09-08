@@ -14,6 +14,7 @@ from database.models.enums import (
     PaymentMethod,
 )
 from database.schemas.origination import BankAccountInput
+from utils.banking import standard_bank_fields, validate_account_number_for_bank
 
 
 ExternalDebtStatus = Literal["active", "settled", "defaulted", "restructured", "written_off", "unknown"]
@@ -281,6 +282,24 @@ class CompanyClientBankAccountUpdate(BaseModel):
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     account_number: str | None = Field(default=None, min_length=4, max_length=40)
     salary_account: bool | None = None
+
+    @model_validator(mode="after")
+    def enforce_supported_bank(self):
+        bank_name = str(self.bank_name or "").strip()
+        account_number = str(self.account_number or "").strip()
+        if account_number and not bank_name:
+            raise ValueError("Select FNB, PB, STD or NB when changing the account number")
+        if bank_name and not account_number:
+            raise ValueError("Changing the bank requires the matching new account number")
+        if bank_name:
+            normalized_bank, branch_name, branch_code = standard_bank_fields(bank_name)
+            self.bank_name = normalized_bank
+            self.branch_name = branch_name
+            self.branch_code = branch_code
+            self.account_number = validate_account_number_for_bank(normalized_bank, account_number)
+        elif self.branch_name is not None or self.branch_code is not None:
+            raise ValueError("Branch and bank code are determined by the selected bank")
+        return self
 
 
 class CompanyClientProfileUpdate(BaseModel):
