@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from database.models.enums import UserRole
 from database.schemas.person_schema import PersonRead
+from utils.banking import standard_bank_fields, validate_account_number_for_bank
 
 
 class EmployeeProfileUpdate(BaseModel):
@@ -48,6 +49,25 @@ class EmployeeProfileUpdate(BaseModel):
     @classmethod
     def trim_text(cls, value):
         return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def enforce_payroll_banking_policy(self):
+        bank_name = str(self.bank_name or "").strip()
+        account_number = str(self.bank_account_number or "").strip()
+        if not bank_name and not account_number:
+            self.bank_name = None
+            self.bank_account_number = None
+            return self
+        if not bank_name:
+            raise ValueError("Select FNB, PB, STD or NB for the employee bank account")
+        if not account_number:
+            raise ValueError("Enter the employee bank account number")
+        normalized_bank, _, _ = standard_bank_fields(bank_name)
+        self.bank_name = normalized_bank
+        self.bank_account_number = validate_account_number_for_bank(normalized_bank, account_number)
+        if self.bank_account_name is not None:
+            self.bank_account_name = self.bank_account_name.strip() or None
+        return self
 
 
 class EmployeeUserRead(BaseModel):
