@@ -15,7 +15,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { MailClient } from "./mail-client";
+import { HostedMailWorkspace as MailClient } from "./hosted-workspace";
 import { API, webmail } from "./mail-types";
 
 type LoginMode = "mailbox" | "system";

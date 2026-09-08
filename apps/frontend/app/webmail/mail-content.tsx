@@ -1,6 +1,7 @@
 "use client";
 
 import { ExternalLink, ShieldCheck } from "lucide-react";
+import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 const TOKEN_RE = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\+?[0-9][0-9 ()-]{6,}[0-9])/gi;
@@ -78,11 +79,17 @@ export function MailContent({ text, openLinksNewTab = true, fontScale = "normal"
   );
 }
 
-export function MailPrivacyNote() {
+export function MailPrivacyNote({ mode }: { mode?: "external" | "hosted" } = {}) {
+  const pathname = usePathname();
+  const hosted = mode === "hosted" || (!mode && pathname === "/webmail");
+  const copy = hosted
+    ? "iMail renders hosted messages through the safe mail reader. Remote tracking content and executable email code stay blocked."
+    : "iMail reads external messages as safe text. Links are detected and made clickable without executing remote email code or tracking images.";
+
   return (
     <div className="flex items-start gap-2 rounded-xl border border-emerald-900/10 bg-emerald-50/70 px-3 py-2.5 text-[11px] leading-5 text-emerald-950 dark:border-emerald-400/10 dark:bg-emerald-400/[.06] dark:text-emerald-100">
       <ShieldCheck size={15} className="mt-0.5 shrink-0" />
-      <span>iMail reads external messages as safe text. Links are detected and made clickable without executing remote email code or tracking images.</span>
+      <span>{copy}</span>
       <ExternalLink size={13} className="mt-1 shrink-0 opacity-50" />
     </div>
   );
