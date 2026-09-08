@@ -24,6 +24,7 @@ from database.models.origination import (
 from database.models.person import Person
 from database.models.user import User
 from services.credential_service import encrypt_credential
+from services.employer_group_service import resolve_employer_group
 from services.platform_finance_service import (
     active_company_account_opening_fee_configuration,
     apply_company_account_opening_fee_snapshot,
@@ -582,6 +583,12 @@ def create_assisted_company_client(db: Session, *, payload, context: TenantConte
                 detail="This borrower already has an account with the active company.",
             )
 
+        employer_group = resolve_employer_group(
+            db,
+            employer_group_id=payload.employer_group_id,
+            new_employer_group=payload.new_employer_group,
+        )
+
         borrower.consent_to_share_profile = bool(
             borrower.consent_to_share_profile or payload.consent_to_share_profile
         )
@@ -589,10 +596,16 @@ def create_assisted_company_client(db: Session, *, payload, context: TenantConte
             borrower.consent_to_credit_checks or payload.consent_to_credit_checks
         )
         borrower.employment_status = payload.employment_status
-        borrower.employer_name = clean_optional(payload.employer_name)
+        borrower.employer_group_id = employer_group.id if employer_group is not None else None
+        borrower.employer_name = (
+            employer_group.name if employer_group is not None else clean_optional(payload.employer_name)
+        )
+        borrower.income_day = payload.income_day
         borrower.job_title = clean_optional(payload.job_title)
         borrower.monthly_income = payload.monthly_income
-        borrower.salary_date = clean_optional(payload.salary_date)
+        borrower.salary_date = (
+            str(payload.income_day) if payload.income_day is not None else clean_optional(payload.salary_date)
+        )
         try:
             save_assisted_external_debts(
                 db,
@@ -643,6 +656,11 @@ def create_assisted_company_client(db: Session, *, payload, context: TenantConte
         raise HTTPException(status_code=409, detail="Borrower passport already exists")
 
     try:
+        employer_group = resolve_employer_group(
+            db,
+            employer_group_id=payload.employer_group_id,
+            new_employer_group=payload.new_employer_group,
+        )
         user = User(
             email=email,
             phone=phone,
@@ -673,10 +691,16 @@ def create_assisted_company_client(db: Session, *, payload, context: TenantConte
         borrower = Borrower(
             user_id=user.id,
             employment_status=payload.employment_status,
-            employer_name=clean_optional(payload.employer_name),
+            employer_group_id=employer_group.id if employer_group is not None else None,
+            employer_name=(
+                employer_group.name if employer_group is not None else clean_optional(payload.employer_name)
+            ),
+            income_day=payload.income_day,
             job_title=clean_optional(payload.job_title),
             monthly_income=payload.monthly_income,
-            salary_date=clean_optional(payload.salary_date),
+            salary_date=(
+                str(payload.income_day) if payload.income_day is not None else clean_optional(payload.salary_date)
+            ),
             has_existing_loans=payload.has_existing_loans,
             existing_loan_total=payload.existing_loan_total,
             consent_to_share_profile=payload.consent_to_share_profile,

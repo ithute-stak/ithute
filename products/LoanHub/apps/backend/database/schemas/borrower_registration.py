@@ -3,8 +3,9 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
+from database.schemas.employer_group import EmployerGroupCreate
 from database.models.enums import (
     UserRole,
     Gender,
@@ -38,6 +39,9 @@ class BorrowerRegistrationCreate(BaseModel):
 
     employment_status: EmploymentStatus
     employer_name: Optional[str] = None
+    employer_group_id: Optional[UUID] = None
+    new_employer_group: Optional[EmployerGroupCreate] = None
+    income_day: Optional[int] = Field(default=None, ge=1, le=31)
     job_title: Optional[str] = None
     monthly_income: Optional[Decimal] = None
     salary_date: Optional[str] = None

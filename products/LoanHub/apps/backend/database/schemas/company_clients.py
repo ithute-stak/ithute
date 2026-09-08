@@ -14,6 +14,7 @@ from database.models.enums import (
     PaymentMethod,
 )
 from database.schemas.origination import BankAccountInput
+from database.schemas.employer_group import EmployerGroupCreate
 from utils.banking import standard_bank_fields, validate_account_number_for_bank
 
 
@@ -157,6 +158,9 @@ class AssistedCompanyClientCreate(BaseModel):
 
     employment_status: EmploymentStatus
     employer_name: str | None = Field(default=None, max_length=200)
+    employer_group_id: UUID | None = None
+    new_employer_group: EmployerGroupCreate | None = None
+    income_day: int | None = Field(default=None, ge=1, le=31)
     job_title: str | None = Field(default=None, max_length=150)
     monthly_income: Decimal | None = Field(default=None, ge=0, max_digits=15, decimal_places=2)
     salary_date: str | None = Field(default=None, max_length=20)
@@ -225,6 +229,9 @@ class CompanyClientRead(BaseModel):
     physical_address: str | None
     employment_status: str
     employer_name: str | None
+    employer_group_id: UUID | None = None
+    employer_group_code: str | None = None
+    income_day: int | None = None
     job_title: str | None
     monthly_income: Decimal | None
     has_existing_loans: bool

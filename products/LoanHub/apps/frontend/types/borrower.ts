@@ -1,5 +1,6 @@
 import type { Person } from "@/types/person";
 import type { UserRole } from "@/types/auth";
+import type { EmployerGroupCreate } from "@/types/employerGroup";
 
 export type EmploymentStatus =
     | "employed"
@@ -14,6 +15,8 @@ export interface Borrower {
     employment_status: EmploymentStatus;
     employment_type: string | null;
     employer_name: string | null;
+    employer_group_id: string | null;
+    income_day: number | null;
     job_title: string | null;
     employment_start_date: string | null;
     monthly_income: string | number | null;
@@ -56,7 +59,10 @@ export interface CreateBorrowerPayload {
     town_or_village: string;
     physical_address: string;
     employment_status: EmploymentStatus;
-    employer_name: string;
+    employer_name: string | null;
+    employer_group_id: string | null;
+    new_employer_group: EmployerGroupCreate | null;
+    income_day: number | null;
     job_title: string;
     monthly_income: number;
     salary_date: string;
@@ -70,6 +76,8 @@ export interface UpdateBorrowerPayload {
     employment_status?: EmploymentStatus;
     employment_type?: string | null;
     employer_name?: string | null;
+    employer_group_id?: string | null;
+    income_day?: number | null;
     job_title?: string | null;
     employment_start_date?: string | null;
     monthly_income?: number | null;

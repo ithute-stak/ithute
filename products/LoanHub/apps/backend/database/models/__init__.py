@@ -25,6 +25,7 @@ from database.models.company_client_case import CompanyClientCaseEntry
 from database.models.company_client_identity_change import CompanyClientIdentityChangeRequest
 from database.models.documents import BorrowerDocument, LoanRequestDocument
 from database.models.employee import EmployeeProfile, PerformanceGoal, PerformanceReview
+from database.models.employer_group import EmployerGroup
 from database.models.hrms import (
     HRAsset,
     HRAssetAssignment,
@@ -125,6 +126,7 @@ __all__ = [
     "EmployeeProfile",
     "PerformanceGoal",
     "PerformanceReview",
+    "EmployerGroup",
     "HRAsset",
     "HRAssetAssignment",
     "HRAttendanceEvent",

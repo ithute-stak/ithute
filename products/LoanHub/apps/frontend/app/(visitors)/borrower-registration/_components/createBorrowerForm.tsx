@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox as ShadcnCheckbox } from "@/components/ui/checkbox";
 import { Input as ShadcnInput } from "@/components/ui/input";
 import { LoadingButton } from "@/components/ui/loading-button";
+import { EmployerGroupRegistrationField } from "@/components/clients/employer-group-registration-field";
 
 const steps = ["Account", "Personal", "Address", "Employment", "Loans"];
 
@@ -37,6 +38,9 @@ const initialForm: CreateBorrowerPayload = {
     physical_address: "",
     employment_status: "employed",
     employer_name: "",
+    employer_group_id: null,
+    new_employer_group: null,
+    income_day: null,
     job_title: "",
     monthly_income: 0,
     salary_date: "",
@@ -95,6 +99,19 @@ export function CreateBorrowerForm() {
         if (currentStep === 2) {
             if (!form.district || !form.town_or_village || !form.physical_address) {
                 setPasswordError("Fill all address fields");
+                return false;
+            }
+        }
+
+        if (currentStep === 3) {
+            const needsIncomeDay = ["employed", "self_employed", "pensioner"].includes(form.employment_status);
+            const hasGroup = Boolean(form.employer_group_id || form.new_employer_group);
+            if (form.employment_status === "employed" && !hasGroup) {
+                setPasswordError("Select an employer/work group or add a new group.");
+                return false;
+            }
+            if (needsIncomeDay && !form.income_day) {
+                setPasswordError("Enter the day of the month when you normally receive income.");
                 return false;
             }
         }
@@ -213,8 +230,23 @@ export function CreateBorrowerForm() {
 
                     {step === 3 && (
                         <>
-                            <Input label="Employer Name" value={form.employer_name} onChange={(v) => updateField("employer_name", v)} />
+                            <div className="sm:col-span-2">
+                                <EmployerGroupRegistrationField
+                                    employerGroupId={form.employer_group_id}
+                                    employerName={form.employer_name}
+                                    newEmployerGroup={form.new_employer_group}
+                                    required={form.employment_status === "employed"}
+                                    onChange={(selection) => setForm((current) => ({ ...current, ...selection }))}
+                                />
+                            </div>
                             <Input label="Job Title" value={form.job_title} onChange={(v) => updateField("job_title", v)} />
+                            <Input
+                                label="Income / pay day (1–31)"
+                                type="number"
+                                value={form.income_day ? String(form.income_day) : ""}
+                                onChange={(v) => updateField("income_day", v ? Number(v) : null)}
+                                placeholder="e.g. 20"
+                            />
                             <div className="sm:col-span-2">
                                 <Input
                                     label="Monthly Income"
