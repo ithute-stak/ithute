@@ -62,13 +62,11 @@ export async function updateCompanyClientProfile(
     // A blank account number means "keep the encrypted account already on file".
     // Do not resend bank/routing fields in that case: the backend deliberately
     // requires a matching new account number whenever those fields are changed.
-    const {
-      bank_name: _bankName,
-      branch_name: _branchName,
-      branch_code: _branchCode,
-      account_number: _accountNumber,
-      ...unchangedBankFields
-    } = payload.bank_account;
+    const unchangedBankFields = { ...payload.bank_account };
+    delete unchangedBankFields.bank_name;
+    delete unchangedBankFields.branch_name;
+    delete unchangedBankFields.branch_code;
+    delete unchangedBankFields.account_number;
     requestPayload = {
       ...payload,
       bank_account: unchangedBankFields,
