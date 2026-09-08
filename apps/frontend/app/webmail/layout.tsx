@@ -28,6 +28,7 @@ import "./mail-workspace-unified.css";
 import "./hosted-workspace-polish.css";
 import "./hosted-message-stability.css";
 import "./next-generation-responsive.css";
+import "./next-generation-mobile-nav.css";
 
 export default function WebmailLayout({ children }: { children: ReactNode }) {
   return (
