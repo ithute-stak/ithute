@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { MailLinkEnhancer } from "./mail-link-enhancer";
+import { MailMigrationShortcut } from "./mail-migration-shortcut";
 import { MailRealtime } from "./mail-realtime";
 import { MailSettingsThemeEnhancer } from "./mail-settings-theme-enhancer";
 import { MailThemeBridge } from "./mail-theme-bridge";
@@ -28,6 +29,7 @@ export default function WebmailLayout({ children }: { children: ReactNode }) {
       <MailRealtime />
       <MailLinkEnhancer />
       <WebmailRouteFrame>{children}</WebmailRouteFrame>
+      <MailMigrationShortcut />
       <WebmailMobileActions />
     </div>
   );
