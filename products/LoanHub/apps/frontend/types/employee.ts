@@ -19,6 +19,9 @@ export type EmployeeProfile = {
     currency: string;
     skills: string[];
     target_config: Record<string, unknown>;
+    bank_name: string | null;
+    bank_account_name: string | null;
+    bank_account_number: string | null;
     notes: string | null;
     is_manager: boolean;
     created_at: string;
@@ -56,6 +59,9 @@ export type EmployeeProfilePayload = {
     currency: string;
     skills: string[];
     target_config: Record<string, unknown>;
+    bank_name: string | null;
+    bank_account_name: string | null;
+    bank_account_number: string | null;
     notes: string | null;
     is_manager: boolean;
 };
