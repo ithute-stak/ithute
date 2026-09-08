@@ -2,14 +2,39 @@
 
 import { useEffect } from "react";
 
+import { webmail } from "./mail-types";
+
 const URL_RE = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/gi;
 const TRAILING_RE = /[),.;:!?]+$/;
 const INTERNAL_MESSAGE_SELECTOR = ".imail-route-webmail article .whitespace-pre-wrap";
+const UID_RE = /^\d+$/;
+
+type MessageTarget = {
+  uid: string;
+  folder: string;
+  key: string;
+};
+
+type RichMessageContent = {
+  body_html?: string;
+  has_html?: boolean;
+  remote_images_blocked?: number;
+};
+
+const richContentRequests = new Map<string, Promise<RichMessageContent | null>>();
 
 function splitTrailing(value: string) {
   const match = value.match(TRAILING_RE);
   if (!match) return { token: value, trailing: "" };
   return { token: value.slice(0, -match[0].length), trailing: match[0] };
+}
+
+function currentMessageTarget(): MessageTarget | null {
+  const params = new URLSearchParams(window.location.search);
+  const uid = params.get("message") || "";
+  if (!UID_RE.test(uid)) return null;
+  const folder = params.get("folder") || "INBOX";
+  return { uid, folder, key: `${folder}\u0000${uid}` };
 }
 
 function appendLinkifiedText(parent: HTMLElement, value: string) {
@@ -48,9 +73,9 @@ function buildMailLine(line: string) {
   const quoted = Boolean(quoteMatch);
   const value = quoted ? quoteMatch?.[2] || "" : line;
 
-  // A plain-text reply can contain rows made only from `>` quote markers.
-  // Showing those markers is noisy and was the main visual defect in the
-  // internal reader. Keep real quoted text, but omit empty quote rows.
+  // Plain-text replies often contain rows made only from `>` markers. Those
+  // rows are transport syntax, not useful message content, so hide them while
+  // retaining real quoted text in a readable quote block.
   if (quoted && !value.trim()) return null;
 
   const row = document.createElement("div");
@@ -68,18 +93,14 @@ function buildMailLine(line: string) {
   return row;
 }
 
-function renderStructuredMail(container: HTMLElement) {
-  // The mutation observer fires again after replaceChildren(). Avoid a loop,
-  // but allow React to replace the body text when a different message opens.
-  // In that case these structured child rows disappear and we render again.
+function renderStructuredText(container: HTMLElement) {
   if (container.querySelector(":scope > [data-imail-mail-line='true']")) return;
 
   const source = (container.textContent || "").replace(/\r\n?/g, "\n");
   const fragment = document.createDocumentFragment();
-  const lines = source.split("\n");
   let rendered = 0;
 
-  for (const line of lines) {
+  for (const line of source.split("\n")) {
     const row = buildMailLine(line);
     if (!row) continue;
     fragment.append(row);
@@ -98,9 +119,104 @@ function renderStructuredMail(container: HTMLElement) {
   container.dataset.imailStructuredMail = "true";
 }
 
+function richContent(target: MessageTarget) {
+  const existing = richContentRequests.get(target.key);
+  if (existing) return existing;
+
+  const request = (async (): Promise<RichMessageContent | null> => {
+    try {
+      const response = await webmail(
+        `/messages/${target.uid}/content?folder=${encodeURIComponent(target.folder)}`,
+      );
+      if (!response.ok) return null;
+      const payload = (await response.json()) as RichMessageContent;
+      return payload.has_html && payload.body_html?.trim() ? payload : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  richContentRequests.set(target.key, request);
+  return request;
+}
+
+function hardenRichContent(root: HTMLElement) {
+  // The API already sanitizes message HTML and removes remote images. Keep a
+  // client-side defensive layer as well because email content is untrusted.
+  root.querySelectorAll("script, style, iframe, object, embed, form, img, svg, link, meta").forEach((node) => node.remove());
+
+  root.querySelectorAll("a").forEach((anchor) => {
+    const href = anchor.getAttribute("href") || "";
+    if (!/^(https?:|mailto:)/i.test(href)) {
+      anchor.removeAttribute("href");
+      return;
+    }
+    if (/^https?:/i.test(href)) {
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer nofollow";
+    }
+    anchor.classList.add("imail-detected-link");
+  });
+}
+
+function renderRichContent(
+  container: HTMLElement,
+  target: MessageTarget,
+  payload: RichMessageContent,
+) {
+  if (!payload.body_html?.trim()) return;
+
+  const root = document.createElement("div");
+  root.dataset.imailRichRoot = "true";
+  root.className = "imail-rich-message";
+  root.innerHTML = payload.body_html;
+  hardenRichContent(root);
+
+  container.replaceChildren(root);
+  container.dataset.imailContentKey = target.key;
+  container.dataset.imailRichMail = "true";
+  container.dataset.imailBlockedImages = String(payload.remote_images_blocked || 0);
+}
+
+async function enhanceContainer(container: HTMLElement) {
+  const target = currentMessageTarget();
+  if (!target) {
+    renderStructuredText(container);
+    return;
+  }
+
+  if (container.dataset.imailContentKey !== target.key) {
+    container.dataset.imailContentKey = target.key;
+    delete container.dataset.imailRichMail;
+    delete container.dataset.imailBlockedImages;
+  }
+
+  if (container.querySelector(":scope > [data-imail-rich-root='true']")) return;
+
+  // Keep the reader useful immediately while the safe rich MIME part is read.
+  // If the message is plain-text only, this remains the final rendering.
+  renderStructuredText(container);
+
+  const requestKey = target.key;
+  const payload = await richContent(target);
+  if (!payload) return;
+
+  const liveTarget = currentMessageTarget();
+  if (
+    !liveTarget ||
+    liveTarget.key !== requestKey ||
+    container.dataset.imailContentKey !== requestKey ||
+    !document.contains(container)
+  ) {
+    return;
+  }
+
+  renderRichContent(container, target, payload);
+}
+
 function enhanceVisibleMail() {
   document.querySelectorAll(INTERNAL_MESSAGE_SELECTOR).forEach((container) => {
-    if (container instanceof HTMLElement) renderStructuredMail(container);
+    if (container instanceof HTMLElement) void enhanceContainer(container);
   });
 }
 
