@@ -1,0 +1,89 @@
+name: Validate LoanHub mobile app
+
+on:
+  pull_request:
+    branches:
+      - main
+      - loanhub
+    paths:
+      - 'products/LoanHub/apps/call_mobile/**'
+      - '.github/workflows/loanhub-call-mobile.yml'
+  push:
+    branches:
+      - main
+      - loanhub
+    paths:
+      - 'products/LoanHub/apps/call_mobile/**'
+      - '.github/workflows/loanhub-call-mobile.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: loanhub-mobile-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  flutter-android:
+    name: Flutter test, analyze and Google Play AAB build
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out Ithute repository
+        uses: actions/checkout@v6
+
+      - name: Set up Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Show Flutter toolchain
+        working-directory: products/LoanHub/apps/call_mobile
+        run: flutter doctor -v
+
+      - name: Resolve Flutter dependencies
+        working-directory: products/LoanHub/apps/call_mobile
+        run: flutter pub get
+
+      - name: Check Dart formatting
+        working-directory: products/LoanHub/apps/call_mobile
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      - name: Analyze Flutter application
+        working-directory: products/LoanHub/apps/call_mobile
+        run: flutter analyze
+
+      - name: Run Flutter tests
+        working-directory: products/LoanHub/apps/call_mobile
+        run: flutter test --timeout 30s
+
+      - name: Verify Play target and Android build toolchain
+        run: |
+          grep -q 'applicationId = "ls.ithute.loanhub"' products/LoanHub/apps/call_mobile/android/app/build.gradle.kts
+          grep -q 'compileSdk = 37' products/LoanHub/apps/call_mobile/android/app/build.gradle.kts
+          grep -q 'targetSdk = 36' products/LoanHub/apps/call_mobile/android/app/build.gradle.kts
+          grep -q 'id("com.android.application") version "9.1.1"' products/LoanHub/apps/call_mobile/android/settings.gradle.kts
+          grep -q 'gradle-9.3.1-all.zip' products/LoanHub/apps/call_mobile/android/gradle/wrapper/gradle-wrapper.properties
+          grep -q '^version: 1.0.0+1$' products/LoanHub/apps/call_mobile/pubspec.yaml
+
+      - name: Build Android release App Bundle
+        working-directory: products/LoanHub/apps/call_mobile
+        env:
+          CI: 'true'
+        run: >-
+          flutter build appbundle --release
+          --dart-define=LOANHUB_API_URL=https://play-ci.loanhub.invalid
+
+      - name: Verify AAB output
+        run: test -s products/LoanHub/apps/call_mobile/build/app/outputs/bundle/release/app-release.aab
+
+      - name: Upload CI App Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: loanhub-play-aab-ci
+          path: products/LoanHub/apps/call_mobile/build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 7
