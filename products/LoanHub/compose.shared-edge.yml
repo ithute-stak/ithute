@@ -1,3 +1,5 @@
+# The shared Ithute edge resolves these stable aliases to the current LoanHub
+# containers; the production workflow reloads the edge after replacements.
 services:
   backend:
     networks:
