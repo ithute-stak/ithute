@@ -8,7 +8,7 @@ import { createPortal } from "react-dom";
 import { type MailTheme, useMailPreferences } from "./mail-preferences";
 
 const options: Array<{ value: MailTheme; title: string; subtitle: string; icon: React.ReactNode }> = [
-  { value: "light", title: "Universal Gmail", subtitle: "Default · familiar light workspace", icon: <Sun size={17} /> },
+  { value: "light", title: "White 600", subtitle: "Default · bright white with gray-600 text", icon: <Sun size={17} /> },
   { value: "ithute", title: "Ithute Green", subtitle: "Brand-forward Ithute workspace", icon: <Leaf size={17} /> },
   { value: "dark", title: "Dark", subtitle: "Comfortable low-light workspace", icon: <Moon size={17} /> },
   { value: "system", title: "System", subtitle: "Follow this device only when selected", icon: <Monitor size={17} /> },
@@ -62,9 +62,9 @@ export function MailSettingsThemeEnhancer() {
       <div className="imail-internal-theme-heading">
         <div>
           <p className="imail-internal-theme-title">Mailbox theme</p>
-          <p className="imail-internal-theme-copy">Universal Gmail is the default for hosted and external iMail. Your explicit choice is remembered on this device.</p>
+          <p className="imail-internal-theme-copy">White 600 is the default for hosted and external iMail. Your explicit choice is remembered on this device.</p>
         </div>
-        <span className="imail-internal-theme-default">Universal default</span>
+        <span className="imail-internal-theme-default">White 600 default</span>
       </div>
       <div className="imail-internal-theme-grid">
         {options.map((option) => {

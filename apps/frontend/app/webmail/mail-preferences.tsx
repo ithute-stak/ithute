@@ -193,7 +193,7 @@ export function MailSettingsPanel({
           <section className="imail-settings-section">
             <h2 className="imail-settings-section-title text-xs font-black uppercase tracking-[.15em] text-slate-500 dark:text-slate-400">Appearance</h2>
             <div className="imail-settings-grid imail-settings-grid-appearance mt-3 grid grid-cols-2 gap-2">
-              <OptionButton active={preferences.theme === "light"} title="Universal Gmail" subtitle="Default · familiar light workspace" onClick={() => update("theme", "light")} icon={<Sun size={16} />} />
+              <OptionButton active={preferences.theme === "light"} title="White 600" subtitle="Default · bright white with gray-600 text" onClick={() => update("theme", "light")} icon={<Sun size={16} />} />
               <OptionButton active={preferences.theme === "ithute"} title="Ithute Green" subtitle="Brand-forward workspace" onClick={() => update("theme", "ithute")} icon={<span className="text-xs font-black text-emerald-800">!T</span>} />
               <OptionButton active={preferences.theme === "dark"} title="Dark" subtitle="Low-light mode" onClick={() => update("theme", "dark")} icon={<Moon size={16} />} />
               <OptionButton active={preferences.theme === "system"} title="System" subtitle="Follow device only when selected" onClick={() => update("theme", "system")} icon={<Monitor size={16} />} />
