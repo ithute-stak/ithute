@@ -31,6 +31,14 @@ import { Label } from "@/components/ui/label";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  BANK_NAMES,
+  DEFAULT_BANK_BRANCH,
+  bankAccountPrefixHint,
+  bankAccountValidationMessage,
+  bankDetails,
+  isBankName,
+} from "@/lib/banking";
 import { formatDate, formatDateTime, formatMoney, titleCase } from "@/lib/format";
 import type {
   CompanyClientProfile,
@@ -169,13 +177,14 @@ export function CompanyClientProfileEditorCards({
         salary_date: client.salary_date,
       });
     } else {
+      const details = bankDetails(client.bank_name);
       setDraft({
         account_status: client.status as CompanyClientProfileUpdate["account_status"],
         bank_account: {
           account_holder: client.bank_account_holder || client.full_name,
-          bank_name: client.bank_name,
-          branch_name: client.bank_branch_name,
-          branch_code: client.bank_branch_code,
+          bank_name: details?.name ?? client.bank_name ?? null,
+          branch_name: details?.branch ?? client.bank_branch_name ?? DEFAULT_BANK_BRANCH,
+          branch_code: details?.code ?? client.bank_branch_code ?? null,
           account_type: client.bank_account_type || "savings",
           currency: client.bank_currency || "LSL",
           account_number: null,
@@ -196,7 +205,46 @@ export function CompanyClientProfileEditorCards({
       if (!permissions.can_edit_account_status) delete payload.is_login_active;
     }
     if (editing === "banking") {
-      if (!permissions.can_edit_banking) delete payload.bank_account;
+      if (!permissions.can_edit_banking) {
+        delete payload.bank_account;
+      } else if (payload.bank_account) {
+        const bankName = payload.bank_account.bank_name;
+        const accountNumber = payload.bank_account.account_number;
+        const legacyBankUnchanged = Boolean(
+          client.has_bank_account
+          && client.bank_name
+          && !isBankName(client.bank_name)
+          && bankName === client.bank_name
+          && !String(accountNumber || "").trim(),
+        );
+
+        if (!legacyBankUnchanged) {
+          if (!bankName || !isBankName(bankName)) {
+            toast.warning("Select FNB, PB, STD or NB before saving banking details.");
+            return;
+          }
+          if (!client.has_bank_account && !String(accountNumber || "").trim()) {
+            toast.warning("Enter the bank account number before creating the banking profile.");
+            return;
+          }
+          if (client.has_bank_account && client.bank_name !== bankName && !String(accountNumber || "").trim()) {
+            toast.warning("Changing the bank also requires the matching new account number.");
+            return;
+          }
+          const accountError = bankAccountValidationMessage(bankName, accountNumber);
+          if (accountError) {
+            toast.warning(accountError);
+            return;
+          }
+          const details = bankDetails(bankName);
+          payload.bank_account = {
+            ...payload.bank_account,
+            bank_name: bankName,
+            branch_name: details?.branch ?? DEFAULT_BANK_BRANCH,
+            branch_code: details?.code ?? null,
+          };
+        }
+      }
       if (!permissions.can_edit_account_status) delete payload.account_status;
     }
     setSaving(true);
@@ -260,6 +308,10 @@ export function CompanyClientProfileEditorCards({
 
   const identityRequest = profile.latest_national_id_change_request;
   const pendingIdentityRequest = identityRequest?.status === "pending" ? identityRequest : null;
+  const draftBankName = draft.bank_account?.bank_name ?? null;
+  const draftAccountNumber = draft.bank_account?.account_number ?? null;
+  const draftBankError = bankAccountValidationMessage(draftBankName, draftAccountNumber);
+  const legacyDraftBank = draftBankName && !isBankName(draftBankName) ? draftBankName : null;
 
   return (
     <div className="grid gap-5 lg:grid-cols-2">
@@ -388,12 +440,47 @@ export function CompanyClientProfileEditorCards({
               {permissions.can_edit_banking ? (
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Field label="Account holder"><Input value={draft.bank_account?.account_holder ?? ""} onChange={(event) => setDraft((current) => ({ ...current, bank_account: { ...(current.bank_account ?? {}), account_holder: event.target.value } }))} /></Field>
-                  <Field label="Bank"><Input value={draft.bank_account?.bank_name ?? ""} onChange={(event) => setDraft((current) => ({ ...current, bank_account: { ...(current.bank_account ?? {}), bank_name: event.target.value } }))} /></Field>
-                  <Field label="Branch"><Input value={draft.bank_account?.branch_name ?? ""} onChange={(event) => setDraft((current) => ({ ...current, bank_account: { ...(current.bank_account ?? {}), branch_name: event.target.value } }))} /></Field>
-                  <Field label="Branch code"><Input value={draft.bank_account?.branch_code ?? ""} onChange={(event) => setDraft((current) => ({ ...current, bank_account: { ...(current.bank_account ?? {}), branch_code: event.target.value } }))} /></Field>
+                  <Field label="Bank">
+                    <NativeSelect
+                      value={draft.bank_account?.bank_name ?? ""}
+                      onChange={(event) => {
+                        const bankName = event.target.value;
+                        const details = bankDetails(bankName);
+                        setDraft((current) => ({
+                          ...current,
+                          bank_account: {
+                            ...(current.bank_account ?? {}),
+                            bank_name: details?.name ?? null,
+                            branch_name: details?.branch ?? DEFAULT_BANK_BRANCH,
+                            branch_code: details?.code ?? null,
+                          },
+                        }));
+                      }}
+                    >
+                      <option value="">Select bank</option>
+                      {legacyDraftBank ? <option value={legacyDraftBank}>Legacy: {legacyDraftBank}</option> : null}
+                      {BANK_NAMES.map((bankName) => <option key={bankName} value={bankName}>{bankName}</option>)}
+                    </NativeSelect>
+                  </Field>
+                  <Field label="Branch"><Input value={draft.bank_account?.branch_name ?? DEFAULT_BANK_BRANCH} readOnly /></Field>
+                  <Field label="Bank code"><Input value={draft.bank_account?.branch_code ?? ""} readOnly placeholder="Select a bank" /></Field>
                   <Field label="Account type"><Input value={draft.bank_account?.account_type ?? "savings"} onChange={(event) => setDraft((current) => ({ ...current, bank_account: { ...(current.bank_account ?? {}), account_type: event.target.value } }))} /></Field>
                   <Field label="Currency"><Input maxLength={3} value={draft.bank_account?.currency ?? "LSL"} onChange={(event) => setDraft((current) => ({ ...current, bank_account: { ...(current.bank_account ?? {}), currency: event.target.value.toUpperCase() } }))} /></Field>
-                  <Field label={client.has_bank_account ? "New account number (leave blank to keep current)" : "Account number"} className="sm:col-span-2"><Input autoComplete="off" value={draft.bank_account?.account_number ?? ""} onChange={(event) => setDraft((current) => ({ ...current, bank_account: { ...(current.bank_account ?? {}), account_number: event.target.value } }))} /></Field>
+                  <Field label={client.has_bank_account ? "New account number (leave blank to keep current)" : "Account number"} className="sm:col-span-2">
+                    <Input
+                      autoComplete="off"
+                      inputMode="numeric"
+                      value={draft.bank_account?.account_number ?? ""}
+                      aria-invalid={draftBankError ? true : undefined}
+                      onChange={(event) => setDraft((current) => ({ ...current, bank_account: { ...(current.bank_account ?? {}), account_number: event.target.value } }))}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {legacyDraftBank
+                        ? "Historical bank remains unchanged until you select FNB, PB, STD or NB and enter a matching new account number."
+                        : bankAccountPrefixHint(draftBankName)}
+                    </p>
+                    {draftBankError ? <p className="text-xs font-semibold text-destructive">{draftBankError}</p> : null}
+                  </Field>
                   <label className="flex items-center gap-3 rounded-xl border p-3 sm:col-span-2"><Checkbox checked={draft.bank_account?.salary_account === true} onCheckedChange={(checked) => setDraft((current) => ({ ...current, bank_account: { ...(current.bank_account ?? {}), salary_account: checked === true } }))} /><span className="text-sm font-bold">Salary is paid into this account</span></label>
                 </div>
               ) : null}

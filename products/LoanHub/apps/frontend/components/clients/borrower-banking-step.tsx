@@ -15,6 +15,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  BANK_NAMES,
+  DEFAULT_BANK_BRANCH,
+  bankAccountPrefixHint,
+  bankAccountValidationMessage,
+  bankDetails,
+} from "@/lib/banking";
 import type { BankAccountInput } from "@/types/origination";
 
 const CURRENT_YEAR = new Date().getFullYear();
@@ -23,7 +30,7 @@ function emptyBankAccount(identityName: string): BankAccountInput {
   return {
     account_holder: identityName,
     bank_name: "",
-    branch_name: null,
+    branch_name: DEFAULT_BANK_BRANCH,
     branch_code: null,
     account_type: "savings",
     currency: "LSL",
@@ -76,6 +83,7 @@ export function BorrowerBankingStep({
   }
 
   const last4 = cardLast4(value.masked_card_number);
+  const accountError = bankAccountValidationMessage(value.bank_name, value.account_number);
 
   return (
     <div className="space-y-5">
@@ -98,19 +106,34 @@ export function BorrowerBankingStep({
           />
         </Field>
 
-        <Field label="Bank name" required>
-          <Input
-            className="h-11"
-            value={value.bank_name}
-            onChange={(event) => onChange({ ...value, bank_name: event.target.value })}
-            placeholder="e.g. Standard Lesotho Bank"
-          />
+        <Field label="Bank" required description="LoanHub supports FNB, PB, STD and NB for Lesotho banking profiles.">
+          <Select
+            value={value.bank_name || undefined}
+            onValueChange={(bank_name) => {
+              const details = bankDetails(bank_name);
+              onChange({
+                ...value,
+                bank_name,
+                branch_name: details?.branch ?? DEFAULT_BANK_BRANCH,
+                branch_code: details?.code ?? null,
+              });
+            }}
+          >
+            <SelectTrigger className="h-11 w-full">
+              <SelectValue placeholder="Select bank" />
+            </SelectTrigger>
+            <SelectContent>
+              {BANK_NAMES.map((bankName) => (
+                <SelectItem key={bankName} value={bankName}>{bankName}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Field>
 
         <Field
           label="Account number"
           required
-          description="Encrypted at rest. The review page only shows the last four characters."
+          description={`${bankAccountPrefixHint(value.bank_name)} Encrypted at rest; review screens show only the last four characters.`}
         >
           <Input
             className="h-11"
@@ -120,23 +143,17 @@ export function BorrowerBankingStep({
             value={value.account_number ?? ""}
             onChange={(event) => onChange({ ...value, account_number: event.target.value || null })}
             placeholder="Bank account number"
+            aria-invalid={accountError ? true : undefined}
           />
+          {accountError ? <p className="text-xs font-semibold text-destructive">{accountError}</p> : null}
         </Field>
 
-        <Field label="Branch name">
-          <Input
-            className="h-11"
-            value={value.branch_name ?? ""}
-            onChange={(event) => onChange({ ...value, branch_name: event.target.value || null })}
-          />
+        <Field label="Branch">
+          <Input className="h-11" value={value.branch_name ?? DEFAULT_BANK_BRANCH} readOnly />
         </Field>
 
-        <Field label="Branch code">
-          <Input
-            className="h-11"
-            value={value.branch_code ?? ""}
-            onChange={(event) => onChange({ ...value, branch_code: event.target.value || null })}
-          />
+        <Field label="Bank code">
+          <Input className="h-11" value={value.branch_code ?? ""} readOnly placeholder="Select a bank" />
         </Field>
 
         <Field label="Account type" required>
