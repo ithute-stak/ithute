@@ -5,7 +5,11 @@ import re
 import shutil
 from pathlib import Path
 
+from sqlalchemy import select
+
 from app.core.config import settings
+from app.db.session import SessionLocal
+from app.models import Mailbox
 
 _PROVIDER_DEFAULTS = {
     "google": ("imap.gmail.com", 993),
@@ -66,6 +70,13 @@ def _maildir_size(root: Path) -> int:
         except (FileNotFoundError, PermissionError, OSError):
             continue
     return total
+
+
+def _configured_quota(address: str) -> int | None:
+    """Read the authoritative hosted-mailbox quota when the destination is local."""
+    with SessionLocal() as db:
+        value = db.scalar(select(Mailbox.quota_bytes).where(Mailbox.address == address.strip().lower()))
+    return int(value) if value is not None and int(value) > 0 else None
 
 
 def _maildir_flags(meta: bytes | str) -> str:
@@ -175,6 +186,8 @@ def migrate_imap_mailbox(
     client = imaplib.IMAP4_SSL(host, port)
     root = _maildir_root(destination_address)
     destination_bytes = _maildir_size(root)
+    if destination_quota_bytes is None:
+        destination_quota_bytes = _configured_quota(destination_address)
     try:
         if oauth2_token:
             client.authenticate("XOAUTH2", lambda _challenge: _xoauth2(source_username, oauth2_token))
