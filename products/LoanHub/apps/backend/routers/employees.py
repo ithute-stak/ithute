@@ -182,7 +182,10 @@ def upsert_employee_profile(
             raise HTTPException(status_code=400, detail="Manager must belong to the same company")
 
     profile = staff.employee_profile
-    data = payload.model_dump()
+    # PUT remains compatible with the existing full-profile editor, but when an
+    # older or narrower client omits sensitive payroll fields we preserve them
+    # instead of replacing them with schema defaults such as None.
+    data = payload.model_dump(exclude_unset=profile is not None)
     data["branch_id"] = staff.branch_id
 
     try:
