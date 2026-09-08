@@ -80,6 +80,7 @@ from app.models.mail_intelligence import (
     MailRetentionPolicy,
     PhishingFinding,
 )
+from app.models.webmail_next import ConnectedMailAccount, MailSnooze, ScheduledMail
 
 __all__ = [
     "ApiKey", "AuditLog", "Invitation", "MembershipRole", "MembershipStatus", "Tenant",
@@ -100,4 +101,5 @@ __all__ = [
     "IthuteSupportContext", "ProductOperationalStatus", "PlatformEventStatus", "SubscriptionGrantStatus",
     "DeploymentStatus", "BackupStatus", "SecuritySeverity",
     "MailRetentionPolicy", "DmarcAggregateReport", "PhishingFinding", "MailAutomationRule",
+    "ConnectedMailAccount", "MailSnooze", "ScheduledMail",
 ]
