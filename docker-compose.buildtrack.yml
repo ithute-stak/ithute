@@ -1,0 +1,149 @@
+# Nthane Brothers / BuildTrack is an independent Ithute product stack.
+# Its PostgreSQL and Redis services stay private; only the API/frontend join the
+# shared Ithute network required for central Auth, Push, Realtime and edge routing.
+services:
+  buildtrack-db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: ${ITHUTE_BUILDTRACK_DB_NAME:-buildtrack}
+      POSTGRES_USER: ${ITHUTE_BUILDTRACK_DB_USER:-buildtrack}
+      POSTGRES_PASSWORD: ${ITHUTE_BUILDTRACK_DB_PASSWORD}
+    volumes:
+      - ithute_buildtrack_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ITHUTE_BUILDTRACK_DB_USER:-buildtrack} -d ${ITHUTE_BUILDTRACK_DB_NAME:-buildtrack}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [ithute_buildtrack_private]
+
+  buildtrack-redis:
+    image: redis:7-alpine
+    restart: always
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - ithute_buildtrack_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [ithute_buildtrack_private]
+
+  buildtrack-migrate:
+    image: ghcr.io/ithute-stak/buildtrack-backend:${ITHUTE_BUILDTRACK_IMAGE_TAG:-local}
+    build:
+      context: ./products/buildtrack-construction/apps/backend
+    restart: "no"
+    environment: &buildtrack-backend-env
+      ENVIRONMENT: production
+      APP_TIMEZONE: Africa/Maseru
+      PUBLIC_APP_URL: ${ITHUTE_BUILDTRACK_PUBLIC_URL:-https://nbro.ithute.co.ls}
+      CORS_ORIGINS: ${ITHUTE_BUILDTRACK_PUBLIC_URL:-https://nbro.ithute.co.ls}
+      DB_HOST: buildtrack-db
+      DB_PORT: 5432
+      DB_NAME: ${ITHUTE_BUILDTRACK_DB_NAME:-buildtrack}
+      DB_USER: ${ITHUTE_BUILDTRACK_DB_USER:-buildtrack}
+      DB_PASSWORD: ${ITHUTE_BUILDTRACK_DB_PASSWORD}
+      REDIS_URL: redis://buildtrack-redis:6379/0
+      MEDIA_ROOT: /app/media
+      RATE_LIMIT_PER_MINUTE: ${ITHUTE_BUILDTRACK_RATE_LIMIT_PER_MINUTE:-120}
+      AUTH_ISSUER: ${ITHUTE_AUTH_ISSUER:-https://auth.ithute.co.ls}
+      AUTH_AUDIENCE: buildtrack-construction
+      AUTH_INTERNAL_BASE_URL: http://ithute-auth:8080
+      AUTH_JWKS_URL: http://ithute-auth:8080/.well-known/jwks.json
+      AUTH_OIDC_REDIRECT_URI: ${ITHUTE_BUILDTRACK_OIDC_REDIRECT_URI:-https://nbro.ithute.co.ls/api/v1/access/oidc/callback}
+      AUTH_COOKIE_SECURE: "true"
+      AUTH_COOKIE_SAMESITE: lax
+      LEGACY_AUTH_ENABLED: "false"
+      SUPERADMIN_EMAIL: ${ITHUTE_BUILDTRACK_SUPERADMIN_EMAIL:-justy@ithute.co.ls}
+      PUSH_BASE_URL: http://ithute-push:8080
+      PUSH_SERVICE_CLIENT_ID: buildtrack-construction
+      PUSH_SERVICE_CLIENT_SECRET: ${ITHUTE_BUILDTRACK_PUSH_SERVICE_CLIENT_SECRET}
+      REALTIME_BASE_URL: http://ithute-realtime:8080
+      REALTIME_PUBLIC_URL: https://realtime.ithute.co.ls
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      buildtrack-db:
+        condition: service_healthy
+    networks: [ithute_buildtrack_private]
+
+  buildtrack-bootstrap:
+    image: ghcr.io/ithute-stak/buildtrack-backend:${ITHUTE_BUILDTRACK_IMAGE_TAG:-local}
+    restart: "no"
+    environment: *buildtrack-backend-env
+    command: ["python", "scripts/bootstrap_production.py"]
+    depends_on:
+      buildtrack-migrate:
+        condition: service_completed_successfully
+    networks: [ithute_buildtrack_private]
+
+  buildtrack-backend:
+    image: ghcr.io/ithute-stak/buildtrack-backend:${ITHUTE_BUILDTRACK_IMAGE_TAG:-local}
+    build:
+      context: ./products/buildtrack-construction/apps/backend
+    restart: always
+    init: true
+    environment: *buildtrack-backend-env
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers"]
+    volumes:
+      - ithute_buildtrack_media:/app/media
+    depends_on:
+      buildtrack-bootstrap:
+        condition: service_completed_successfully
+      buildtrack-redis:
+        condition: service_healthy
+      ithute-auth:
+        condition: service_healthy
+      ithute-push:
+        condition: service_healthy
+      ithute-realtime:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${ITHUTE_BUILDTRACK_BACKEND_PORT:-8204}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [ithute_buildtrack_private, mailbox_dns]
+
+  buildtrack-frontend:
+    image: ghcr.io/ithute-stak/buildtrack-frontend:${ITHUTE_BUILDTRACK_IMAGE_TAG:-local}
+    build:
+      context: ./products/buildtrack-construction/apps/frontend
+      args:
+        NEXT_PUBLIC_API_URL: /api/v1
+    restart: always
+    init: true
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_API_URL: /api/v1
+      BUILDTRACK_BACKEND_URL: http://buildtrack-backend:8000/api/v1
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      buildtrack-backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${ITHUTE_BUILDTRACK_FRONTEND_PORT:-3204}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "const http=require('http');const r=http.get('http://127.0.0.1:3000/index',x=>{x.resume();process.exit(x.statusCode<500?0:1)});r.setTimeout(4000,()=>{r.destroy();process.exit(1)});r.on('error',()=>process.exit(1));"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [mailbox_dns]
+
+networks:
+  ithute_buildtrack_private:
+    driver: bridge
+    internal: true
+
+volumes:
+  ithute_buildtrack_postgres:
+  ithute_buildtrack_redis:
+  ithute_buildtrack_media:
