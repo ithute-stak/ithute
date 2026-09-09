@@ -74,5 +74,5 @@ def test_phase8_browser_workspaces_cover_operational_and_control_contracts() -> 
     ):
         assert text in control
     assert 'href: "/procurement"' in navigation and 'href: "/procurement/control"' in navigation
-    assert "Phase 8 — Procurement & Stores: complete" in readme
+    assert "| 8 | Procurement, suppliers, quotations, purchase orders, receiving, stores and stock | Complete |" in readme
     assert "does **not** fabricate quotations" in readme

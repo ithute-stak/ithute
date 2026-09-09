@@ -41,7 +41,7 @@ def test_phase4_fleet_workspace_contract() -> None:
     assert '"critical_defect_blocks_operation": True' in fleet_admin
     assert "compliance_reminder_days" not in fleet_admin
     assert "An unserviceable asset cannot be placed into active service" in fleet_guard
-    assert "Operator/driver must belong to the asset/assignment branch" in fleet_guard
+    assert "must belong to the asset/assignment branch" in fleet_guard and 'label="Operator/driver"' in fleet_guard
 
     assert 'down_revision = "0004_phase3_workforce_payroll"' in migration
     for table in ("fleet_assets", "fleet_assignments", "fleet_meter_readings", "fleet_compliance", "fleet_inspections", "fleet_defects", "fleet_fuel_transactions", "fleet_maintenance_plans", "fleet_maintenance_jobs", "fleet_audit_events"):

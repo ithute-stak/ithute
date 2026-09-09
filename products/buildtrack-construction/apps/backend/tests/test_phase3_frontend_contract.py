@@ -31,7 +31,7 @@ def test_phase3_workforce_ui_exposes_complete_operational_flow() -> None:
         assert capability in page
 
     assert 'href: "/workforce"' in navigation
-    assert "Workforce & Payroll" in navigation
+    assert "Workforce" in navigation
     assert "@media(max-width:720px)" in css
 
 

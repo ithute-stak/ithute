@@ -73,4 +73,4 @@ def test_phase7_browser_workspaces_cover_operational_and_control_contracts() -> 
     ):
         assert text in control
     assert 'href: "/site-operations"' in navigation and 'href: "/site-operations/control"' in navigation
-    assert "Phase 7 — Site Operations: complete" in readme
+    assert "| 7 | Daily site operations, labour, plant, materials, progress, incidents and quality | Complete |" in readme
