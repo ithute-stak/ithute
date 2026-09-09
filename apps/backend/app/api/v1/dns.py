@@ -16,15 +16,31 @@ from app.services.powerdns import PowerDNSClient, PowerDNSError, validate_record
 router = APIRouter(prefix="/tenants/{tenant_id}/domains/{domain_id}/dns", tags=["dns"])
 
 
-def _managed_domain(db: Session, tenant_id: UUID, domain_id: UUID):
+def _platform_domain(db: Session, tenant_id: UUID, domain_id: UUID):
+    """Return a non-archived domain that is configured for Mailbox DNS.
+
+    Pending platform domains are intentionally allowed here so operators can
+    stage an authoritative PowerDNS zone and copy/import records before changing
+    registrar delegation. Until ownership is verified, no mail lifecycle is
+    reconciled and the zone is only useful if the owner later delegates to it.
+    """
     domain = _domain_or_404(db, tenant_id, domain_id)
-    if domain.status != DomainStatus.verified or domain.ownership_verified_at is None:
-        raise HTTPException(409, "Domain ownership must be verified before authoritative DNS can be provisioned")
     if domain.dns_mode != DomainDnsMode.platform:
         raise HTTPException(409, "Domain is configured for external DNS")
     if domain.status == DomainStatus.archived:
         raise HTTPException(409, "Archived domains cannot manage DNS")
     return domain
+
+
+def _verified_platform_domain(db: Session, tenant_id: UUID, domain_id: UUID):
+    domain = _platform_domain(db, tenant_id, domain_id)
+    if domain.status != DomainStatus.verified or domain.ownership_verified_at is None:
+        raise HTTPException(409, "Domain ownership must be verified before live mail/DNS activation")
+    return domain
+
+
+def _is_verified(domain) -> bool:
+    return domain.status == DomainStatus.verified and domain.ownership_verified_at is not None
 
 
 def _pdns_error(exc: PowerDNSError):
@@ -61,7 +77,7 @@ def _mail_dns_or_502(db: Session, domain, current: User):
 @router.get("/health")
 def dns_health(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "dns.read", db, current)
-    _managed_domain(db, tenant_id, domain_id)
+    _platform_domain(db, tenant_id, domain_id)
     try:
         server = PowerDNSClient().health()
         return {"available": True, "server_id": server.get("id"), "version": server.get("version")}
@@ -72,7 +88,8 @@ def dns_health(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), 
 @router.post("/zone", status_code=status.HTTP_201_CREATED)
 def provision_zone(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "dns.manage", db, current)
-    domain = _managed_domain(db, tenant_id, domain_id)
+    domain = _platform_domain(db, tenant_id, domain_id)
+    verified = _is_verified(domain)
     client = PowerDNSClient()
     try:
         try:
@@ -89,8 +106,10 @@ def provision_zone(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_d
             _pdns_error(exc)
         raise HTTPException(422, detail=str(exc)) from exc
 
+    # A pending domain may have its zone and ordinary records staged, but mail
+    # routing/DKIM/Rspamd lifecycle is not activated until ownership is proven.
     mail_dns = None
-    if domain.mail_enabled:
+    if verified and domain.mail_enabled:
         result = _mail_dns_or_502(db, domain, current)
         mail_dns = {
             "selector": result.selector,
@@ -99,12 +118,28 @@ def provision_zone(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_d
             "rspamd_synced_domains": result.rspamd_synced_domains,
         }
 
-    add_domain_event(db, domain, current.id, "dns.zone_provisioned" if created else "dns.zone_reconciled")
-    _audit(db, tenant_id, current, "dns.zone.provision", domain, {"created": created, "mail_dns_reconciled": bool(mail_dns)})
+    if verified:
+        event_type = "dns.zone_provisioned" if created else "dns.zone_reconciled"
+        audit_action = "dns.zone.provision"
+    else:
+        event_type = "dns.zone_staged" if created else "dns.zone_stage_reconciled"
+        audit_action = "dns.zone.stage"
+    add_domain_event(db, domain, current.id, event_type, {"created": created, "verified": verified})
+    _audit(
+        db,
+        tenant_id,
+        current,
+        audit_action,
+        domain,
+        {"created": created, "staged": not verified, "mail_dns_reconciled": bool(mail_dns)},
+    )
     db.commit()
     return {
         "created": created,
         "zone": zone,
+        "staged": not verified,
+        "ownership_verified": verified,
+        "activation_required": not verified,
         "required_nameservers": [settings.nameserver_1, settings.nameserver_2],
         "mail_dns": mail_dns,
     }
@@ -113,7 +148,7 @@ def provision_zone(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_d
 @router.post("/mail/reconcile")
 def reconcile_mail_records(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "dns.manage", db, current)
-    domain = _managed_domain(db, tenant_id, domain_id)
+    domain = _verified_platform_domain(db, tenant_id, domain_id)
     if not domain.mail_enabled:
         raise HTTPException(status_code=409, detail="Mail is disabled for this domain")
     result = _mail_dns_or_502(db, domain, current)
@@ -129,10 +164,12 @@ def reconcile_mail_records(tenant_id: UUID, domain_id: UUID, db: Session = Depen
 @router.get("/zone")
 def get_zone(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "dns.read", db, current)
-    domain = _managed_domain(db, tenant_id, domain_id)
+    domain = _platform_domain(db, tenant_id, domain_id)
     try:
         return PowerDNSClient().get_zone(domain.ascii_name)
     except PowerDNSError as exc:
+        if exc.status_code == 404 or "HTTP 404" in str(exc):
+            raise HTTPException(status_code=404, detail="Authoritative zone has not been prepared yet") from exc
         _pdns_error(exc)
 
 
@@ -145,9 +182,14 @@ def replace_record(
     current: User = Depends(get_current_user),
 ):
     require_tenant_permission(tenant_id, "dns.manage", db, current)
-    domain = _managed_domain(db, tenant_id, domain_id)
+    domain = _platform_domain(db, tenant_id, domain_id)
     try:
-        name, rtype, contents = validate_record(domain.ascii_name, str(payload.get("name", "@")), str(payload.get("type", "")), payload.get("contents") or [])
+        name, rtype, contents = validate_record(
+            domain.ascii_name,
+            str(payload.get("name", "@")),
+            str(payload.get("type", "")),
+            payload.get("contents") or [],
+        )
         ttl = int(payload.get("ttl", settings.powerdns_default_ttl))
         if not 60 <= ttl <= 86400:
             raise ValueError("TTL must be between 60 and 86400 seconds")
@@ -156,10 +198,11 @@ def replace_record(
         raise HTTPException(422, detail=str(exc)) from exc
     except PowerDNSError as exc:
         _pdns_error(exc)
-    add_domain_event(db, domain, current.id, "dns.rrset_replaced", {"name": name, "type": rtype, "ttl": ttl, "value_count": len(contents)})
-    _audit(db, tenant_id, current, "dns.record.replace", domain, {"name": name, "type": rtype, "ttl": ttl})
+    event_type = "dns.rrset_replaced" if _is_verified(domain) else "dns.staged_rrset_replaced"
+    add_domain_event(db, domain, current.id, event_type, {"name": name, "type": rtype, "ttl": ttl, "value_count": len(contents)})
+    _audit(db, tenant_id, current, "dns.record.replace", domain, {"name": name, "type": rtype, "ttl": ttl, "staged": not _is_verified(domain)})
     db.commit()
-    return {"name": name, "type": rtype, "ttl": ttl, "contents": contents}
+    return {"name": name, "type": rtype, "ttl": ttl, "contents": contents, "staged": not _is_verified(domain)}
 
 
 @router.delete("/records", status_code=status.HTTP_204_NO_CONTENT)
@@ -172,7 +215,7 @@ def delete_record(
     current: User = Depends(get_current_user),
 ):
     require_tenant_permission(tenant_id, "dns.manage", db, current)
-    domain = _managed_domain(db, tenant_id, domain_id)
+    domain = _platform_domain(db, tenant_id, domain_id)
     try:
         fqdn, rtype, _ = validate_record(domain.ascii_name, name, record_type, ["placeholder"])
         if rtype in {"A", "AAAA"}:
@@ -192,7 +235,8 @@ def delete_record(
             _pdns_error(pdns_exc)
     except PowerDNSError as exc:
         _pdns_error(exc)
-    add_domain_event(db, domain, current.id, "dns.rrset_deleted", {"name": fqdn, "type": rtype})
-    _audit(db, tenant_id, current, "dns.record.delete", domain, {"name": fqdn, "type": rtype})
+    event_type = "dns.rrset_deleted" if _is_verified(domain) else "dns.staged_rrset_deleted"
+    add_domain_event(db, domain, current.id, event_type, {"name": fqdn, "type": rtype})
+    _audit(db, tenant_id, current, "dns.record.delete", domain, {"name": fqdn, "type": rtype, "staged": not _is_verified(domain)})
     db.commit()
     return Response(status_code=204)
