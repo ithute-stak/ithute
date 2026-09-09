@@ -55,6 +55,38 @@ def _safe_return_to(value: str | None) -> str:
     return value[:2048]
 
 
+def _new_oidc_challenge(return_to: str | None) -> tuple[str, str, str, dict[str, str]]:
+    verifier = secrets.token_urlsafe(64)[:96]
+    state_value = secrets.token_urlsafe(32)
+    nonce = secrets.token_urlsafe(32)
+    fields = {
+        "response_type": "code",
+        "client_id": settings.auth_audience,
+        "redirect_uri": settings.auth_oidc_redirect_uri,
+        "code_challenge": _pkce_challenge(verifier),
+        "code_challenge_method": "S256",
+        "scope": "openid profile email phone",
+        "state": state_value,
+        "nonce": nonce,
+    }
+    return verifier, state_value, nonce, fields
+
+
+def _set_oidc_challenge_cookies(
+    response,
+    *,
+    verifier: str,
+    state_value: str,
+    nonce: str,
+    return_to: str | None,
+) -> None:
+    short_cookie = _cookie_kwargs(600)
+    response.set_cookie(settings.auth_oidc_state_cookie_name, state_value, **short_cookie)
+    response.set_cookie(settings.auth_oidc_nonce_cookie_name, nonce, **short_cookie)
+    response.set_cookie(settings.auth_oidc_verifier_cookie_name, verifier, **short_cookie)
+    response.set_cookie(settings.auth_oidc_return_cookie_name, _safe_return_to(return_to), **short_cookie)
+
+
 def _validate_access_token(token: str) -> dict[str, object]:
     try:
         signing_key = jwt.PyJWKClient(settings.auth_jwks_url).get_signing_key_from_jwt(token).key
@@ -183,27 +215,43 @@ def _clear_cookies(response) -> None:
 def oidc_login(
     return_to: str | None = Query(default=None, alias="returnTo", max_length=2048),
 ) -> RedirectResponse:
-    verifier = secrets.token_urlsafe(64)[:96]
-    state_value = secrets.token_urlsafe(32)
-    nonce = secrets.token_urlsafe(32)
-    query = urlencode(
+    verifier, state_value, nonce, fields = _new_oidc_challenge(return_to)
+    response = RedirectResponse(f"{settings.auth_authorization_url}?{urlencode(fields)}", status_code=303)
+    _set_oidc_challenge_cookies(
+        response,
+        verifier=verifier,
+        state_value=state_value,
+        nonce=nonce,
+        return_to=return_to,
+    )
+    return _no_store(response)
+
+
+@router.get("/oidc/manual-challenge")
+def oidc_manual_challenge(
+    return_to: str | None = Query(default=None, alias="returnTo", max_length=2048),
+):
+    """Prepare a PKCE-bound direct credential form for central Ithute Auth.
+
+    BuildTrack never receives the email/password/MFA values. The browser posts
+    them directly to the central Ithute Auth authorization endpoint, which then
+    returns the normal authorization code to BuildTrack's OIDC callback.
+    """
+    verifier, state_value, nonce, fields = _new_oidc_challenge(return_to)
+    response = JSONResponse(
         {
-            "response_type": "code",
-            "client_id": settings.auth_audience,
-            "redirect_uri": settings.auth_oidc_redirect_uri,
-            "code_challenge": _pkce_challenge(verifier),
-            "code_challenge_method": "S256",
-            "scope": "openid profile email phone",
-            "state": state_value,
-            "nonce": nonce,
+            "action": settings.auth_authorization_url,
+            "method": "post",
+            "fields": fields,
         }
     )
-    response = RedirectResponse(f"{settings.auth_authorization_url}?{query}", status_code=303)
-    short_cookie = _cookie_kwargs(600)
-    response.set_cookie(settings.auth_oidc_state_cookie_name, state_value, **short_cookie)
-    response.set_cookie(settings.auth_oidc_nonce_cookie_name, nonce, **short_cookie)
-    response.set_cookie(settings.auth_oidc_verifier_cookie_name, verifier, **short_cookie)
-    response.set_cookie(settings.auth_oidc_return_cookie_name, _safe_return_to(return_to), **short_cookie)
+    _set_oidc_challenge_cookies(
+        response,
+        verifier=verifier,
+        state_value=state_value,
+        nonce=nonce,
+        return_to=return_to,
+    )
     return _no_store(response)
 
 
