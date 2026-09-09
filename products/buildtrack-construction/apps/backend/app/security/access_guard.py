@@ -59,6 +59,17 @@ def _is_mutation(request: Request) -> bool:
     return request.method.upper() not in {"GET", "HEAD", "OPTIONS"}
 
 
+def _is_user_assignment_route(path: str) -> bool:
+    """Match only /access/users/{id}/assignments, never product assignment URLs."""
+    parts = path.rstrip("/").split("/")
+    return (
+        len(parts) >= 7
+        and parts[-4:-2] == ["access", "users"]
+        and parts[-1] == "assignments"
+        and parts[-2].isdigit()
+    )
+
+
 def _last_system_admin(db: Session, company_id: int, user_id: int) -> bool:
     role = db.scalar(select(Role).where(Role.company_id == company_id, Role.code == "SYSTEM_ADMIN"))
     if not role:
@@ -110,7 +121,9 @@ async def require_access_request_security(request: Request, db: Session = Depend
     if principal.user.must_change_password and not any(path.endswith(suffix) for suffix in PASSWORD_CHANGE_ALLOWED_SUFFIXES):
         raise HTTPException(status_code=428, detail="Password change required before continuing")
 
-    if request.method in {"POST", "PUT"} and (path.endswith("/access/users") or path.endswith("/assignments")):
+    user_assignment_route = _is_user_assignment_route(path)
+    creating_user = path.rstrip("/") == "/api/v1/access/users"
+    if request.method in {"POST", "PUT"} and (creating_user or user_assignment_route):
         try:
             payload = await request.json()
         except Exception:
@@ -122,13 +135,9 @@ async def require_access_request_security(request: Request, db: Session = Depend
             if any(role.code in SENSITIVE_ROLE_CODES for role in roles) and not principal.has_company_permission("roles.manage"):
                 raise HTTPException(status_code=403, detail="Only a role administrator can assign System Administrator or Access Administrator")
 
-        if path.endswith("/assignments"):
-            parts = path.rstrip("/").split("/")
-            try:
-                target_user_id = int(parts[-2])
-            except (ValueError, IndexError):
-                target_user_id = 0
-            if target_user_id and _last_system_admin(db, principal.user.company_id, target_user_id):
+        if user_assignment_route:
+            target_user_id = int(path.rstrip("/").split("/")[-2])
+            if _last_system_admin(db, principal.user.company_id, target_user_id):
                 system_role = db.scalar(select(Role).where(Role.company_id == principal.user.company_id, Role.code == "SYSTEM_ADMIN"))
                 if system_role and system_role.id not in role_ids:
                     raise HTTPException(status_code=422, detail="The last active System Administrator cannot lose the System Administrator role")
