@@ -32,32 +32,36 @@ def test_production_disables_second_password_system() -> None:
     assert 'python -m scripts.bootstrap_production && python -m scripts.provision_central_admin' in compose
 
 
-def test_manual_email_password_login_uses_exact_central_identity_without_cached_browser_session() -> None:
+def test_manual_email_password_login_posts_directly_to_central_auth_without_cors_fetch() -> None:
     access = (BACKEND / "app/api/v1/ithute_access.py").read_text()
     frontend = (PRODUCT / "apps/frontend/app/login/page.tsx").read_text()
-    central = (REPO / "platform/ithute-auth/app/main.py").read_text()
+    central_oauth = (REPO / "platform/ithute-auth/app/oauth.py").read_text()
 
-    # The browser authenticates the typed credential directly against central Auth.
-    assert 'CENTRAL_AUTH_LOGIN = "https://auth.ithute.co.ls/v1/auth/login"' in frontend
-    assert 'BUILDTRACK_CLIENT_ID = "buildtrack-construction"' in frontend
-    assert 'fetch(CENTRAL_AUTH_LOGIN' in frontend
-    assert 'identifier: email.trim()' in frontend
-    assert 'password,' in frontend
-    assert 'mfa_code: mfaCode.trim() || null' in frontend
+    # BuildTrack prepares a PKCE challenge but never receives the credential.
+    assert '@router.get("/oidc/manual-challenge")' in access
+    assert '"action": settings.auth_authorization_url' in access
+    assert '"code_challenge": _pkce_challenge(verifier)' in access
+    assert 'BuildTrack never receives the email/password/MFA values' in access
 
-    # BuildTrack receives only central tokens, validates the BuildTrack audience and
-    # converts them to the normal HttpOnly product session.
-    assert '@router.post("/central-session")' in access
-    assert 'access_token = str(payload.get("access_token") or "").strip()' in access
-    assert 'refresh_token = str(payload.get("refresh_token") or "").strip()' in access
-    assert 'claims = _validate_access_token(access_token)' in access
-    assert 'body: JSON.stringify({ access_token: tokens.access_token, refresh_token: tokens.refresh_token })' in frontend
-    assert 'fetch("/api/v1/access/central-session"' in frontend
+    # The browser performs a normal form POST directly to central Auth. This does
+    # not depend on cross-origin fetch/CORS and therefore cannot fail as "Failed to fetch".
+    assert 'json<ManualChallenge>' in frontend
+    assert 'centralForm.action = challenge.action' in frontend
+    assert 'centralForm.method = "post"' in frontend
+    assert 'addFormField(centralForm, "identifier", email.trim())' in frontend
+    assert 'addFormField(centralForm, "password", password)' in frontend
+    assert 'addFormField(centralForm, "mfa_code", mfaCode.trim())' in frontend
+    assert 'centralForm.submit()' in frontend
+    assert 'fetch(CENTRAL_AUTH_LOGIN' not in frontend
+    assert 'https://auth.ithute.co.ls/v1/auth/login' not in frontend
 
-    # Central Auth remains the password authority.
-    assert '@app.post("/v1/auth/login", response_model=TokenResponse)' in central
-    assert 'verify_password(payload.password, user.password_hash)' in central
-    assert 'client_id=payload.client_id' in central
+    # Central Auth validates the exact submitted identifier/password and issues
+    # the authorization code for that user, independent of an existing SSO cookie.
+    assert '@router.post("/oauth/authorize")' in central_oauth
+    assert 'identifier: str = Form(...)' in central_oauth
+    assert 'password: str = Form(...)' in central_oauth
+    assert 'verify_password(password, user.password_hash)' in central_oauth
+    assert 'user=user' in central_oauth
 
 
 def test_all_configured_product_admins_can_federate_as_system_admin() -> None:
@@ -86,6 +90,7 @@ def test_production_admin_bootstrap_is_multi_identity_and_idempotent() -> None:
     assert "settings.product_admin_email_list" in bootstrap
     assert 'PRODUCT_ADMIN_EMAILS = "justy@ithute.co.ls,just@ithute.co.ls"' in sync
     assert '"ITHUTE_BUILDTRACK_PRODUCT_ADMIN_EMAILS": PRODUCT_ADMIN_EMAILS' in sync
+    assert 'ensure_csv("ITHUTE_AUTH_CORS_ORIGINS", PUBLIC_URL, central=True)' in sync
 
 
 def test_production_cert_discovery_accepts_current_certbot_inventory_format() -> None:

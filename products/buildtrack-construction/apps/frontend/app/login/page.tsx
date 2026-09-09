@@ -8,9 +8,6 @@ import { Alert, Button } from "../components/ui";
 import { PublicHeader } from "../components/public-header";
 import styles from "../security.module.css";
 
-const CENTRAL_AUTH_LOGIN = "https://auth.ithute.co.ls/v1/auth/login";
-const BUILDTRACK_CLIENT_ID = "buildtrack-construction";
-
 async function json<T>(path: string): Promise<T> {
   const response = await fetch(`/api/v1${path}`, { cache: "no-store", credentials: "include" });
   const payload = await response.json().catch(() => ({}));
@@ -18,10 +15,19 @@ async function json<T>(path: string): Promise<T> {
   return payload as T;
 }
 
-type CentralTokens = {
-  access_token: string;
-  refresh_token: string;
+type ManualChallenge = {
+  action: string;
+  method: "post";
+  fields: Record<string, string>;
 };
+
+function addFormField(form: HTMLFormElement, name: string, value: string) {
+  const input = document.createElement("input");
+  input.type = "hidden";
+  input.name = name;
+  input.value = value;
+  form.appendChild(input);
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -55,60 +61,41 @@ export default function LoginPage() {
     setSubmitting(true);
 
     try {
-      // The browser sends the credential directly to central Ithute Auth. BuildTrack
-      // receives only the resulting audience-bound tokens and never receives the password.
-      const centralResponse = await fetch(CENTRAL_AUTH_LOGIN, {
-        method: "POST",
-        mode: "cors",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          client_id: BUILDTRACK_CLIENT_ID,
-          identifier: email.trim(),
-          password,
-          mfa_code: mfaCode.trim() || null,
-        }),
-      });
-      const centralPayload = await centralResponse.json().catch(() => ({}));
-      if (!centralResponse.ok) {
-        const detail = typeof centralPayload?.detail === "string" ? centralPayload.detail : "Central Ithute Auth rejected the sign-in";
-        throw new Error(detail);
+      // BuildTrack prepares only the PKCE/OIDC challenge. The browser then posts
+      // the credential directly to central Ithute Auth as a normal form navigation.
+      // This keeps the password out of BuildTrack and avoids cross-origin fetch/CORS.
+      const challenge = await json<ManualChallenge>(
+        `/access/oidc/manual-challenge?returnTo=${encodeURIComponent(returnTo)}`,
+      );
+      if (challenge.method !== "post" || !challenge.action || !challenge.fields) {
+        throw new Error("Could not prepare secure sign-in");
       }
 
-      const tokens = centralPayload as Partial<CentralTokens>;
-      if (!tokens.access_token || !tokens.refresh_token) {
-        throw new Error("Central Ithute Auth returned an incomplete sign-in response");
-      }
-
-      const sessionResponse = await fetch("/api/v1/access/central-session", {
-        method: "POST",
-        cache: "no-store",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ access_token: tokens.access_token, refresh_token: tokens.refresh_token }),
-      });
-      const sessionPayload = await sessionResponse.json().catch(() => ({}));
-      if (!sessionResponse.ok) {
-        const detail = typeof sessionPayload?.detail === "string" ? sessionPayload.detail : "Nthane Brothers could not create your session";
-        throw new Error(detail);
-      }
+      const centralForm = document.createElement("form");
+      centralForm.method = "post";
+      centralForm.action = challenge.action;
+      centralForm.acceptCharset = "UTF-8";
+      for (const [name, value] of Object.entries(challenge.fields)) addFormField(centralForm, name, value);
+      addFormField(centralForm, "identifier", email.trim());
+      addFormField(centralForm, "password", password);
+      addFormField(centralForm, "mfa_code", mfaCode.trim());
+      document.body.appendChild(centralForm);
 
       setPassword("");
       setMfaCode("");
-      router.replace(returnTo);
-      router.refresh();
+      centralForm.submit();
     } catch (err) {
       setPassword("");
       setMfaCode("");
       setSubmitting(false);
-      setError(err instanceof Error ? err.message : "Could not complete secure sign-in");
+      setError(err instanceof Error ? err.message : "Could not start secure sign-in");
     }
   }
 
   return <main className={styles.screen}><PublicHeader showSignIn={false} /><div className={styles.authWrap}><section className={styles.authCard}>
     <div className={styles.brand}><span className={styles.brandMark}>NB</span><div className={styles.brandText}><strong>Nthane Brothers</strong><span>Construction Management System · Lesotho</span></div></div>
     <p className={styles.eyebrow}>Ithute protected access</p><h1 className={styles.title}>Sign in to Nthane Brothers.</h1>
-    <p className={styles.intro}>Use your email and password here. Your browser sends the credential directly to central Ithute Auth; Nthane Brothers receives only the resulting secure tokens and creates your BuildTrack session.</p>
+    <p className={styles.intro}>Use your email and password here. Your browser submits the credential directly to central Ithute Auth; Nthane Brothers never receives your password and creates your BuildTrack session only after central authentication succeeds.</p>
     {error && <Alert tone="danger" title="Sign-in unavailable">{error}</Alert>}
     {!ready ? <p className={styles.intro}>Checking product readiness…</p> : <>
       <form className={styles.form} onSubmit={submitEmailPassword}>
