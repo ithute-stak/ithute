@@ -35,6 +35,25 @@ type RecordRow = { content: string; disabled?: boolean };
 type Rrset = { name: string; type: string; ttl: number; records: RecordRow[] };
 type Zone = { name?: string; kind?: string; serial?: number; rrsets?: Rrset[] };
 type RecordType = "A" | "AAAA" | "CNAME" | "MX" | "TXT" | "CAA" | "SRV";
+type PackageInfo = {
+  id: string;
+  code: string;
+  name: string;
+  currency: string;
+  monthly_price_minor: number;
+  included_domains: number;
+  included_mailboxes: number;
+  included_storage_mb: number;
+  subscription_status: string;
+};
+type PackageContext = {
+  domain: string;
+  package: PackageInfo;
+  profile_records: Array<{ name: string; type: string; values: string[]; purpose: string }>;
+  mail_enabled: boolean;
+  dkim_after_verification: boolean;
+  package_scope: string;
+};
 
 async function api(path: string, init?: RequestInit) {
   const options: RequestInit = {
@@ -67,6 +86,12 @@ function help(type: RecordType) {
   }[type];
 }
 
+function packagePrice(info: PackageInfo | null) {
+  if (!info) return "—";
+  const amount = (info.monthly_price_minor / 100).toFixed(2);
+  return info.currency === "LSL" ? `M ${amount}/month` : `${info.currency} ${amount}/month`;
+}
+
 export default function DnsPage() {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
@@ -76,6 +101,8 @@ export default function DnsPage() {
   const [domainId, setDomainId] = useState("");
   const [zone, setZone] = useState<Zone | null>(null);
   const [nameservers, setNameservers] = useState<string[]>([]);
+  const [packageContext, setPackageContext] = useState<PackageContext | null>(null);
+  const [packageUnavailable, setPackageUnavailable] = useState("");
   const [busy, setBusy] = useState(false);
   const [showRecord, setShowRecord] = useState(false);
   const [type, setType] = useState<RecordType>("A");
@@ -94,6 +121,7 @@ export default function DnsPage() {
   const canManage = Boolean(me?.is_platform_owner || ["tenant_admin", "dns_admin"].includes(selectedContext?.role || ""));
   const verified = Boolean(selectedDomain?.status === "verified" && selectedDomain?.ownership_verified_at);
   const rrsets = zone?.rrsets || [];
+  const packageInfo = packageContext?.package || null;
 
   useEffect(() => {
     void (async () => {
@@ -158,7 +186,12 @@ export default function DnsPage() {
   useEffect(() => {
     setZone(null);
     setNameservers([]);
-    if (tenantId && domainId) void loadZone();
+    setPackageContext(null);
+    setPackageUnavailable("");
+    if (tenantId && domainId) {
+      void loadZone();
+      void loadPackage();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, domainId]);
 
@@ -183,6 +216,23 @@ export default function DnsPage() {
     }
   }
 
+  async function loadPackage() {
+    if (!tenantId || !domainId) return;
+    setPackageUnavailable("");
+    try {
+      const response = await api(`/tenants/${tenantId}/domains/${domainId}/dns/package`);
+      if (!response.ok) {
+        setPackageContext(null);
+        setPackageUnavailable(await detail(response, "Hosting package unavailable"));
+        return;
+      }
+      setPackageContext(await response.json());
+    } catch {
+      setPackageContext(null);
+      setPackageUnavailable("Unable to read the hosting package");
+    }
+  }
+
   async function provision() {
     if (!tenantId || !domainId) return;
     setBusy(true);
@@ -196,7 +246,7 @@ export default function DnsPage() {
       if (data.staged) {
         setToast(
           data.created
-            ? "Staged PowerDNS zone prepared. Add/import all records before changing registrar nameservers."
+            ? "Staged PowerDNS zone prepared. Auto-generate or add/import all required records before changing registrar nameservers."
             : "Staged PowerDNS zone reconciled. Check all records before changing registrar nameservers.",
         );
       } else {
@@ -204,6 +254,26 @@ export default function DnsPage() {
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to prepare authoritative zone");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function autoGenerateRecords() {
+    if (!tenantId || !domainId || !zone) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await api(`/tenants/${tenantId}/domains/${domainId}/dns/records/auto-generate`, { method: "POST" });
+      if (!response.ok) throw new Error(await detail(response, "Unable to auto-generate package DNS records"));
+      const data = await response.json();
+      const generated = Array.isArray(data.generated) ? data.generated.length : 0;
+      const skipped = Array.isArray(data.skipped) ? data.skipped.length : 0;
+      const planName = String(data.package?.name || packageInfo?.name || "hosting package");
+      setToast(`${planName} DNS defaults applied: ${generated} record set${generated === 1 ? "" : "s"} generated, ${skipped} existing/conflicting set${skipped === 1 ? "" : "s"} left unchanged.${verified && selectedDomain?.mail_enabled ? " Reconcile mail DNS to ensure DKIM." : " DKIM will be generated after ownership verification."}`);
+      await Promise.all([loadZone(), loadPackage()]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to auto-generate package DNS records");
     } finally {
       setBusy(false);
     }
@@ -375,7 +445,7 @@ export default function DnsPage() {
               <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
                 {[
                   ["1", "Prepare zone", zone ? "Done" : "Next"],
-                  ["2", "Add / import records", zone ? "Available" : "After step 1"],
+                  ["2", "Auto-generate / add records", zone ? "Available" : "After step 1"],
                   ["3", "Change registrar NS", "After records are ready"],
                   ["4", "Wait for propagation", "Both Ithute NS"],
                   ["5", "Verify ownership", "Domain portfolio"],
@@ -384,7 +454,7 @@ export default function DnsPage() {
                   <p className="mt-1 text-[9px] text-[var(--admin-muted)]">{state}</p>
                 </div>)}
               </div>
-              {zone ? <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] font-semibold text-emerald-800"><CheckCircle2 size={14}/>Zone is staged. Finish checking records before changing nameservers at Zeecom. <a href="/domains" className="font-black underline">Verify after delegation propagates</a></div> : null}
+              {zone ? <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] font-semibold text-emerald-800"><CheckCircle2 size={14}/>Zone is staged. Generate/check records before changing nameservers at Zeecom. <a href="/domains" className="font-black underline">Verify after delegation propagates</a></div> : null}
             </div>
           </div>
         </section> : null}
@@ -397,10 +467,15 @@ export default function DnsPage() {
             </div>
             <div className="mt-5 space-y-3 text-[11px]">
               <div className="flex justify-between border-b pb-2"><span className="text-[var(--admin-muted)]">Ownership</span><strong>{verified ? "Verified" : "Pending"}</strong></div>
+              <div className="flex justify-between border-b pb-2"><span className="text-[var(--admin-muted)]">Hosting package</span><strong>{packageInfo?.name || (packageUnavailable ? "Unavailable" : "Loading…")}</strong></div>
+              <div className="flex justify-between border-b pb-2"><span className="text-[var(--admin-muted)]">Package price</span><strong>{packagePrice(packageInfo)}</strong></div>
+              <div className="flex justify-between border-b pb-2"><span className="text-[var(--admin-muted)]">Package capacity</span><strong>{packageInfo ? `${packageInfo.included_domains} domains · ${packageInfo.included_mailboxes} mailboxes` : "—"}</strong></div>
               <div className="flex justify-between border-b pb-2"><span className="text-[var(--admin-muted)]">Kind</span><strong>{zone?.kind || "—"}</strong></div>
               <div className="flex justify-between border-b pb-2"><span className="text-[var(--admin-muted)]">Serial</span><strong>{zone?.serial || "—"}</strong></div>
               <div className="flex justify-between"><span className="text-[var(--admin-muted)]">RRsets</span><strong>{rrsets.length}</strong></div>
             </div>
+            {packageUnavailable ? <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[10px] font-semibold text-amber-900">{packageUnavailable}</div> : null}
+            {packageInfo ? <div className="mt-3 rounded-xl bg-[#f6f8f6] p-3 text-[10px] leading-4 text-[var(--admin-muted)]"><strong className="text-[var(--admin-ink)]">Auto-generation profile: {packageInfo.name}</strong><br/>{packageContext?.profile_records.length || 0} package-default record sets are eligible. Existing customer records are never overwritten. DKIM stays verified-only.</div> : null}
             {nameservers.length ? <div className="mt-4 rounded-xl bg-[#f6f8f6] p-3">
               <p className="eyebrow-label">Registrar nameservers</p>
               {nameservers.map((nameserver) => <div key={nameserver} className="mt-1 flex items-center gap-2"><code className="min-w-0 flex-1 truncate text-[10px]">{nameserver}</code><button type="button" onClick={() => copy(nameserver)} className="icon-button" aria-label={`Copy ${nameserver}`}><Copy size={12}/></button></div>)}
@@ -408,7 +483,8 @@ export default function DnsPage() {
             </div> : null}
             <div className="mt-5 flex flex-wrap gap-2">
               {canManage ? <button className="btn-primary" disabled={busy} onClick={() => void provision()}><Database size={14}/>{zone ? (verified ? "Reconcile" : "Reconcile staged zone") : "Prepare zone"}</button> : null}
-              <button className="btn-secondary" disabled={busy} onClick={() => void loadZone()}><RefreshCw size={14} className={busy ? "animate-spin" : ""}/>Refresh</button>
+              {zone && canManage && packageInfo ? <button className="btn-secondary" disabled={busy} onClick={() => void autoGenerateRecords()}><Database size={14}/>Auto-generate records</button> : null}
+              <button className="btn-secondary" disabled={busy} onClick={() => { void loadZone(); void loadPackage(); }}><RefreshCw size={14} className={busy ? "animate-spin" : ""}/>Refresh</button>
               {zone ? <><button className="btn-secondary" onClick={exportJson}><Download size={14}/>JSON</button><button className="btn-secondary" onClick={exportCsv}><Download size={14}/>CSV</button></> : null}
             </div>
           </aside>
@@ -417,11 +493,14 @@ export default function DnsPage() {
             <section className="surface-card p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div><p className="text-sm font-black">DNS record sets</p><p className="text-[10px] text-[var(--admin-muted)]">SOA and NS are protected. Pending-domain records are staged until registrar delegation.</p></div>
-                {zone && canManage ? <button className="btn-primary" onClick={() => setShowRecord(true)}><Plus size={14}/>Add record</button> : null}
+                <div className="flex flex-wrap gap-2">
+                  {zone && canManage && packageInfo ? <button className="btn-secondary" disabled={busy} onClick={() => void autoGenerateRecords()}><Database size={14}/>Auto-generate records</button> : null}
+                  {zone && canManage ? <button className="btn-primary" onClick={() => setShowRecord(true)}><Plus size={14}/>Add record</button> : null}
+                </div>
               </div>
-              {!zone ? <div className="mt-4 rounded-xl border border-dashed border-[var(--admin-line)] bg-[var(--admin-soft)] p-5 text-center text-[11px] text-[var(--admin-muted)]">Click <b>Prepare zone</b> first. After that you can add or import records before verification.</div> : <div className="table-wrap mt-4"><table><thead><tr><th>Name</th><th>Type</th><th>TTL</th><th>Values</th><th/></tr></thead><tbody>
+              {!zone ? <div className="mt-4 rounded-xl border border-dashed border-[var(--admin-line)] bg-[var(--admin-soft)] p-5 text-center text-[11px] text-[var(--admin-muted)]">Click <b>Prepare zone</b> first. After that you can auto-generate, add or import records before verification.</div> : <div className="table-wrap mt-4"><table><thead><tr><th>Name</th><th>Type</th><th>TTL</th><th>Values</th><th/></tr></thead><tbody>
                 {rrsets.map((rrset) => <tr key={`${rrset.name}-${rrset.type}`}><td><code className="text-[10px]">{rrset.name}</code></td><td><StatusBadge state="neutral">{rrset.type}</StatusBadge></td><td className="text-[10px]">{rrset.ttl}</td><td>{rrset.records.map((record, index) => <code key={index} className="block max-w-[460px] overflow-x-auto text-[10px]">{record.content}</code>)}</td><td>{canManage && !["SOA", "NS"].includes(rrset.type) ? <button className="icon-button text-red-700" onClick={() => { setPendingDelete(rrset); setConfirmText(""); }} aria-label={`Delete ${rrset.type} ${rrset.name}`}><Trash2 size={13}/></button> : null}</td></tr>)}
-                {!rrsets.length ? <tr><td colSpan={5} className="py-8 text-center text-[var(--admin-muted)]">No records yet. Add the first record set before registrar cutover.</td></tr> : null}
+                {!rrsets.length ? <tr><td colSpan={5} className="py-8 text-center text-[var(--admin-muted)]">No records yet. Auto-generate package defaults or add the first record set before registrar cutover.</td></tr> : null}
               </tbody></table></div>}
             </section>
 
