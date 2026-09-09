@@ -193,6 +193,8 @@ The system controls records and evidence; it deliberately does not pretend that 
 
 For local development/testing:
 
+No `.env` file is required for local development; the Compose stack has safe local defaults, while production/VPS deployments must provide their own secure environment values.
+
 ```bash
 docker compose up --build
 ```
