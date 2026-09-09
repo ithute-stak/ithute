@@ -123,11 +123,35 @@ wait_service buildtrack-frontend 120
 compose exec -T backend python -m app.product_dns --zone ithute.co.ls --host "$PRODUCT_HOST"
 
 # Expand the existing shared certificate before activating the new virtual host.
-# Discovering the current SAN set prevents accidental loss of sibling domains.
+# Certbot versions used by Ithute have reported the SAN line as either
+# `Domains:` or `Identifiers:`. Read the named certificate block and preserve
+# its complete existing SAN set so adding BuildTrack cannot drop sibling hosts.
 cd "$EDGE_DIR"
 edge() { docker compose -p ithute-edge -f docker-compose.ithute-edge.yml "$@"; }
-current_domains="$(edge run --rm --no-deps --entrypoint certbot certbot certificates --cert-name ithute-edge 2>/dev/null | sed -n 's/^[[:space:]]*Domains: //p' | tail -n1)"
-[ -n "$current_domains" ] || { echo "Could not discover the shared ithute-edge certificate SANs" >&2; exit 1; }
+certbot_domains() {
+  inventory="$(edge run --rm --no-deps --entrypoint certbot certbot certificates 2>/dev/null || true)"
+  printf '%s\n' "$inventory" | awk '
+    /^[[:space:]]*Certificate Name:[[:space:]]*ithute-edge[[:space:]]*$/ {
+      in_cert = 1
+      next
+    }
+    in_cert && /^[[:space:]]*(Domains|Identifiers):[[:space:]]*/ {
+      sub(/^[[:space:]]*(Domains|Identifiers):[[:space:]]*/, "")
+      print
+      exit
+    }
+    in_cert && /^[[:space:]]*Certificate Name:/ {
+      exit
+    }
+  '
+}
+
+current_domains="$(certbot_domains || true)"
+if [ -z "$current_domains" ]; then
+  echo "Could not discover the shared ithute-edge certificate SANs" >&2
+  edge run --rm --no-deps --entrypoint certbot certbot certificates || true
+  exit 1
+fi
 case " $current_domains " in
   *" $PRODUCT_HOST "*) : ;;
   *)
@@ -135,6 +159,16 @@ case " $current_domains " in
     set -- certonly --webroot -w /var/www/certbot --cert-name ithute-edge --expand --non-interactive --agree-tos
     for domain in $current_domains "$PRODUCT_HOST"; do set -- "$@" -d "$domain"; done
     edge run --rm --no-deps --entrypoint certbot certbot "$@"
+    ;;
+esac
+
+cert_domains="$(certbot_domains || true)"
+case " $cert_domains " in
+  *" $PRODUCT_HOST "*) echo "Shared TLS certificate includes ${PRODUCT_HOST}." ;;
+  *)
+    echo "Shared ithute-edge certificate does not include ${PRODUCT_HOST} after reconciliation" >&2
+    edge run --rm --no-deps --entrypoint certbot certbot certificates || true
+    exit 1
     ;;
 esac
 
