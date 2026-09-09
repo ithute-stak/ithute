@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     auth_cookie_max_age_seconds: int = 60 * 60 * 24 * 30
     legacy_auth_enabled: bool = True
     superadmin_email: str = "justy@ithute.co.ls"
+    product_admin_emails: str = "justy@ithute.co.ls,just@ithute.co.ls"
 
     # Shared Ithute delivery services. Product data remains in BuildTrack.
     push_base_url: str = "http://ithute-push:8080"
@@ -55,6 +56,18 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def product_admin_email_list(self) -> list[str]:
+        values = [self.superadmin_email, *self.product_admin_emails.split(",")]
+        seen: set[str] = set()
+        result: list[str] = []
+        for value in values:
+            email = value.strip().lower()
+            if email and email not in seen:
+                seen.add(email)
+                result.append(email)
+        return result
 
     @property
     def auth_authorization_url(self) -> str:
