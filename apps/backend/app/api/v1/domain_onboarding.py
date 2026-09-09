@@ -69,19 +69,20 @@ def inspect_domain_onboarding(
             )
         elif discovery["lookup_status"] == "found" and change_required:
             next_step = (
-                "Preferred: keep the current nameservers and publish the one-time TXT ownership record. "
-                f"If your registrar only lets you change nameservers (for example a registrar without DNS record editing), set them to {ns1} and {ns2}, "
-                "then click Verify. Mailbox DNS will accept the parent-zone delegation to both Ithute nameservers as ownership proof. "
-                "Use the delegation-first route only when you intend Mailbox DNS to become authoritative for the domain."
+                "Safe cutover: add the domain, open DNS zones, prepare the staged PowerDNS zone, and add/import every required record first. "
+                f"Only after the staged zone is ready should you change the registrar nameservers to {ns1} and {ns2}. "
+                "Wait for delegation to propagate, then click Verify. Mailbox DNS accepts delegation to both Ithute nameservers as ownership proof. "
+                "If your current DNS provider lets you publish TXT, TXT verification remains available without changing nameservers first."
             )
         elif discovery["already_on_platform_nameservers"]:
             next_step = (
-                f"The domain is already delegated to {ns1} and {ns2}. Click Verify; Mailbox DNS can use that registrar delegation as ownership proof, "
-                "then continue with PowerDNS zone reconciliation."
+                f"The domain is already delegated to {ns1} and {ns2}. Ensure the PowerDNS zone is prepared and contains the required records, "
+                "then click Verify. Mailbox DNS can use the parent-zone delegation as ownership proof."
             )
         else:
             next_step = (
-                f"Complete ownership verification. You can publish the TXT challenge, or—when the registrar only supports nameserver changes—delegate to {ns1} and {ns2} and click Verify."
+                f"Prepare the staged PowerDNS zone and required records first. If your registrar only supports nameserver changes, then delegate to {ns1} and {ns2}, "
+                "wait for propagation, and click Verify. TXT verification remains available when the current DNS provider supports TXT records."
             )
     else:
         next_step = (
