@@ -59,6 +59,8 @@ def inspect_domain_onboarding(
         and not discovery["already_on_platform_nameservers"]
     )
     if wants_platform:
+        ns1 = settings.nameserver_1.strip().rstrip(".")
+        ns2 = settings.nameserver_2.strip().rstrip(".")
         if not platform_ready:
             next_step = (
                 "Keep the current registrar nameservers unchanged. Mailbox DNS production nameserver hostnames are not configured yet, "
@@ -67,13 +69,20 @@ def inspect_domain_onboarding(
             )
         elif discovery["lookup_status"] == "found" and change_required:
             next_step = (
-                "Keep the current nameservers in place while TXT ownership verification is completed. "
-                "After verification and PowerDNS zone preparation, replace the registrar nameservers with the Mailbox DNS nameservers."
+                "Preferred: keep the current nameservers and publish the one-time TXT ownership record. "
+                f"If your registrar only lets you change nameservers (for example a registrar without DNS record editing), set them to {ns1} and {ns2}, "
+                "then click Verify. Mailbox DNS will accept the parent-zone delegation to both Ithute nameservers as ownership proof. "
+                "Use the delegation-first route only when you intend Mailbox DNS to become authoritative for the domain."
             )
         elif discovery["already_on_platform_nameservers"]:
-            next_step = "The domain is already delegated to Mailbox DNS nameservers; continue with ownership verification and zone reconciliation."
+            next_step = (
+                f"The domain is already delegated to {ns1} and {ns2}. Click Verify; Mailbox DNS can use that registrar delegation as ownership proof, "
+                "then continue with PowerDNS zone reconciliation."
+            )
         else:
-            next_step = "Complete ownership verification first. Re-run nameserver discovery before changing registrar delegation."
+            next_step = (
+                f"Complete ownership verification. You can publish the TXT challenge, or—when the registrar only supports nameserver changes—delegate to {ns1} and {ns2} and click Verify."
+            )
     else:
         next_step = (
             "Keep the current external nameservers. Publish the ownership TXT and any later MX/SPF/DKIM/DMARC records at that DNS provider; "
