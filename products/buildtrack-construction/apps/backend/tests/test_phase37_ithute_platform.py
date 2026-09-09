@@ -27,6 +27,7 @@ def test_production_disables_second_password_system() -> None:
     assert 'AUTH_AUDIENCE: buildtrack-construction' in compose
     assert 'LEGACY_AUTH_ENABLED: "false"' in compose
     assert 'SUPERADMIN_EMAIL: ${ITHUTE_BUILDTRACK_SUPERADMIN_EMAIL:-justy@ithute.co.ls}' in compose
+    assert 'command: ["python", "-m", "scripts.bootstrap_production"]' in compose
 
 
 def test_frontend_public_vendor_and_manual_routes_are_not_session_gated() -> None:
