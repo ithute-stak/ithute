@@ -32,26 +32,32 @@ def test_production_disables_second_password_system() -> None:
     assert 'python -m scripts.bootstrap_production && python -m scripts.provision_central_admin' in compose
 
 
-def test_manual_email_password_login_stays_central_and_pkce_bound() -> None:
+def test_manual_email_password_login_uses_exact_central_identity_without_cached_browser_session() -> None:
     access = (BACKEND / "app/api/v1/ithute_access.py").read_text()
     frontend = (PRODUCT / "apps/frontend/app/login/page.tsx").read_text()
-    central_oauth = (REPO / "platform/ithute-auth/app/oauth.py").read_text()
+    central = (REPO / "platform/ithute-auth/app/main.py").read_text()
 
-    assert '@router.get("/oidc/manual-challenge")' in access
-    assert '"action": settings.auth_authorization_url' in access
-    assert '"code_challenge": _pkce_challenge(verifier)' in access
-    assert 'response.set_cookie(settings.auth_oidc_verifier_cookie_name' in access
-    assert 'BuildTrack never receives the email/password/MFA values' in access
+    # The browser authenticates the typed credential directly against central Auth.
+    assert 'CENTRAL_AUTH_LOGIN = "https://auth.ithute.co.ls/v1/auth/login"' in frontend
+    assert 'BUILDTRACK_CLIENT_ID = "buildtrack-construction"' in frontend
+    assert 'fetch(CENTRAL_AUTH_LOGIN' in frontend
+    assert 'identifier: email.trim()' in frontend
+    assert 'password,' in frontend
+    assert 'mfa_code: mfaCode.trim() || null' in frontend
 
-    assert 'centralForm.action = challenge.action' in frontend
-    assert 'addFormField(centralForm, "identifier", email.trim())' in frontend
-    assert 'addFormField(centralForm, "password", password)' in frontend
-    assert 'addFormField(centralForm, "mfa_code", mfaCode.trim())' in frontend
-    assert 'https://auth.ithute.co.ls/forgot-password' in frontend
+    # BuildTrack receives only central tokens, validates the BuildTrack audience and
+    # converts them to the normal HttpOnly product session.
+    assert '@router.post("/central-session")' in access
+    assert 'access_token = str(payload.get("access_token") or "").strip()' in access
+    assert 'refresh_token = str(payload.get("refresh_token") or "").strip()' in access
+    assert 'claims = _validate_access_token(access_token)' in access
+    assert 'body: JSON.stringify({ access_token: tokens.access_token, refresh_token: tokens.refresh_token })' in frontend
+    assert 'fetch("/api/v1/access/central-session"' in frontend
 
-    assert '@router.post("/oauth/authorize")' in central_oauth
-    assert 'password: str = Form(...)' in central_oauth
-    assert 'verify_password(password, user.password_hash)' in central_oauth
+    # Central Auth remains the password authority.
+    assert '@app.post("/v1/auth/login", response_model=TokenResponse)' in central
+    assert 'verify_password(payload.password, user.password_hash)' in central
+    assert 'client_id=payload.client_id' in central
 
 
 def test_all_configured_product_admins_can_federate_as_system_admin() -> None:
@@ -61,6 +67,7 @@ def test_all_configured_product_admins_can_federate_as_system_admin() -> None:
     assert "if is_product_admin:" in access
     assert 'created_by="Ithute product admin projection"' in access
     assert "is_product_superadmin = email == settings.superadmin_email.strip().lower()" not in access
+    assert 'f"Your Ithute account ({email}) is valid but has not been assigned "' in access
 
 
 def test_central_admin_bootstrap_never_contains_a_human_password() -> None:
