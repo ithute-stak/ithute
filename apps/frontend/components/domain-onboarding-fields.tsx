@@ -36,6 +36,9 @@ type Inspection = {
   platform_nameservers_configured: boolean;
   already_on_platform_nameservers: boolean;
   nameserver_change_required: boolean;
+  verification_method: "txt" | "nameserver";
+  txt_required: boolean;
+  has_existing_external_dns: boolean;
   next_step: string;
   package?: { plan_code?: string; plan_name?: string; status?: string } | null;
   package_usage: PackageUsage;
@@ -175,6 +178,7 @@ export function DomainOnboardingFields({ tenantId, isPlatformOwner }: Props) {
       <input type="hidden" name="onboarding_inspected" value={inspection ? "true" : "false"}/>
       <input type="hidden" name="selected_plan_allows_domain" value={selectedPlanAllowsDomain ? "true" : "false"}/>
       <input type="hidden" name="domain_claim_available" value={claimAvailable ? "true" : "false"}/>
+      <input type="hidden" name="verification_method" value={inspection?.verification_method || "txt"}/>
 
       <div className="mt-5 form-field">
         <label className="form-label" htmlFor="domain-name"><span>Domain name</span><span className="form-required">Required</span></label>
@@ -232,11 +236,11 @@ export function DomainOnboardingFields({ tenantId, isPlatformOwner }: Props) {
         <div id="dns-mode-help" className="mt-2 grid gap-2 sm:grid-cols-2">
           <div className={`rounded-xl border p-3 text-[10px] leading-4 ${dnsMode === "platform" ? "border-[#87a69d] bg-[#f2f8f6]" : "border-[#e1e7e3] bg-[#fafcfb]"}`}>
             <div className="flex items-center gap-2 font-black text-[#294a40]"><Server size={13}/>Mailbox DNS / PowerDNS</div>
-            <p className="mt-1 text-[#687970]">We become authoritative DNS. After verification and zone preparation, change the registrar nameservers to ours. DNS and email records can then be automated here.</p>
+            <p className="mt-1 text-[#687970]">We become authoritative DNS. Prepare the zone and records before registrar cutover. New domains verify by Ithute nameserver delegation; existing DNS migrations verify by TXT before cutover.</p>
           </div>
           <div className={`rounded-xl border p-3 text-[10px] leading-4 ${dnsMode === "external" ? "border-[#87a69d] bg-[#f2f8f6]" : "border-[#e1e7e3] bg-[#fafcfb]"}`}>
             <div className="flex items-center gap-2 font-black text-[#294a40]"><Globe2 size={13}/>External DNS</div>
-            <p className="mt-1 text-[#687970]">Keep Zeecom, Cloudflare or another provider authoritative. Email may still be hosted here, but TXT/MX/SPF/DKIM/DMARC changes must be published at that provider.</p>
+            <p className="mt-1 text-[#687970]">Keep Zeecom, Cloudflare or another provider authoritative. TXT ownership proof is required, and later MX/SPF/DKIM/DMARC changes must be published at that provider.</p>
           </div>
         </div>
       </div>
@@ -249,7 +253,7 @@ export function DomainOnboardingFields({ tenantId, isPlatformOwner }: Props) {
             <div className="flex items-center gap-2 text-[11px] font-black text-[#263a31]"><ShieldCheck size={14}/>Current DNS delegation</div>
             <p className="mt-1 text-[10px] text-[#718078]">Live public lookup for <b>{inspection.ascii_name}</b></p>
           </div>
-          {inspection.lookup_status === "found" ? <span className="status-badge status-verified">Detected</span> : <span className="status-badge status-pending">Check needed</span>}
+          {inspection.lookup_status === "found" ? <span className="status-badge status-verified">Detected</span> : <span className="status-badge status-pending">No active DNS detected</span>}
         </div>
 
         {inspection.current_nameservers.length ? <div className="mt-3">
@@ -259,6 +263,16 @@ export function DomainOnboardingFields({ tenantId, isPlatformOwner }: Props) {
           </div>
         </div> : <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-800">{inspection.lookup_detail || "No current nameservers were discovered."}</p>}
 
+        <div className={`mt-3 flex gap-2 rounded-lg border p-3 text-[10px] leading-4 ${inspection.txt_required ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+          {inspection.txt_required ? <AlertTriangle size={14} className="mt-0.5 shrink-0"/> : <CheckCircle2 size={14} className="mt-0.5 shrink-0"/>}
+          <span>
+            <b>{inspection.txt_required ? "TXT ownership verification required." : "No TXT ownership token required."}</b>{" "}
+            {inspection.txt_required
+              ? (inspection.has_existing_external_dns ? "Existing external DNS was detected, so ownership is proved at the DNS provider currently serving the domain." : "This domain will remain on external DNS, so ownership is proved there.")
+              : "This is a new/undelegated Platform DNS domain. Ownership will be proved by delegating the registrar to both Ithute nameservers after the staged zone is ready."}
+          </span>
+        </div>
+
         {dnsMode === "platform" ? (
           inspection.platform_nameservers_configured ? <div className="mt-3 rounded-lg border border-[#cddbd5] bg-white p-3">
             <p className="text-[10px] font-black text-[#294a40]">Mailbox DNS target nameservers</p>
@@ -266,7 +280,9 @@ export function DomainOnboardingFields({ tenantId, isPlatformOwner }: Props) {
               {inspection.platform_nameservers.map((server) => <code key={server} className="rounded-md bg-[#f3f6f4] px-2 py-1.5 text-[10px]">{server}</code>)}
             </div>
             <p className={`mt-2 text-[10px] font-bold ${inspection.nameserver_change_required ? "text-amber-700" : "text-emerald-700"}`}>
-              {inspection.nameserver_change_required ? "Nameserver change will be required after verification." : "This domain already uses the platform nameservers."}
+              {inspection.nameserver_change_required
+                ? (inspection.txt_required ? "Prepare/import records and complete TXT verification first; then change the registrar nameservers." : "Prepare the staged zone and records first; then change the registrar nameservers to complete ownership verification.")
+                : "This domain already uses the platform nameservers."}
             </p>
           </div> : <div className="mt-3 flex gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-[10px] leading-4 text-amber-900">
             <AlertTriangle size={14} className="mt-0.5 shrink-0"/>
