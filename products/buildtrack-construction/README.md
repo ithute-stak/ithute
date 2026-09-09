@@ -17,6 +17,7 @@ The platform connects the full operating lifecycle: business development, tender
 - Primary timezone: **Africa/Maseru**
 - Frontend: **http://localhost:3004** by default
 - API: **http://localhost:8004** by default
+- API docs: **http://localhost:8004/docs** by default
 
 ## Architecture
 
