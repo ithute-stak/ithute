@@ -34,4 +34,4 @@ def test_workforce_setup_exposes_remaining_phase3_administration() -> None:
     assert "company_signed" in page
     assert "does not send salary payments" in page
     assert "does not invent statutory tax or pension rates" in page
-    assert 'href="/workforce/setup"' in navigation
+    assert 'href: "/workforce/setup"' in navigation

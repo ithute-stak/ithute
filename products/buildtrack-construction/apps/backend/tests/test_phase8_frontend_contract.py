@@ -57,7 +57,7 @@ def test_phase8_routes_models_and_migration_are_registered() -> None:
 def test_phase8_browser_workspaces_cover_operational_and_control_contracts() -> None:
     page = (FRONTEND / "app/procurement/page.tsx").read_text()
     control = (FRONTEND / "app/procurement/control/page.tsx").read_text()
-    layout = (FRONTEND / "app/layout.tsx").read_text()
+    navigation = (FRONTEND / "app/components/buildtrack-navigation.tsx").read_text()
     readme = (ROOT.parent / "README.md").read_text() if (ROOT.parent / "README.md").exists() else (ROOT / "../README.md").resolve().read_text()
 
     for text in (
@@ -73,6 +73,6 @@ def test_phase8_browser_workspaces_cover_operational_and_control_contracts() -> 
         "/procurement/approvals/", "/procurement/policy/current", "/procurement/stock/adjustments",
     ):
         assert text in control
-    assert 'href="/procurement"' in layout and 'href="/procurement/control"' in layout
+    assert 'href: "/procurement"' in navigation and 'href: "/procurement/control"' in navigation
     assert "Phase 8 — Procurement & Stores: complete" in readme
     assert "does **not** fabricate quotations" in readme

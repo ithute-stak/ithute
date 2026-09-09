@@ -5,7 +5,7 @@ def test_phase4_fleet_workspace_contract() -> None:
     root = Path(__file__).resolve().parents[3]
     page = (root / "apps" / "frontend" / "app" / "fleet" / "page.tsx").read_text(encoding="utf-8")
     control = (root / "apps" / "frontend" / "app" / "fleet" / "control" / "page.tsx").read_text(encoding="utf-8")
-    layout = (root / "apps" / "frontend" / "app" / "layout.tsx").read_text(encoding="utf-8")
+    navigation = (root / "apps" / "frontend" / "app" / "components" / "buildtrack-navigation.tsx").read_text(encoding="utf-8")
     router = (root / "apps" / "backend" / "app" / "api" / "v1" / "router.py").read_text(encoding="utf-8")
     fleet_admin = (root / "apps" / "backend" / "app" / "api" / "v1" / "fleet_admin.py").read_text(encoding="utf-8")
     fleet_guard = (root / "apps" / "backend" / "app" / "security" / "fleet_guard.py").read_text(encoding="utf-8")
@@ -33,7 +33,7 @@ def test_phase4_fleet_workspace_contract() -> None:
     assert "Compliance reminder days are set on each licence" in control
     assert "/fleet/policy" in control and "/fleet/assignments/" in control and "/fleet/inspections/" in control
 
-    assert 'href="/fleet"' in layout and 'href="/fleet/control"' in layout
+    assert 'href: "/fleet"' in navigation and 'href: "/fleet/control"' in navigation
     assert "fleet_admin_router" in router and "fleet_safe_router" in router and "fleet_router" in router
     assert router.index("fleet_admin_router") < router.index("fleet_safe_router") < router.index("router.include_router(fleet_router")
 

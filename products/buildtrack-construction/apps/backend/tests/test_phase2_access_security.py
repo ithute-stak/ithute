@@ -101,6 +101,7 @@ def test_scoped_branch_assignment_is_enforced_and_context_is_filtered(clients) -
             "full_name": "Butha-Buthe Manager",
             "job_title": "Branch Manager",
             "temporary_password": "Branch!Secure2026X",
+            "must_change_password": False,
             "assignments": [{"role_id": branch_role["id"], "branch_id": branch["id"], "site_id": None, "is_primary": True}],
         },
     )

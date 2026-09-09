@@ -33,8 +33,8 @@ def test_phase6_routes_models_and_migration_are_registered() -> None:
         assert model in models and f"class {model}" in project_model
     for contract in (
         '"PROJECT_BUDGET_BASELINE"', '"PROJECT_MOBILISATION"', '"PROJECT_RISK"',
-        '"/from-tender/{tender_id}"', '"/budget/submit"', '"/budget/revise"',
-        '"/readiness-approval"', '"/site-operations-handoff"', '"/exports/projects.csv"',
+        '"/from-tender/{tender_id}"', '"/{project_id}/budget/submit"', '"/{project_id}/budget/revise"',
+        '"/{project_id}/readiness-approval"', '"/{project_id}/site-operations-handoff"', '"/exports/projects.csv"',
     ):
         assert contract in api
     assert "strict_readiness_state" in safe
@@ -48,7 +48,7 @@ def test_phase6_browser_workspaces_cover_operational_and_control_contracts() -> 
     page = (FRONTEND / "app/projects/page.tsx").read_text()
     control = (FRONTEND / "app/projects/control/page.tsx").read_text()
     risks = (FRONTEND / "app/projects/risks/page.tsx").read_text()
-    layout = (FRONTEND / "app/layout.tsx").read_text()
+    navigation = (FRONTEND / "app/components/buildtrack-navigation.tsx").read_text()
     for text in (
         "Project Mobilisation", "Award → Project", "Mobilisation", "Budget baseline", "Programme", "Team",
         "Plant allocation", "Handover docs", "Risks", "/projects/from-tender/", "/projects/dashboard/summary",
@@ -62,4 +62,4 @@ def test_phase6_browser_workspaces_cover_operational_and_control_contracts() -> 
         assert text in control
     for text in ("Project Risk Workbench", "/projects/risks/", "Mitigate", "Save risk treatment", "Critical open risks"):
         assert text in risks
-    assert 'href="/projects"' in layout and 'href="/projects/control"' in layout and 'href="/projects/risks"' in layout
+    assert 'href: "/projects"' in navigation and 'href: "/projects/control"' in navigation and 'href: "/projects/risks"' in navigation

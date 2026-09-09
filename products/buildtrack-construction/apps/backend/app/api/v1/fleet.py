@@ -621,6 +621,7 @@ def change_job_status(job_id: int, payload: MaintenanceStatusInput, db: Session 
         if job.defect_id:
             defect = db.get(FleetDefect, job.defect_id)
             if defect: defect.status = "resolved"; defect.resolved_at = utcnow(); defect.resolved_by = principal.user.full_name; defect.resolution_notes = f"Resolved by maintenance job {job.job_number}"
+        db.flush()
         critical_open = db.scalar(select(FleetDefect.id).where(FleetDefect.asset_id == asset.id, FleetDefect.severity == "critical", FleetDefect.status != "resolved"))
         asset.status = "standby"; asset.serviceability = "restricted" if critical_open else "serviceable"
     job.status = payload.status

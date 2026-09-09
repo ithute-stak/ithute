@@ -61,7 +61,7 @@ def bootstrap(client: TestClient) -> dict:
             "username": "admin",
             "email": "admin@nthane.example.com",
             "full_name": "BuildTrack Administrator",
-            "password": "BuildTrack!Admin2026",
+            "password": "BuildTrack!Root2026X",
         },
     )
     assert admin.status_code == 201, admin.text
