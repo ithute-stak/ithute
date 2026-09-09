@@ -17,7 +17,7 @@ PRODUCT_NAME = "Nthane Brothers Construction"
 PUBLIC_URL = "https://nbro.ithute.co.ls"
 CALLBACK = f"{PUBLIC_URL}/api/v1/access/oidc/callback"
 SUPERADMIN_EMAIL = "justy@ithute.co.ls"
-PRODUCT_ADMIN_EMAILS = "justy@ithute.co.ls,just@ithute.co.ls"
+PRODUCT_ADMIN_EMAILS = "justy@ithute.co.ls,just@ithute.co.ls,supperadmin@ithute.co.ls"
 
 
 def placeholder(value: str) -> bool:

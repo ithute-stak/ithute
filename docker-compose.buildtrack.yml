@@ -58,7 +58,7 @@ services:
       AUTH_COOKIE_SAMESITE: lax
       LEGACY_AUTH_ENABLED: "false"
       SUPERADMIN_EMAIL: ${ITHUTE_BUILDTRACK_SUPERADMIN_EMAIL:-justy@ithute.co.ls}
-      PRODUCT_ADMIN_EMAILS: ${ITHUTE_BUILDTRACK_PRODUCT_ADMIN_EMAILS:-justy@ithute.co.ls,just@ithute.co.ls}
+      PRODUCT_ADMIN_EMAILS: ${ITHUTE_BUILDTRACK_PRODUCT_ADMIN_EMAILS:-justy@ithute.co.ls,just@ithute.co.ls,supperadmin@ithute.co.ls}
       PUSH_BASE_URL: http://ithute-push:8080
       PUSH_SERVICE_CLIENT_ID: buildtrack-construction
       PUSH_SERVICE_CLIENT_SECRET: ${ITHUTE_BUILDTRACK_PUSH_SERVICE_CLIENT_SECRET}
