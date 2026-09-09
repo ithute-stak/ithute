@@ -4,7 +4,7 @@ from pathlib import Path
 def test_workforce_setup_exposes_remaining_phase3_administration() -> None:
     root = Path(__file__).resolve().parents[2]
     page = (root / "frontend" / "app" / "workforce" / "setup" / "page.tsx").read_text(encoding="utf-8")
-    layout = (root / "frontend" / "app" / "layout.tsx").read_text(encoding="utf-8")
+    navigation = (root / "frontend" / "app" / "components" / "buildtrack-navigation.tsx").read_text(encoding="utf-8")
 
     for label in (
         "Leave balance setup",
@@ -34,4 +34,4 @@ def test_workforce_setup_exposes_remaining_phase3_administration() -> None:
     assert "company_signed" in page
     assert "does not send salary payments" in page
     assert "does not invent statutory tax or pension rates" in page
-    assert 'href="/workforce/setup"' in layout
+    assert 'href="/workforce/setup"' in navigation
