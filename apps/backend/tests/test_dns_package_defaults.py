@@ -59,6 +59,7 @@ def profile(records):
 
 
 def test_desired_records_follow_package_mail_entitlement(monkeypatch):
+    monkeypatch.delenv("API_HOSTNAME", raising=False)
     monkeypatch.setattr(dns_defaults.settings, "bootstrap_public_ip", "204.12.205.224")
     monkeypatch.setattr(dns_defaults.settings, "mail_hostname", "mail.ithute.co.ls")
     plan = SimpleNamespace(included_mailboxes=10)
@@ -81,7 +82,22 @@ def test_desired_records_follow_package_mail_entitlement(monkeypatch):
     assert next(row for row in records if row["purpose"] == "smtp-discovery")["values"] == ["0 1 587 mail.ithute.co.ls."]
 
 
+def test_outlook_autodiscover_uses_configured_api_hostname(monkeypatch):
+    monkeypatch.setenv("API_HOSTNAME", "api.ithute.co.ls")
+    monkeypatch.setattr(dns_defaults.settings, "bootstrap_public_ip", "204.12.205.224")
+    monkeypatch.setattr(dns_defaults.settings, "mail_hostname", "mail.ithute.co.ls")
+    plan = SimpleNamespace(included_mailboxes=10)
+
+    records = dns_defaults.desired_package_records(domain(mail_enabled=True), plan)
+    autodiscover = next(row for row in records if row["purpose"] == "outlook-autodiscover")
+
+    assert autodiscover["type"] == "SRV"
+    assert autodiscover["name"] == "_autodiscover._tcp.example.co.ls"
+    assert autodiscover["values"] == ["0 0 443 api.ithute.co.ls."]
+
+
 def test_package_without_mailboxes_omits_mail_defaults(monkeypatch):
+    monkeypatch.setenv("API_HOSTNAME", "api.ithute.co.ls")
     monkeypatch.setattr(dns_defaults.settings, "bootstrap_public_ip", "204.12.205.224")
     plan = SimpleNamespace(included_mailboxes=0)
 
