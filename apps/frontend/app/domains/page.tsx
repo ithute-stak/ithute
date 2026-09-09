@@ -32,6 +32,7 @@ type Domain = {
   dns_mode: "external" | "platform";
   mail_enabled: boolean;
   notes?: string | null;
+  verification_method: "txt" | "nameserver";
   verification_record_name: string;
   verification_token_hint: string;
   ownership_verified_at?: string | null;
@@ -214,18 +215,23 @@ export default function DomainsPage() {
         }),
       });
       if (!response.ok) throw new Error(await detail(response, "Unable to add domain"));
-      const created = await response.json();
-      setChallenge({
-        domain_id: created.id,
-        record_name: created.verification_record_name,
-        verification_value: created.verification_value,
-      });
-      setChallengeToken(created.verification_value.split("=", 2)[1] || "");
+      const created: Domain & { verification_value?: string | null } = await response.json();
+      if (created.verification_method === "txt" && created.verification_value) {
+        setChallenge({
+          domain_id: created.id,
+          record_name: created.verification_record_name,
+          verification_value: created.verification_value,
+        });
+        setChallengeToken(created.verification_value.split("=", 2)[1] || "");
+      } else {
+        setChallenge(null);
+        setChallengeToken("");
+      }
       setShowAdd(false);
       setMessage(
-        created.dns_mode === "platform"
-          ? `${created.ascii_name} added${packageChanged ? ` under the ${selectedPlanCode} package` : ""}. Next: open Prepare DNS, stage the zone and records, then change registrar nameservers and verify after propagation.`
-          : `${created.ascii_name} added${packageChanged ? ` under the ${selectedPlanCode} package` : ""}. Publish the TXT ownership record at the external DNS provider.`,
+        created.verification_method === "nameserver"
+          ? `${created.ascii_name} added${packageChanged ? ` under the ${selectedPlanCode} package` : ""}. No TXT token is required. Prepare DNS and records first, then delegate the registrar to both Ithute nameservers and verify after propagation.`
+          : `${created.ascii_name} added${packageChanged ? ` under the ${selectedPlanCode} package` : ""}. Existing/external DNS requires the one-time TXT ownership record before cutover.`,
       );
       await loadDomains();
     } catch (reason) {
@@ -245,7 +251,7 @@ export default function DomainsPage() {
     const data = await response.json();
     setChallenge(data);
     setChallengeToken(data.verification_value.split("=", 2)[1] || "");
-    setMessage("New one-time challenge generated; the previous challenge is invalid.");
+    setMessage("New one-time TXT challenge generated; the previous challenge is invalid.");
     await loadDomains();
   }
 
@@ -268,9 +274,9 @@ export default function DomainsPage() {
     setMessage(
       data.verified
         ? `${domain.ascii_name} ownership verified. Reconcile its DNS zone to activate the verified DNS/mail lifecycle.`
-        : domain.dns_mode === "platform"
-          ? "Ownership proof not found yet. Publish the TXT challenge, or finish delegating both Ithute nameservers and wait for propagation before retrying."
-          : "TXT record not found or does not match the active challenge yet. DNS may still be propagating.",
+        : domain.verification_method === "nameserver"
+          ? "Ithute nameserver delegation is not complete yet. Make sure both ns1.ithute.co.ls and ns2.ithute.co.ls are set at the registrar, wait for propagation, then retry."
+          : "TXT record not found or does not match the active challenge yet. Keep the current external DNS active and allow time for TXT propagation.",
     );
     await loadDomains();
   }
@@ -337,7 +343,7 @@ export default function DomainsPage() {
             <div>
               <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[.12em] text-[#718078]"><Globe2 size={14}/>Phase 3 · Domain management</div>
               <h1 className="mt-2 text-2xl font-black tracking-tight text-[#21342a]">Domains under management</h1>
-              <p className="mt-1 max-w-3xl text-[12px] leading-5 text-[#718078]">Claim domains, inspect delegation, stage Platform DNS zones and records before registrar cutover, then verify ownership by TXT or Ithute nameserver delegation.</p>
+              <p className="mt-1 max-w-3xl text-[12px] leading-5 text-[#718078]">Stage Platform DNS before registrar cutover. New registrar/reseller domains verify by Ithute nameserver delegation; existing DNS migrations verify by TXT before cutover.</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
               <label className="sr-only" htmlFor="domain-organization">Organization</label>
@@ -358,8 +364,8 @@ export default function DomainsPage() {
           <div className="flex items-start gap-3">
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#123a38] text-white"><ShieldCheck size={18}/></div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-black text-[#21342a]">Ownership verification options</p>
-              <p className="mt-1 text-[11px] text-[#718078]">TXT is the preferred proof when your current DNS provider lets you add records. For a nameserver-only registrar, first use <b>Prepare DNS</b> to stage the PowerDNS zone and all records; only then delegate to both Ithute nameservers and verify after propagation.</p>
+              <p className="text-sm font-black text-[#21342a]">TXT ownership verification</p>
+              <p className="mt-1 text-[11px] text-[#718078]">Existing/external DNS was detected. Publish this one-time TXT record at the DNS provider currently serving the domain. Keep the existing nameservers in place while you stage or import all records needed for a safe cutover.</p>
               <div className="mt-3 grid gap-3 lg:grid-cols-2">
                 {[["TXT host / name", challenge.record_name], ["TXT value", challenge.verification_value]].map(([label, value]) => <div key={label}>
                   <span className="label">{label}</span>
@@ -390,11 +396,18 @@ export default function DomainsPage() {
                   <td><span className={`status-badge ${badge(domain.status)}`}>{domain.status.replaceAll("_", " ")}</span></td>
                   <td><span className="font-bold capitalize">{domain.dns_mode}</span><div className="mt-1 text-[9px] text-[#89958e]">{domain.dns_mode === "platform" ? "PowerDNS" : "External DNS"}</div></td>
                   <td>{domain.mail_enabled ? <span className="font-bold text-emerald-700">Enabled</span> : <span className="text-[#89958e]">Disabled</span>}</td>
-                  <td>{domain.status === "archived" ? <span className="font-bold text-[#89958e]">Archived</span> : domain.ownership_verified_at ? <span className="font-bold text-emerald-700">Ownership verified</span> : <div><div className="font-bold text-amber-700">TXT or NS required</div><div className="mt-1 text-[9px] text-[#89958e]">token …{domain.verification_token_hint}</div></div>}</td>
+                  <td>
+                    {domain.status === "archived" ? <span className="font-bold text-[#89958e]">Archived</span>
+                      : domain.ownership_verified_at ? <span className="font-bold text-emerald-700">Ownership verified</span>
+                      : domain.verification_method === "nameserver"
+                        ? <div><div className="font-bold text-amber-700">Nameserver delegation required</div><div className="mt-1 text-[9px] text-[#89958e]">No TXT token required</div></div>
+                        : <div><div className="font-bold text-amber-700">TXT required</div><div className="mt-1 text-[9px] text-[#89958e]">token …{domain.verification_token_hint}</div></div>}
+                  </td>
                   <td>
                     <div className="flex flex-wrap gap-2">
                       {canManage && domain.status !== "archived" && domain.dns_mode === "platform" ? <a href="/dns" className="btn-secondary !min-h-0 px-2.5 py-1.5 text-[10px]"><Database size={12}/>{domain.ownership_verified_at ? "Manage DNS" : "Prepare DNS"}</a> : null}
-                      {canManage && domain.status !== "archived" && !domain.ownership_verified_at ? <><button type="button" onClick={() => void regenerate(domain)} className="btn-secondary !min-h-0 px-2.5 py-1.5 text-[10px]">New token</button><button type="button" onClick={() => void verify(domain)} className="btn-primary !min-h-0 px-2.5 py-1.5 text-[10px]">Verify</button></> : null}
+                      {canManage && domain.status !== "archived" && !domain.ownership_verified_at && domain.verification_method === "txt" ? <button type="button" onClick={() => void regenerate(domain)} className="btn-secondary !min-h-0 px-2.5 py-1.5 text-[10px]">New token</button> : null}
+                      {canManage && domain.status !== "archived" && !domain.ownership_verified_at ? <button type="button" onClick={() => void verify(domain)} className="btn-primary !min-h-0 px-2.5 py-1.5 text-[10px]">Verify</button> : null}
                       {canManage && domain.status !== "archived" ? <button type="button" onClick={() => void archive(domain)} className="btn-danger !min-h-0 px-2.5 py-1.5 text-[10px]" title="Archive domain"><Archive size={12}/>Archive</button> : null}
                       {me?.is_platform_owner && domain.status === "archived" ? <button type="button" onClick={() => openRelease(domain)} className="btn-danger !min-h-0 px-2.5 py-1.5 text-[10px]" title="Permanently delete domain claim"><Trash2 size={12}/>Delete permanently</button> : null}
                     </div>
@@ -410,7 +423,7 @@ export default function DomainsPage() {
       {showAdd ? <div className="fixed inset-0 z-[60] grid place-items-center bg-black/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !adding) setShowAdd(false); }}>
         <form onSubmit={addDomain} className="form-modal w-full max-w-3xl rounded-2xl bg-white p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="add-domain-title">
           <div className="flex items-start justify-between gap-4">
-            <div><p id="add-domain-title" className="text-lg font-black text-[#21342a]">Add domain</p><p className="mt-1 text-[11px] leading-5 text-[#718078]">Inspect current nameservers, choose DNS hosting, confirm package capacity, then stage Platform DNS before any registrar cutover.</p></div>
+            <div><p id="add-domain-title" className="text-lg font-black text-[#21342a]">Add domain</p><p className="mt-1 text-[11px] leading-5 text-[#718078]">Inspect current DNS, choose hosting, confirm package capacity, then stage Platform DNS before any registrar cutover.</p></div>
             <button type="button" onClick={() => setShowAdd(false)} disabled={adding} className="icon-button" aria-label="Close add-domain form"><X size={16}/></button>
           </div>
 
