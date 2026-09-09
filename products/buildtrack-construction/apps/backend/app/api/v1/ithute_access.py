@@ -132,7 +132,10 @@ def _ensure_product_identity(
     if user is None and not is_product_admin:
         raise HTTPException(
             status_code=403,
-            detail="Your Ithute account is valid but has not been assigned access to Nthane Brothers",
+            detail=(
+                f"Your Ithute account ({email}) is valid but has not been assigned "
+                "access to Nthane Brothers"
+            ),
         )
 
     if user is None:
@@ -343,6 +346,51 @@ def oidc_callback(
         settings.auth_oidc_return_cookie_name,
     ):
         response.delete_cookie(name, path="/")
+    response.headers["X-BuildTrack-Session"] = str(product_session.id)
+    return _no_store(response)
+
+
+@router.post("/central-session")
+def central_session(
+    payload: dict[str, str],
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Turn central audience-bound tokens into an HttpOnly BuildTrack session.
+
+    The login page obtains these tokens directly from central Ithute Auth, so the
+    product backend never receives the user's password and cannot accidentally
+    reuse a different cached browser identity.
+    """
+    access_token = str(payload.get("access_token") or "").strip()
+    refresh_token = str(payload.get("refresh_token") or "").strip()
+    if not access_token or not refresh_token:
+        raise HTTPException(status_code=400, detail="central Ithute Auth tokens are required")
+
+    claims = _validate_access_token(access_token)
+    user = _ensure_product_identity(
+        db,
+        claims=claims,
+        display_name=str(claims.get("email") or ""),
+    )
+    user.last_login_at = utcnow()
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    product_session, raw_token = create_session(db, user, request)
+    db.commit()
+
+    response = JSONResponse({"authenticated": True, "email": user.email})
+    policy = security_policy(db, user.company_id)
+    response.set_cookie(
+        SESSION_COOKIE,
+        raw_token,
+        max_age=int(policy["session_hours"]) * 3600,
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        samesite=settings.auth_cookie_samesite,
+        path="/",
+    )
+    _set_central_cookies(response, access_token, refresh_token)
     response.headers["X-BuildTrack-Session"] = str(product_session.id)
     return _no_store(response)
 
