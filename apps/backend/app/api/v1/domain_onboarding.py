@@ -9,9 +9,9 @@ from app.api.deps import get_current_user, require_tenant_permission
 from app.core.config import settings
 from app.db.session import get_db
 from app.models import User
-from app.models.domains import Domain, DomainDnsMode
+from app.models.domains import Domain, DomainDnsMode, DomainVerificationMethod
 from app.services.billing import billing_summary, entitlement_decision
-from app.services.domain_discovery import inspect_nameservers
+from app.services.domain_discovery import inspect_existing_records, inspect_nameservers
 from app.services.domains import normalize_domain
 
 router = APIRouter(tags=["domain-onboarding"])
@@ -42,6 +42,7 @@ def inspect_domain_onboarding(
 
     platform_nameservers = [settings.nameserver_1, settings.nameserver_2]
     discovery = inspect_nameservers(ascii_name, platform_nameservers)
+    records = inspect_existing_records(ascii_name)
     billing = billing_summary(db, tenant_id)
     entitlement = entitlement_decision(db, tenant_id, "domain")
 
@@ -53,41 +54,70 @@ def inspect_domain_onboarding(
 
     wants_platform = payload.dns_mode == DomainDnsMode.platform
     platform_ready = bool(discovery["platform_nameservers_configured"])
+    has_external_nameservers = bool(
+        discovery["lookup_status"] == "found"
+        and discovery["current_nameservers"]
+        and not discovery["already_on_platform_nameservers"]
+    )
+    record_classification_ready = not (
+        wants_platform
+        and has_external_nameservers
+        and records["record_lookup_status"] == "resolver_error"
+    )
+    has_existing_external_dns = bool(
+        wants_platform
+        and has_external_nameservers
+        and records["has_existing_dns_records"]
+    )
+    verification_method = (
+        DomainVerificationMethod.txt
+        if payload.dns_mode == DomainDnsMode.external
+        or has_existing_external_dns
+        or not platform_ready
+        or not record_classification_ready
+        else DomainVerificationMethod.nameserver
+    )
     change_required = bool(
         wants_platform
         and platform_ready
         and not discovery["already_on_platform_nameservers"]
     )
+
     if wants_platform:
         ns1 = settings.nameserver_1.strip().rstrip(".")
         ns2 = settings.nameserver_2.strip().rstrip(".")
         if not platform_ready:
             next_step = (
                 "Keep the current registrar nameservers unchanged. Mailbox DNS production nameserver hostnames are not configured yet, "
-                "so it is unsafe to delegate the domain to this platform. Complete TXT ownership verification now; configure real public "
-                "Mailbox DNS nameservers and their required glue/A records before any registrar nameserver change."
+                "so TXT ownership verification is required until real public platform nameservers are configured."
             )
-        elif discovery["lookup_status"] == "found" and change_required:
+        elif not record_classification_ready:
             next_step = (
-                "Safe cutover: add the domain, open DNS zones, prepare the staged PowerDNS zone, and add/import every required record first. "
-                f"Only after the staged zone is ready should you change the registrar nameservers to {ns1} and {ns2}. "
-                "Wait for delegation to propagate, then click Verify. Mailbox DNS accepts delegation to both Ithute nameservers as ownership proof. "
-                "If your current DNS provider lets you publish TXT, TXT verification remains available without changing nameservers first."
+                "Mailbox DNS found external nameservers but could not reliably inspect the domain's existing A/AAAA/CNAME/MX/TXT records. "
+                "Retry the domain check before onboarding so a live DNS migration is not mistaken for a new registration."
+            )
+        elif has_existing_external_dns:
+            record_list = ", ".join(records["existing_record_types"])
+            next_step = (
+                f"Existing DNS records were detected ({record_list}). Add the domain, prepare the staged PowerDNS zone, and add/import all existing records first. "
+                "Because this is an existing DNS migration, publish the one-time TXT ownership record at the current DNS provider and verify it before cutover. "
+                f"When the staged zone is ready, change the registrar nameservers to {ns1} and {ns2}."
             )
         elif discovery["already_on_platform_nameservers"]:
             next_step = (
-                f"The domain is already delegated to {ns1} and {ns2}. Ensure the PowerDNS zone is prepared and contains the required records, "
-                "then click Verify. Mailbox DNS can use the parent-zone delegation as ownership proof."
+                f"The domain is already delegated to {ns1} and {ns2}. Ensure the staged PowerDNS zone contains the required records, then click Verify. "
+                "No TXT record is required."
             )
         else:
             next_step = (
-                f"Prepare the staged PowerDNS zone and required records first. If your registrar only supports nameserver changes, then delegate to {ns1} and {ns2}, "
-                "wait for propagation, and click Verify. TXT verification remains available when the current DNS provider supports TXT records."
+                "No existing customer-facing A/AAAA/CNAME/MX/TXT records were detected, so this is treated as a new registrar/reseller domain. "
+                f"Prepare the staged PowerDNS zone and records first, then set the registrar nameservers to {ns1} and {ns2}, wait for propagation, and click Verify. "
+                "No TXT record is required."
             )
     else:
         next_step = (
-            "Keep the current external nameservers. Publish the ownership TXT and any later MX/SPF/DKIM/DMARC records at that DNS provider; "
-            "Mailbox DNS will host email services without becoming authoritative for the zone."
+            "Keep the current external nameservers. TXT ownership verification is required because another DNS provider remains authoritative. "
+            "Publish the ownership TXT and any later MX/SPF/DKIM/DMARC records at that provider."
         )
 
     return {
@@ -96,7 +126,12 @@ def inspect_domain_onboarding(
         "claim_status": claim_status,
         "requested_dns_mode": payload.dns_mode.value,
         **discovery,
+        **records,
+        "record_classification_ready": record_classification_ready,
         "nameserver_change_required": change_required,
+        "verification_method": verification_method.value,
+        "txt_required": verification_method == DomainVerificationMethod.txt,
+        "has_existing_external_dns": has_existing_external_dns,
         "next_step": next_step,
         "package": billing.get("subscription"),
         "package_usage": billing.get("usage") or usage,

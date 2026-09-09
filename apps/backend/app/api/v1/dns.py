@@ -9,6 +9,7 @@ from app.db.session import get_db
 from app.models import User
 from app.models.domains import DomainDnsMode, DomainStatus
 from app.api.v1.domains import _audit, _domain_or_404
+from app.services.dns_defaults import apply_package_dns_defaults, package_dns_profile
 from app.services.domains import add_domain_event
 from app.services.mail_dns_reconcile import MailDNSReconcileError, reconcile_mail_dns
 from app.services.powerdns import PowerDNSClient, PowerDNSError, validate_record
@@ -79,6 +80,20 @@ def _mail_dns_or_502(db: Session, domain, current: User):
     return result
 
 
+def _package_out(profile):
+    return {
+        "id": profile.plan_id,
+        "code": profile.plan_code,
+        "name": profile.plan_name,
+        "currency": profile.currency,
+        "monthly_price_minor": profile.monthly_price_minor,
+        "included_domains": profile.included_domains,
+        "included_mailboxes": profile.included_mailboxes,
+        "included_storage_mb": profile.included_storage_mb,
+        "subscription_status": profile.subscription_status,
+    }
+
+
 @router.get("/health")
 def dns_health(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "dns.read", db, current)
@@ -88,6 +103,25 @@ def dns_health(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), 
         return {"available": True, "server_id": server.get("id"), "version": server.get("version")}
     except PowerDNSError as exc:
         _pdns_error(exc)
+
+
+@router.get("/package")
+def dns_package(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    """Return the current organization hosting package used by this domain."""
+    require_tenant_permission(tenant_id, "dns.read", db, current)
+    domain = _platform_domain(db, tenant_id, domain_id)
+    try:
+        profile = package_dns_profile(db, domain)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "domain": domain.ascii_name,
+        "package": _package_out(profile),
+        "profile_records": profile.records,
+        "mail_enabled": bool(domain.mail_enabled),
+        "dkim_after_verification": bool(domain.mail_enabled and profile.included_mailboxes > 0),
+        "package_scope": "organization_subscription",
+    }
 
 
 @router.post("/zone", status_code=status.HTTP_201_CREATED)
@@ -148,6 +182,56 @@ def provision_zone(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_d
         "required_nameservers": [settings.nameserver_1, settings.nameserver_2],
         "mail_dns": mail_dns,
     }
+
+
+@router.post("/records/auto-generate")
+def auto_generate_package_records(
+    tenant_id: UUID,
+    domain_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """Add missing package defaults without overwriting customer-created DNS."""
+    require_tenant_permission(tenant_id, "dns.manage", db, current)
+    domain = _platform_domain(db, tenant_id, domain_id)
+    try:
+        result = apply_package_dns_defaults(db, domain)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PowerDNSError as exc:
+        if exc.status_code == 404 or "HTTP 404" in str(exc):
+            raise HTTPException(status_code=409, detail="Prepare the PowerDNS zone before auto-generating records") from exc
+        _pdns_error(exc)
+
+    generated = result["generated"]
+    skipped = result["skipped"]
+    add_domain_event(
+        db,
+        domain,
+        current.id,
+        "dns.package_defaults_generated",
+        {
+            "package_code": result["package"]["code"],
+            "generated_count": len(generated),
+            "skipped_count": len(skipped),
+            "staged": not _is_verified(domain),
+        },
+    )
+    _audit(
+        db,
+        tenant_id,
+        current,
+        "dns.records.auto_generate",
+        domain,
+        {
+            "package_code": result["package"]["code"],
+            "generated_count": len(generated),
+            "skipped_count": len(skipped),
+            "staged": not _is_verified(domain),
+        },
+    )
+    db.commit()
+    return {**result, "staged": not _is_verified(domain)}
 
 
 @router.post("/mail/reconcile")

@@ -21,6 +21,11 @@ class DomainDnsMode(str, enum.Enum):
     platform = "platform"
 
 
+class DomainVerificationMethod(str, enum.Enum):
+    txt = "txt"
+    nameserver = "nameserver"
+
+
 class Domain(Base):
     __tablename__ = "domains"
     __table_args__ = (UniqueConstraint("ascii_name", name="uq_domains_ascii_name"),)
@@ -33,6 +38,7 @@ class Domain(Base):
     dns_mode: Mapped[DomainDnsMode] = mapped_column(Enum(DomainDnsMode), default=DomainDnsMode.platform, nullable=False)
     mail_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verification_method: Mapped[str] = mapped_column(String(20), default=DomainVerificationMethod.txt.value, nullable=False)
     verification_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     verification_token_hint: Mapped[str] = mapped_column(String(16), nullable=False)
     verification_record_name: Mapped[str] = mapped_column(String(320), nullable=False)

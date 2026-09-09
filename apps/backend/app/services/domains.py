@@ -145,41 +145,51 @@ def verify_domain(
     error: str | None = None
     success = False
 
-    # Preferred flow: a one-time TXT record at the existing DNS provider.
-    try:
-        observed = resolver(domain.verification_record_name)
-        for candidate in _verification_candidates(observed, raw_token):
-            if not secrets.compare_digest(token_hash(candidate), domain.verification_token_hash):
-                continue
-            if verification_value(candidate) in observed:
-                success = True
-                break
-    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers, dns.exception.Timeout) as exc:
-        error = exc.__class__.__name__
-    except Exception as exc:
-        error = f"resolver_error:{exc.__class__.__name__}"
-
-    # Registrar-only fallback for platform DNS: if the owner cannot publish TXT
-    # but can change nameservers, delegation to BOTH configured Ithute servers is
-    # itself proof of registrar control. Inspect the parent referral so this also
-    # works before the child PowerDNS zone is authoritative.
+    method = str(getattr(domain, "verification_method", "txt") or "txt").lower()
     dns_mode = getattr(domain, "dns_mode", None)
     dns_mode_value = getattr(dns_mode, "value", dns_mode)
     ascii_name = str(getattr(domain, "ascii_name", "") or "").strip().rstrip(".").lower()
-    expected_ns = _normalize_nameservers([settings.nameserver_1, settings.nameserver_2])
-    if not success and dns_mode_value == "platform" and ascii_name and len(set(expected_ns)) >= 2:
+
+    if method == "txt":
+        # Existing/external DNS migrations prove control at the DNS provider
+        # that is currently authoritative. A registrar NS cutover must not bypass
+        # this migration proof because existing records may still need preserving.
         try:
-            delegated_ns = _normalize_nameservers(nameserver_resolver(ascii_name))
-            observed.extend(f"NS:{value}" for value in delegated_ns)
-            if set(expected_ns).issubset(set(delegated_ns)):
-                success = True
-                error = None
+            observed = resolver(domain.verification_record_name)
+            for candidate in _verification_candidates(observed, raw_token):
+                if not secrets.compare_digest(token_hash(candidate), domain.verification_token_hash):
+                    continue
+                if verification_value(candidate) in observed:
+                    success = True
+                    break
         except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers, dns.exception.Timeout) as exc:
-            if error is None:
-                error = f"delegation_{exc.__class__.__name__}"
+            error = exc.__class__.__name__
         except Exception as exc:
-            if error is None:
-                error = f"delegation_resolver_error:{exc.__class__.__name__}"
+            error = f"resolver_error:{exc.__class__.__name__}"
+    elif method == "nameserver":
+        # New registrar/reseller domains have no existing external DNS record set
+        # to preserve. Ownership is proved only by controlling the parent-zone
+        # delegation and assigning BOTH configured Ithute nameservers.
+        if dns_mode_value != "platform":
+            error = "nameserver_verification_requires_platform_dns"
+        else:
+            expected_ns = _normalize_nameservers([settings.nameserver_1, settings.nameserver_2])
+            if ascii_name and len(set(expected_ns)) >= 2:
+                try:
+                    delegated_ns = _normalize_nameservers(nameserver_resolver(ascii_name))
+                    observed.extend(f"NS:{value}" for value in delegated_ns)
+                    if set(expected_ns).issubset(set(delegated_ns)):
+                        success = True
+                    else:
+                        error = "delegation_not_ready"
+                except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers, dns.exception.Timeout) as exc:
+                    error = f"delegation_{exc.__class__.__name__}"
+                except Exception as exc:
+                    error = f"delegation_resolver_error:{exc.__class__.__name__}"
+            else:
+                error = "platform_nameservers_not_configured"
+    else:
+        error = "unsupported_verification_method"
 
     db.add(DomainVerificationAttempt(
         domain_id=domain.id,
@@ -191,8 +201,7 @@ def verify_domain(
     if success:
         domain.status = DomainStatus.verified
         domain.ownership_verified_at = datetime.now(timezone.utc)
-        # Invalidate the disclosed challenge immediately. A later re-verification
-        # must explicitly generate a fresh challenge.
+        # Invalidate any historical TXT challenge immediately.
         domain.verification_token_hash = token_hash(new_verification_token())
         domain.verification_token_hint = "verified"
     return success, observed, error

@@ -7,6 +7,7 @@ import dns.resolver
 
 
 ResolverFn = Callable[[str], Iterable[str]]
+RecordResolverFn = Callable[[str, str], Iterable[str]]
 
 
 def _normalize_nameservers(values: Iterable[str]) -> list[str]:
@@ -54,6 +55,44 @@ def _system_resolve(name: str) -> list[str]:
     resolver.lifetime = 5.0
     answers = resolver.resolve(name, "NS", search=False)
     return [str(answer.target) for answer in answers]
+
+
+def _system_resolve_record(name: str, record_type: str) -> list[str]:
+    resolver = dns.resolver.Resolver(configure=True)
+    resolver.timeout = 3.0
+    resolver.lifetime = 5.0
+    answers = resolver.resolve(name, record_type, search=False)
+    return [str(answer).strip() for answer in answers]
+
+
+def inspect_existing_records(name: str, resolve_fn: RecordResolverFn | None = None) -> dict:
+    """Detect whether a domain already carries customer-facing DNS records.
+
+    NS and SOA do not count because registrars commonly create those for a newly
+    registered/parked domain. A/AAAA/CNAME/MX/TXT records indicate an existing
+    DNS lifecycle that should be preserved and verified before nameserver cutover.
+    """
+    resolver = resolve_fn or _system_resolve_record
+    found: list[str] = []
+    lookup_errors: list[str] = []
+    for record_type in ("A", "AAAA", "CNAME", "MX", "TXT"):
+        try:
+            values = [str(value).strip() for value in resolver(name, record_type) if str(value).strip()]
+            if values:
+                found.append(record_type)
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            continue
+        except (dns.resolver.NoNameservers, dns.exception.Timeout) as exc:
+            lookup_errors.append(exc.__class__.__name__)
+        except Exception as exc:
+            lookup_errors.append(f"resolver_error:{exc.__class__.__name__}")
+
+    return {
+        "has_existing_dns_records": bool(found),
+        "existing_record_types": found,
+        "record_lookup_status": "found" if found else ("resolver_error" if lookup_errors else "none"),
+        "record_lookup_errors": sorted(set(lookup_errors)),
+    }
 
 
 def inspect_nameservers(

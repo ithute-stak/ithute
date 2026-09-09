@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.domains import DomainDnsMode, DomainStatus
+from app.models.domains import DomainDnsMode, DomainStatus, DomainVerificationMethod
 
 
 class DomainCreate(BaseModel):
@@ -31,8 +31,8 @@ class DomainStatusUpdate(BaseModel):
 
 
 class DomainVerifyRequest(BaseModel):
-    # Optional for backwards compatibility. The server can verify ownership
-    # directly from the public TXT record by hashing the observed challenge.
+    # Required only for TXT-verification domains. Nameserver-verification domains
+    # prove ownership by delegating to both configured Ithute nameservers.
     token: str | None = Field(default=None, min_length=20, max_length=200)
 
 
@@ -47,6 +47,7 @@ class DomainRead(BaseModel):
     dns_mode: DomainDnsMode
     mail_enabled: bool
     notes: str | None
+    verification_method: DomainVerificationMethod
     verification_record_name: str
     verification_token_hint: str
     ownership_verified_at: datetime | None
@@ -56,7 +57,7 @@ class DomainRead(BaseModel):
 
 
 class DomainCreateResponse(DomainRead):
-    verification_value: str
+    verification_value: str | None = None
 
 
 class DomainChallengeResponse(BaseModel):

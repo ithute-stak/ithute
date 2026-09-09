@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models import AuditLog, User
 from app.models.deliverability import DkimKey
-from app.models.domains import Domain, DomainEvent, DomainStatus, DomainVerificationAttempt
+from app.models.domains import Domain, DomainDnsMode, DomainEvent, DomainStatus, DomainVerificationAttempt, DomainVerificationMethod
 from app.models.mail import DistributionGroup, MailAlias, Mailbox
 from app.schemas.domains import (
     DomainChallengeResponse,
@@ -29,6 +29,7 @@ from app.schemas.domains import (
     DomainVerifyResponse,
 )
 from app.services.billing import require_entitlement
+from app.services.domain_discovery import inspect_existing_records, inspect_nameservers
 from app.services.domains import (
     add_domain_event,
     new_verification_token,
@@ -122,6 +123,38 @@ def _release_blockers(db: Session, domain: Domain) -> list[str]:
     return blockers
 
 
+def _verification_method_for_new_domain(ascii_name: str, dns_mode: DomainDnsMode) -> DomainVerificationMethod:
+    if dns_mode == DomainDnsMode.external:
+        return DomainVerificationMethod.txt
+
+    platform_nameservers = [settings.nameserver_1, settings.nameserver_2]
+    discovery = inspect_nameservers(ascii_name, platform_nameservers)
+    if not discovery["platform_nameservers_configured"]:
+        return DomainVerificationMethod.txt
+
+    if discovery["lookup_status"] in {"timeout", "resolver_error"}:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to classify the domain's current DNS delegation reliably. Retry the domain check before adding it.",
+        )
+
+    if discovery["already_on_platform_nameservers"]:
+        return DomainVerificationMethod.nameserver
+
+    has_external_nameservers = bool(
+        discovery["lookup_status"] == "found" and discovery["current_nameservers"]
+    )
+    records = inspect_existing_records(ascii_name)
+    if has_external_nameservers and records["record_lookup_status"] == "resolver_error":
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to inspect the domain's existing DNS records reliably. Retry before onboarding so a live DNS migration is not mistaken for a new registration.",
+        )
+    if has_external_nameservers and records["has_existing_dns_records"]:
+        return DomainVerificationMethod.txt
+    return DomainVerificationMethod.nameserver
+
+
 @router.post("", response_model=DomainCreateResponse, status_code=status.HTTP_201_CREATED)
 def create_domain(tenant_id: UUID, payload: DomainCreate, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "dns.manage", db, current)
@@ -140,6 +173,11 @@ def create_domain(tenant_id: UUID, payload: DomainCreate, db: Session = Depends(
             raise HTTPException(status_code=409, detail="Domain already exists in this organization")
         raise HTTPException(status_code=409, detail="Domain is already claimed by another organization")
 
+    # Re-run live classification on the server at creation time. The browser's
+    # inspection result is advisory UI only and cannot downgrade an existing DNS
+    # migration from TXT proof to nameserver proof.
+    verification_method = _verification_method_for_new_domain(ascii_name, payload.dns_mode)
+
     token = new_verification_token()
     domain = Domain(
         tenant_id=tenant_id,
@@ -148,15 +186,16 @@ def create_domain(tenant_id: UUID, payload: DomainCreate, db: Session = Depends(
         dns_mode=payload.dns_mode,
         mail_enabled=payload.mail_enabled,
         notes=payload.notes,
+        verification_method=verification_method.value,
         verification_token_hash=token_hash(token),
-        verification_token_hint=token[-8:],
+        verification_token_hint=token[-8:] if verification_method == DomainVerificationMethod.txt else "not-needed",
         verification_record_name=record_name(ascii_name),
         created_by_user_id=current.id,
     )
     db.add(domain)
     db.flush()
-    add_domain_event(db, domain, current.id, "domain.created", {"ascii_name": ascii_name})
-    _audit(db, tenant_id, current, "domain.create", domain, {"ascii_name": ascii_name})
+    add_domain_event(db, domain, current.id, "domain.created", {"ascii_name": ascii_name, "verification_method": verification_method.value})
+    _audit(db, tenant_id, current, "domain.create", domain, {"ascii_name": ascii_name, "verification_method": verification_method.value})
     try:
         db.commit()
     except IntegrityError as exc:
@@ -164,7 +203,8 @@ def create_domain(tenant_id: UUID, payload: DomainCreate, db: Session = Depends(
         raise HTTPException(status_code=409, detail="Domain already exists") from exc
     db.refresh(domain)
     data = DomainRead.model_validate(domain).model_dump()
-    return DomainCreateResponse(**data, verification_value=verification_value(token))
+    disclosed_value = verification_value(token) if verification_method == DomainVerificationMethod.txt else None
+    return DomainCreateResponse(**data, verification_value=disclosed_value)
 
 
 @router.get("", response_model=DomainListResponse)
@@ -203,6 +243,8 @@ def update_domain(tenant_id: UUID, domain_id: UUID, payload: DomainUpdate, db: S
     changes = payload.model_dump(exclude_unset=True)
     for field, value in changes.items():
         setattr(domain, field, value)
+    if domain.ownership_verified_at is None and domain.dns_mode == DomainDnsMode.external:
+        domain.verification_method = DomainVerificationMethod.txt.value
     add_domain_event(db, domain, current.id, "domain.updated", changes)
     _audit(db, tenant_id, current, "domain.update", domain, changes)
     db.commit()
@@ -216,6 +258,8 @@ def regenerate_challenge(tenant_id: UUID, domain_id: UUID, db: Session = Depends
     domain = _domain_or_404(db, tenant_id, domain_id)
     if domain.status == DomainStatus.archived:
         raise HTTPException(status_code=409, detail="Archived domain cannot be re-verified")
+    if domain.verification_method != DomainVerificationMethod.txt.value:
+        raise HTTPException(status_code=409, detail="TXT verification is not required for this domain; verify ownership by nameserver delegation")
     token = new_verification_token()
     domain.verification_token_hash = token_hash(token)
     domain.verification_token_hint = token[-8:]
@@ -242,8 +286,8 @@ def verify_domain_ownership(
     _enforce_verification_throttle(db, domain)
     success, observed, error = verify_domain(domain, payload.token, current.id, db)
     event = "domain.ownership_verified" if success else "domain.verification_failed"
-    add_domain_event(db, domain, current.id, event, {"error": error, "observed_count": len(observed)})
-    _audit(db, tenant_id, current, "domain.verify", domain, {"success": success, "error": error})
+    add_domain_event(db, domain, current.id, event, {"error": error, "observed_count": len(observed), "verification_method": domain.verification_method})
+    _audit(db, tenant_id, current, "domain.verify", domain, {"success": success, "error": error, "verification_method": domain.verification_method})
     db.commit()
     db.refresh(domain)
     return DomainVerifyResponse(verified=success, status=domain.status, observed_values=observed, ownership_verified_at=domain.ownership_verified_at)
@@ -331,6 +375,7 @@ def domain_readiness(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get
     require_tenant_permission(tenant_id, "dns.read", db, current)
     domain = _domain_or_404(db, tenant_id, domain_id)
     verified = domain.ownership_verified_at is not None and domain.status == DomainStatus.verified
+    pending_step = "Complete TXT ownership verification" if domain.verification_method == DomainVerificationMethod.txt.value else "Prepare DNS, delegate both Ithute nameservers, then verify"
     return DomainReadiness(
         domain_id=domain.id,
         ownership_verified=verified,
@@ -338,5 +383,5 @@ def domain_readiness(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get
         dns_mode=domain.dns_mode,
         ready_for_powerdns=verified and domain.dns_mode.value == "platform",
         required_nameservers=[settings.nameserver_1, settings.nameserver_2],
-        next_phase="Phase 4: create PowerDNS zone and verify nameserver delegation" if verified else "Complete TXT ownership verification",
+        next_phase="Phase 4: create PowerDNS zone and verify nameserver delegation" if verified else pending_step,
     )
