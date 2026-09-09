@@ -39,6 +39,11 @@ def _verified_platform_domain(db: Session, tenant_id: UUID, domain_id: UUID):
     return domain
 
 
+def _managed_domain(db: Session, tenant_id: UUID, domain_id: UUID):
+    """Compatibility helper for DNSSEC/templates that must stay verified-only."""
+    return _verified_platform_domain(db, tenant_id, domain_id)
+
+
 def _is_verified(domain) -> bool:
     return domain.status == DomainStatus.verified and domain.ownership_verified_at is not None
 
