@@ -13,6 +13,7 @@ def test_phase37_central_identity_defaults() -> None:
     assert settings.auth_audience == "buildtrack-construction"
     assert settings.auth_issuer == "https://auth.ithute.co.ls"
     assert settings.superadmin_email == "justy@ithute.co.ls"
+    assert settings.product_admin_email_list == ["justy@ithute.co.ls", "just@ithute.co.ls"]
 
 
 def test_phase37_migration_links_stable_auth_subject() -> None:
@@ -27,7 +28,26 @@ def test_production_disables_second_password_system() -> None:
     assert 'AUTH_AUDIENCE: buildtrack-construction' in compose
     assert 'LEGACY_AUTH_ENABLED: "false"' in compose
     assert 'SUPERADMIN_EMAIL: ${ITHUTE_BUILDTRACK_SUPERADMIN_EMAIL:-justy@ithute.co.ls}' in compose
-    assert 'command: ["python", "-m", "scripts.bootstrap_production"]' in compose
+    assert 'PRODUCT_ADMIN_EMAILS: ${ITHUTE_BUILDTRACK_PRODUCT_ADMIN_EMAILS:-justy@ithute.co.ls,just@ithute.co.ls}' in compose
+    assert 'python -m scripts.bootstrap_production && python -m scripts.provision_central_admin' in compose
+
+
+def test_central_admin_bootstrap_never_contains_a_human_password() -> None:
+    provision = (BACKEND / "scripts/provision_central_admin.py").read_text()
+    assert 'DEFAULT_ADMIN_EMAIL = "just@ithute.co.ls"' in provision
+    assert "secrets.token_urlsafe(48)" in provision
+    assert 'f"{base}/v1/users/register"' in provision
+    assert 'f"{base}/v1/account/password/reset/request"' in provision
+    assert "secure password setup instructions requested" in provision
+    assert "no credential was changed" in provision
+
+
+def test_production_admin_bootstrap_is_multi_identity_and_idempotent() -> None:
+    bootstrap = (BACKEND / "scripts/bootstrap_production.py").read_text()
+    sync = (REPO / "scripts/buildtrack-sync-env.py").read_text()
+    assert "settings.product_admin_email_list" in bootstrap
+    assert 'PRODUCT_ADMIN_EMAILS = "justy@ithute.co.ls,just@ithute.co.ls"' in sync
+    assert '"ITHUTE_BUILDTRACK_PRODUCT_ADMIN_EMAILS": PRODUCT_ADMIN_EMAILS' in sync
 
 
 def test_production_cert_discovery_accepts_current_certbot_inventory_format() -> None:
