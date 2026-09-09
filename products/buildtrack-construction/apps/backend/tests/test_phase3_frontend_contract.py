@@ -32,7 +32,7 @@ def test_phase3_workforce_ui_exposes_complete_operational_flow() -> None:
 
     assert 'href: "/workforce"' in navigation
     assert "Workforce" in navigation
-    assert "@media(max-width:720px)" in css
+    assert "max-width: 720px" in css
 
 
 def test_phase3_backend_contract_mentions_scope_and_control_boundaries() -> None:

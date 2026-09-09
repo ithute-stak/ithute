@@ -188,6 +188,7 @@ The system controls records and evidence; it deliberately does not pretend that 
 - Project Communications records correspondence and dispatch/response evidence; it does not send external messages.
 - Programme delay records support internal control; they do not issue legal notices or determine contractual entitlement.
 - Client and vendor public links expose only deliberately selected evidence; they do not create external internal-system accounts.
+- Procurement records supplier quotations and supporting evidence; it does **not** fabricate quotations or supplier responses.
 - Algorithmic assistants provide explainable decision support; they do not approve transactions or submit tenders.
 
 ## Docker startup
