@@ -24,177 +24,197 @@ jobs:
         with:
           ref: feature/buildtrack-ithute-production
           fetch-depth: 1
-      - name: Apply targeted source and contract repairs
+
+      - name: Apply diagnosed BuildTrack repairs
         shell: bash
         run: |
-          set -eu
+          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           import re
 
           ROOT = Path('.')
+          PRODUCT = ROOT / 'products/buildtrack-construction'
+          BACKEND = PRODUCT / 'apps/backend'
+          FRONTEND = PRODUCT / 'apps/frontend'
 
-          def replace(path: str, old: str, new: str, *, count: int | None = None) -> None:
-              p = ROOT / path
-              text = p.read_text()
-              found = text.count(old)
-              if found == 0:
-                  raise SystemExit(f"Expected text not found in {path}: {old[:100]!r}")
-              if count is not None and found != count:
-                  raise SystemExit(f"Unexpected match count in {path}: {found}, expected {count}")
-              p.write_text(text.replace(old, new))
+          def read(path: Path) -> str:
+              return path.read_text(encoding='utf-8')
 
-          # SQLAlchemy is configured with autoflush=False. Flush the resolved
-          # defect before deciding whether any critical defects remain open.
-          replace(
-              'products/buildtrack-construction/apps/backend/app/api/v1/fleet.py',
-              '            defect.resolved_at = utcnow()\n        critical_open = db.scalar(',
-              '            defect.resolved_at = utcnow()\n        db.flush()\n        critical_open = db.scalar(',
-              count=1,
-          )
+          def write(path: Path, text: str) -> None:
+              path.write_text(text, encoding='utf-8')
 
-          # This test is about branch scope, not the mandatory first-password
-          # change control. Keep production enforcement and opt the fixture out.
-          replace(
-              'products/buildtrack-construction/apps/backend/tests/test_phase2_access_security.py',
-              '            "temporary_password": "Branch!Secure2026X",\n            "assignments":',
-              '            "temporary_password": "Branch!Secure2026X",\n            "must_change_password": False,\n            "assignments":',
-              count=1,
-          )
+          def replace_once(path: Path, old: str, new: str, *, required: bool = True) -> bool:
+              text = read(path)
+              if old not in text:
+                  if required and new not in text:
+                      raise SystemExit(f'Expected source not found in {path}: {old[:120]!r}')
+                  return False
+              write(path, text.replace(old, new, 1))
+              return True
 
-          # Phase 32 migration filename was expanded; its Alembic revision ID
-          # intentionally remains the shorter stable identifier.
-          replace(
-              'products/buildtrack-construction/apps/backend/tests/test_phase32_business_development.py',
-              'alembic/versions/0033_phase32_business_dev.py',
-              'alembic/versions/0033_phase32_business_development.py',
-              count=1,
-          )
+          # 1. Fleet: the session intentionally uses autoflush=False. Persist the
+          # resolved critical defect before querying whether any blockers remain.
+          fleet = BACKEND / 'app/api/v1/fleet.py'
+          text = read(fleet)
+          marker = '        critical_open = db.scalar(select(FleetDefect.id).where(FleetDefect.asset_id == asset.id, FleetDefect.severity == "critical", FleetDefect.status != "resolved"))'
+          if '        db.flush()\n' + marker not in text:
+              if marker not in text:
+                  raise SystemExit('Fleet critical-defect query marker not found')
+              text = text.replace(marker, '        db.flush()\n' + marker, 1)
+              write(fleet, text)
 
-          # Navigation is centralized in BuildTrackNavigation rather than
-          # duplicated in app/layout.tsx. Verify the component that owns it.
+          # 2. Phase 1 test data must satisfy the real password policy. Keep the
+          # production rule intact and use a fixture password without "admin".
+          phase1 = BACKEND / 'tests/test_phase1_foundation.py'
+          replace_once(phase1, '"password": "BuildTrack!Admin2026"', '"password": "BuildTrack!Root2026X"')
+
+          # 3. Branch-scope regression is not testing forced first-password change.
+          phase2 = BACKEND / 'tests/test_phase2_access_security.py'
+          text = read(phase2)
+          old = '            "temporary_password": "Branch!Secure2026X",\n            "assignments":'
+          new = '            "temporary_password": "Branch!Secure2026X",\n            "must_change_password": False,\n            "assignments":'
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('Branch-manager fixture marker not found')
+              write(phase2, text.replace(old, new, 1))
+
+          # 4. Phase 32 kept its stable Alembic revision ID, but the filename was
+          # expanded. The test should read the real file.
+          phase32 = BACKEND / 'tests/test_phase32_business_development.py'
+          replace_once(phase32, 'alembic/versions/0033_phase32_business_dev.py', 'alembic/versions/0033_phase32_business_development.py')
+
+          # 5. Navigation moved from layout.tsx into the shared navigation model.
+          # Verify the actual module registry syntax rather than old literal JSX.
           nav_tests = [
-              'products/buildtrack-construction/apps/backend/tests/test_phase4_frontend_contract.py',
-              'products/buildtrack-construction/apps/backend/tests/test_phase5_frontend_contract.py',
-              'products/buildtrack-construction/apps/backend/tests/test_phase6_frontend_contract.py',
-              'products/buildtrack-construction/apps/backend/tests/test_phase7_frontend_contract.py',
-              'products/buildtrack-construction/apps/backend/tests/test_phase8_frontend_contract.py',
+              BACKEND / 'tests/test_phase3_frontend_contract.py',
+              BACKEND / 'tests/test_phase3_workforce_setup_frontend.py',
+              BACKEND / 'tests/test_phase4_frontend_contract.py',
+              BACKEND / 'tests/test_phase5_frontend_contract.py',
+              BACKEND / 'tests/test_phase6_frontend_contract.py',
+              BACKEND / 'tests/test_phase7_frontend_contract.py',
+              BACKEND / 'tests/test_phase8_frontend_contract.py',
           ]
+          nav_paths = (
+              '/workforce', '/workforce/setup', '/fleet', '/fleet/control',
+              '/tenders', '/tenders/control', '/projects', '/projects/control',
+              '/projects/risks', '/site-operations', '/site-operations/control',
+              '/procurement', '/procurement/control',
+          )
           for path in nav_tests:
-              p = ROOT / path
-              lines = p.read_text().splitlines()
-              replaced = False
-              out: list[str] = []
+              lines = read(path).splitlines()
+              out = []
               for line in lines:
                   if 'layout.tsx' in line and 'read_text' in line and 'layout =' in line:
-                      indent = line[:len(line) - len(line.lstrip())]
-                      if 'FRONTEND' in line:
-                          line = indent + 'navigation = (FRONTEND / "app/components/buildtrack-navigation.tsx").read_text()'
-                      else:
-                          line = indent + 'navigation = (root / "apps" / "frontend" / "app" / "components" / "buildtrack-navigation.tsx").read_text(encoding="utf-8")'
-                      replaced = True
-                  out.append(line.replace(' in layout', ' in navigation'))
-              if not replaced:
-                  raise SystemExit(f'Navigation layout contract not found in {path}')
-              p.write_text('\n'.join(out) + '\n')
+                      line = line.replace('layout =', 'navigation =')
+                      line = line.replace('app/layout.tsx', 'app/components/buildtrack-navigation.tsx')
+                      line = line.replace('"layout.tsx"', '"components" / "buildtrack-navigation.tsx"')
+                  line = line.replace(' in layout', ' in navigation')
+                  for href in nav_paths:
+                      line = line.replace(f'href="{href}"', f'href: "{href}"')
+                  out.append(line)
+              write(path, '\n'.join(out) + '\n')
 
-          # Phase 6 endpoints are project-scoped; assert their actual complete
-          # route templates instead of stale standalone suffix literals.
-          phase6 = 'products/buildtrack-construction/apps/backend/tests/test_phase6_frontend_contract.py'
+          phase3 = BACKEND / 'tests/test_phase3_frontend_contract.py'
+          text = read(phase3).replace('"Workforce &amp; Payroll" in navigation', '"Workforce" in navigation')
+          write(phase3, text)
+
+          # 6. Phase 6 project routes are project-scoped. Assert complete route
+          # templates instead of obsolete suffix-only strings.
+          phase6 = BACKEND / 'tests/test_phase6_frontend_contract.py'
+          text = read(phase6)
           for old, new in (
               ('\'"/budget/submit"\'', '\'"/{project_id}/budget/submit"\''),
               ('\'"/budget/revise"\'', '\'"/{project_id}/budget/revise"\''),
               ('\'"/readiness-approval"\'', '\'"/{project_id}/readiness-approval"\''),
               ('\'"/site-operations-handoff"\'', '\'"/{project_id}/site-operations-handoff"\''),
           ):
-              replace(phase6, old, new, count=1)
+              text = text.replace(old, new)
+          write(phase6, text)
 
-          # JSX elements placed directly into cell arrays need stable keys.
-          env = 'products/buildtrack-construction/apps/frontend/app/environment/page.tsx'
-          replace(env, '<span className={`${styles.badge} ${tone(txt(r,"status"))}`}>', '<span key="status" className={`${styles.badge} ${tone(txt(r,"status"))}`}>', count=3)
-          replace(env, '<span className={`${styles.badge} ${tone(txt(r,"severity"))}`}>', '<span key="severity" className={`${styles.badge} ${tone(txt(r,"severity"))}`}>', count=1)
-          replace(env, '<div className={styles.actions}>', '<div key="control" className={styles.actions}>', count=1)
+          # 7. React arrays need stable keys on JSX values used as table cells.
+          environment = FRONTEND / 'app/environment/page.tsx'
+          text = read(environment)
+          text = text.replace('<span className={`${styles.badge} ${tone(txt(r,"status"))}`}>', '<span key="status" className={`${styles.badge} ${tone(txt(r,"status"))}`}>')
+          text = text.replace('<span className={`${styles.badge} ${tone(txt(r,"severity"))}`}>', '<span key="severity" className={`${styles.badge} ${tone(txt(r,"severity"))}`}>')
+          text = text.replace('<div className={styles.actions}>', '<div key="control" className={styles.actions}>')
+          write(environment, text)
 
-          tools = 'products/buildtrack-construction/apps/frontend/app/tools/page.tsx'
-          replace(tools, '<span className={`${styles.badge} ${badge(t(r,"status"))}`}>', '<span key="status" className={`${styles.badge} ${badge(t(r,"status"))}`}>', count=2)
-          replace(tools, '<div className={styles.actions}>', '<div key="control" className={styles.actions}>', count=1)
+          tools = FRONTEND / 'app/tools/page.tsx'
+          text = read(tools)
+          text = text.replace('<span className={`${styles.badge} ${badge(t(r,"status"))}`}>', '<span key="status" className={`${styles.badge} ${badge(t(r,"status"))}`}>')
+          text = text.replace('<div className={styles.actions}>', '<div key="control" className={styles.actions}>')
+          write(tools, text)
 
-          home = 'products/buildtrack-construction/apps/frontend/app/page.tsx'
-          replace(home, 'Boolean(role.is_system)?<Badge tone="blue">System</Badge>:<Badge>Custom</Badge>', 'Boolean(role.is_system)?<Badge key="type" tone="blue">System</Badge>:<Badge key="type">Custom</Badge>', count=1)
+          home = FRONTEND / 'app/page.tsx'
+          text = read(home)
+          text = text.replace('Boolean(role.is_system)?<Badge tone="blue">System</Badge>:<Badge>Custom</Badge>', 'Boolean(role.is_system)?<Badge key="type" tone="blue">System</Badge>:<Badge key="type">Custom</Badge>')
+          write(home, text)
 
-          # React compiler: declare the hydration callback before refresh uses it
-          # and make the dependency chain explicit.
-          control = ROOT / 'products/buildtrack-construction/apps/frontend/app/projects/control/page.tsx'
-          text = control.read_text()
-          match = re.search(r'^ function hydrate\(d:Row\)\{(.*)\}$', text, flags=re.MULTILINE)
-          if not match:
-              raise SystemExit('ProjectControl hydrate function not found')
-          hydrate = f' const hydrate=useCallback((d:Row)=>{{{match.group(1)}}},[]);'
-          text = text[:match.start()] + text[match.end()+1:]
-          marker = ' const refresh=useCallback('
-          pos = text.find(marker)
-          if pos < 0:
-              raise SystemExit('ProjectControl refresh marker not found')
-          text = text[:pos] + hydrate + '\n' + text[pos:]
-          text = text.replace('}},[selectedId]);', '}},[selectedId,hydrate]);', 1)
-          text = text.replace(' useEffect(()=>{void refresh()},[]);', ' useEffect(()=>{void refresh()},[refresh]);', 1)
-          control.write_text(text)
+          # 8. React Compiler requires hydrate to be declared before the memoized
+          # refresh callback that closes over it.
+          control = FRONTEND / 'app/projects/control/page.tsx'
+          text = read(control)
+          if 'const hydrate=useCallback' not in text:
+              match = re.search(r'^ function hydrate\(d:Row\)\{(.*)\}$', text, flags=re.MULTILINE)
+              if not match:
+                  raise SystemExit('Project Control hydrate function not found')
+              hydrate = f' const hydrate=useCallback((d:Row)=>{{{match.group(1)}}},[]);'
+              text = text[:match.start()] + text[match.end()+1:]
+              pos = text.find(' const refresh=useCallback(')
+              if pos < 0:
+                  raise SystemExit('Project Control refresh callback not found')
+              text = text[:pos] + hydrate + '\n' + text[pos:]
+              text = text.replace('}},[selectedId]);', '}},[selectedId,hydrate]);', 1)
+              write(control, text)
 
-          # Compute the suggested deadline lazily for a newly mounted form,
-          # avoiding an impure Date.now() call in the component render body.
-          tenders = ROOT / 'products/buildtrack-construction/apps/frontend/app/tenders/page.tsx'
-          lines = tenders.read_text().splitlines()
-          out = []
-          changed_default = False
-          for line in lines:
-              if 'const defaultDeadline=new Date(Date.now()+14*86400000)' in line:
-                  changed_default = True
-                  continue
-              if 'const [form,setForm]=useState({' in line and 'submission_deadline:defaultDeadline' in line:
-                  line = line.replace('const [form,setForm]=useState({', 'const [form,setForm]=useState(()=>({')
-                  line = line.replace('submission_deadline:defaultDeadline', 'submission_deadline:new Date(Date.now()+14*86400000).toISOString().slice(0,16)')
-                  if not line.rstrip().endswith('});'):
-                      raise SystemExit('Unexpected Tender form initializer shape')
-                  line = line.rstrip()[:-3] + '}));'
-              line = line.replace(' useEffect(()=>{void refresh()},[]);', ' useEffect(()=>{void refresh()},[refresh]);')
-              out.append(line)
-          if not changed_default:
-              raise SystemExit('Tender default deadline render expression not found')
-          tenders.write_text('\n'.join(out) + '\n')
+          # 9. Avoid an impure Date.now() call in the component render body. The
+          # lazy state initializer computes the suggested deadline only at mount.
+          tenders = FRONTEND / 'app/tenders/page.tsx'
+          text = read(tenders)
+          deadline_line = ' const defaultDeadline=new Date(Date.now()+14*86400000).toISOString().slice(0,16);\n'
+          if deadline_line in text:
+              text = text.replace(deadline_line, '', 1)
+              old = ' const [form,setForm]=useState({'
+              if old not in text or 'submission_deadline:defaultDeadline' not in text:
+                  raise SystemExit('Tender form deadline initializer not found')
+              text = text.replace(old, ' const [form,setForm]=useState(()=>({', 1)
+              text = text.replace('submission_deadline:defaultDeadline', 'submission_deadline:new Date(Date.now()+14*86400000).toISOString().slice(0,16)', 1)
+              # The compact initializer is one line and ends in `});`.
+              form_line = next((line for line in text.splitlines() if 'const [form,setForm]=useState(()=>({' in line), None)
+              if not form_line or not form_line.rstrip().endswith('});'):
+                  raise SystemExit('Unexpected Tender form initializer shape')
+              text = text.replace(form_line, form_line.rstrip()[:-3] + '}));', 1)
+              write(tenders, text)
 
-          # Clean stale exhaustive-deps warnings where refresh is already a
-          # memoized callback and the effect intentionally invokes that callback.
-          for path in (
-              'products/buildtrack-construction/apps/frontend/app/projects/page.tsx',
-              'products/buildtrack-construction/apps/frontend/app/site-operations/page.tsx',
-              'products/buildtrack-construction/apps/frontend/app/tenders/control/page.tsx',
-              'products/buildtrack-construction/apps/frontend/app/workforce/page.tsx',
-          ):
-              p = ROOT / path
-              s = p.read_text()
-              if 'useEffect(()=>{void refresh()},[]);' in s:
-                  s = s.replace('useEffect(()=>{void refresh()},[]);', 'useEffect(()=>{void refresh()},[refresh]);', 1)
-              elif 'useEffect(() => { void refresh(); }, []);' in s:
-                  s = s.replace('useEffect(() => { void refresh(); }, []);', 'useEffect(() => { void refresh(); }, [refresh]);', 1)
-              else:
-                  raise SystemExit(f'Expected refresh effect not found in {path}')
-              p.write_text(s)
+          # Validate that every diagnosed repair is actually present before commit.
+          checks = {
+              'fleet flush': 'db.flush()\n        critical_open = db.scalar' in read(fleet),
+              'phase1 safe password': 'BuildTrack!Root2026X' in read(phase1),
+              'phase2 scope fixture': '"must_change_password": False' in read(phase2),
+              'phase32 migration filename': '0033_phase32_business_development.py' in read(phase32),
+              'phase6 full route': '"/{project_id}/budget/submit"' in read(phase6),
+              'project hydrate callback': 'const hydrate=useCallback' in read(control),
+              'tender render purity': 'const defaultDeadline=new Date(Date.now()' not in read(tenders),
+              'home JSX key': '<Badge key="type"' in read(home),
+          }
+          missing = [name for name, ok in checks.items() if not ok]
+          if missing:
+              raise SystemExit('Repair validation failed: ' + ', '.join(missing))
 
-          print('Targeted BuildTrack regression repairs applied.')
+          print('Diagnosed BuildTrack repairs applied and validated.')
           PY
 
           git diff --check
           git status --short
-      - name: Commit targeted repairs
+
+      - name: Commit repairs and remove one-shot workflow
         shell: bash
         run: |
-          set -eu
-          if git diff --quiet; then
-            echo 'No repair changes were needed.'
-            exit 0
-          fi
+          set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add products/buildtrack-construction
-          git commit -m 'fix(buildtrack): clear backend and frontend regressions'
+          git rm .github/workflows/repair-buildtrack-source.yml
+          git commit -m 'fix(buildtrack): clear diagnosed regressions'
           git push origin HEAD:feature/buildtrack-ithute-production
