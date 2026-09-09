@@ -124,8 +124,12 @@ def _ensure_product_identity(
     if user is None:
         user = db.scalar(select(User).where(User.company_id == company.id, User.email == email))
 
-    is_product_superadmin = email == settings.superadmin_email.strip().lower()
-    if user is None and not is_product_superadmin:
+    # Any explicitly configured BuildTrack product administrator must be able to
+    # federate into the product and receive SYSTEM_ADMIN. Production can override
+    # the single SUPERADMIN_EMAIL independently, so relying on that one value
+    # incorrectly denied other configured administrators such as justy@ithute.co.ls.
+    is_product_admin = email in settings.product_admin_email_list
+    if user is None and not is_product_admin:
         raise HTTPException(
             status_code=403,
             detail="Your Ithute account is valid but has not been assigned access to Nthane Brothers",
@@ -155,12 +159,12 @@ def _ensure_product_identity(
         raise HTTPException(status_code=409, detail="BuildTrack profile is linked to another Ithute identity")
 
     if not user.is_active or user.status == "suspended":
-        if not is_product_superadmin:
+        if not is_product_admin:
             raise HTTPException(status_code=403, detail="BuildTrack access is suspended")
         user.is_active = True
         user.status = "active"
 
-    if is_product_superadmin:
+    if is_product_admin:
         role = db.scalar(select(Role).where(Role.company_id == company.id, Role.code == "SYSTEM_ADMIN"))
         if role is None:
             raise HTTPException(status_code=503, detail="BuildTrack System Administrator role is missing")
@@ -176,7 +180,7 @@ def _ensure_product_identity(
                     user_id=user.id,
                     role_id=role.id,
                     is_primary=True,
-                    created_by="Ithute product superadmin projection",
+                    created_by="Ithute product admin projection",
                 )
             )
         user.must_change_password = False

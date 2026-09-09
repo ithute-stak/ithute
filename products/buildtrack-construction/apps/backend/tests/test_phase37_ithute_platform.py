@@ -54,6 +54,15 @@ def test_manual_email_password_login_stays_central_and_pkce_bound() -> None:
     assert 'verify_password(password, user.password_hash)' in central_oauth
 
 
+def test_all_configured_product_admins_can_federate_as_system_admin() -> None:
+    access = (BACKEND / "app/api/v1/ithute_access.py").read_text()
+    assert "is_product_admin = email in settings.product_admin_email_list" in access
+    assert "if user is None and not is_product_admin:" in access
+    assert "if is_product_admin:" in access
+    assert 'created_by="Ithute product admin projection"' in access
+    assert "is_product_superadmin = email == settings.superadmin_email.strip().lower()" not in access
+
+
 def test_central_admin_bootstrap_never_contains_a_human_password() -> None:
     provision = (BACKEND / "scripts/provision_central_admin.py").read_text()
     assert 'DEFAULT_ADMIN_EMAIL = "just@ithute.co.ls"' in provision
