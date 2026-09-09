@@ -32,6 +32,28 @@ def test_production_disables_second_password_system() -> None:
     assert 'python -m scripts.bootstrap_production && python -m scripts.provision_central_admin' in compose
 
 
+def test_manual_email_password_login_stays_central_and_pkce_bound() -> None:
+    access = (BACKEND / "app/api/v1/ithute_access.py").read_text()
+    frontend = (PRODUCT / "apps/frontend/app/login/page.tsx").read_text()
+    central_oauth = (REPO / "platform/ithute-auth/app/oauth.py").read_text()
+
+    assert '@router.get("/oidc/manual-challenge")' in access
+    assert '"action": settings.auth_authorization_url' in access
+    assert '"code_challenge": _pkce_challenge(verifier)' in access
+    assert 'response.set_cookie(settings.auth_oidc_verifier_cookie_name' in access
+    assert 'BuildTrack never receives the email/password/MFA values' in access
+
+    assert 'centralForm.action = challenge.action' in frontend
+    assert 'addFormField(centralForm, "identifier", email.trim())' in frontend
+    assert 'addFormField(centralForm, "password", password)' in frontend
+    assert 'addFormField(centralForm, "mfa_code", mfaCode.trim())' in frontend
+    assert 'https://auth.ithute.co.ls/forgot-password' in frontend
+
+    assert '@router.post("/oauth/authorize")' in central_oauth
+    assert 'password: str = Form(...)' in central_oauth
+    assert 'verify_password(password, user.password_hash)' in central_oauth
+
+
 def test_central_admin_bootstrap_never_contains_a_human_password() -> None:
     provision = (BACKEND / "scripts/provision_central_admin.py").read_text()
     assert 'DEFAULT_ADMIN_EMAIL = "just@ithute.co.ls"' in provision
