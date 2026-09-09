@@ -17,11 +17,38 @@ services:
   smtp-policy:
     image: ${MAILBOX_DNS_BACKEND_IMAGE:-ghcr.io/ithute-stak/mailbox-dns-backend}:${MAILBOX_DNS_IMAGE_TAG:-latest}
 
+  # Production mail clients must see the same public Let's Encrypt identity as
+  # the shared HTTPS edge. The canonical ithute-edge certificate includes
+  # mail.ithute.co.ls and is renewed by the shared Certbot service.
   dovecot:
     image: ${MAILBOX_DNS_DOVECOT_IMAGE:-ghcr.io/ithute-stak/mailbox-dns-dovecot}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+    environment:
+      MAIL_TLS_MODE: external
+      MAIL_TLS_CERT_PATH: /etc/letsencrypt/live/ithute-edge/fullchain.pem
+      MAIL_TLS_KEY_PATH: /etc/letsencrypt/live/ithute-edge/privkey.pem
+    volumes:
+      - ithute_edge_letsencrypt:/etc/letsencrypt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "openssl x509 -in /etc/letsencrypt/live/ithute-edge/fullchain.pem -checkend 86400 -noout && openssl x509 -in /etc/letsencrypt/live/ithute-edge/fullchain.pem -noout -ext subjectAltName | grep -Fq \"DNS:$${MAIL_HOSTNAME}\" && printf 'a logout\\r\\n' | openssl s_client -connect 127.0.0.1:993 -servername \"$${MAIL_HOSTNAME}\" -verify_hostname \"$${MAIL_HOSTNAME}\" -verify_return_error -CApath /etc/ssl/certs >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 10s
 
   postfix:
     image: ${MAILBOX_DNS_POSTFIX_IMAGE:-ghcr.io/ithute-stak/mailbox-dns-postfix}:${MAILBOX_DNS_IMAGE_TAG:-latest}
+    environment:
+      MAIL_TLS_MODE: external
+      MAIL_TLS_CERT_PATH: /etc/letsencrypt/live/ithute-edge/fullchain.pem
+      MAIL_TLS_KEY_PATH: /etc/letsencrypt/live/ithute-edge/privkey.pem
+    volumes:
+      - ithute_edge_letsencrypt:/etc/letsencrypt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "postfix status >/dev/null 2>&1 && openssl x509 -in /etc/letsencrypt/live/ithute-edge/fullchain.pem -checkend 86400 -noout && openssl x509 -in /etc/letsencrypt/live/ithute-edge/fullchain.pem -noout -ext subjectAltName | grep -Fq \"DNS:$${MAIL_HOSTNAME}\" && printf 'QUIT\\r\\n' | openssl s_client -starttls smtp -connect 127.0.0.1:587 -servername \"$${MAIL_HOSTNAME}\" -verify_hostname \"$${MAIL_HOSTNAME}\" -verify_return_error -CApath /etc/ssl/certs >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 10s
 
   radicale:
     image: ${MAILBOX_DNS_RADICALE_IMAGE:-ghcr.io/ithute-stak/mailbox-dns-radicale}:${MAILBOX_DNS_IMAGE_TAG:-latest}
@@ -52,3 +79,8 @@ services:
       timeout: 2s
       retries: 30
       start_period: 2s
+
+volumes:
+  ithute_edge_letsencrypt:
+    external: true
+    name: ${ITHUTE_EDGE_LETSENCRYPT_VOLUME:-loanhub_edge_letsencrypt}

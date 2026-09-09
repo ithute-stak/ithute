@@ -59,6 +59,7 @@ def profile(records):
 
 
 def test_desired_records_follow_package_mail_entitlement(monkeypatch):
+    monkeypatch.delenv("API_HOSTNAME", raising=False)
     monkeypatch.setattr(dns_defaults.settings, "bootstrap_public_ip", "204.12.205.224")
     monkeypatch.setattr(dns_defaults.settings, "mail_hostname", "mail.ithute.co.ls")
     plan = SimpleNamespace(included_mailboxes=10)
@@ -66,12 +67,37 @@ def test_desired_records_follow_package_mail_entitlement(monkeypatch):
     records = dns_defaults.desired_package_records(domain(mail_enabled=True), plan)
     purposes = {row["purpose"] for row in records}
 
-    assert purposes == {"platform-web", "www-alias", "mail-routing", "spf", "dmarc"}
+    assert purposes == {
+        "platform-web",
+        "www-alias",
+        "mail-routing",
+        "spf",
+        "dmarc",
+        "imap-discovery",
+        "smtp-discovery",
+    }
     assert next(row for row in records if row["purpose"] == "platform-web")["values"] == ["204.12.205.224"]
     assert next(row for row in records if row["purpose"] == "mail-routing")["values"] == ["10 mail.ithute.co.ls."]
+    assert next(row for row in records if row["purpose"] == "imap-discovery")["values"] == ["0 1 993 mail.ithute.co.ls."]
+    assert next(row for row in records if row["purpose"] == "smtp-discovery")["values"] == ["0 1 587 mail.ithute.co.ls."]
+
+
+def test_outlook_autodiscover_uses_configured_api_hostname(monkeypatch):
+    monkeypatch.setenv("API_HOSTNAME", "api.ithute.co.ls")
+    monkeypatch.setattr(dns_defaults.settings, "bootstrap_public_ip", "204.12.205.224")
+    monkeypatch.setattr(dns_defaults.settings, "mail_hostname", "mail.ithute.co.ls")
+    plan = SimpleNamespace(included_mailboxes=10)
+
+    records = dns_defaults.desired_package_records(domain(mail_enabled=True), plan)
+    autodiscover = next(row for row in records if row["purpose"] == "outlook-autodiscover")
+
+    assert autodiscover["type"] == "SRV"
+    assert autodiscover["name"] == "_autodiscover._tcp.example.co.ls"
+    assert autodiscover["values"] == ["0 0 443 api.ithute.co.ls."]
 
 
 def test_package_without_mailboxes_omits_mail_defaults(monkeypatch):
+    monkeypatch.setenv("API_HOSTNAME", "api.ithute.co.ls")
     monkeypatch.setattr(dns_defaults.settings, "bootstrap_public_ip", "204.12.205.224")
     plan = SimpleNamespace(included_mailboxes=0)
 
@@ -108,6 +134,8 @@ def test_auto_generate_second_run_is_idempotent(monkeypatch):
     wanted = [
         {"name": "example.co.ls", "type": "MX", "values": ["10 mail.ithute.co.ls."], "purpose": "mail-routing"},
         {"name": "example.co.ls", "type": "TXT", "values": ["v=spf1 mx -all"], "purpose": "spf"},
+        {"name": "_imaps._tcp.example.co.ls", "type": "SRV", "values": ["0 1 993 mail.ithute.co.ls."], "purpose": "imap-discovery"},
+        {"name": "_submission._tcp.example.co.ls", "type": "SRV", "values": ["0 1 587 mail.ithute.co.ls."], "purpose": "smtp-discovery"},
     ]
     monkeypatch.setattr(dns_defaults, "package_dns_profile", lambda _db, _domain: profile(wanted))
     client = FakePowerDNS()
@@ -117,10 +145,10 @@ def test_auto_generate_second_run_is_idempotent(monkeypatch):
     write_count = len(client.replaced)
     second = dns_defaults.apply_package_dns_defaults(SimpleNamespace(), item, client=client)
 
-    assert len(first["generated"]) == 2
+    assert len(first["generated"]) == 4
     assert len(client.replaced) == write_count
     assert second["generated"] == []
-    assert len(second["skipped"]) == 2
+    assert len(second["skipped"]) == 4
 
 
 def test_auto_generate_leaves_cname_conflict_untouched(monkeypatch):

@@ -10,6 +10,7 @@ from redis import Redis
 from sqlalchemy import text
 from starlette.concurrency import run_in_threadpool
 
+from app.api.mail_discovery import router as mail_discovery_router
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.db.session import engine
@@ -58,9 +59,6 @@ def _strip_untrusted_proxy_headers(request: Request) -> None:
         for name, value in request.scope.get("headers", [])
         if name.lower() not in _PROXY_ONLY_HEADERS
     ]
-    # Starlette lazily caches Headers on the Request. If an upstream middleware
-    # inspected them first, invalidate that cache so every downstream consumer
-    # sees the sanitized scope rather than stale spoofable values.
     if hasattr(request, "_headers"):
         delattr(request, "_headers")
 
@@ -164,6 +162,7 @@ async def security_middleware(request: Request, call_next):
     return response
 
 
+app.include_router(mail_discovery_router)
 app.include_router(api_router, prefix="/api/v1")
 
 
