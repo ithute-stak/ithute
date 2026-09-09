@@ -17,7 +17,10 @@ def _xml_response(content: bytes) -> Response:
     return Response(
         content=content,
         media_type=_XML_MEDIA_TYPE,
-        headers={"Cache-Control": "public, max-age=300"},
+        headers={
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex, nofollow",
+        },
     )
 
 
