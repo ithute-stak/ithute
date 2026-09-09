@@ -58,6 +58,7 @@ services:
       AUTH_COOKIE_SAMESITE: lax
       LEGACY_AUTH_ENABLED: "false"
       SUPERADMIN_EMAIL: ${ITHUTE_BUILDTRACK_SUPERADMIN_EMAIL:-justy@ithute.co.ls}
+      PRODUCT_ADMIN_EMAILS: ${ITHUTE_BUILDTRACK_PRODUCT_ADMIN_EMAILS:-justy@ithute.co.ls,just@ithute.co.ls}
       PUSH_BASE_URL: http://ithute-push:8080
       PUSH_SERVICE_CLIENT_ID: buildtrack-construction
       PUSH_SERVICE_CLIENT_SECRET: ${ITHUTE_BUILDTRACK_PUSH_SERVICE_CLIENT_SECRET}
@@ -73,11 +74,11 @@ services:
     image: ghcr.io/ithute-stak/buildtrack-backend:${ITHUTE_BUILDTRACK_IMAGE_TAG:-local}
     restart: "no"
     environment: *buildtrack-backend-env
-    command: ["python", "-m", "scripts.bootstrap_production"]
+    command: ["sh", "-c", "python -m scripts.bootstrap_production && python -m scripts.provision_central_admin"]
     depends_on:
       buildtrack-migrate:
         condition: service_completed_successfully
-    networks: [ithute_buildtrack_private]
+    networks: [ithute_buildtrack_private, mailbox_dns]
 
   buildtrack-backend:
     image: ghcr.io/ithute-stak/buildtrack-backend:${ITHUTE_BUILDTRACK_IMAGE_TAG:-local}

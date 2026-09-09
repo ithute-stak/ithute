@@ -17,6 +17,7 @@ PRODUCT_NAME = "Nthane Brothers Construction"
 PUBLIC_URL = "https://nbro.ithute.co.ls"
 CALLBACK = f"{PUBLIC_URL}/api/v1/access/oidc/callback"
 SUPERADMIN_EMAIL = "justy@ithute.co.ls"
+PRODUCT_ADMIN_EMAILS = "justy@ithute.co.ls,just@ithute.co.ls"
 
 
 def placeholder(value: str) -> bool:
@@ -71,6 +72,7 @@ def main() -> None:
             "ITHUTE_BUILDTRACK_PUBLIC_URL": PUBLIC_URL,
             "ITHUTE_BUILDTRACK_OIDC_REDIRECT_URI": CALLBACK,
             "ITHUTE_BUILDTRACK_SUPERADMIN_EMAIL": SUPERADMIN_EMAIL,
+            "ITHUTE_BUILDTRACK_PRODUCT_ADMIN_EMAILS": PRODUCT_ADMIN_EMAILS,
         }
     )
     values.update(updates)

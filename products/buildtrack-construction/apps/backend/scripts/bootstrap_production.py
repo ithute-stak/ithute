@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Idempotent production bootstrap for Nthane Brothers BuildTrack.
 
-Central Ithute Auth owns the real credential. The local User row is only the
-BuildTrack role/scope projection and receives an unreachable random legacy hash.
+Central Ithute Auth owns the real credentials. Local User rows are only the
+BuildTrack role/scope projections and receive unreachable random legacy hashes.
 """
 
 from __future__ import annotations
@@ -19,11 +19,57 @@ from app.models import Company, Role, User, UserRoleAssignment
 from app.security.access import hash_password
 
 
+def _ensure_admin(db, company: Company, system_admin: Role, email: str) -> User:
+    user = db.scalar(select(User).where(User.company_id == company.id, User.email == email))
+    if user is None:
+        base_username = email.split("@", 1)[0][:72] or "superadmin"
+        username = base_username
+        suffix = 1
+        while db.scalar(select(User.id).where(User.company_id == company.id, User.username == username)):
+            suffix += 1
+            username = f"{base_username[:70]}-{suffix}"
+        user = User(
+            company_id=company.id,
+            username=username,
+            email=email,
+            full_name="Nthane Brothers System Administrator",
+            job_title="System Administrator",
+            password_hash=hash_password(secrets.token_urlsafe(48)),
+            must_change_password=False,
+            status="active",
+            is_active=True,
+            created_by="Ithute production bootstrap",
+        )
+        db.add(user)
+        db.flush()
+    else:
+        user.is_active = True
+        user.status = "active"
+        user.must_change_password = False
+
+    assignment = db.scalar(
+        select(UserRoleAssignment).where(
+            UserRoleAssignment.user_id == user.id,
+            UserRoleAssignment.role_id == system_admin.id,
+        )
+    )
+    if assignment is None:
+        db.add(
+            UserRoleAssignment(
+                user_id=user.id,
+                role_id=system_admin.id,
+                is_primary=True,
+                created_by="Ithute production bootstrap",
+            )
+        )
+    return user
+
+
 def main() -> None:
     settings = get_settings()
-    email = settings.superadmin_email.strip().lower()
-    if not email or "@" not in email:
-        raise SystemExit("SUPERADMIN_EMAIL must be a valid email address")
+    admin_emails = settings.product_admin_email_list
+    if not admin_emails or any("@" not in email for email in admin_emails):
+        raise SystemExit("PRODUCT_ADMIN_EMAILS must contain valid email addresses")
 
     with SessionLocal() as db:
         company = db.scalar(select(Company).order_by(Company.id).limit(1))
@@ -52,53 +98,12 @@ def main() -> None:
         if system_admin is None:
             raise SystemExit("SYSTEM_ADMIN role is missing after BuildTrack bootstrap")
 
-        user = db.scalar(select(User).where(User.company_id == company.id, User.email == email))
-        if user is None:
-            base_username = email.split("@", 1)[0][:72] or "superadmin"
-            username = base_username
-            suffix = 1
-            while db.scalar(
-                select(User.id).where(User.company_id == company.id, User.username == username)
-            ):
-                suffix += 1
-                username = f"{base_username[:70]}-{suffix}"
-            user = User(
-                company_id=company.id,
-                username=username,
-                email=email,
-                full_name="Nthane Brothers Super Administrator",
-                job_title="System Administrator",
-                password_hash=hash_password(secrets.token_urlsafe(48)),
-                must_change_password=False,
-                status="active",
-                is_active=True,
-                created_by="Ithute production bootstrap",
-            )
-            db.add(user)
-            db.flush()
-        else:
-            user.is_active = True
-            user.status = "active"
-            user.must_change_password = False
-
-        assignment = db.scalar(
-            select(UserRoleAssignment).where(
-                UserRoleAssignment.user_id == user.id,
-                UserRoleAssignment.role_id == system_admin.id,
-            )
-        )
-        if assignment is None:
-            db.add(
-                UserRoleAssignment(
-                    user_id=user.id,
-                    role_id=system_admin.id,
-                    is_primary=True,
-                    created_by="Ithute production bootstrap",
-                )
-            )
+        for email in admin_emails:
+            _ensure_admin(db, company, system_admin, email)
 
         db.commit()
-        print(f"BuildTrack production owner projection ready for {email}")
+        for email in admin_emails:
+            print(f"BuildTrack SYSTEM_ADMIN projection ready for {email}")
 
 
 if __name__ == "__main__":
