@@ -74,11 +74,11 @@ services:
     image: ghcr.io/ithute-stak/buildtrack-backend:${ITHUTE_BUILDTRACK_IMAGE_TAG:-local}
     restart: "no"
     environment: *buildtrack-backend-env
-    command: ["python", "-m", "scripts.bootstrap_production"]
+    command: ["sh", "-c", "python -m scripts.bootstrap_production && python -m scripts.provision_central_admin"]
     depends_on:
       buildtrack-migrate:
         condition: service_completed_successfully
-    networks: [ithute_buildtrack_private]
+    networks: [ithute_buildtrack_private, mailbox_dns]
 
   buildtrack-backend:
     image: ghcr.io/ithute-stak/buildtrack-backend:${ITHUTE_BUILDTRACK_IMAGE_TAG:-local}
