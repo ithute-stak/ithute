@@ -26,6 +26,36 @@ def client():
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def deterministic_domain_create_dns(monkeypatch):
+    """Avoid public DNS calls from unrelated API tests.
+
+    Historical domain tests expect the TXT migration path. Individual tests for
+    the new registrar-domain path can override these two API-level probes.
+    """
+    monkeypatch.setattr(
+        "app.api.v1.domains.inspect_nameservers",
+        lambda name, platform: {
+            "lookup_status": "found",
+            "lookup_detail": None,
+            "current_nameservers": ["ns1.external.test", "ns2.external.test"],
+            "current_provider": "External DNS provider",
+            "platform_nameservers": ["ns1.ithute.co.ls", "ns2.ithute.co.ls"],
+            "platform_nameservers_configured": True,
+            "already_on_platform_nameservers": False,
+        },
+    )
+    monkeypatch.setattr(
+        "app.api.v1.domains.inspect_existing_records",
+        lambda name: {
+            "has_existing_dns_records": True,
+            "existing_record_types": ["A"],
+            "record_lookup_status": "found",
+            "record_lookup_errors": [],
+        },
+    )
+
+
 @pytest.fixture()
 def db():
     with SessionLocal() as session:
@@ -96,6 +126,7 @@ def tenant_member(db):
     db.refresh(user)
     yield user
     db.execute(delete(AuditLog).where(AuditLog.tenant_id == tenant.id))
+    db.execute(delete(Invitation).where(Invitation.tenant_id == tenant.id))
     db.execute(delete(UserSession).where(UserSession.user_id == user.id))
     db.execute(delete(TenantMembership).where(TenantMembership.tenant_id == tenant.id))
     db.execute(delete(User).where(User.id == user.id))
