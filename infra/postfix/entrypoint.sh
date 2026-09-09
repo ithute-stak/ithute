@@ -8,6 +8,7 @@ set -eu
 : "${MAIL_TLS_MODE:=selfsigned}"
 : "${MAIL_TLS_CERT_PATH:=/etc/postfix/tls/cert.pem}"
 : "${MAIL_TLS_KEY_PATH:=/etc/postfix/tls/key.pem}"
+: "${MAIL_TLS_RELOAD_INTERVAL_SECONDS:=300}"
 
 mkdir -p "$(dirname "$MAIL_TLS_CERT_PATH")" "$(dirname "$MAIL_TLS_KEY_PATH")"
 case "$MAIL_TLS_MODE" in
@@ -82,6 +83,22 @@ postconf -M 'rewrite/unix=rewrite unix - - n - - trivial-rewrite'
 postconf -M 'cleanup/unix=cleanup unix n - n - 0 cleanup'
 postconf -M 'lmtp/unix=lmtp unix - - n - - lmtp'
 
+watch_tls_certificate() {
+  previous="$(sha256sum "$MAIL_TLS_CERT_PATH" 2>/dev/null | awk '{print $1}')"
+  while sleep "$MAIL_TLS_RELOAD_INTERVAL_SECONDS"; do
+    current="$(sha256sum "$MAIL_TLS_CERT_PATH" 2>/dev/null | awk '{print $1}')"
+    if [ -n "$current" ] && [ "$current" != "$previous" ]; then
+      if postfix reload; then
+        echo "Reloaded Postfix after TLS certificate renewal"
+        previous="$current"
+      fi
+    fi
+  done
+}
+
 postfix check
+case "$MAIL_TLS_MODE" in
+  acme|external) watch_tls_certificate & ;;
+esac
 MAIL_OPS_TOKEN="$MAIL_OPS_TOKEN" MAIL_OPS_PORT="${MAIL_OPS_PORT:-9080}" MAIL_HOSTNAME="${MAIL_HOSTNAME:-mail.phase8.test}" MAIL_TLS_CERT_PATH="$MAIL_TLS_CERT_PATH" /usr/local/bin/mailbox-mail-ops &
 exec postfix start-fg
