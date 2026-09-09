@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     auth_cookie_max_age_seconds: int = 60 * 60 * 24 * 30
     legacy_auth_enabled: bool = True
     superadmin_email: str = "justy@ithute.co.ls"
-    product_admin_emails: str = "justy@ithute.co.ls,just@ithute.co.ls"
+    product_admin_emails: str = "justy@ithute.co.ls,just@ithute.co.ls,supperadmin@ithute.co.ls"
 
     # Shared Ithute delivery services. Product data remains in BuildTrack.
     push_base_url: str = "http://ithute-push:8080"
