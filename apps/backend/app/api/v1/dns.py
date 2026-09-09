@@ -118,13 +118,13 @@ def provision_zone(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_d
             "rspamd_synced_domains": result.rspamd_synced_domains,
         }
 
-    if verified:
-        event_type = "dns.zone_provisioned" if created else "dns.zone_reconciled"
-        audit_action = "dns.zone.provision"
-    else:
-        event_type = "dns.zone_staged" if created else "dns.zone_stage_reconciled"
-        audit_action = "dns.zone.stage"
-    add_domain_event(db, domain, current.id, event_type, {"created": created, "verified": verified})
+    # Use the established zone lifecycle event names for both staged and verified
+    # zones. Domain release safety already treats these events as evidence that a
+    # PowerDNS zone exists, preventing an abandoned staged zone from being
+    # silently orphaned. Audit metadata still distinguishes staged from live.
+    event_type = "dns.zone_provisioned" if created else "dns.zone_reconciled"
+    audit_action = "dns.zone.provision" if verified else "dns.zone.stage"
+    add_domain_event(db, domain, current.id, event_type, {"created": created, "verified": verified, "staged": not verified})
     _audit(
         db,
         tenant_id,
