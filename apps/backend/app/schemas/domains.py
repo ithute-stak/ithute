@@ -9,7 +9,6 @@ from app.models.domains import DomainDnsMode, DomainStatus, DomainVerificationMe
 class DomainCreate(BaseModel):
     name: str = Field(min_length=1, max_length=320)
     dns_mode: DomainDnsMode = DomainDnsMode.platform
-    verification_method: DomainVerificationMethod | None = None
     mail_enabled: bool = True
     notes: str | None = Field(default=None, max_length=4000)
 
