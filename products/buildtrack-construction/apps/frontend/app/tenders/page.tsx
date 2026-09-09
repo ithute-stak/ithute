@@ -27,8 +27,7 @@ function Data({rows,cols}:{rows:Row[];cols:string[]}){return <div className={sty
 export default function TenderPage(){
  const {promptText}=useBuildTrackUi();
  const [initialized,setInitialized]=useState<boolean|null>(null),[catalog,setCatalog]=useState<Catalog>({branches:[],sites:[],employees:[],cost_centres:[],workflows:[],permissions:[]}),[summary,setSummary]=useState<Summary|null>(null),[tenders,setTenders]=useState<Row[]>([]),[alerts,setAlerts]=useState<Row[]>([]),[audit,setAudit]=useState<Row[]>([]),[selectedId,setSelectedId]=useState(""),[detail,setDetail]=useState<Row|null>(null),[tab,setTab]=useState<Tab>("pipeline"),[error,setError]=useState(""),[notice,setNotice]=useState(""),[loading,setLoading]=useState(true);
- const defaultDeadline=new Date(Date.now()+14*86400000).toISOString().slice(0,16);
- const [form,setForm]=useState({branch_id:"",lead_employee_id:"",external_reference:"",title:"",client_name:"",category:"civil_works",location:"",site_visit_required:false,site_visit_date:"",clarification_deadline:"",submission_deadline:defaultDeadline,estimated_contract_value:"",win_probability:"25",priority:"normal"});
+ const [form,setForm]=useState(()=>({branch_id:"",lead_employee_id:"",external_reference:"",title:"",client_name:"",category:"civil_works",location:"",site_visit_required:false,site_visit_date:"",clarification_deadline:"",submission_deadline:new Date(Date.now()+14*86400000).toISOString().slice(0,16),estimated_contract_value:"",win_probability:"25",priority:"normal"}));
  const [team,setTeam]=useState({employee_id:"",role:"estimator"});
  const [estimate,setEstimate]=useState({section:"",item_code:"",description:"",unit:"item",quantity:"1",material_unit_cost:"0",labour_unit_cost:"0",plant_unit_cost:"0",subcontract_unit_cost:"0",other_unit_cost:"0",markup_pct:"10"});
  const [security,setSecurity]=useState({security_type:"bid_bond",provider:"",reference_number:"",amount:"0",issue_date:"",expiry_date:"",status:"required"});

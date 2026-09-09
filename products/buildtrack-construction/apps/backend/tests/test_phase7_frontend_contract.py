@@ -58,7 +58,7 @@ def test_phase7_routes_models_and_migration_are_registered() -> None:
 def test_phase7_browser_workspaces_cover_operational_and_control_contracts() -> None:
     page = (FRONTEND / "app/site-operations/page.tsx").read_text()
     control = (FRONTEND / "app/site-operations/control/page.tsx").read_text()
-    layout = (FRONTEND / "app/layout.tsx").read_text()
+    navigation = (FRONTEND / "app/components/buildtrack-navigation.tsx").read_text()
     readme = (ROOT.parent / "README.md").read_text() if (ROOT.parent / "README.md").exists() else (ROOT / "../README.md").resolve().read_text()
 
     for text in (
@@ -72,5 +72,5 @@ def test_phase7_browser_workspaces_cover_operational_and_control_contracts() -> 
         "Open incidents", "Quality / NCR actions", "Site activation lifecycle", "Site Operations policy",
     ):
         assert text in control
-    assert 'href="/site-operations"' in layout and 'href="/site-operations/control"' in layout
-    assert "Phase 7 — Site Operations: complete" in readme
+    assert 'href: "/site-operations"' in navigation and 'href: "/site-operations/control"' in navigation
+    assert "| 7 | Daily site operations, labour, plant, materials, progress, incidents and quality | Complete |" in readme

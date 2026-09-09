@@ -39,7 +39,10 @@ def test_phase1_workspace_exposes_complete_control_plane() -> None:
     ):
         assert endpoint in page
 
-    assert "Lesotho · Maloti (M)" in page
+    # The current command centre renders the canonical ISO currency and Maseru
+    # timezone rather than the older prose-only "Maloti" label.
+    assert "LSL · Africa/Maseru" in page
+    assert "Currency" in page
     assert "Phase 1 operational" in page
     assert "@media (max-width: 880px)" in css
     assert "@media (max-width: 560px)" in css

@@ -19,6 +19,32 @@ class Settings(BaseSettings):
     media_root: str = "media"
     rate_limit_per_minute: int = 120
 
+    # Shared Ithute identity. BuildTrack owns product authorization, not passwords.
+    auth_issuer: str = "https://auth.ithute.co.ls"
+    auth_audience: str = "buildtrack-construction"
+    auth_internal_base_url: str = "http://ithute-auth:8080"
+    auth_jwks_url: str = "http://ithute-auth:8080/.well-known/jwks.json"
+    auth_oidc_redirect_uri: str = "http://localhost:3004/api/v1/access/oidc/callback"
+    auth_cookie_secure: bool = False
+    auth_cookie_samesite: str = "lax"
+    auth_access_cookie_name: str = "buildtrack_ithute_access"
+    auth_refresh_cookie_name: str = "buildtrack_ithute_refresh"
+    auth_oidc_state_cookie_name: str = "buildtrack_oidc_state"
+    auth_oidc_nonce_cookie_name: str = "buildtrack_oidc_nonce"
+    auth_oidc_verifier_cookie_name: str = "buildtrack_oidc_verifier"
+    auth_oidc_return_cookie_name: str = "buildtrack_oidc_return"
+    auth_cookie_max_age_seconds: int = 60 * 60 * 24 * 30
+    legacy_auth_enabled: bool = True
+    superadmin_email: str = "justy@ithute.co.ls"
+
+    # Shared Ithute delivery services. Product data remains in BuildTrack.
+    push_base_url: str = "http://ithute-push:8080"
+    push_service_client_id: str = "buildtrack-construction"
+    push_service_client_secret: str = ""
+    push_timeout_seconds: float = 10.0
+    realtime_base_url: str = "http://ithute-realtime:8080"
+    realtime_public_url: str = "https://realtime.ithute.co.ls"
+
     @property
     def database_url(self) -> str:
         return (
@@ -29,6 +55,26 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def auth_authorization_url(self) -> str:
+        return f"{self.auth_issuer.rstrip('/')}/oauth/authorize"
+
+    @property
+    def auth_token_url(self) -> str:
+        return f"{self.auth_internal_base_url.rstrip('/')}/oauth/token"
+
+    @property
+    def auth_refresh_url(self) -> str:
+        return f"{self.auth_internal_base_url.rstrip('/')}/v1/auth/refresh"
+
+    @property
+    def auth_logout_url(self) -> str:
+        return f"{self.auth_internal_base_url.rstrip('/')}/v1/auth/logout"
+
+    @property
+    def auth_service_token_url(self) -> str:
+        return f"{self.auth_internal_base_url.rstrip('/')}/v1/auth/service-token"
 
 
 @lru_cache

@@ -40,7 +40,7 @@ def test_phase5_routes_and_migration_are_registered() -> None:
 def test_phase5_browser_workspaces_cover_operational_and_control_contracts() -> None:
     page = (FRONTEND / "app/tenders/page.tsx").read_text()
     control = (FRONTEND / "app/tenders/control/page.tsx").read_text()
-    layout = (FRONTEND / "app/layout.tsx").read_text()
+    navigation = (FRONTEND / "app/components/buildtrack-navigation.tsx").read_text()
     for text in (
         "Tender Management",
         "Document checklist",
@@ -65,4 +65,4 @@ def test_phase5_browser_workspaces_cover_operational_and_control_contracts() -> 
         "Generate Phase 6 handoff",
     ):
         assert text in control
-    assert 'href="/tenders"' in layout and 'href="/tenders/control"' in layout
+    assert 'href: "/tenders"' in navigation and 'href: "/tenders/control"' in navigation

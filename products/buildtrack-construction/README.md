@@ -17,6 +17,7 @@ The platform connects the full operating lifecycle: business development, tender
 - Primary timezone: **Africa/Maseru**
 - Frontend: **http://localhost:3004** by default
 - API: **http://localhost:8004** by default
+- API docs: **http://localhost:8004/docs** by default
 
 ## Architecture
 
@@ -187,11 +188,14 @@ The system controls records and evidence; it deliberately does not pretend that 
 - Project Communications records correspondence and dispatch/response evidence; it does not send external messages.
 - Programme delay records support internal control; they do not issue legal notices or determine contractual entitlement.
 - Client and vendor public links expose only deliberately selected evidence; they do not create external internal-system accounts.
+- Procurement records supplier quotations and supporting evidence; it does **not** fabricate quotations or supplier responses.
 - Algorithmic assistants provide explainable decision support; they do not approve transactions or submit tenders.
 
 ## Docker startup
 
 For local development/testing:
+
+No `.env` file is required for local development; the Compose stack has safe local defaults, while production/VPS deployments must provide their own secure environment values.
 
 ```bash
 docker compose up --build
