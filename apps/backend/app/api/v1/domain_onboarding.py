@@ -11,7 +11,7 @@ from app.db.session import get_db
 from app.models import User
 from app.models.domains import Domain, DomainDnsMode, DomainVerificationMethod
 from app.services.billing import billing_summary, entitlement_decision
-from app.services.domain_discovery import inspect_nameservers
+from app.services.domain_discovery import inspect_existing_records, inspect_nameservers
 from app.services.domains import normalize_domain
 
 router = APIRouter(tags=["domain-onboarding"])
@@ -42,6 +42,7 @@ def inspect_domain_onboarding(
 
     platform_nameservers = [settings.nameserver_1, settings.nameserver_2]
     discovery = inspect_nameservers(ascii_name, platform_nameservers)
+    records = inspect_existing_records(ascii_name)
     billing = billing_summary(db, tenant_id)
     entitlement = entitlement_decision(db, tenant_id, "domain")
 
@@ -53,15 +54,27 @@ def inspect_domain_onboarding(
 
     wants_platform = payload.dns_mode == DomainDnsMode.platform
     platform_ready = bool(discovery["platform_nameservers_configured"])
-    has_existing_external_dns = bool(
-        wants_platform
-        and discovery["lookup_status"] == "found"
+    has_external_nameservers = bool(
+        discovery["lookup_status"] == "found"
         and discovery["current_nameservers"]
         and not discovery["already_on_platform_nameservers"]
     )
+    record_classification_ready = not (
+        wants_platform
+        and has_external_nameservers
+        and records["record_lookup_status"] == "resolver_error"
+    )
+    has_existing_external_dns = bool(
+        wants_platform
+        and has_external_nameservers
+        and records["has_existing_dns_records"]
+    )
     verification_method = (
         DomainVerificationMethod.txt
-        if payload.dns_mode == DomainDnsMode.external or has_existing_external_dns or not platform_ready
+        if payload.dns_mode == DomainDnsMode.external
+        or has_existing_external_dns
+        or not platform_ready
+        or not record_classification_ready
         else DomainVerificationMethod.nameserver
     )
     change_required = bool(
@@ -78,10 +91,16 @@ def inspect_domain_onboarding(
                 "Keep the current registrar nameservers unchanged. Mailbox DNS production nameserver hostnames are not configured yet, "
                 "so TXT ownership verification is required until real public platform nameservers are configured."
             )
-        elif has_existing_external_dns:
+        elif not record_classification_ready:
             next_step = (
-                "Existing DNS was detected. Add the domain, prepare the staged PowerDNS zone, and add/import all existing records first. "
-                "Because this is a DNS migration, publish the one-time TXT ownership record at the current DNS provider and verify it before cutover. "
+                "Mailbox DNS found external nameservers but could not reliably inspect the domain's existing A/AAAA/CNAME/MX/TXT records. "
+                "Retry the domain check before onboarding so a live DNS migration is not mistaken for a new registration."
+            )
+        elif has_existing_external_dns:
+            record_list = ", ".join(records["existing_record_types"])
+            next_step = (
+                f"Existing DNS records were detected ({record_list}). Add the domain, prepare the staged PowerDNS zone, and add/import all existing records first. "
+                "Because this is an existing DNS migration, publish the one-time TXT ownership record at the current DNS provider and verify it before cutover. "
                 f"When the staged zone is ready, change the registrar nameservers to {ns1} and {ns2}."
             )
         elif discovery["already_on_platform_nameservers"]:
@@ -91,7 +110,7 @@ def inspect_domain_onboarding(
             )
         else:
             next_step = (
-                "No existing authoritative DNS was detected, so this is treated as a new registrar/reseller domain. "
+                "No existing customer-facing A/AAAA/CNAME/MX/TXT records were detected, so this is treated as a new registrar/reseller domain. "
                 f"Prepare the staged PowerDNS zone and records first, then set the registrar nameservers to {ns1} and {ns2}, wait for propagation, and click Verify. "
                 "No TXT record is required."
             )
@@ -107,6 +126,8 @@ def inspect_domain_onboarding(
         "claim_status": claim_status,
         "requested_dns_mode": payload.dns_mode.value,
         **discovery,
+        **records,
+        "record_classification_ready": record_classification_ready,
         "nameserver_change_required": change_required,
         "verification_method": verification_method.value,
         "txt_required": verification_method == DomainVerificationMethod.txt,
