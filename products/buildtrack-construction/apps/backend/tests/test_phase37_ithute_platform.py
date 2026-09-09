@@ -30,6 +30,14 @@ def test_production_disables_second_password_system() -> None:
     assert 'command: ["python", "-m", "scripts.bootstrap_production"]' in compose
 
 
+def test_production_cert_discovery_accepts_current_certbot_inventory_format() -> None:
+    deploy = (REPO / "scripts/buildtrack-deploy.sh").read_text()
+    assert "Certificate Name:" in deploy
+    assert "(Domains|Identifiers)" in deploy
+    assert 'certbot_domains()' in deploy
+    assert 'Shared TLS certificate includes ${PRODUCT_HOST}.' in deploy
+
+
 def test_frontend_public_vendor_and_manual_routes_are_not_session_gated() -> None:
     proxy = (PRODUCT / "apps/frontend/proxy.ts").read_text()
     assert '"/index"' in proxy
