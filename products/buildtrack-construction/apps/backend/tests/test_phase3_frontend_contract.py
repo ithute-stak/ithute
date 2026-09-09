@@ -5,7 +5,7 @@ def test_phase3_workforce_ui_exposes_complete_operational_flow() -> None:
     root = Path(__file__).resolve().parents[2]
     page = (root / "frontend" / "app" / "workforce" / "page.tsx").read_text()
     css = (root / "frontend" / "app" / "workforce" / "workforce.module.css").read_text()
-    layout = (root / "frontend" / "app" / "layout.tsx").read_text()
+    navigation = (root / "frontend" / "app" / "components" / "buildtrack-navigation.tsx").read_text()
 
     for capability in (
         "Workforce overview",
@@ -30,8 +30,8 @@ def test_phase3_workforce_ui_exposes_complete_operational_flow() -> None:
     ):
         assert capability in page
 
-    assert 'href="/workforce"' in layout
-    assert "Workforce &amp; Payroll" in layout
+    assert 'href="/workforce"' in navigation
+    assert "Workforce & Payroll" in navigation
     assert "@media(max-width:720px)" in css
 
 
