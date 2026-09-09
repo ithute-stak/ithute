@@ -29,6 +29,7 @@ from app.schemas.domains import (
     DomainVerifyResponse,
 )
 from app.services.billing import require_entitlement
+from app.services.domain_discovery import inspect_existing_records, inspect_nameservers
 from app.services.domains import (
     add_domain_event,
     new_verification_token,
@@ -122,6 +123,38 @@ def _release_blockers(db: Session, domain: Domain) -> list[str]:
     return blockers
 
 
+def _verification_method_for_new_domain(ascii_name: str, dns_mode: DomainDnsMode) -> DomainVerificationMethod:
+    if dns_mode == DomainDnsMode.external:
+        return DomainVerificationMethod.txt
+
+    platform_nameservers = [settings.nameserver_1, settings.nameserver_2]
+    discovery = inspect_nameservers(ascii_name, platform_nameservers)
+    if not discovery["platform_nameservers_configured"]:
+        return DomainVerificationMethod.txt
+
+    if discovery["lookup_status"] in {"timeout", "resolver_error"}:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to classify the domain's current DNS delegation reliably. Retry the domain check before adding it.",
+        )
+
+    if discovery["already_on_platform_nameservers"]:
+        return DomainVerificationMethod.nameserver
+
+    has_external_nameservers = bool(
+        discovery["lookup_status"] == "found" and discovery["current_nameservers"]
+    )
+    records = inspect_existing_records(ascii_name)
+    if has_external_nameservers and records["record_lookup_status"] == "resolver_error":
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to inspect the domain's existing DNS records reliably. Retry before onboarding so a live DNS migration is not mistaken for a new registration.",
+        )
+    if has_external_nameservers and records["has_existing_dns_records"]:
+        return DomainVerificationMethod.txt
+    return DomainVerificationMethod.nameserver
+
+
 @router.post("", response_model=DomainCreateResponse, status_code=status.HTTP_201_CREATED)
 def create_domain(tenant_id: UUID, payload: DomainCreate, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "dns.manage", db, current)
@@ -140,14 +173,10 @@ def create_domain(tenant_id: UUID, payload: DomainCreate, db: Session = Depends(
             raise HTTPException(status_code=409, detail="Domain already exists in this organization")
         raise HTTPException(status_code=409, detail="Domain is already claimed by another organization")
 
-    verification_method = payload.verification_method or DomainVerificationMethod.txt
-    if payload.dns_mode == DomainDnsMode.external:
-        verification_method = DomainVerificationMethod.txt
-    elif verification_method == DomainVerificationMethod.nameserver:
-        configured_ns = {settings.nameserver_1.strip().rstrip("."), settings.nameserver_2.strip().rstrip(".")}
-        configured_ns.discard("")
-        if len(configured_ns) < 2:
-            verification_method = DomainVerificationMethod.txt
+    # Re-run live classification on the server at creation time. The browser's
+    # inspection result is advisory UI only and cannot downgrade an existing DNS
+    # migration from TXT proof to nameserver proof.
+    verification_method = _verification_method_for_new_domain(ascii_name, payload.dns_mode)
 
     token = new_verification_token()
     domain = Domain(
