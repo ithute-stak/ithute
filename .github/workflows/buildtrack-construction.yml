@@ -69,6 +69,7 @@ jobs:
       PUBLIC_APP_URL: http://localhost:3004
       CORS_ORIGINS: http://localhost:3004
       LEGACY_AUTH_ENABLED: 'true'
+      PYTHONPATH: .
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -92,7 +93,7 @@ jobs:
           alembic upgrade head
           alembic current
       - name: Run backend regression suite
-        run: pytest -q
+        run: python -m pytest -q
 
   frontend:
     name: Next.js typecheck, lint and production build
@@ -128,6 +129,12 @@ jobs:
     env:
       ITHUTE_BUILDTRACK_DB_PASSWORD: test-only-not-production
       ITHUTE_BUILDTRACK_PUSH_SERVICE_CLIENT_SECRET: test-only-not-production
+      ITHUTE_AUTH_DB_PASSWORD: test-only-not-production
+      ITHUTE_AUTH_TOTP_ENCRYPTION_KEY: test-only-not-production
+      ITHUTE_PUSH_DB_PASSWORD: test-only-not-production
+      ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY: test-only-not-production
+      ITHUTE_REALTIME_DB_PASSWORD: test-only-not-production
+      ITHUTE_SERVICE_REALTIME_SECRET: test-only-not-production
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -138,11 +145,13 @@ jobs:
         run: |
           docker compose \
             -f docker-compose.yml \
+            -f docker-compose.prod.yml \
             -f docker-compose.ithute-platform.yml \
             -f docker-compose.buildtrack.yml \
             config >/dev/null
       - name: Validate production registration scripts
         run: |
           python3 -m py_compile scripts/buildtrack-sync-env.py
+          sh -n scripts/buildtrack-deploy.sh
           grep -Fq 'nbro.ithute.co.ls' infrastructure/ithute-edge/default.conf.template
           grep -Fq 'buildtrack-construction' docker-compose.buildtrack.yml
