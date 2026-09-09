@@ -59,7 +59,7 @@ def bootstrap(client: TestClient) -> dict:
         "/api/v1/access/bootstrap-admin",
         json={
             "username": "admin",
-            "email": "admin@nthane.test",
+            "email": "admin@nthane.example.com",
             "full_name": "BuildTrack Administrator",
             "password": "BuildTrack!Admin2026",
         },
