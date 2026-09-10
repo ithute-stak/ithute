@@ -762,7 +762,8 @@ def control_board(db: Session = Depends(get_db), principal: Principal = Depends(
 
 @router.post("/vehicle-requests/match")
 def match_vehicle_request(payload: VehicleRequestInput, db: Session = Depends(get_db), principal: Principal = Depends(current_principal)) -> dict[str, Any]:
-    require_company(principal, "fleet.assign")
+    if not principal.can("fleet.assign"):
+        raise HTTPException(status_code=403, detail="fleet.assign is required")
     if payload.expected_return <= payload.required_from:
         raise HTTPException(status_code=422, detail="Expected return must be after the requested start time")
     candidates = db.scalars(select(FleetAsset).where(FleetAsset.company_id == principal.user.company_id, FleetAsset.asset_type == payload.requested_asset_type).order_by(FleetAsset.asset_number)).all()
