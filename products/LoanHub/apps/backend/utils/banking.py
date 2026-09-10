@@ -7,10 +7,10 @@ from typing import Final
 DEFAULT_BANK_BRANCH: Final[str] = "Maseru Central"
 
 BANKING_POLICY: Final[dict[str, dict[str, object]]] = {
-    "FNB": {"code": "280061", "prefixes": ("6",)},
-    "PB": {"code": "500100", "prefixes": ("10",)},
-    "STD": {"code": "060667", "prefixes": ("90",)},
-    "NB": {"code": "390161", "prefixes": ("11", "12")},
+    "FNB": {"code": "280061", "prefixes": ("6",), "account_digits": 11},
+    "PB": {"code": "500100", "prefixes": ("10",), "account_digits": 13},
+    "STD": {"code": "060667", "prefixes": ("90",), "account_digits": 13},
+    "NB": {"code": "390161", "prefixes": ("11", "12"), "account_digits": 11},
 }
 
 BANK_NAMES: Final[tuple[str, ...]] = tuple(BANKING_POLICY)
@@ -33,6 +33,11 @@ def bank_prefixes_for(bank_name: str) -> tuple[str, ...]:
     return tuple(str(prefix) for prefix in policy["prefixes"])
 
 
+def bank_account_digits_for(bank_name: str) -> int:
+    policy = BANKING_POLICY[normalize_bank_name(bank_name)]
+    return int(policy["account_digits"])
+
+
 def normalize_account_number(value: str | None) -> str | None:
     if value is None or not str(value).strip():
         return None
@@ -49,6 +54,10 @@ def validate_account_number_for_bank(bank_name: str, account_number: str | None)
     account = normalize_account_number(account_number)
     if account is None:
         return None
+
+    expected_digits = bank_account_digits_for(name)
+    if len(account) != expected_digits:
+        raise ValueError(f"{name} account number must contain exactly {expected_digits} digits")
 
     prefixes = bank_prefixes_for(name)
     if not account.startswith(prefixes):
