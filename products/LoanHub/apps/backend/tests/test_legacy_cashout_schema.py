@@ -15,9 +15,9 @@ def _payload(**overrides):
         "surname": "Mokoena",
         "identity_number": "123456789",
         "cell_phone": "59001111",
-        "bank_name": "Example Bank",
+        "bank_name": "FNB",
         "bank_account_holder": "Mpho Mokoena",
-        "bank_account_number": "1234567890",
+        "bank_account_number": "6123456789",
         "amount_taken": Decimal("1000.00"),
         "total_repayable": Decimal("1200.00"),
         "amount_paid": Decimal("200.00"),
@@ -67,15 +67,41 @@ def test_draft_capture_requires_only_folio_loan_date_and_banking_details():
     capture = LegacyCashoutCaptureCreate(
         folio_number="F-019",
         loan_date=date.today() - timedelta(days=1),
-        bank_name="Example Bank",
+        bank_name="FNB",
         bank_account_holder="Historic borrower",
-        bank_account_number="0012345678",
+        bank_account_number="6012345678",
     )
     assert capture.identity_type is None
     assert capture.amount_taken == Decimal("0")
-    assert capture.bank_account_number == "0012345678"
+    assert capture.bank_account_number == "6012345678"
 
 
 def test_converted_legacy_status_is_presented_as_posted():
     assert normalise_legacy_capture_status("converted") == "posted"
     assert normalise_legacy_capture_status("posted") == "posted"
+
+
+
+def test_legacy_capture_applies_standard_branch_and_code():
+    capture = LegacyCashoutCaptureCreate(
+        **_payload(
+            bank_name="fnb",
+            bank_account_number="6123-456-789",
+            bank_branch_name="Historic branch",
+            bank_branch_code="999999",
+        )
+    )
+    assert capture.bank_name == "FNB"
+    assert capture.bank_account_number == "6123456789"
+    assert capture.bank_branch_name == "Maseru Central"
+    assert capture.bank_branch_code == "280061"
+
+
+def test_legacy_capture_rejects_unsupported_bank():
+    with pytest.raises(ValidationError, match="Bank must be one of FNB, PB, STD or NB"):
+        LegacyCashoutCaptureCreate(**_payload(bank_name="Example Bank"))
+
+
+def test_legacy_capture_rejects_wrong_account_prefix():
+    with pytest.raises(ValidationError, match="FNB account number must start with 6"):
+        LegacyCashoutCaptureCreate(**_payload(bank_name="FNB", bank_account_number="9012345678"))

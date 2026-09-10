@@ -89,6 +89,7 @@ export async function previewRepayment(payload: {
   overpayment_action: OverpaymentAction;
   installment_number?: number;
   payment_method?: PaymentMethod;
+  payment_date?: string | null;
 }): Promise<CashRepaymentPreview> {
   return (await api.post<CashRepaymentPreview>("/loans/repayments/preview", payload)).data;
 }
@@ -106,6 +107,7 @@ export async function collectRepayment(payload: {
   proof_notes?: string | null;
   notes?: string;
   idempotency_key?: string;
+  payment_date?: string | null;
 }): Promise<CashPaymentResult> {
   return (await api.post<CashPaymentResult>("/loans/repayments", payload)).data;
 }
@@ -120,6 +122,7 @@ export type InstallmentPaymentPayload = {
   proof_notes?: string | null;
   notes?: string | null;
   idempotency_key?: string;
+  payment_date?: string | null;
 };
 
 export async function payLoanInstallment(

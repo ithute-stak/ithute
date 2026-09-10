@@ -68,6 +68,7 @@ from services.loan_service import (
     record_installment_repayment,
 )
 from services.receipt_service import ensure_payment_receipt, generate_payment_receipt_pdf
+from utils.payment_dates import current_payment_date, resolve_payment_date
 
 
 router = APIRouter(prefix="/loans", tags=["Company Loans and Recorded Payments"])
@@ -230,11 +231,13 @@ def preview_repayment(
     require_tenant_roles(context, CASHIER_ROLES)
     loan = loan_by_reference_or_404(db, payload.loan_reference)
     assert_tenant_loan(context, loan)
+    effective_payment_date = resolve_payment_date(context.role, payload.payment_date)
     return preview_cash_repayment(
         loan,
         amount_tendered=payload.amount_tendered,
         overpayment_action=payload.overpayment_action,
         installment_number=payload.installment_number,
+        payment_date=effective_payment_date,
     )
 
 
@@ -248,6 +251,7 @@ def collect_cash_repayment(
     require_tenant_roles(context, CASHIER_ROLES)
     loan = loan_by_reference_or_404(db, payload.loan_reference)
     assert_tenant_loan(context, loan)
+    effective_payment_date = resolve_payment_date(context.role, payload.payment_date)
     payment, cash, preview = record_cash_repayment(
         db,
         loan=loan,
@@ -263,6 +267,11 @@ def collect_cash_repayment(
         proof_notes=payload.proof_notes,
         notes=payload.notes,
         idempotency_key=payload.idempotency_key,
+        payment_date=effective_payment_date,
+        backdated_by_company_owner=(
+            context.role == UserRole.COMPANY_OWNER
+            and effective_payment_date < current_payment_date()
+        ),
     )
     receipt_number, receipt_file = payment_receipt_payload(db, payment.id)
     return {
@@ -383,6 +392,7 @@ def pay_installment(
 ):
     require_tenant_roles(context, INSTALLMENT_PAYMENT_ROLES)
     loan = _tenant_loan_or_404(db, context, loan_id)
+    effective_payment_date = resolve_payment_date(context.role, payload.payment_date)
     payment, cash, preview = record_installment_repayment(
         db,
         loan=loan,
@@ -397,6 +407,11 @@ def pay_installment(
         proof_notes=payload.proof_notes,
         notes=payload.notes,
         idempotency_key=payload.idempotency_key,
+        payment_date=effective_payment_date,
+        backdated_by_company_owner=(
+            context.role == UserRole.COMPANY_OWNER
+            and effective_payment_date < current_payment_date()
+        ),
     )
     receipt_number, receipt_file = payment_receipt_payload(db, payment.id)
     return {

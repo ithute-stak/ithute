@@ -711,12 +711,23 @@ def record_payment_treasury_entry(
         branch_id=resolved_branch_id,
         business_date=local_business_date(settings, occurred_at),
     )
-    ledger = ensure_current_payment_day_writable(
-        db,
-        ledger,
-        settings=settings,
-        occurred_at=occurred_at,
-    )
+    owner_backdated = bool((payment.provider_payload or {}).get("backdated_by_company_owner"))
+    if owner_backdated and ledger.status not in {TreasuryDayStatus.OPEN, TreasuryDayStatus.REOPENED}:
+        ledger = reopen_daily_ledger(
+            db,
+            ledger,
+            reason=(
+                "Company Owner posted a verified backdated payment. "
+                f"Payment {payment.provider_reference or payment.id} was applied to this historical business date."
+            ),
+        )
+    else:
+        ledger = ensure_current_payment_day_writable(
+            db,
+            ledger,
+            settings=settings,
+            occurred_at=occurred_at,
+        )
     assert_ledger_writable(ledger)
     direction = TreasuryDirection.MONEY_IN if payment.direction == PaymentDirection.INBOUND else TreasuryDirection.MONEY_OUT
     entry = TreasuryEntry(

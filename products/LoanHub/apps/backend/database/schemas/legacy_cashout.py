@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from database.models.enums import RepaymentType
+from utils.banking import standard_bank_fields, validate_account_number_for_bank
 
 
 IdentityType = Literal["national_id", "passport"]
@@ -94,9 +95,16 @@ class LegacyCashoutCaptureCreate(BaseModel):
         if self.total_repayable > 0 and self.amount_paid > self.total_repayable:
             raise ValueError("Amount paid cannot exceed the recorded total repayable")
 
-        account_number = "".join(character for character in self.bank_account_number if character.isalnum())
-        if len(account_number) < 4:
+        try:
+            bank_name, bank_branch_name, bank_branch_code = standard_bank_fields(self.bank_name)
+            account_number = validate_account_number_for_bank(bank_name, self.bank_account_number)
+        except ValueError as error:
+            raise ValueError(str(error)) from error
+        if account_number is None:
             raise ValueError("A valid bank account number is required")
+        self.bank_name = bank_name
+        self.bank_branch_name = bank_branch_name
+        self.bank_branch_code = bank_branch_code
         self.bank_account_number = account_number
 
         if not self.identity_number:

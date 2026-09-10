@@ -117,6 +117,7 @@ class CashDisbursementCreate(BaseModel):
 
 class CashRepaymentPreviewCreate(BaseModel):
     payment_method: PaymentMethod = PaymentMethod.CASH
+    payment_date: date | None = None
     loan_reference: str = Field(min_length=8, max_length=100)
     amount_tendered: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
     overpayment_action: Literal["give_change", "carry_forward"] = "carry_forward"
@@ -135,6 +136,7 @@ class CashRepaymentCreate(CashRepaymentPreviewCreate):
 
 class InstallmentPaymentCreate(BaseModel):
     payment_method: PaymentMethod = PaymentMethod.CASH
+    payment_date: date | None = None
     gateway_provider: str | None = Field(default=None, min_length=2, max_length=30, pattern=r"^[a-zA-Z0-9_]+$")
     gateway_customer_phone: str | None = Field(default=None, min_length=8, max_length=20)
     amount_tendered: Decimal = Field(gt=0, max_digits=15, decimal_places=2)

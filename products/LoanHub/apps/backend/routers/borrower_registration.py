@@ -18,6 +18,7 @@ from database.schemas.borrower_registration import (
     BorrowerRegistrationResponse,
 )
 from database.session import get_db
+from services.employer_group_service import resolve_employer_group
 
 
 router = APIRouter(
@@ -124,6 +125,12 @@ def register_borrower(
             )
 
     try:
+        employer_group = resolve_employer_group(
+            db,
+            employer_group_id=payload.employer_group_id,
+            new_employer_group=payload.new_employer_group,
+        )
+
         user = User(
             email=email,
             phone=phone,
@@ -166,15 +173,21 @@ def register_borrower(
         borrower = Borrower(
             user_id=user.id,
             employment_status=payload.employment_status,
-            employer_name=clean_optional_string(
-                payload.employer_name,
+            employer_name=(
+                employer_group.name
+                if employer_group is not None
+                else clean_optional_string(payload.employer_name)
             ),
+            employer_group_id=(employer_group.id if employer_group is not None else None),
+            income_day=payload.income_day,
             job_title=clean_optional_string(
                 payload.job_title,
             ),
             monthly_income=payload.monthly_income,
-            salary_date=clean_optional_string(
-                payload.salary_date,
+            salary_date=(
+                str(payload.income_day)
+                if payload.income_day is not None
+                else clean_optional_string(payload.salary_date)
             ),
             has_existing_loans=(
                 payload.has_existing_loans

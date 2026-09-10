@@ -1,4 +1,5 @@
 import type { BankAccountInput } from "@/types/origination";
+import type { EmployerGroupCreate } from "@/types/employerGroup";
 
 export type ExternalDebtFrequency = "weekly" | "fortnightly" | "monthly" | "quarterly" | "custom";
 export type ExternalDebtStatus = "active" | "settled" | "defaulted" | "restructured" | "written_off" | "unknown";
@@ -80,6 +81,9 @@ export type CompanyClient = {
     physical_address: string | null;
     employment_status: string;
     employer_name: string | null;
+    employer_group_id: string | null;
+    employer_group_code: string | null;
+    income_day: number | null;
     job_title: string | null;
     monthly_income: number | null;
     has_existing_loans: boolean;
@@ -139,6 +143,9 @@ export type AssistedCompanyClientCreate = {
     physical_address?: string | null;
     employment_status: "employed" | "self_employed" | "unemployed" | "student" | "pensioner";
     employer_name?: string | null;
+    employer_group_id?: string | null;
+    new_employer_group?: EmployerGroupCreate | null;
+    income_day?: number | null;
     job_title?: string | null;
     monthly_income?: number | null;
     salary_date?: string | null;

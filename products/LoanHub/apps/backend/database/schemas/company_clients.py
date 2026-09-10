@@ -14,6 +14,8 @@ from database.models.enums import (
     PaymentMethod,
 )
 from database.schemas.origination import BankAccountInput
+from database.schemas.employer_group import EmployerGroupCreate
+from utils.banking import standard_bank_fields, validate_account_number_for_bank
 
 
 ExternalDebtStatus = Literal["active", "settled", "defaulted", "restructured", "written_off", "unknown"]
@@ -156,6 +158,9 @@ class AssistedCompanyClientCreate(BaseModel):
 
     employment_status: EmploymentStatus
     employer_name: str | None = Field(default=None, max_length=200)
+    employer_group_id: UUID | None = None
+    new_employer_group: EmployerGroupCreate | None = None
+    income_day: int | None = Field(default=None, ge=1, le=31)
     job_title: str | None = Field(default=None, max_length=150)
     monthly_income: Decimal | None = Field(default=None, ge=0, max_digits=15, decimal_places=2)
     salary_date: str | None = Field(default=None, max_length=20)
@@ -224,6 +229,9 @@ class CompanyClientRead(BaseModel):
     physical_address: str | None
     employment_status: str
     employer_name: str | None
+    employer_group_id: UUID | None = None
+    employer_group_code: str | None = None
+    income_day: int | None = None
     job_title: str | None
     monthly_income: Decimal | None
     has_existing_loans: bool
@@ -281,6 +289,24 @@ class CompanyClientBankAccountUpdate(BaseModel):
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     account_number: str | None = Field(default=None, min_length=4, max_length=40)
     salary_account: bool | None = None
+
+    @model_validator(mode="after")
+    def enforce_supported_bank(self):
+        bank_name = str(self.bank_name or "").strip()
+        account_number = str(self.account_number or "").strip()
+        if account_number and not bank_name:
+            raise ValueError("Select FNB, PB, STD or NB when changing the account number")
+        if bank_name and not account_number:
+            raise ValueError("Changing the bank requires the matching new account number")
+        if bank_name:
+            normalized_bank, branch_name, branch_code = standard_bank_fields(bank_name)
+            self.bank_name = normalized_bank
+            self.branch_name = branch_name
+            self.branch_code = branch_code
+            self.account_number = validate_account_number_for_bank(normalized_bank, account_number)
+        elif self.branch_name is not None or self.branch_code is not None:
+            raise ValueError("Branch and bank code are determined by the selected bank")
+        return self
 
 
 class CompanyClientProfileUpdate(BaseModel):
