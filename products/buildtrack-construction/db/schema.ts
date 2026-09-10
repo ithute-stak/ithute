@@ -100,7 +100,107 @@ export const fleetAssets = sqliteTable("fleet_assets", {
   type: text("type").notNull().default("Vehicle"),
   status: text("status").notNull().default("Available"),
   odometer: integer("odometer").notNull().default(0),
+  make: text("make"),
+  model: text("model"),
+  year: integer("year"),
+  vin: text("vin"),
+  engineNumber: text("engine_number"),
+  fuelType: text("fuel_type"),
+  branch: text("branch"),
+  purchaseInfo: text("purchase_info"),
+  mechanicalStatus: text("mechanical_status").notNull().default("Operational"),
+  faultNotes: text("fault_notes"),
+  inspectionStatus: text("inspection_status"),
+  inspectionDueDate: text("inspection_due_date"),
+  warningDays: integer("warning_days").notNull().default(30),
+  serviceWarningKm: integer("service_warning_km").notNull().default(500),
   nextServiceDate: text("next_service_date"),
+  nextServiceMileage: integer("next_service_mileage"),
+  ...timestamps,
+});
+
+export const fleetDocuments = sqliteTable("fleet_documents", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  companyId: integer("company_id").notNull().references(() => companies.id),
+  assetId: integer("asset_id").notNull().references(() => fleetAssets.id),
+  documentType: text("document_type").notNull(),
+  documentNumber: text("document_number"),
+  issueDate: text("issue_date"),
+  expiryDate: text("expiry_date"),
+  required: integer("required").notNull().default(1),
+  fileName: text("file_name"),
+  ...timestamps,
+});
+
+export const fleetServices = sqliteTable("fleet_services", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  companyId: integer("company_id").notNull().references(() => companies.id),
+  assetId: integer("asset_id").notNull().references(() => fleetAssets.id),
+  serviceDate: text("service_date").notNull(),
+  mileage: integer("mileage").notNull().default(0),
+  serviceType: text("service_type"),
+  partsUsed: text("parts_used"),
+  serviceKit: text("service_kit"),
+  mechanic: text("mechanic"),
+  costM: integer("cost_m").notNull().default(0),
+  nextServiceDate: text("next_service_date"),
+  nextServiceMileage: integer("next_service_mileage"),
+  ...timestamps,
+});
+
+export const fleetFaults = sqliteTable("fleet_faults", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  companyId: integer("company_id").notNull().references(() => companies.id),
+  assetId: integer("asset_id").notNull().references(() => fleetAssets.id),
+  reportedAt: text("reported_at").notNull(),
+  description: text("description").notNull(),
+  severity: text("severity").notNull().default("Requires attention"),
+  status: text("status").notNull().default("Open"),
+  reportedBy: text("reported_by"),
+  resolvedAt: text("resolved_at"),
+  ...timestamps,
+});
+
+export const fleetInspections = sqliteTable("fleet_inspections", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  companyId: integer("company_id").notNull().references(() => companies.id),
+  assetId: integer("asset_id").notNull().references(() => fleetAssets.id),
+  inspectionDate: text("inspection_date").notNull(),
+  result: text("result").notNull().default("Passed"),
+  notes: text("notes"),
+  nextDueDate: text("next_due_date"),
+  inspector: text("inspector"),
+  ...timestamps,
+});
+
+export const fleetAssignments = sqliteTable("fleet_assignments", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  companyId: integer("company_id").notNull().references(() => companies.id),
+  assetId: integer("asset_id").notNull().references(() => fleetAssets.id),
+  driverName: text("driver_name"),
+  licenceNumber: text("licence_number"),
+  licenceCategory: text("licence_category"),
+  purpose: text("purpose"),
+  destination: text("destination"),
+  startDate: text("start_date").notNull(),
+  expectedReturnDate: text("expected_return_date"),
+  endDate: text("end_date"),
+  status: text("status").notNull().default("Active"),
+  ...timestamps,
+});
+
+export const fleetRequests = sqliteTable("fleet_requests", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  companyId: integer("company_id").notNull().references(() => companies.id),
+  driverName: text("driver_name").notNull(),
+  licenceNumber: text("licence_number"),
+  licenceCategory: text("licence_category"),
+  vehicleType: text("vehicle_type").notNull(),
+  purpose: text("purpose"),
+  destination: text("destination"),
+  requiredDate: text("required_date").notNull(),
+  expectedReturnDate: text("expected_return_date"),
+  status: text("status").notNull().default("Requested"),
   ...timestamps,
 });
 
