@@ -447,8 +447,10 @@ def create_assignment(asset_id: int, payload: AssignmentInput, db: Session = Dep
     employee_or_422(db, principal, payload.employee_id, payload.branch_id, payload.site_id)
     if db.scalar(select(FleetAssignment.id).where(FleetAssignment.asset_id == asset.id, FleetAssignment.status == "active")):
         raise HTTPException(status_code=409, detail="Asset already has an active assignment")
-    if asset.status in {"maintenance", "out_of_service", "disposed"} or asset.serviceability == "unserviceable":
-        raise HTTPException(status_code=422, detail="Asset is not available for assignment")
+    readiness = readiness_for_asset(db, principal, asset)
+    if readiness["decision"] != "allowed":
+        reasons = "; ".join(readiness["blockers"] or readiness["warnings"])
+        raise HTTPException(status_code=422, detail=f"Asset is not available for assignment: {reasons}")
     assignment = FleetAssignment(company_id=asset.company_id, asset_id=asset.id, employee_id=payload.employee_id, branch_id=payload.branch_id, site_id=payload.site_id, assigned_from=payload.assigned_from or utcnow(), purpose=payload.purpose, status="active", assigned_by=principal.user.full_name)
     db.add(assignment); db.flush()
     asset.branch_id = payload.branch_id; asset.site_id = payload.site_id
@@ -638,6 +640,112 @@ def due_state(asset: FleetAsset, plan: FleetMaintenancePlan, warning_days: int) 
     if plan.next_due_odometer_km is not None and Decimal(asset.current_odometer_km or 0) >= Decimal(plan.next_due_odometer_km): reasons.append("odometer overdue")
     if plan.next_due_engine_hours is not None and Decimal(asset.current_engine_hours or 0) >= Decimal(plan.next_due_engine_hours): reasons.append("engine hours overdue")
     return ("overdue" if any("overdue" in item for item in reasons) else ("due_soon" if reasons else "ok"), reasons)
+
+
+def readiness_for_asset(db: Session, principal: Principal, asset: FleetAsset) -> dict[str, Any]:
+    """Deterministic operational decision used by the Fleet & Plant control board."""
+    company_id = asset.company_id
+    policy_row = db.scalar(select(CompanySetting).where(CompanySetting.company_id == company_id, CompanySetting.key == "fleet_policy"))
+    policy = policy_row.value if policy_row and isinstance(policy_row.value, dict) else {}
+    warning_days = int(policy.get("maintenance_due_warning_days", 14))
+    today = date.today()
+    blockers: list[str] = []
+    warnings: list[str] = []
+    evidence: list[dict[str, Any]] = []
+
+    if asset.status in {"maintenance", "out_of_service", "disposed"}:
+        blockers.append(f"lifecycle status is {asset.status.replace("_", " ")}")
+    if asset.serviceability == "unserviceable":
+        blockers.append("mechanical condition is unserviceable")
+    elif asset.serviceability == "restricted":
+        warnings.append("mechanical condition is restricted")
+
+    if db.scalar(select(FleetAssignment.id).where(FleetAssignment.asset_id == asset.id, FleetAssignment.status == "active")):
+        blockers.append("asset has an active assignment")
+
+    open_defects = db.scalars(select(FleetDefect).where(FleetDefect.asset_id == asset.id, FleetDefect.status != "resolved")).all()
+    for defect in open_defects:
+        message = f"{defect.severity} defect {defect.defect_number}: {defect.description}"
+        if defect.severity == "critical":
+            blockers.append(message)
+        elif defect.severity == "major":
+            warnings.append(message)
+
+    required_by_type = {
+        "vehicle": ["registration", "insurance", "roadworthy"],
+        "truck": ["registration", "insurance", "roadworthy"],
+        "bus": ["registration", "insurance", "roadworthy"],
+        "trailer": ["registration", "insurance"],
+        "light_plant": ["operator_certificate"],
+        "heavy_plant": ["operator_certificate"],
+        "generator": ["operator_certificate"],
+    }
+    required = required_by_type.get(asset.asset_type, [])
+    records = db.scalars(select(FleetCompliance).where(FleetCompliance.asset_id == asset.id)).all()
+    for compliance_type in required:
+        rows = [row for row in records if row.compliance_type == compliance_type]
+        if not rows:
+            evidence.append({"type": compliance_type, "status": "missing"})
+            blockers.append(f"required {compliance_type.replace("_", " ")} record is missing")
+            continue
+        row = max(rows, key=lambda item: item.expiry_date or date.max)
+        if not row.expiry_date:
+            evidence.append({"type": compliance_type, "status": "missing", "reference_number": row.reference_number})
+            blockers.append(f"{compliance_type.replace("_", " ")} has no expiry date")
+            continue
+        days = (row.expiry_date - today).days
+        state = "valid" if days > warning_days else ("soon" if days > 7 else ("critical" if days >= 0 else "expired"))
+        evidence.append({"type": compliance_type, "status": state, "expiry_date": row.expiry_date.isoformat(), "reference_number": row.reference_number})
+        if state in {"expired", "critical"}:
+            blockers.append(f"{compliance_type.replace("_", " ")} is {state}")
+        elif state == "soon":
+            warnings.append(f"{compliance_type.replace("_", " ")} expires soon")
+
+    latest_inspection = db.scalar(select(FleetInspection).where(FleetInspection.asset_id == asset.id).order_by(FleetInspection.inspection_date.desc(), FleetInspection.created_at.desc()))
+    if not latest_inspection:
+        blockers.append("no current inspection has been captured")
+        inspection_status = "missing"
+    elif latest_inspection.status != "approved" or not latest_inspection.safe_to_operate:
+        blockers.append("latest inspection is not approved safe-to-operate")
+        inspection_status = latest_inspection.status
+    else:
+        inspection_status = "approved"
+
+    plans = db.scalars(select(FleetMaintenancePlan).where(FleetMaintenancePlan.asset_id == asset.id, FleetMaintenancePlan.is_active.is_(True))).all()
+    maintenance: list[dict[str, Any]] = []
+    for plan in plans:
+        state, reasons = due_state(asset, plan, warning_days)
+        maintenance.append({"plan_id": plan.id, "name": plan.name, "status": state, "reasons": reasons})
+        if state == "overdue":
+            blockers.append(f"maintenance overdue: {plan.name} ({", ".join(reasons)})")
+        elif state == "due_soon":
+            warnings.append(f"maintenance due soon: {plan.name}")
+
+    decision = "blocked" if blockers else ("restricted" if warnings else "allowed")
+    return {
+        "asset_id": asset.id,
+        "asset_number": asset.asset_number,
+        "asset": f"{asset.make} {asset.model}",
+        "decision": decision,
+        "blockers": blockers,
+        "warnings": warnings,
+        "document_status": evidence,
+        "inspection_status": inspection_status,
+        "maintenance": maintenance,
+        "checked_at": utcnow().isoformat(),
+    }
+
+
+@router.get("/assets/{asset_id}/operational-readiness")
+def operational_readiness(asset_id: int, db: Session = Depends(get_db), principal: Principal = Depends(current_principal)) -> dict[str, Any]:
+    asset = asset_or_404(db, principal, asset_id)
+    return readiness_for_asset(db, principal, asset)
+
+
+@router.get("/control-board")
+def control_board(db: Session = Depends(get_db), principal: Principal = Depends(current_principal)) -> list[dict[str, Any]]:
+    assets = db.scalars(select(FleetAsset).where(FleetAsset.company_id == principal.user.company_id).order_by(FleetAsset.asset_number)).all()
+    return [readiness_for_asset(db, principal, asset) for asset in assets if principal.can("fleet.view", branch_id=asset.branch_id, site_id=asset.site_id)]
 
 
 @router.get("/alerts")
