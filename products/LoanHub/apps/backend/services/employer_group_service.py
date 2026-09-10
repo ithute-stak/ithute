@@ -8,9 +8,24 @@ from sqlalchemy.orm import Session
 
 from database.models.employer_group import EmployerGroup
 from database.schemas.employer_group import EmployerGroupCreate
+from utils.work_group_policy import (
+    WORK_GROUP_CODES,
+    work_group_policy_for,
+)
 
 
 _CODE_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9 /._&-]{0,39}$")
+
+
+def _unsupported_work_group() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=(
+            "Unsupported work group. Select one of LoanHub's central work groups: "
+            + ", ".join(WORK_GROUP_CODES)
+            + "."
+        ),
+    )
 
 
 def normalize_employer_group_code(value: str) -> str:
@@ -19,11 +34,15 @@ def normalize_employer_group_code(value: str) -> str:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
-                "Employer/group code must contain letters, numbers or the supported "
+                "Work-group code must contain letters, numbers or the supported "
                 "separators / . _ & - and be at most 40 characters."
             ),
         )
-    return code
+
+    policy = work_group_policy_for(code)
+    if policy is None:
+        raise _unsupported_work_group()
+    return policy.code
 
 
 def normalize_employer_group_name(value: str) -> str:
@@ -31,9 +50,22 @@ def normalize_employer_group_name(value: str) -> str:
     if len(name) < 2 or len(name) > 200:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Employer/group name must be between 2 and 200 characters.",
+            detail="Work-group name must be between 2 and 200 characters.",
         )
     return name
+
+
+def _central_group_or_422(group: EmployerGroup | None) -> EmployerGroup:
+    if group is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The selected work group is not available.",
+        )
+
+    policy = work_group_policy_for(group.code)
+    if policy is None:
+        raise _unsupported_work_group()
+    return group
 
 
 def resolve_employer_group(
@@ -42,10 +74,17 @@ def resolve_employer_group(
     employer_group_id: UUID | None = None,
     new_employer_group: EmployerGroupCreate | None = None,
 ) -> EmployerGroup | None:
+    """Resolve a borrower work group from LoanHub's central catalogue.
+
+    ``new_employer_group`` remains accepted at the API boundary for backwards
+    compatibility with older clients, but it can only resolve to one of the
+    centrally supported groups. Registration can no longer create arbitrary
+    employer/group rows.
+    """
     if employer_group_id and new_employer_group is not None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Select an existing employer group or add a new one, not both.",
+            detail="Select one central work group, not both.",
         )
 
     if employer_group_id:
@@ -57,28 +96,32 @@ def resolve_employer_group(
             )
             .first()
         )
-        if group is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="The selected employer/group is not available.",
-            )
-        return group
+        return _central_group_or_422(group)
 
     if new_employer_group is None:
         return None
 
-    code = normalize_employer_group_code(new_employer_group.code)
-    name = normalize_employer_group_name(new_employer_group.name)
-    existing = db.query(EmployerGroup).filter(EmployerGroup.code == code).first()
-    if existing is not None:
-        if not existing.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="That employer/group code exists but is inactive.",
-            )
-        return existing
+    policy = (
+        work_group_policy_for(new_employer_group.code)
+        or work_group_policy_for(new_employer_group.name)
+    )
+    if policy is None:
+        raise _unsupported_work_group()
 
-    group = EmployerGroup(code=code, name=name, is_active=True)
-    db.add(group)
-    db.flush()
+    group = (
+        db.query(EmployerGroup)
+        .filter(
+            EmployerGroup.code == policy.code,
+            EmployerGroup.is_active.is_(True),
+        )
+        .first()
+    )
+    if group is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Central work group {policy.code} is not available. "
+                "Contact a LoanHub administrator."
+            ),
+        )
     return group
