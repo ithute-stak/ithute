@@ -10,6 +10,7 @@ from database.models.employer_group import EmployerGroup
 from database.schemas.employer_group import EmployerGroupCreate
 from utils.work_group_policy import (
     WORK_GROUP_CODES,
+    WORK_GROUP_POLICY,
     work_group_policy_for,
 )
 
@@ -26,6 +27,56 @@ def _unsupported_work_group() -> HTTPException:
             + "."
         ),
     )
+
+
+def ensure_central_work_groups(db: Session) -> tuple[int, int]:
+    """Persist LoanHub's canonical work-group catalogue idempotently.
+
+    Missing canonical records are created. Existing canonical records are
+    repaired back to the centrally defined name and active state. The function
+    deliberately ignores non-central employer-group rows so legacy data is not
+    deleted or rewritten unexpectedly.
+
+    Returns ``(created_count, updated_count)``.
+    """
+    existing_groups = (
+        db.query(EmployerGroup)
+        .filter(EmployerGroup.code.in_(WORK_GROUP_CODES))
+        .all()
+    )
+    groups_by_code = {group.code: group for group in existing_groups}
+
+    created_count = 0
+    updated_count = 0
+
+    for policy in WORK_GROUP_POLICY:
+        group = groups_by_code.get(policy.code)
+        if group is None:
+            group = EmployerGroup(
+                code=policy.code,
+                name=policy.name,
+                is_active=True,
+            )
+            db.add(group)
+            groups_by_code[policy.code] = group
+            created_count += 1
+            continue
+
+        changed = False
+        if group.name != policy.name:
+            group.name = policy.name
+            changed = True
+        if not group.is_active:
+            group.is_active = True
+            changed = True
+
+        if changed:
+            updated_count += 1
+
+    if created_count or updated_count:
+        db.commit()
+
+    return created_count, updated_count
 
 
 def normalize_employer_group_code(value: str) -> str:
