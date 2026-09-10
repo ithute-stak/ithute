@@ -265,6 +265,18 @@ class AssignmentInput(BaseModel):
     purpose: str | None = None
 
 
+class VehicleRequestInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    driver_name: str = Field(min_length=2, max_length=200)
+    licence_number: str = Field(min_length=2, max_length=80)
+    licence_category: str = Field(min_length=1, max_length=40)
+    requested_asset_type: Literal["vehicle", "truck", "bus", "light_plant", "heavy_plant", "generator", "trailer", "equipment", "other"]
+    purpose: str = Field(min_length=2, max_length=500)
+    destination: str = Field(min_length=2, max_length=200)
+    required_from: datetime
+    expected_return: datetime
+
+
 class ComplianceInput(BaseModel):
     compliance_type: Literal["licence", "insurance", "roadworthy", "permit", "registration", "operator_certificate", "other"]
     reference_number: str | None = Field(default=None, max_length=120)
@@ -746,6 +758,34 @@ def operational_readiness(asset_id: int, db: Session = Depends(get_db), principa
 def control_board(db: Session = Depends(get_db), principal: Principal = Depends(current_principal)) -> list[dict[str, Any]]:
     assets = db.scalars(select(FleetAsset).where(FleetAsset.company_id == principal.user.company_id).order_by(FleetAsset.asset_number)).all()
     return [readiness_for_asset(db, principal, asset) for asset in assets if principal.can("fleet.view", branch_id=asset.branch_id, site_id=asset.site_id)]
+
+
+@router.post("/vehicle-requests/match")
+def match_vehicle_request(payload: VehicleRequestInput, db: Session = Depends(get_db), principal: Principal = Depends(current_principal)) -> dict[str, Any]:
+    require_company(principal, "fleet.assign")
+    if payload.expected_return <= payload.required_from:
+        raise HTTPException(status_code=422, detail="Expected return must be after the requested start time")
+    candidates = db.scalars(select(FleetAsset).where(FleetAsset.company_id == principal.user.company_id, FleetAsset.asset_type == payload.requested_asset_type).order_by(FleetAsset.asset_number)).all()
+    primary: list[dict[str, Any]] = []
+    alternatives: list[dict[str, Any]] = []
+    for asset in candidates:
+        if not principal.can("fleet.view", branch_id=asset.branch_id, site_id=asset.site_id):
+            continue
+        readiness = readiness_for_asset(db, principal, asset)
+        if readiness["decision"] == "allowed":
+            primary.append(readiness)
+        else:
+            alternatives.append(readiness)
+    request_detail = payload.model_dump(mode="json")
+    audit(db, principal, "fleet.vehicle_request.matched", "fleet_vehicle_request", None, detail={**request_detail, "primary_match_count": len(primary), "alternative_count": len(alternatives)})
+    commit(db)
+    return {
+        "request": request_detail,
+        "decision": "match_found" if primary else "no_current_match",
+        "primary_matches": primary,
+        "alternatives": alternatives,
+        "message": "Available assets are safe and compliant now." if primary else "No currently assignable asset matches. Review the alternative reasons or adjust the timing/type.",
+    }
 
 
 @router.get("/alerts")
