@@ -717,7 +717,7 @@ def readiness_for_asset(db: Session, principal: Principal, asset: FleetAsset) ->
         state, reasons = due_state(asset, plan, warning_days)
         maintenance.append({"plan_id": plan.id, "name": plan.name, "status": state, "reasons": reasons})
         if state == "overdue":
-            blockers.append(f"maintenance overdue: {plan.name} ({", ".join(reasons)})")
+            blockers.append(f"maintenance overdue: {plan.name} ({'; '.join(reasons)})")
         elif state == "due_soon":
             warnings.append(f"maintenance due soon: {plan.name}")
 
