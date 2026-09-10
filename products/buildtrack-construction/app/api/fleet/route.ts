@@ -92,13 +92,21 @@ export async function GET() {
       db.prepare("SELECT * FROM fuel_logs WHERE company_id = ? ORDER BY fill_date DESC").bind(companyId),
       db.prepare("SELECT * FROM maintenance_records WHERE company_id = ? ORDER BY service_date DESC").bind(companyId),
     ]);
-    const records = assets.results.map((asset: Record<string, any>) => {
-      const assetDocuments = documents.results.filter((row: Record<string, any>) => row.asset_id === asset.id);
-      const assetServices = services.results.filter((row: Record<string, any>) => row.asset_id === asset.id);
-      const assetFaults = faults.results.filter((row: Record<string, any>) => row.asset_id === asset.id);
-      const assetInspections = inspections.results.filter((row: Record<string, any>) => row.asset_id === asset.id);
-      const assetAssignments = assignments.results.filter((row: Record<string, any>) => row.asset_id === asset.id);
-      return { ...asset, readiness: readiness(asset, assetDocuments, assetServices, assetFaults, assetInspections, assetAssignments), documents: assetDocuments, services: assetServices, faults: assetFaults, inspections: assetInspections, assignments: assetAssignments, fuel: fuel.results.filter((row: Record<string, any>) => row.asset_id === asset.id), maintenance: maintenance.results.filter((row: Record<string, any>) => row.asset_id === asset.id) };
+    const assetRows = assets.results as Record<string, any>[];
+    const documentRows = documents.results as Record<string, any>[];
+    const serviceRows = services.results as Record<string, any>[];
+    const faultRows = faults.results as Record<string, any>[];
+    const inspectionRows = inspections.results as Record<string, any>[];
+    const assignmentRows = assignments.results as Record<string, any>[];
+    const fuelRows = fuel.results as Record<string, any>[];
+    const maintenanceRows = maintenance.results as Record<string, any>[];
+    const records = assetRows.map((asset) => {
+      const assetDocuments = documentRows.filter((row) => row.asset_id === asset.id);
+      const assetServices = serviceRows.filter((row) => row.asset_id === asset.id);
+      const assetFaults = faultRows.filter((row) => row.asset_id === asset.id);
+      const assetInspections = inspectionRows.filter((row) => row.asset_id === asset.id);
+      const assetAssignments = assignmentRows.filter((row) => row.asset_id === asset.id);
+      return { ...asset, readiness: readiness(asset, assetDocuments, assetServices, assetFaults, assetInspections, assetAssignments), documents: assetDocuments, services: assetServices, faults: assetFaults, inspections: assetInspections, assignments: assetAssignments, fuel: fuelRows.filter((row) => row.asset_id === asset.id), maintenance: maintenanceRows.filter((row) => row.asset_id === asset.id) };
     });
     const alerts = records.flatMap((asset: any) => [asset.readiness.documents, asset.readiness.service, asset.readiness.mechanical, asset.readiness.inspection].filter((item: any) => item.tone !== "green").map((item: any) => ({ assetId: asset.id, asset: asset.asset_no, label: item.label, tone: item.tone })));
     return json({ assets: records, requests: requests.results, alerts, requiredDocuments });
