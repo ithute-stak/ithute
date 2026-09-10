@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from api.v1.router import api_router
@@ -18,8 +19,9 @@ from core.security_middleware import SecurityControlMiddleware
 from core.websocket_manager import manager
 from core.route_inspection import validate_http_route_contracts
 from database.config.config import settings
-from database.session import get_db
+from database.session import SessionLocal, get_db
 from utils.authContextMiddleware import AuthContextMiddleware
+from services.employer_group_service import ensure_central_work_groups
 from services.maturity_recovery_scheduler import (
     start_maturity_recovery_scheduler,
     stop_maturity_recovery_scheduler,
@@ -28,12 +30,29 @@ from services.treasury_scheduler import start_treasury_scheduler, stop_treasury_
 from services.webhook_outbox_scheduler import start_webhook_outbox_scheduler, stop_webhook_outbox_scheduler
 
 
+def _seed_central_work_groups() -> None:
+    """Ensure the canonical LoanHub work-group catalogue exists before serving."""
+    db = SessionLocal()
+    try:
+        try:
+            ensure_central_work_groups(db)
+        except IntegrityError:
+            # Multiple web workers can start together on a fresh installation.
+            # If another worker wins the unique-code insert race, roll back and
+            # re-run the idempotent repair against the now-persisted catalogue.
+            db.rollback()
+            ensure_central_work_groups(db)
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Start production workers normally and keep sandbox side effects disabled."""
     treasury_started = False
     maturity_started = False
     webhook_started = False
+    _seed_central_work_groups()
     await manager.start()
     try:
         # The public sandbox is intentionally writable but must never launch

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from database.models.employer_group import EmployerGroup
 from database.schemas.employer_group import EmployerGroupRead
 from database.session import get_db
+from utils.work_group_policy import WORK_GROUP_CODES, work_group_sort_key
 
 
 router = APIRouter(prefix="/employer-groups", tags=["Employer Groups"])
@@ -16,7 +17,10 @@ def list_employer_groups(
     limit: int = Query(default=250, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
-    query = db.query(EmployerGroup).filter(EmployerGroup.is_active.is_(True))
+    query = db.query(EmployerGroup).filter(
+        EmployerGroup.is_active.is_(True),
+        EmployerGroup.code.in_(WORK_GROUP_CODES),
+    )
     term = str(search or "").strip()
     if term:
         value = f"%{term}%"
@@ -26,4 +30,7 @@ def list_employer_groups(
                 EmployerGroup.name.ilike(value),
             )
         )
-    return query.order_by(EmployerGroup.code.asc(), EmployerGroup.name.asc()).limit(limit).all()
+
+    groups = query.all()
+    groups.sort(key=lambda group: work_group_sort_key(group.code))
+    return groups[:limit]
