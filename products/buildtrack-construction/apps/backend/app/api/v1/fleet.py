@@ -666,7 +666,7 @@ def readiness_for_asset(db: Session, principal: Principal, asset: FleetAsset) ->
     evidence: list[dict[str, Any]] = []
 
     if asset.status in {"maintenance", "out_of_service", "disposed"}:
-        blockers.append(f"lifecycle status is {asset.status.replace("_", " ")}")
+        blockers.append(f'lifecycle status is {asset.status.replace("_", " ")}')
     if asset.serviceability == "unserviceable":
         blockers.append("mechanical condition is unserviceable")
     elif asset.serviceability == "restricted":
@@ -698,20 +698,20 @@ def readiness_for_asset(db: Session, principal: Principal, asset: FleetAsset) ->
         rows = [row for row in records if row.compliance_type == compliance_type]
         if not rows:
             evidence.append({"type": compliance_type, "status": "missing"})
-            blockers.append(f"required {compliance_type.replace("_", " ")} record is missing")
+            blockers.append(f'required {compliance_type.replace("_", " ")} record is missing')
             continue
         row = max(rows, key=lambda item: item.expiry_date or date.max)
         if not row.expiry_date:
             evidence.append({"type": compliance_type, "status": "missing", "reference_number": row.reference_number})
-            blockers.append(f"{compliance_type.replace("_", " ")} has no expiry date")
+            blockers.append(f'{compliance_type.replace("_", " ")} has no expiry date')
             continue
         days = (row.expiry_date - today).days
         state = "valid" if days > warning_days else ("soon" if days > 7 else ("critical" if days >= 0 else "expired"))
         evidence.append({"type": compliance_type, "status": state, "expiry_date": row.expiry_date.isoformat(), "reference_number": row.reference_number})
         if state in {"expired", "critical"}:
-            blockers.append(f"{compliance_type.replace("_", " ")} is {state}")
+            blockers.append(f'{compliance_type.replace("_", " ")} is {state}')
         elif state == "soon":
-            warnings.append(f"{compliance_type.replace("_", " ")} expires soon")
+            warnings.append(f'{compliance_type.replace("_", " ")} expires soon')
 
     latest_inspection = db.scalar(select(FleetInspection).where(FleetInspection.asset_id == asset.id).order_by(FleetInspection.inspection_date.desc(), FleetInspection.created_at.desc()))
     if not latest_inspection:
