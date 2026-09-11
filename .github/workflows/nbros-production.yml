@@ -1,0 +1,153 @@
+name: Deploy NBros Production
+
+on:
+  workflow_run:
+    workflows: ["NBros Main Release Gate"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ithute-production-vps
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 204.12.205.224
+  VPS_USER: administrator
+  VPS_PLATFORM_ROOT: /home/administrator/mailbox-dns
+  VPS_EDGE_DIR: /home/administrator/ithute-edge
+  VPS_RUNTIME_DIR: /home/administrator/mailbox-dns/nbros
+  PRODUCT_HOST: nbro.ithute.co.ls
+  BACKEND_REPO: ghcr.io/ithute-stak/nbros-backend
+  FRONTEND_REPO: ghcr.io/ithute-stak/nbros-frontend
+  AUTH_REPO: ghcr.io/ithute-stak/ithute-auth
+  REALTIME_REPO: ghcr.io/ithute-stak/ithute-realtime
+  RELEASE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  deploy:
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: production
+    env:
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+
+    steps:
+      - name: Validate deployment credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${VPS_SSH_KEY:-}" || { echo "::error::VPS_SSH_KEY is required"; exit 1; }
+
+      - name: Check out exact green release
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          persist-credentials: false
+
+      - name: Build exact NBros and Central Auth/Realtime images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull -t "${BACKEND_REPO}:${RELEASE_SHA}" products/nbros/apps/backend
+          docker build --pull -t "${FRONTEND_REPO}:${RELEASE_SHA}" products/nbros/apps/frontend
+          docker build --pull -t "${AUTH_REPO}:${RELEASE_SHA}" platform/ithute-auth
+          docker build --pull -t "${REALTIME_REPO}:${RELEASE_SHA}" platform/ithute-realtime
+          docker save \
+            "${BACKEND_REPO}:${RELEASE_SHA}" \
+            "${FRONTEND_REPO}:${RELEASE_SHA}" \
+            "${AUTH_REPO}:${RELEASE_SHA}" \
+            "${REALTIME_REPO}:${RELEASE_SHA}" \
+            | gzip -1 > "/tmp/nbros-images-${RELEASE_SHA}.tar.gz"
+          test -s "/tmp/nbros-images-${RELEASE_SHA}.tar.gz"
+
+      - name: Render NBros shared-edge release
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="/tmp/nbros-release-${RELEASE_SHA}"
+          mkdir -p "$stage"
+          cp products/nbros/compose.yaml "$stage/compose.yaml"
+          cp products/nbros/compose.production.yml "$stage/compose.production.yml"
+          python3 products/nbros/deploy/render-shared-edge.py \
+            infrastructure/ithute-edge/default.conf.template \
+            "$stage/edge-default.conf.template"
+          grep -Fq 'server_name nbro.ithute.co.ls;' "$stage/edge-default.conf.template"
+          grep -Fq 'nbros-backend:8000' "$stage/edge-default.conf.template"
+          grep -Fq 'nbros-frontend:3000' "$stage/edge-default.conf.template"
+          ! grep -Fq 'buildtrack-backend' "$stage/edge-default.conf.template"
+
+      - name: Configure production SSH identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/nbros_deploy"
+          chmod 600 "$HOME/.ssh/nbros_deploy"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/nbros-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/nbros-askpass.sh
+            SSH_ASKPASS=/tmp/nbros-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+              setsid -w ssh-add "$HOME/.ssh/nbros_deploy" </dev/null
+            rm -f /tmp/nbros-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/nbros_deploy" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Stage exact production release on VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          stage="/tmp/nbros-release-${RELEASE_SHA}"
+          scp "/tmp/nbros-images-${RELEASE_SHA}.tar.gz" "$remote:/tmp/nbros-images-${RELEASE_SHA}.tar.gz"
+          ssh "$remote" "rm -rf '$stage' && mkdir -p '$stage'"
+          scp "$stage/compose.yaml" "$remote:$stage/compose.yaml"
+          scp "$stage/compose.production.yml" "$remote:$stage/compose.production.yml"
+          scp "$stage/edge-default.conf.template" "$remote:$stage/edge-default.conf.template"
+          scp products/nbros/deploy/deploy-production.sh "$remote:/tmp/nbros-deploy-${RELEASE_SHA}.sh"
+
+      - name: Deploy NBros without mutating sibling product data
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" \
+            "PLATFORM_ROOT='$VPS_PLATFORM_ROOT' EDGE_DIR='$VPS_EDGE_DIR' RUNTIME_DIR='$VPS_RUNTIME_DIR' DEPLOY_SHA='$RELEASE_SHA' PRODUCT_HOST='$PRODUCT_HOST' BACKEND_IMAGE='$BACKEND_REPO:$RELEASE_SHA' FRONTEND_IMAGE='$FRONTEND_REPO:$RELEASE_SHA' AUTH_IMAGE='$AUTH_REPO:$RELEASE_SHA' REALTIME_IMAGE='$REALTIME_REPO:$RELEASE_SHA' sh '/tmp/nbros-deploy-${RELEASE_SHA}.sh'"
+          ssh "$remote" "rm -f '/tmp/nbros-deploy-${RELEASE_SHA}.sh'"
+
+      - name: Verify NBros publicly from GitHub runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          for url in \
+            "https://${PRODUCT_HOST}/healthz" \
+            "https://${PRODUCT_HOST}/readyz" \
+            "https://${PRODUCT_HOST}/"; do
+            curl --fail --silent --show-error --retry 12 --retry-delay 5 --connect-timeout 10 --max-time 30 -o /dev/null "$url"
+            echo "Verified: $url"
+          done
+          headers="$(mktemp)"
+          curl --silent --show-error --max-time 30 -D "$headers" -o /dev/null "https://${PRODUCT_HOST}/api/auth/login"
+          grep -Eiq '^location: https://auth\.ithute\.co\.ls/' "$headers"
+          rm -f "$headers"
+          curl --fail --silent --show-error --retry 8 --retry-delay 3 https://auth.ithute.co.ls/healthz -o /dev/null
+          curl --fail --silent --show-error --retry 8 --retry-delay 3 https://realtime.ithute.co.ls/healthz -o /dev/null
+          echo | openssl s_client -connect "${PRODUCT_HOST}:443" -servername "$PRODUCT_HOST" 2>/dev/null \
+            | openssl x509 -noout -ext subjectAltName | grep -F "$PRODUCT_HOST"
