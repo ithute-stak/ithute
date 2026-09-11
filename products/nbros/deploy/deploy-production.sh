@@ -252,8 +252,22 @@ for service in ithute-auth ithute-auth-push-event-worker ithute-realtime; do
   done
   [ "$healthy" = true ] || { central logs --tail=250 "$service" >&2 || true; exit 1; }
 done
-curl -fsS --retry 8 --retry-delay 3 https://auth.ithute.co.ls/healthz >/dev/null
-curl -fsS --retry 8 --retry-delay 3 https://realtime.ithute.co.ls/healthz >/dev/null
+
+# Recreating Docker services changes their container IPs. The shared Nginx
+# edge resolves Docker hostnames when its configuration is loaded, so refresh
+# it immediately after Auth/Realtime replacement before using public health
+# checks. This prevents stale upstream addresses from producing temporary 502s.
+EDGE_COMPOSE="$EDGE_DIR/docker-compose.ithute-edge.yml"
+[ -s "$EDGE_COMPOSE" ] || { echo "Shared Ithute edge compose file is missing" >&2; exit 1; }
+edge_refresh() {
+  docker compose -p ithute-edge -f "$EDGE_COMPOSE" "$@"
+}
+edge_refresh config >/dev/null
+edge_refresh up -d --no-build --no-deps --force-recreate edge-nginx
+edge_refresh exec -T edge-nginx nginx -t >/dev/null
+
+curl -fsS --retry 12 --retry-all-errors --retry-delay 3 https://auth.ithute.co.ls/healthz >/dev/null
+curl -fsS --retry 12 --retry-all-errors --retry-delay 3 https://realtime.ithute.co.ls/healthz >/dev/null
 
 # Start the new product after Central Auth/Realtime can recognize NBros.
 cd "$RUNTIME_DIR"
