@@ -8,10 +8,12 @@ from .auth import current_claims
 from .config import settings
 from .db import SessionLocal, engine
 from .fleet import router as fleet_router
+from .fleet_views import router as fleet_views_router
 from .models import Profile
 
 app = FastAPI(title="NBros API", version="0.2.0", redoc_url=None)
 app.include_router(fleet_router)
+app.include_router(fleet_views_router)
 
 
 @app.get("/healthz")
