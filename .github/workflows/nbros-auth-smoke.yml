@@ -1,0 +1,120 @@
+name: NBros Auth Smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "products/nbros/apps/frontend/**"
+      - "platform/ithute-auth/**"
+      - ".github/workflows/nbros-auth-smoke.yml"
+  workflow_run:
+    workflows: ["Deploy NBros Production"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Simple login contract
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Verify NBros delegates credentials to Central Auth
+        run: |
+          set -euo pipefail
+          grep -Fq 'action="/api/auth/password"' products/nbros/apps/frontend/app/page.tsx
+          grep -Fq 'defaultValue="justy@ithute.co.ls"' products/nbros/apps/frontend/app/page.tsx
+          grep -Fq 'type="password"' products/nbros/apps/frontend/app/page.tsx
+          grep -Fq '`${authIssuer()}/v1/auth/login`' products/nbros/apps/frontend/app/api/auth/password/route.ts
+          grep -Fq 'client_id: clientId()' products/nbros/apps/frontend/app/api/auth/password/route.ts
+          grep -Fq 'httpOnly: true' products/nbros/apps/frontend/app/api/auth/password/route.ts
+          grep -Fq 'The email or password is incorrect.' platform/ithute-auth/app/oauth.py
+          if grep -Eq 'defaultValue=.*password|value=.*password' products/nbros/apps/frontend/app/page.tsx; then
+            echo '::error::NBros must never prefill or embed a password.'
+            exit 1
+          fi
+
+  smoke:
+    name: Production password and OIDC smoke
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require NBros simple login and Central Auth contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          home="$(mktemp)"
+          curl --fail --silent --show-error --retry 8 --retry-delay 3 \
+            --connect-timeout 10 --max-time 30 \
+            https://nbro.ithute.co.ls/ -o "$home"
+          grep -Fq '/api/auth/password' "$home"
+          grep -Fq 'justy@ithute.co.ls' "$home"
+          rm -f "$home"
+
+          # A deliberately invalid account must reach Central Auth as the NBros
+          # first-party client. 401 proves the client/endpoint contract exists;
+          # an unregistered client would fail with 400 before credential checks.
+          direct_body="$(mktemp)"
+          direct_code="$(curl --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            -o "$direct_body" -w '%{http_code}' \
+            -H 'content-type: application/json' \
+            --data "{\"identifier\":\"nbros-auth-probe-${GITHUB_RUN_ID}@invalid.example\",\"password\":\"not-a-real-password\",\"client_id\":\"nbros\"}" \
+            https://auth.ithute.co.ls/v1/auth/login)"
+          test "$direct_code" = "401" || {
+            echo "::error::Central Auth NBros password-login contract returned HTTP $direct_code"
+            cat "$direct_body"
+            exit 1
+          }
+          grep -Fqi 'invalid credentials' "$direct_body"
+          rm -f "$direct_body"
+
+          # The product-side simple form must reject an empty submission with a
+          # friendly local redirect rather than throwing or exposing Auth data.
+          headers="$(mktemp)"
+          product_code="$(curl --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            -D "$headers" -o /dev/null -w '%{http_code}' \
+            -X POST -H 'content-type: application/x-www-form-urlencoded' --data '' \
+            https://nbro.ithute.co.ls/api/auth/password)"
+          test "$product_code" = "303"
+          grep -Eiq '^location: https://nbro\.ithute\.co\.ls/\?auth_error=missing_credentials' "$headers"
+          rm -f "$headers"
+
+          # OIDC login failures must remain on a human-readable HTML form. This
+          # protects the browser flow from regressing to a raw JSON error page.
+          oidc_body="$(mktemp)"
+          oidc_headers="$(mktemp)"
+          oidc_code="$(curl --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            -D "$oidc_headers" -o "$oidc_body" -w '%{http_code}' \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            --data-urlencode 'response_type=code' \
+            --data-urlencode 'client_id=nbros' \
+            --data-urlencode 'redirect_uri=https://nbro.ithute.co.ls/api/auth/oidc/callback' \
+            --data-urlencode 'code_challenge=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' \
+            --data-urlencode 'code_challenge_method=S256' \
+            --data-urlencode 'state=nbros-smoke-state' \
+            --data-urlencode 'nonce=nbros-smoke-nonce-1234567890' \
+            --data-urlencode 'scope=openid profile email phone' \
+            --data-urlencode "identifier=nbros-oidc-probe-${GITHUB_RUN_ID}@invalid.example" \
+            --data-urlencode 'password=not-a-real-password' \
+            https://auth.ithute.co.ls/oauth/authorize)"
+          test "$oidc_code" = "401"
+          grep -Eiq '^content-type: text/html' "$oidc_headers"
+          grep -Fq 'The email or password is incorrect.' "$oidc_body"
+          ! grep -Fq '"detail":"invalid_credentials"' "$oidc_body"
+          rm -f "$oidc_body" "$oidc_headers"
+
+          echo 'NBros simple login and Ithute Auth production contracts are healthy.'

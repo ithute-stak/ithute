@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 
 import RealtimeAlerts from "@/components/realtime-alerts";
 import "./globals.css";
+import "./login.css";
 
 export const metadata: Metadata = {
   title: "NBros",
