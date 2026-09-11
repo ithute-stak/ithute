@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, Uuid, UniqueConstraint, select
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, Uuid, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from .db import Base
@@ -40,6 +40,8 @@ class FleetAlert(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    notification_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_notification_error: Mapped[str | None] = mapped_column(Text)
 
 
 def _candidate(component: str, item: dict[str, Any], vehicle_id: uuid.UUID) -> dict[str, str]:
@@ -129,6 +131,8 @@ def sync_vehicle_alerts(
         changed = row.fingerprint != item["fingerprint"] or row.resolved_at is not None
         if row.resolved_at is not None:
             row.first_seen_at = now
+            row.notification_attempts = 0
+            row.last_notification_error = None
         row.severity = item["severity"]
         row.label = item["label"]
         row.detail = item["detail"]
