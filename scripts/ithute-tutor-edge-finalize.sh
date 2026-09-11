@@ -76,6 +76,7 @@ pay.ithute.co.ls
 api.pay.ithute.co.ls
 portal.pay.ithute.co.ls
 tutor.ithute.co.ls
+nbro.ithute.co.ls
 $TUTOR_HOST
 EOF
 
