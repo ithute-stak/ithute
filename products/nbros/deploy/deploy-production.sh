@@ -41,7 +41,7 @@ echo "Loading exact NBros and central platform images for ${DEPLOY_SHA}."
 gzip -dc "$BUNDLE" | docker load
 for image in "$BACKEND_IMAGE" "$FRONTEND_IMAGE" "$AUTH_IMAGE" "$REALTIME_IMAGE"; do
   docker image inspect "$image" >/dev/null
- done
+done
 
 mkdir -p "$RUNTIME_DIR/backups"
 chmod 700 "$RUNTIME_DIR"
@@ -112,9 +112,43 @@ for key in ('NBROS_DB_PASSWORD', 'NBROS_REALTIME_SERVICE_CLIENT_SECRET'):
 path.write_text('\n'.join(f'{key}={values[key]}' for key in order) + '\n')
 PY
 
-set -a
-. ./.env
-set +a
+# Read only the few runtime values this shell needs. Never source a Docker
+# Compose .env file: valid Compose values can contain spaces, JSON, or other
+# characters that are not safe POSIX shell syntax.
+read_env_value() {
+  env_file="$1"
+  env_key="$2"
+  python3 - "$env_file" "$env_key" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+path = Path(sys.argv[1])
+wanted = sys.argv[2]
+for raw in path.read_text(encoding='utf-8', errors='replace').splitlines():
+    if not raw or raw.lstrip().startswith('#') or '=' not in raw:
+        continue
+    key, value = raw.split('=', 1)
+    if key.strip() != wanted:
+        continue
+    value = value.strip()
+    if value:
+        try:
+            parsed = shlex.split(value, posix=True)
+        except ValueError:
+            parsed = []
+        if len(parsed) == 1:
+            value = parsed[0]
+    print(value)
+    break
+PY
+}
+
+NBROS_REALTIME_SERVICE_CLIENT_SECRET="$(read_env_value "$RUNTIME_DIR/.env" NBROS_REALTIME_SERVICE_CLIENT_SECRET)"
+NBROS_BACKEND_PORT="$(read_env_value "$RUNTIME_DIR/.env" NBROS_BACKEND_PORT)"
+NBROS_FRONTEND_PORT="$(read_env_value "$RUNTIME_DIR/.env" NBROS_FRONTEND_PORT)"
+NETWORK_NAME="$(read_env_value "$RUNTIME_DIR/.env" ITHUTE_MAILBOX_NETWORK_NAME)"
+NETWORK_NAME="${NETWORK_NAME:-mailbox-dns_mailbox_dns}"
 
 export NBROS_BACKEND_IMAGE="$BACKEND_IMAGE"
 export NBROS_FRONTEND_IMAGE="$FRONTEND_IMAGE"
@@ -123,7 +157,6 @@ compose() {
 }
 
 compose config -q
-NETWORK_NAME="${ITHUTE_MAILBOX_NETWORK_NAME:-mailbox-dns_mailbox_dns}"
 docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || {
   echo "Required shared Ithute network is missing: $NETWORK_NAME" >&2
   exit 1
@@ -189,18 +222,17 @@ PY
 chmod 600 "$CENTRAL_ENV"
 
 # Refresh only Auth/Realtime components required by NBros. Existing databases,
-# Push and sibling products are not recreated.
+# Push and sibling products are not recreated. The central .env is passed to
+# Docker Compose as data and is never executed by this shell.
 cd "$PLATFORM_ROOT"
-set -a
-. ./.env
-set +a
-CENTRAL_PROJECT="${COMPOSE_PROJECT_NAME:-mailbox-dns}"
+CENTRAL_PROJECT="$(read_env_value "$CENTRAL_ENV" COMPOSE_PROJECT_NAME)"
+CENTRAL_PROJECT="${CENTRAL_PROJECT:-mailbox-dns}"
 CENTRAL_FILES="-f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.ithute-platform.yml -f docker-compose.deploy.yml"
 central() {
   ITHUTE_AUTH_IMAGE="ghcr.io/ithute-stak/ithute-auth" \
   ITHUTE_REALTIME_IMAGE="ghcr.io/ithute-stak/ithute-realtime" \
   MAILBOX_DNS_IMAGE_TAG="$DEPLOY_SHA" \
-  docker compose -p "$CENTRAL_PROJECT" $CENTRAL_FILES "$@"
+  docker compose -p "$CENTRAL_PROJECT" --env-file "$CENTRAL_ENV" $CENTRAL_FILES "$@"
 }
 central config >/dev/null
 central up -d --no-build --no-deps --force-recreate ithute-auth ithute-auth-push-event-worker ithute-realtime
@@ -232,7 +264,7 @@ for attempt in $(seq 1 90); do
   sleep 2
 done
 [ "$backend_healthy" = true ] || { compose logs --tail=250 backend >&2 || true; exit 1; }
-curl -fsS http://127.0.0.1:${NBROS_BACKEND_PORT:-8203}/readyz >/dev/null
+curl -fsS "http://127.0.0.1:${NBROS_BACKEND_PORT:-8203}/readyz" >/dev/null
 
 compose up -d --no-build fleet-monitor frontend
 FRONTEND_ID="$(compose ps -q frontend)"
@@ -245,7 +277,7 @@ for attempt in $(seq 1 90); do
   sleep 2
 done
 [ "$frontend_ready" = true ] || { compose logs --tail=250 frontend >&2 || true; exit 1; }
-curl -fsS http://127.0.0.1:${NBROS_FRONTEND_PORT:-3203}/ >/dev/null
+curl -fsS "http://127.0.0.1:${NBROS_FRONTEND_PORT:-3203}/" >/dev/null
 
 # Cut the existing nbro.ithute.co.ls virtual host over only after NBros is
 # healthy. The shared certificate already contains this hostname from the
