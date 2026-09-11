@@ -129,7 +129,9 @@ jobs:
           docker run --rm -i --network host -e PGPASSWORD postgres:17-alpine \
             pg_restore -h 127.0.0.1 -U nbros -d nbros_restore_test --no-owner --no-privileges < /tmp/nbros-ci.dump
           test "$(docker run --rm --network host -e PGPASSWORD postgres:17-alpine psql -h 127.0.0.1 -U nbros -d nbros_restore_test -Atc 'SELECT count(*) FROM alembic_version')" = "1"
-          restored_tables="$(docker run --rm --network host -e PGPASSWORD postgres:17-alpine psql -h 127.0.0.1 -U nbros -d nbros_restore_test -Atc \"SELECT count(*) FROM information_schema.tables WHERE table_schema='public'\")"
+          docker run --rm --network host -e PGPASSWORD postgres:17-alpine \
+            psql -h 127.0.0.1 -U nbros -d nbros_restore_test -Atc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';" > /tmp/nbros-restored-tables
+          restored_tables="$(tr -d '[:space:]' < /tmp/nbros-restored-tables)"
           test "$restored_tables" -ge 20
           echo "Backup restore verified with $restored_tables public tables."
 
