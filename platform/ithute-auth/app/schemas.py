@@ -36,8 +36,11 @@ class LogoutRequest(BaseModel):
 class ServiceTokenRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=120)
     client_secret: str = Field(min_length=24, max_length=512)
-    audience: str = Field(default="ithute-push", pattern="^ithute-push$")
-    scope: str = Field(default="push.send", pattern=r"^push\.send$")
+    audience: str = Field(default="ithute-push", pattern=r"^(ithute-push|ithute-realtime)$")
+    scope: str = Field(
+        default="push.send",
+        pattern=r"^(?:push\.send|realtime\.(?:publish|manage|metrics|broadcast))(?: (?:push\.send|realtime\.(?:publish|manage|metrics|broadcast)))*$",
+    )
 
 
 class TokenResponse(BaseModel):
