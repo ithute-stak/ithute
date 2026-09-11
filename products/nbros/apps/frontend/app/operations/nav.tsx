@@ -15,6 +15,9 @@ export default function OperationsNav({ branchId, active }: { branchId: string; 
         {item("stores", "/operations/stores", "Stores & procurement")}
         {item("dispatch", "/operations/dispatch", "Dispatch")}
         {item("assets", "/operations/assets", "Tyres, claims & telematics")}
+        {item("people", "/operations/people", "Drivers & compliance")}
+        {item("finance", "/operations/finance", "Finance & fuel")}
+        {item("governance", "/operations/governance", "Approvals & governance")}
         <span className="nav-section">Fleet</span>
         <Link className="nav-item" href={`/fleet?${query}`}>Fleet dashboard</Link>
         <Link className="nav-item" href={`/fleet/reports?${query}`}>Fleet reports</Link>
