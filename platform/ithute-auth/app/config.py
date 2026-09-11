@@ -92,6 +92,9 @@ class Settings(BaseSettings):
             client_id = client_id.strip()
             if client_id:
                 result[client_id] = (name.strip() or client_id)
+        # NBros is a repository-owned first-party product. Keep it registered
+        # even when an older deployment environment overrides the client list.
+        result.setdefault("nbros", "NBros")
         return result
 
     @property
@@ -120,6 +123,7 @@ class Settings(BaseSettings):
                     uris.append(uri)
             if uris:
                 result[client_id] = tuple(dict.fromkeys(uris))
+        result.setdefault("nbros", ("https://nbro.ithute.co.ls/api/auth/oidc/callback",))
         return result
 
     @property
@@ -162,7 +166,10 @@ class Settings(BaseSettings):
 
     @property
     def allowed_origins(self) -> list[str]:
-        return [value.strip() for value in self.cors_origins.split(",") if value.strip()]
+        origins = [value.strip() for value in self.cors_origins.split(",") if value.strip()]
+        if "https://nbro.ithute.co.ls" not in origins:
+            origins.append("https://nbro.ithute.co.ls")
+        return origins
 
 
 @lru_cache
