@@ -1,13 +1,14 @@
-name: NBros Fleet CI
+name: NBros Main Release Gate
 
 on:
   push:
-    branches: [nbros]
+    branches: [main, nbros]
     paths:
       - "products/nbros/**"
       - "platform/ithute-auth/**"
       - "platform/ithute-realtime/**"
       - ".github/workflows/nbros-fleet-ci.yml"
+      - ".github/workflows/nbros-production.yml"
   pull_request:
     branches: [main, nbros]
     paths:
@@ -15,12 +16,13 @@ on:
       - "platform/ithute-auth/**"
       - "platform/ithute-realtime/**"
       - ".github/workflows/nbros-fleet-ci.yml"
+      - ".github/workflows/nbros-production.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: nbros-fleet-${{ github.ref }}
+  group: nbros-release-gate-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -168,15 +170,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate NBros Compose
+      - name: Validate standalone and production-overlay Compose
         env:
           NBROS_DB_PASSWORD: nbros-compose-validation-password
-          NBROS_REALTIME_SERVICE_CLIENT_SECRET: ""
+          NBROS_REALTIME_SERVICE_CLIENT_SECRET: nbros-ci-realtime-secret-long-enough
           NBROS_AI_ENABLED: "false"
-        run: docker compose -f products/nbros/compose.yaml config -q
-      - name: Validate operational scripts
-        run: bash -n products/nbros/scripts/backup.sh products/nbros/scripts/verify-backup.sh
-      - name: Verify Caddy routes and security headers
+        run: |
+          set -euo pipefail
+          docker compose -f products/nbros/compose.yaml config -q
+          docker compose -f products/nbros/compose.yaml -f products/nbros/compose.production.yml config -q
+          docker compose -f products/nbros/compose.yaml -f products/nbros/compose.production.yml config \
+            | grep -Fq 'nbros-backend'
+          docker compose -f products/nbros/compose.yaml -f products/nbros/compose.production.yml config \
+            | grep -Fq 'nbros-frontend'
+      - name: Validate operational and production scripts
+        run: |
+          set -euo pipefail
+          bash -n products/nbros/scripts/backup.sh products/nbros/scripts/verify-backup.sh
+          sh -n products/nbros/deploy/deploy-production.sh
+          python3 -m py_compile products/nbros/deploy/render-shared-edge.py
+      - name: Verify rendered shared-edge cutover contract
+        run: |
+          set -euo pipefail
+          python3 products/nbros/deploy/render-shared-edge.py \
+            infrastructure/ithute-edge/default.conf.template /tmp/nbros-edge.conf.template
+          grep -Fq 'server_name nbro.ithute.co.ls;' /tmp/nbros-edge.conf.template
+          grep -Fq 'nbros-backend:8000' /tmp/nbros-edge.conf.template
+          grep -Fq 'nbros-frontend:3000' /tmp/nbros-edge.conf.template
+          grep -Fq 'location ^~ /api/v1/' /tmp/nbros-edge.conf.template
+          grep -Fq 'location ^~ /api/fleet/' /tmp/nbros-edge.conf.template
+          ! grep -Fq 'buildtrack-backend' /tmp/nbros-edge.conf.template
+          ! grep -Fq 'buildtrack-frontend' /tmp/nbros-edge.conf.template
+      - name: Verify standalone Caddy routes and security headers
         run: |
           grep -F '/api/v1/*' products/nbros/deploy/Caddyfile.nbro
           grep -F '/api/fleet/*' products/nbros/deploy/Caddyfile.nbro
