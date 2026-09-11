@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   backend:
-    name: FastAPI · Alembic · Fleet rules
+    name: FastAPI · Alembic · Fleet + Operations rules
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -72,13 +72,14 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
       - name: Compile Python sources
         run: python -m compileall -q app alembic tests
-      - name: Apply Fleet migrations to PostgreSQL
+      - name: Apply NBros migrations to PostgreSQL
         run: alembic upgrade head
       - name: Verify Alembic/model drift
         run: alembic check
-      - name: Verify Fleet API contract
+      - name: Verify Fleet + Operations API contract
         run: |
           python - <<'PY'
+          from app.file_compat import router as file_compat_router
           from app.main import app
           paths = set(app.openapi()["paths"])
           required = {
@@ -86,14 +87,26 @@ jobs:
               "/api/v1/fleet/advisor",
               "/api/v1/fleet/reports/summary",
               "/api/v1/fleet/inventory",
-              "/api/fleet/files/{branch_id}/{filename}",
+              "/api/v1/operations/summary",
+              "/api/v1/operations/workshop",
+              "/api/v1/operations/procurement",
+              "/api/v1/operations/dispatch",
+              "/api/v1/operations/tyres",
+              "/api/v1/operations/insurance/claims",
+              "/api/v1/operations/telematics/events",
+              "/api/v1/operations/finance/tco",
+              "/api/v1/operations/executive",
           }
           missing = sorted(required - paths)
           if missing:
-              raise SystemExit(f"Missing Fleet API paths: {missing}")
-          print(f"Fleet API contract OK: {len(paths)} OpenAPI paths")
+              raise SystemExit(f"Missing NBros API paths: {missing}")
+          legacy_paths = {getattr(route, "path", "") for route in file_compat_router.routes}
+          legacy = "/api/fleet/files/{branch_id}/{filename}"
+          if legacy not in legacy_paths:
+              raise SystemExit(f"Missing Fleet compatibility route: {legacy}")
+          print(f"NBros API contract OK: {len(paths)} OpenAPI paths + legacy file route")
           PY
-      - name: Run Fleet regression tests
+      - name: Run backend regression tests
         run: python -m pytest -q --maxfail=1
 
   frontend:
