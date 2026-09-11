@@ -33,6 +33,8 @@ def _serialize(row: FleetAlert, registration_plate: str | None) -> dict[str, Any
         "last_seen_at": row.last_seen_at,
         "resolved_at": row.resolved_at,
         "last_notified_at": row.last_notified_at,
+        "notification_attempts": row.notification_attempts,
+        "last_notification_error": row.last_notification_error,
     }
 
 
@@ -70,6 +72,13 @@ def monitor_status(
                 FleetAlert.resolved_at.is_(None),
             )
         ) or 0
+        failed_notifications = db.scalar(
+            select(func.count(FleetAlert.id)).where(
+                FleetAlert.branch_id == branch_id,
+                FleetAlert.resolved_at.is_(None),
+                FleetAlert.last_notification_error.is_not(None),
+            )
+        ) or 0
         latest = db.scalar(
             select(func.max(FleetAlert.last_seen_at)).where(FleetAlert.branch_id == branch_id)
         )
@@ -86,6 +95,7 @@ def monitor_status(
 
     return {
         "active_alerts": int(active),
+        "notification_failures": int(failed_notifications),
         "latest_alert_evaluation": latest,
         "worker": monitor,
     }
