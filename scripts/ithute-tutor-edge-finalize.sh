@@ -11,6 +11,26 @@ health_host="${EDGE_HEALTH_HOST:-panel.ithute.co.ls}"
 
 mkdir -p "$EDGE_DIR/infrastructure/ithute-edge"
 if [ -s "$staged_template" ]; then
+  # BuildTrack has been retired from nbro.ithute.co.ls. A shared TLS/DNS
+  # recovery must never put its old upstreams back into the live edge after an
+  # NBros deployment. Require the staged template to carry the canonical NBros
+  # routes before it is allowed to replace the live shared configuration.
+  if grep -Eq 'buildtrack-(backend|frontend)' "$staged_template"; then
+    echo "Refusing staged edge template with retired BuildTrack upstreams" >&2
+    exit 1
+  fi
+  grep -Fq 'server_name nbro.ithute.co.ls;' "$staged_template" || {
+    echo "Staged edge template is missing the NBros virtual host" >&2
+    exit 1
+  }
+  grep -Fq 'nbros-backend:8000' "$staged_template" || {
+    echo "Staged edge template is missing the NBros backend upstream" >&2
+    exit 1
+  }
+  grep -Fq 'nbros-frontend:3000' "$staged_template" || {
+    echo "Staged edge template is missing the NBros frontend upstream" >&2
+    exit 1
+  }
   cp "$staged_template" "$live_template"
   rm -f "$staged_template"
 elif [ ! -s "$live_template" ]; then
@@ -56,6 +76,7 @@ pay.ithute.co.ls
 api.pay.ithute.co.ls
 portal.pay.ithute.co.ls
 tutor.ithute.co.ls
+nbro.ithute.co.ls
 $TUTOR_HOST
 EOF
 
