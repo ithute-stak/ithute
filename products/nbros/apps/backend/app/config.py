@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     fleet_monitor_interval_seconds: int = 60
     fleet_monitor_lock_seconds: int = 120
 
+    ai_enabled: bool = False
+    ai_base_url: str = ""
+    ai_api_key: str = ""
+    ai_model: str = ""
+    ai_timeout_seconds: int = 30
+
     model_config = SettingsConfigDict(env_prefix="NBROS_", case_sensitive=False)
 
 
