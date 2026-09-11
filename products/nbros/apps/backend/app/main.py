@@ -16,13 +16,16 @@ from .fleet_alerts_api import router as fleet_alerts_router
 from .fleet_inventory import router as fleet_inventory_router
 from .fleet_reports import router as fleet_reports_router
 from .fleet_views import router as fleet_views_router
+from .governance import router as governance_router
 from .models import Profile
+from .production_hardening import install_hardening, router as production_router
 
 # Enterprise Operations keeps its stable API surface, while the maturity layer
 # supplies policy-aware approval routing to existing workshop/procurement flows.
 enterprise_ops_module._approval = policy_aware_approval
 
 app = FastAPI(title="NBros API", version="1.0.0", redoc_url=None)
+install_hardening(app)
 app.include_router(fleet_router)
 app.include_router(fleet_views_router)
 app.include_router(fleet_alerts_router)
@@ -31,6 +34,8 @@ app.include_router(fleet_reports_router)
 app.include_router(fleet_advisor_router)
 app.include_router(enterprise_ops_module.router)
 app.include_router(maturity_router)
+app.include_router(governance_router)
+app.include_router(production_router)
 app.include_router(file_compat_router)
 
 
