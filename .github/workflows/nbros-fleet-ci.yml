@@ -76,8 +76,26 @@ jobs:
         run: alembic upgrade head
       - name: Verify Alembic/model drift
         run: alembic check
-      - name: Show registered API routes
-        run: python -c 'from app.main import app; print("\n".join(sorted({getattr(route, "path", "") for route in app.routes})))'
+      - name: Inspect Fleet router initialization
+        run: |
+          python - <<'PY'
+          import app.fleet as fleet
+          import app.fleet_views as views
+          import app.fleet_alerts_api as alerts
+          import app.fleet_inventory as inventory
+          import app.fleet_reports as reports
+          import app.fleet_advisor as advisor
+          import app.file_compat as compat
+          modules = [fleet, views, alerts, inventory, reports, advisor, compat]
+          for module in modules:
+              print(module.__name__, module.__file__, len(module.router.routes))
+              for route in module.router.routes[:5]:
+                  print('  ', getattr(route, 'path', ''))
+          from app.main import app
+          print('APP', len(app.routes))
+          for route in app.routes:
+              print('  ', getattr(route, 'path', ''))
+          PY
       - name: Run Fleet regression tests
         run: python -m pytest -q --maxfail=1
 
