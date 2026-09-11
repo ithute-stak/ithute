@@ -15,6 +15,7 @@ from app import models as _models  # noqa: F401
 from app import fleet_alerts as _fleet_alerts  # noqa: F401
 from app import fleet_inventory as _fleet_inventory  # noqa: F401
 from app import enterprise_models as _enterprise_models  # noqa: F401
+from app import enterprise_maturity_models as _enterprise_maturity_models  # noqa: F401
 from app.models import Branch, BranchModule, FleetSetting, Inspection, ServiceRecord, Vehicle
 
 TODAY = date(2026, 9, 11)
