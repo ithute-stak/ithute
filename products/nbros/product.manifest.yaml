@@ -1,0 +1,21 @@
+manifest_version: "1"
+id: nbros
+name: NBros
+category: operations
+source_path: products/nbros
+public_url: https://nbro.ithute.co.ls
+api_url: https://nbro.ithute.co.ls/api/v1
+health_url: https://nbro.ithute.co.ls/readyz
+services:
+  auth: central
+  realtime: central
+database:
+  ownership: product
+  engine: postgresql
+  volume: nbros_postgres
+deployment:
+  mode: isolated
+  preserve_existing_data: true
+  require_pre_migration_backup: true
+  reject_unexpected_volume_change: true
+capabilities: []
