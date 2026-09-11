@@ -76,25 +76,22 @@ jobs:
         run: alembic upgrade head
       - name: Verify Alembic/model drift
         run: alembic check
-      - name: Inspect Fleet router initialization
+      - name: Verify Fleet API contract
         run: |
           python - <<'PY'
-          import app.fleet as fleet
-          import app.fleet_views as views
-          import app.fleet_alerts_api as alerts
-          import app.fleet_inventory as inventory
-          import app.fleet_reports as reports
-          import app.fleet_advisor as advisor
-          import app.file_compat as compat
-          modules = [fleet, views, alerts, inventory, reports, advisor, compat]
-          for module in modules:
-              print(module.__name__, module.__file__, len(module.router.routes))
-              for route in module.router.routes[:5]:
-                  print('  ', getattr(route, 'path', ''))
           from app.main import app
-          print('APP', len(app.routes))
-          for route in app.routes:
-              print('  ', getattr(route, 'path', ''))
+          paths = set(app.openapi()["paths"])
+          required = {
+              "/api/v1/fleet/dashboard",
+              "/api/v1/fleet/advisor",
+              "/api/v1/fleet/reports/summary",
+              "/api/v1/fleet/inventory",
+              "/api/fleet/files/{branch_id}/{filename}",
+          }
+          missing = sorted(required - paths)
+          if missing:
+              raise SystemExit(f"Missing Fleet API paths: {missing}")
+          print(f"Fleet API contract OK: {len(paths)} OpenAPI paths")
           PY
       - name: Run Fleet regression tests
         run: python -m pytest -q --maxfail=1
