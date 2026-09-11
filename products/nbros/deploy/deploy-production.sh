@@ -153,7 +153,11 @@ NETWORK_NAME="${NETWORK_NAME:-mailbox-dns_mailbox_dns}"
 export NBROS_BACKEND_IMAGE="$BACKEND_IMAGE"
 export NBROS_FRONTEND_IMAGE="$FRONTEND_IMAGE"
 compose() {
-  docker compose -p nbros --env-file .env -f compose.yaml -f compose.production.yml "$@"
+  docker compose -p nbros \
+    --env-file "$RUNTIME_DIR/.env" \
+    -f "$RUNTIME_DIR/compose.yaml" \
+    -f "$RUNTIME_DIR/compose.production.yml" \
+    "$@"
 }
 
 compose config -q
