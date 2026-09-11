@@ -83,6 +83,7 @@ jobs:
           grep -Fq 'nbros-backend:8000' "$stage/edge-default.conf.template"
           grep -Fq 'nbros-frontend:3000' "$stage/edge-default.conf.template"
           ! grep -Fq 'buildtrack-backend' "$stage/edge-default.conf.template"
+          ! grep -Fq 'buildtrack-frontend' "$stage/edge-default.conf.template"
 
       - name: Configure production SSH identity
         shell: bash
@@ -122,6 +123,16 @@ jobs:
           scp "$stage/compose.production.yml" "$remote:$stage/compose.production.yml"
           scp "$stage/edge-default.conf.template" "$remote:$stage/edge-default.conf.template"
           scp products/nbros/deploy/deploy-production.sh "$remote:/tmp/nbros-deploy-${RELEASE_SHA}.sh"
+          scp products/nbros/deploy/prepare-production-runtime.sh "$remote:/tmp/nbros-prepare-${RELEASE_SHA}.sh"
+          scp products/nbros/deploy/retire-buildtrack.sh "$remote:/tmp/nbros-retire-buildtrack-${RELEASE_SHA}.sh"
+
+      - name: Normalize NBros production runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" \
+            "RUNTIME_DIR='$VPS_RUNTIME_DIR' PRODUCT_HOST='$PRODUCT_HOST' sh '/tmp/nbros-prepare-${RELEASE_SHA}.sh'"
 
       - name: Deploy NBros without mutating sibling product data
         shell: bash
@@ -130,7 +141,16 @@ jobs:
           remote="${VPS_USER}@${VPS_HOST}"
           ssh "$remote" \
             "PLATFORM_ROOT='$VPS_PLATFORM_ROOT' EDGE_DIR='$VPS_EDGE_DIR' RUNTIME_DIR='$VPS_RUNTIME_DIR' DEPLOY_SHA='$RELEASE_SHA' PRODUCT_HOST='$PRODUCT_HOST' BACKEND_IMAGE='$BACKEND_REPO:$RELEASE_SHA' FRONTEND_IMAGE='$FRONTEND_REPO:$RELEASE_SHA' AUTH_IMAGE='$AUTH_REPO:$RELEASE_SHA' REALTIME_IMAGE='$REALTIME_REPO:$RELEASE_SHA' sh '/tmp/nbros-deploy-${RELEASE_SHA}.sh'"
-          ssh "$remote" "rm -f '/tmp/nbros-deploy-${RELEASE_SHA}.sh'"
+
+      - name: Retire legacy BuildTrack production runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" \
+            "PLATFORM_ROOT='$VPS_PLATFORM_ROOT' sh '/tmp/nbros-retire-buildtrack-${RELEASE_SHA}.sh'"
+          ssh "$remote" \
+            "rm -f '/tmp/nbros-deploy-${RELEASE_SHA}.sh' '/tmp/nbros-prepare-${RELEASE_SHA}.sh' '/tmp/nbros-retire-buildtrack-${RELEASE_SHA}.sh'"
 
       - name: Verify NBros publicly from GitHub runner
         shell: bash
