@@ -76,7 +76,7 @@ jobs:
         run: alembic upgrade head
       - name: Verify Alembic/model drift
         run: alembic check
-      - name: Verify Fleet + Operations API contract
+      - name: Verify Fleet + Operations + production API contract
         run: |
           python - <<'PY'
           from app.file_compat import router as file_compat_router
@@ -96,18 +96,42 @@ jobs:
               "/api/v1/operations/telematics/events",
               "/api/v1/operations/finance/tco",
               "/api/v1/operations/executive",
+              "/api/v1/operations/observability",
+              "/api/v1/operations/exports/fleet.csv",
+              "/api/v1/operations/exports/tco.csv",
+              "/api/v1/operations/exports/audit.csv",
+              "/api/v1/governance/profiles",
+              "/api/v1/governance/branch-access",
           }
           missing = sorted(required - paths)
           if missing:
               raise SystemExit(f"Missing NBros API paths: {missing}")
+          if "/metrics" in paths:
+              raise SystemExit("Internal metrics endpoint must not be exposed in OpenAPI")
           legacy_paths = {getattr(route, "path", "") for route in file_compat_router.routes}
           legacy = "/api/fleet/files/{branch_id}/{filename}"
           if legacy not in legacy_paths:
               raise SystemExit(f"Missing Fleet compatibility route: {legacy}")
-          print(f"NBros API contract OK: {len(paths)} OpenAPI paths + legacy file route")
+          print(f"NBros API contract OK: {len(paths)} OpenAPI paths + internal metrics + legacy file route")
           PY
       - name: Run backend regression tests
         run: python -m pytest -q --maxfail=1
+      - name: PostgreSQL backup and restore round-trip
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          export PGPASSWORD=nbros-test-password
+          docker run --rm --network host -e PGPASSWORD postgres:17-alpine \
+            pg_dump -h 127.0.0.1 -U nbros -d nbros_test --format=custom --no-owner --no-privileges > /tmp/nbros-ci.dump
+          test -s /tmp/nbros-ci.dump
+          docker run --rm --network host -e PGPASSWORD postgres:17-alpine \
+            createdb -h 127.0.0.1 -U nbros nbros_restore_test
+          docker run --rm -i --network host -e PGPASSWORD postgres:17-alpine \
+            pg_restore -h 127.0.0.1 -U nbros -d nbros_restore_test --no-owner --no-privileges < /tmp/nbros-ci.dump
+          test "$(docker run --rm --network host -e PGPASSWORD postgres:17-alpine psql -h 127.0.0.1 -U nbros -d nbros_restore_test -Atc 'SELECT count(*) FROM alembic_version')" = "1"
+          restored_tables="$(docker run --rm --network host -e PGPASSWORD postgres:17-alpine psql -h 127.0.0.1 -U nbros -d nbros_restore_test -Atc \"SELECT count(*) FROM information_schema.tables WHERE table_schema='public'\")"
+          test "$restored_tables" -ge 20
+          echo "Backup restore verified with $restored_tables public tables."
 
   frontend:
     name: Next.js · TypeScript · production build
@@ -148,7 +172,12 @@ jobs:
           NBROS_REALTIME_SERVICE_CLIENT_SECRET: ""
           NBROS_AI_ENABLED: "false"
         run: docker compose -f products/nbros/compose.yaml config -q
-      - name: Verify Caddy routes
+      - name: Validate operational scripts
+        run: bash -n products/nbros/scripts/backup.sh products/nbros/scripts/verify-backup.sh
+      - name: Verify Caddy routes and security headers
         run: |
           grep -F '/api/v1/*' products/nbros/deploy/Caddyfile.nbro
           grep -F '/api/fleet/*' products/nbros/deploy/Caddyfile.nbro
+          grep -F 'Strict-Transport-Security' products/nbros/deploy/Caddyfile.nbro
+          grep -F 'X-Content-Type-Options' products/nbros/deploy/Caddyfile.nbro
+          grep -F 'X-Frame-Options' products/nbros/deploy/Caddyfile.nbro
