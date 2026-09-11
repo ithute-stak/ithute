@@ -1,0 +1,123 @@
+name: NBros Fleet CI
+
+on:
+  push:
+    branches: [nbros]
+    paths:
+      - "products/nbros/**"
+      - "platform/ithute-auth/**"
+      - "platform/ithute-realtime/**"
+      - ".github/workflows/nbros-fleet-ci.yml"
+  pull_request:
+    branches: [main, nbros]
+    paths:
+      - "products/nbros/**"
+      - "platform/ithute-auth/**"
+      - "platform/ithute-realtime/**"
+      - ".github/workflows/nbros-fleet-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nbros-fleet-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: FastAPI · Alembic · Fleet rules
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: nbros_test
+          POSTGRES_USER: nbros
+          POSTGRES_PASSWORD: nbros-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nbros -d nbros_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: products/nbros/apps/backend
+    env:
+      NBROS_DATABASE_URL: postgresql+psycopg://nbros:nbros-test-password@127.0.0.1:5432/nbros_test
+      NBROS_REDIS_URL: redis://127.0.0.1:6379/0
+      NBROS_REALTIME_PUBLISH_ENABLED: "false"
+      NBROS_AI_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            products/nbros/apps/backend/requirements.txt
+            products/nbros/apps/backend/requirements-dev.txt
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+      - name: Compile Python sources
+        run: python -m compileall -q app alembic tests
+      - name: Apply Fleet migrations to PostgreSQL
+        run: alembic upgrade head
+      - name: Verify Alembic/model drift
+        run: alembic check
+      - name: Run Fleet regression tests
+        run: pytest -q --maxfail=1
+
+  frontend:
+    name: Next.js · TypeScript · production build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: products/nbros/apps/frontend
+    env:
+      NBROS_PUBLIC_URL: https://nbro.ithute.co.ls
+      NBROS_AUTH_ISSUER: https://auth.ithute.co.ls
+      NBROS_AUTH_CLIENT_ID: nbros
+      NBROS_OIDC_REDIRECT_URI: https://nbro.ithute.co.ls/api/auth/oidc/callback
+      NBROS_COOKIE_SECURE: "true"
+      NBROS_REALTIME_WS_URL: wss://realtime.ithute.co.ls/v1/ws
+      NBROS_BACKEND_INTERNAL_URL: http://127.0.0.1:8203
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: products/nbros/apps/frontend/package.json
+      - name: Install frontend dependencies
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build production frontend
+        run: npm run build
+
+  compose:
+    name: Compose · deployment contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate NBros Compose
+        env:
+          NBROS_DB_PASSWORD: nbros-compose-validation-password
+          NBROS_REALTIME_SERVICE_CLIENT_SECRET: ""
+          NBROS_AI_ENABLED: "false"
+        run: docker compose -f products/nbros/compose.yaml config -q
+      - name: Verify Caddy routes
+        run: |
+          grep -F '/api/v1/*' products/nbros/deploy/Caddyfile.nbro
+          grep -F '/api/fleet/*' products/nbros/deploy/Caddyfile.nbro

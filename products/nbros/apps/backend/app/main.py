@@ -7,6 +7,7 @@ from sqlalchemy import select, text
 from .auth import current_claims
 from .config import settings
 from .db import SessionLocal, engine
+from .file_compat import router as file_compat_router
 from .fleet import router as fleet_router
 from .fleet_advisor import router as fleet_advisor_router
 from .fleet_alerts_api import router as fleet_alerts_router
@@ -15,13 +16,14 @@ from .fleet_reports import router as fleet_reports_router
 from .fleet_views import router as fleet_views_router
 from .models import Profile
 
-app = FastAPI(title="NBros API", version="0.4.0", redoc_url=None)
+app = FastAPI(title="NBros API", version="1.0.0", redoc_url=None)
 app.include_router(fleet_router)
 app.include_router(fleet_views_router)
 app.include_router(fleet_alerts_router)
 app.include_router(fleet_inventory_router)
 app.include_router(fleet_reports_router)
 app.include_router(fleet_advisor_router)
+app.include_router(file_compat_router)
 
 
 @app.get("/healthz")
@@ -61,4 +63,9 @@ def me(claims: dict = Depends(current_claims)) -> dict[str, str | None]:
             profile.email_snapshot = email
             db.commit()
 
-        return {"id": str(profile.id), "auth_user_id": str(profile.auth_user_id), "email": profile.email_snapshot, "role": profile.role}
+        return {
+            "id": str(profile.id),
+            "auth_user_id": str(profile.auth_user_id),
+            "email": profile.email_snapshot,
+            "role": profile.role,
+        }

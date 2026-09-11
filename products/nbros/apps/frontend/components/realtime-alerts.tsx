@@ -22,6 +22,20 @@ export default function RealtimeAlerts() {
     let stopped = false;
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
+    let refreshTimer: number | null = null;
+
+    const refreshSession = async () => {
+      if (stopped) return;
+      try {
+        await fetch("/api/auth/refresh", {
+          method: "POST",
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+      } catch {
+        // A later protected navigation will re-enter the refresh/login flow.
+      }
+    };
 
     const scheduleReconnect = () => {
       if (stopped || reconnectTimer !== null) return;
@@ -88,12 +102,22 @@ export default function RealtimeAlerts() {
       }
     };
 
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refreshSession();
+      }
+    };
+
     void connect();
+    refreshTimer = window.setInterval(() => void refreshSession(), 7 * 60 * 1000);
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       stopped = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
+      if (refreshTimer !== null) window.clearInterval(refreshTimer);
       if (clearTimer.current !== null) window.clearTimeout(clearTimer.current);
       socket?.close();
     };
