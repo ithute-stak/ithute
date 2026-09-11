@@ -46,11 +46,13 @@ class Settings(BaseSettings):
     first_party_clients: str = (
         "loanhub:LoanHub,rsl-pos:RSL POS,mailbox-dns:Mailbox DNS,"
         "ithute-account:Ithute Account,ithute-tutor:Ithute Tutor,ithute-pay:Ithute Pay,"
-        "ithute-realtime:!thute Realtime"
+        "nbros:NBros,ithute-realtime:!thute Realtime"
     )
-    redirect_uris_json: str = "{}"
+    redirect_uris_json: str = (
+        '{"nbros":["https://nbro.ithute.co.ls/api/auth/oidc/callback"]}'
+    )
     service_client_secrets_json: str = "{}"
-    cors_origins: str = "https://panel.ithute.co.ls"
+    cors_origins: str = "https://panel.ithute.co.ls,https://nbro.ithute.co.ls"
     push_events_url: str = "http://ithute-push:8080/v1/internal/auth-events"
     push_event_worker_poll_seconds: float = 2.0
     push_event_request_timeout_seconds: float = 5.0
