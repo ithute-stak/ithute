@@ -54,6 +54,7 @@ jobs:
       run:
         working-directory: products/nbros/apps/backend
     env:
+      PYTHONPATH: .
       NBROS_DATABASE_URL: postgresql+psycopg://nbros:nbros-test-password@127.0.0.1:5432/nbros_test
       NBROS_REDIS_URL: redis://127.0.0.1:6379/0
       NBROS_REALTIME_PUBLISH_ENABLED: "false"
