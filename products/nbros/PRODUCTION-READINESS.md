@@ -4,11 +4,13 @@ NBros is designed as an isolated product using Ithute Central Auth and Ithute Ce
 
 ## Release gate
 
-A production release is acceptable only when the `NBros Fleet CI` workflow is fully green on the exact commit being deployed. The gate verifies Python compilation, all Alembic migrations, zero model/schema drift, Fleet and enterprise API contracts, backend regressions, Next.js type checking and production build, Compose validation, Caddy routing/security headers, and a PostgreSQL backup/restore round-trip.
+A production release is acceptable only when the `NBros Main Release Gate` workflow is fully green on the exact commit being released. The same gate runs on `nbros`, on the pull request to `main`, and again on the exact `main` revision after merge. It verifies Python compilation, all Alembic migrations, zero model/schema drift, Fleet and enterprise API contracts, backend regressions, Next.js type checking and production build, standalone and production-overlay Compose validation, deployment script syntax, shared-edge cutover rendering/security headers, and a PostgreSQL backup/restore round-trip.
+
+The retired BuildTrack CI and BuildTrack production workflows have been removed. `nbro.ithute.co.ls` is now owned by NBros; the deployment renderer replaces the legacy BuildTrack edge aliases with the isolated `nbros-backend` and `nbros-frontend` aliases only after NBros is healthy.
 
 ## Runtime secrets
 
-Do not commit database passwords, Central Auth service credentials, AI credentials or other runtime secrets. Keep them in the production environment or secret manager. The repository only contains placeholders/default non-secret configuration.
+Do not commit database passwords, Central Auth service credentials, AI credentials or other runtime secrets. Keep them in the production environment or secret manager. The repository only contains placeholders/default non-secret configuration. On first production deployment, the NBros deployment script creates strong product-local database/realtime secrets on the VPS and preserves those runtime-owned values on later releases.
 
 ## Database backup
 
@@ -30,22 +32,23 @@ Store production backups outside the application host as well. A backup is not c
 
 ## Deployment sequence
 
-1. Confirm the exact `nbros` commit has a completely successful CI run.
-2. Take a fresh PostgreSQL backup and verify it.
-3. Confirm persistent volume names for PostgreSQL, Redis and uploads have not changed unexpectedly.
-4. Pull/build the exact release commit.
-5. Run `alembic upgrade head` through the backend startup process.
-6. Start PostgreSQL/Redis, backend, Fleet monitor and frontend.
-7. Confirm `/healthz` and `/readyz` are healthy on the backend.
-8. Verify Central Auth sign-in and logout.
-9. Verify branch access, one Fleet readiness calculation, one vehicle request/match, one Workshop job, one procurement workflow and one report/export.
-10. Verify realtime Fleet alert delivery and confirm no active notification delivery error in Fleet monitor status.
+1. Confirm the exact `nbros` head and its pull-request checks are completely green.
+2. Merge the reviewed NBros pull request to `main`.
+3. Require `NBros Main Release Gate` to pass again on the exact merged `main` revision.
+4. Allow the established shared-platform sequence (`Commercial Release Regression` → `Build and Deploy Production`) to complete successfully first.
+5. `Deploy NBros Production` then builds the exact merged revision, stages the isolated NBros product and preserves existing runtime data/secrets.
+6. Take/verify the pre-change NBros PostgreSQL backup and back up uploads when an existing uploads volume is present.
+7. Start the product-owned PostgreSQL and Redis, apply Alembic through backend startup, and require backend readiness before proceeding.
+8. Start the Fleet monitor and frontend, then verify local health.
+9. Provision the runtime-only NBros service credential into Central Auth without replacing sibling service-client registrations.
+10. Verify Central Auth and Central Realtime are healthy, validate the existing TLS certificate contains `nbro.ithute.co.ls`, render/test the shared Nginx cutover, and only then route public NBros traffic to `nbros-backend`/`nbros-frontend`.
+11. Verify public `/healthz`, `/readyz`, the frontend, Central Auth login redirection, Central Auth health, Central Realtime health and TLS SAN from the GitHub runner.
 
 ## Security controls
 
-NBros responses receive request IDs, MIME-sniffing protection, clickjacking protection, referrer policy, permissions policy and cross-origin opener protection. Caddy additionally supplies HSTS and matching browser security headers at the edge. Company branch access is managed through the Governance API and important changes are written to the audit trail.
+NBros responses receive request IDs, MIME-sniffing protection, clickjacking protection, referrer policy, permissions policy and cross-origin opener protection. The HTTPS edge additionally supplies HSTS and matching browser security headers. Company branch access is managed through the Governance API and important changes are written to the audit trail.
 
-The internal `/metrics` endpoint is intentionally omitted from OpenAPI and is not routed by the public Caddy configuration. It is intended for host/internal-network observability only.
+The internal `/metrics` endpoint is intentionally omitted from OpenAPI and is not routed by the public edge configuration. It is intended for host/internal-network observability only.
 
 ## Recovery
 
