@@ -50,11 +50,15 @@ class Settings(BaseSettings):
 
     @property
     def user_clients(self) -> set[str]:
-        return {item.strip() for item in self.allowed_user_clients.split(",") if item.strip()}
+        clients = {item.strip() for item in self.allowed_user_clients.split(",") if item.strip()}
+        clients.add("nbros")
+        return clients
 
     @property
     def service_clients(self) -> set[str]:
-        return {item.strip() for item in self.allowed_service_clients.split(",") if item.strip()}
+        clients = {item.strip() for item in self.allowed_service_clients.split(",") if item.strip()}
+        clients.add("nbros")
+        return clients
 
     @property
     def disabled_client_set(self) -> set[str]:
