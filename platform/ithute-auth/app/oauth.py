@@ -140,10 +140,44 @@ def _browser_user(request: Request, db: Session, settings: Settings) -> User | N
     return user
 
 
-def _login_html(fields: dict[str, str]) -> str:
+def _authorization_fields(
+    *,
+    response_type: str,
+    client_id: str,
+    redirect_uri: str,
+    code_challenge: str,
+    code_challenge_method: str,
+    state: str,
+    nonce: str,
+    scope: str,
+) -> dict[str, str]:
+    return {
+        "response_type": response_type,
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "code_challenge": code_challenge,
+        "code_challenge_method": code_challenge_method,
+        "state": state,
+        "nonce": nonce,
+        "scope": scope,
+    }
+
+
+def _login_html(
+    fields: dict[str, str],
+    *,
+    identifier: str = "",
+    error: str | None = None,
+) -> str:
     hidden = "\n".join(
         f'<input type="hidden" name="{html.escape(key)}" value="{html.escape(value, quote=True)}">'
         for key, value in fields.items()
+    )
+    identifier_value = html.escape(identifier, quote=True)
+    error_html = (
+        f'<div class="error" role="alert">{html.escape(error)}</div>'
+        if error
+        else ""
     )
     return f"""<!doctype html>
 <html lang="en">
@@ -152,23 +186,29 @@ def _login_html(fields: dict[str, str]) -> str:
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Sign in to !thute</title>
   <style>
-    body{{font-family:system-ui,sans-serif;max-width:420px;margin:8vh auto;padding:24px;color:#17202a}}
+    body{{font-family:system-ui,sans-serif;max-width:420px;margin:8vh auto;padding:24px;color:#17202a;background:#f8fafc}}
+    main{{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:26px;box-shadow:0 14px 40px rgba(15,23,42,.08)}}
     form{{display:grid;gap:14px}} label{{display:grid;gap:6px;font-weight:600}}
     input{{padding:11px 12px;border:1px solid #c9d1d9;border-radius:8px;font:inherit}}
-    button{{padding:11px;border:0;border-radius:8px;background:#111827;color:white;font:inherit;font-weight:700;cursor:pointer}}
+    input:focus{{outline:3px solid rgba(121,13,41,.12);border-color:#790d29}}
+    button{{padding:11px;border:0;border-radius:8px;background:#790d29;color:white;font:inherit;font-weight:700;cursor:pointer}}
     p{{color:#5b6573}} small{{color:#6b7280;font-weight:400}}
+    .error{{margin:0 0 16px;padding:10px 12px;border:1px solid #efb7bf;border-radius:8px;background:#fdecef;color:#9f1d2d;font-size:14px;font-weight:650}}
   </style>
 </head>
 <body>
-  <h1>Sign in to !thute</h1>
-  <p>Use your central Ithute account to continue.</p>
-  <form method="post" action="/oauth/authorize">
-    {hidden}
-    <label>Email or phone<input name="identifier" autocomplete="username" required></label>
-    <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
-    <label>Authenticator or recovery code <small>Required only when MFA is enabled</small><input name="mfa_code" inputmode="numeric" autocomplete="one-time-code"></label>
-    <button type="submit">Continue</button>
-  </form>
+  <main>
+    <h1>Sign in to !thute</h1>
+    <p>Use your central Ithute account to continue.</p>
+    {error_html}
+    <form method="post" action="/oauth/authorize">
+      {hidden}
+      <label>Email or phone<input name="identifier" value="{identifier_value}" autocomplete="username" required></label>
+      <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
+      <label>Authenticator or recovery code <small>Required only when MFA is enabled</small><input name="mfa_code" inputmode="numeric" autocomplete="one-time-code"></label>
+      <button type="submit">Continue</button>
+    </form>
+  </main>
 </body>
 </html>"""
 
@@ -215,16 +255,16 @@ def authorize_get(
 
     return HTMLResponse(
         _login_html(
-            {
-                "response_type": response_type,
-                "client_id": client_id,
-                "redirect_uri": redirect_uri,
-                "code_challenge": code_challenge,
-                "code_challenge_method": code_challenge_method,
-                "state": state,
-                "nonce": nonce,
-                "scope": normalized_scope,
-            }
+            _authorization_fields(
+                response_type=response_type,
+                client_id=client_id,
+                redirect_uri=redirect_uri,
+                code_challenge=code_challenge,
+                code_challenge_method=code_challenge_method,
+                state=state,
+                nonce=nonce,
+                scope=normalized_scope,
+            )
         )
     )
 
@@ -258,10 +298,27 @@ def authorize_post(
         state=state,
         nonce=nonce,
     )
+    fields = _authorization_fields(
+        response_type=response_type,
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        code_challenge=code_challenge,
+        code_challenge_method=code_challenge_method,
+        state=state,
+        nonce=nonce,
+        scope=normalized_scope,
+    )
+
+    def login_error(message: str, status_code: int) -> HTMLResponse:
+        return HTMLResponse(
+            _login_html(fields, identifier=identifier, error=message),
+            status_code=status_code,
+        )
+
     if login_rate_limited(db, request=request, settings=settings):
         record_audit(db, event_type="oidc_login_rate_limited", success=False, client_id=client_id, request=request)
         db.commit()
-        raise HTTPException(status_code=429, detail="too_many_login_attempts")
+        return login_error("Too many sign-in attempts. Wait a few minutes and try again.", 429)
 
     email = normalize_email(identifier)
     phone = normalize_phone(identifier)
@@ -275,11 +332,11 @@ def authorize_post(
     if user is None:
         record_audit(db, event_type="oidc_login_failed", success=False, client_id=client_id, request=request)
         db.commit()
-        raise HTTPException(status_code=401, detail="invalid_credentials")
+        return login_error("The email or password is incorrect.", 401)
     if user.locked_until is not None and user.locked_until > now:
         record_audit(db, event_type="oidc_login_blocked", user=user, success=False, client_id=client_id, request=request)
         db.commit()
-        raise HTTPException(status_code=401, detail="invalid_credentials")
+        return login_error("The email or password is incorrect.", 401)
     if not verify_password(password, user.password_hash):
         user.failed_login_attempts += 1
         if user.failed_login_attempts >= settings.max_login_failures:
@@ -294,7 +351,7 @@ def authorize_post(
             details={"failed_attempts": user.failed_login_attempts},
         )
         db.commit()
-        raise HTTPException(status_code=401, detail="invalid_credentials")
+        return login_error("The email or password is incorrect.", 401)
     if not verify_second_factor(db, user=user, code=mfa_code or None, settings=settings):
         user.failed_login_attempts += 1
         if user.failed_login_attempts >= settings.max_login_failures:
@@ -309,7 +366,7 @@ def authorize_post(
             details={"failed_attempts": user.failed_login_attempts},
         )
         db.commit()
-        raise HTTPException(status_code=401, detail="mfa_required_or_invalid")
+        return login_error("Enter a valid authenticator or recovery code.", 401)
 
     user.failed_login_attempts = 0
     user.locked_until = None
