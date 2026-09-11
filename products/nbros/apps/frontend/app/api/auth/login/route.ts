@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { clientId, cookieSecure, discovery, redirectUri } from "@/lib/oidc";
 
@@ -7,12 +7,20 @@ function randomUrlSafe(bytes = 32): string {
   return randomBytes(bytes).toString("base64url");
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const codeVerifier = randomUrlSafe(32);
   const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
   const state = randomUrlSafe(32);
   const nonce = randomUrlSafe(32);
-  const oidc = await discovery();
+
+  let oidc;
+  try {
+    oidc = await discovery();
+  } catch {
+    const response = NextResponse.redirect(new URL("/?auth_error=auth_unavailable", request.url));
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  }
 
   const url = new URL(oidc.authorization_endpoint);
   url.searchParams.set("response_type", "code");
@@ -29,5 +37,6 @@ export async function GET() {
   response.cookies.set("nbros_oidc_verifier", codeVerifier, cookieOptions);
   response.cookies.set("nbros_oidc_state", state, cookieOptions);
   response.cookies.set("nbros_oidc_nonce", nonce, cookieOptions);
+  response.headers.set("Cache-Control", "no-store");
   return response;
 }
