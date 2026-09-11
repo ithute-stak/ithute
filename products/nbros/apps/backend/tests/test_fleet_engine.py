@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -113,7 +113,12 @@ def test_active_reservation_reports_expected_future_availability(db, branch, hea
     result = evaluate_vehicle(db, healthy_vehicle, at=NOW)
     assert result["availability"]["label"] == "EXPECTED LATER"
     assert result["availability"]["level"] == "orange"
-    assert result["availability"]["expected_available_at"] == release.isoformat()
+    recorded_release = datetime.fromisoformat(result["availability"]["expected_available_at"])
+    # SQLite drops timezone metadata for DateTime columns; PostgreSQL preserves it.
+    # Normalize the test value so the decision-engine contract is the same in both databases.
+    if recorded_release.tzinfo is None:
+        recorded_release = recorded_release.replace(tzinfo=timezone.utc)
+    assert recorded_release == release
 
 
 def test_match_rejects_unsuitable_driver_licence(db, branch, healthy_vehicle):
