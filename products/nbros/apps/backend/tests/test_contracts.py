@@ -3,10 +3,11 @@ from app.main import app
 
 
 def test_operational_routes_are_registered():
-    paths = {getattr(route, "path", "") for route in app.routes}
+    paths = set(app.openapi()["paths"])
     assert "/api/v1/fleet/advisor" in paths
     assert "/api/v1/fleet/reports/summary" in paths
     assert "/api/v1/fleet/inventory" in paths
+    assert "/api/v1/fleet/dashboard" in paths
     assert "/api/fleet/files/{branch_id}/{filename}" in paths
 
 
