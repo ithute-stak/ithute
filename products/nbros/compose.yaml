@@ -45,6 +45,10 @@ services:
       NBROS_AUTH_AUDIENCE: nbros
       NBROS_AUTH_JWKS_URL: ${NBROS_AUTH_JWKS_URL:-https://auth.ithute.co.ls/.well-known/jwks.json}
       NBROS_BOOTSTRAP_ADMIN_EMAIL: ${NBROS_BOOTSTRAP_ADMIN_EMAIL:-justy@ithute.co.ls}
+      NBROS_UPLOAD_DIR: /data/uploads
+      NBROS_MAX_UPLOAD_BYTES: ${NBROS_MAX_UPLOAD_BYTES:-10485760}
+    volumes:
+      - nbros_uploads:/data/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -94,3 +98,4 @@ networks:
 volumes:
   nbros_postgres:
   nbros_redis:
+  nbros_uploads:

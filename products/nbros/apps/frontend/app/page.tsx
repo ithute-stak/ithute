@@ -1,46 +1,43 @@
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
 export default async function Home() {
   const store = await cookies();
   const signedIn = Boolean(store.get("nbros_access")?.value);
 
+  if (signedIn) redirect("/fleet");
+
   return (
     <main className="foundation-page">
       <header className="brand-header">
         <div className="brand-lockup">
-          <div className="brand-mark" aria-hidden="true">NB</div>
-          <div className="brand-name">
+          <div className="brand-mark">NB</div>
+          <div>
             <strong>Nthane Brothers</strong>
-            <span>NBros management platform</span>
+            <span>NBros Management Platform</span>
           </div>
         </div>
-        <div className="status-pill">Powered by Ithute Solutions</div>
+        <span className="ithute-credit">Powered by !thute</span>
       </header>
-      <div className="brand-subbar" aria-hidden="true" />
-
-      <section className="hero-stage">
-        <div className="card">
-          <div className="badge">Nthane Brothers · NBros</div>
-          <h1>NBros</h1>
+      <div className="slate-band" />
+      <section className="foundation-stage">
+        <div className="foundation-card">
+          <span className="eyebrow">NBros · Secure Operations Platform</span>
+          <h1>Fleet Management starts here.</h1>
           <p>
-            The new Nthane Brothers product foundation is ready. Central authentication,
-            product-owned PostgreSQL and Redis, Alembic migrations, FastAPI, Next.js,
-            and Ithute central realtime are prepared. Business functionality will begin
-            from the project description you provide next.
+            Manage branch-owned vehicles, compliance documents, services, mechanical
+            condition, inspections, drivers, trips, reservations and operational readiness
+            from one decision-driven system.
           </p>
           <div className="actions">
-            {!signedIn ? (
-              <a className="primary" href="/api/auth/login">Sign in with !thute</a>
-            ) : (
-              <form action="/api/auth/logout" method="post">
-                <button className="secondary" type="submit">Sign out</button>
-              </form>
-            )}
+            <a className="primary" href="/api/auth/login">Sign in with !thute</a>
           </div>
         </div>
       </section>
-
-      <footer className="brand-footer">Nthane Brothers · NBros</footer>
+      <footer className="brand-footer">
+        <strong>NTHANE BROTHERS</strong>
+        <span>NBros · Fleet Management System</span>
+      </footer>
     </main>
   );
 }

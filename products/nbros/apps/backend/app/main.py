@@ -7,9 +7,11 @@ from sqlalchemy import select, text
 from .auth import current_claims
 from .config import settings
 from .db import SessionLocal, engine
+from .fleet import router as fleet_router
 from .models import Profile
 
-app = FastAPI(title="NBros API", version="0.1.0", redoc_url=None)
+app = FastAPI(title="NBros API", version="0.2.0", redoc_url=None)
+app.include_router(fleet_router)
 
 
 @app.get("/healthz")

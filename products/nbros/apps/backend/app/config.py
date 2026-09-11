@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     auth_audience: str = "nbros"
     auth_jwks_url: str = "https://auth.ithute.co.ls/.well-known/jwks.json"
     bootstrap_admin_email: str = "justy@ithute.co.ls"
+    upload_dir: str = "/data/uploads"
+    max_upload_bytes: int = 10 * 1024 * 1024
 
     model_config = SettingsConfigDict(env_prefix="NBROS_", case_sensitive=False)
 
