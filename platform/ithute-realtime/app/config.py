@@ -10,8 +10,8 @@ class Settings(BaseSettings):
 
     auth_issuer: str = "https://auth.ithute.co.ls"
     auth_jwks_url: str = "https://auth.ithute.co.ls/.well-known/jwks.json"
-    allowed_user_clients: str = "loanhub,rsl-pos,mailbox-dns,ithute-account,ithute-tutor,ithute-pay"
-    allowed_service_clients: str = "loanhub,rsl-pos,mailbox-dns,ithute-account,ithute-tutor,ithute-pay"
+    allowed_user_clients: str = "loanhub,rsl-pos,mailbox-dns,ithute-account,ithute-tutor,ithute-pay,nbros"
+    allowed_service_clients: str = "loanhub,rsl-pos,mailbox-dns,ithute-account,ithute-tutor,ithute-pay,nbros"
     disabled_clients: str = ""
 
     auth_service_token_url: str = "http://ithute-auth:8080/v1/auth/service-token"
