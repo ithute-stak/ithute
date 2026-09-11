@@ -37,7 +37,11 @@ def monitor_once(redis_client: Redis) -> dict[str, int | str]:
     lock_seconds = max(settings.fleet_monitor_lock_seconds, settings.fleet_monitor_interval_seconds * 2, 30)
     if not redis_client.set(lock_key, token, nx=True, ex=lock_seconds):
         return {"status": "locked", "vehicles": 0, "notifications": 0}
-    vehicles_checked = 0; notifications_sent = 0; now = utcnow(); pending_notifications: list[dict[str, str | list[str]]] = []
+    vehicles_checked = 0
+    notifications_sent = 0
+    notification_failures = 0
+    now = utcnow()
+    pending_notifications: list[dict[str, str | list[str]]] = []
     try:
         with SessionLocal() as db:
             branch_ids = select(BranchModule.branch_id).where(BranchModule.module_key == "fleet", BranchModule.is_enabled.is_(True))
@@ -51,22 +55,40 @@ def monitor_once(redis_client: Redis) -> dict[str, int | str]:
                 for row in changed_rows:
                     pending_notifications.append({"recipient_subs": recipients, "alert_id": str(row.id), "branch_id": str(vehicle.branch_id), "vehicle_id": str(vehicle.id), "registration_plate": vehicle.registration_plate, "severity": row.severity, "label": row.label, "detail": row.detail, "source_type": row.source_type, "source_id": row.source_id, "fingerprint": row.fingerprint})
             db.commit()
+
             for item in pending_notifications:
+                row = db.get(FleetAlert, uuid.UUID(str(item["alert_id"])))
+                if row is None:
+                    continue
+                row.notification_attempts += 1
                 try:
                     sent = publisher.publish_fleet_alert(**item)
                     if sent:
                         notifications_sent += 1
-                        row = db.get(FleetAlert, uuid.UUID(str(item["alert_id"])))
-                        if row is not None: row.last_notified_at = now
-                except Exception:
+                        row.last_notified_at = now
+                        row.last_notification_error = None
+                    else:
+                        notification_failures += 1
+                        row.last_notification_error = "Realtime publisher reported no delivery."
+                except Exception as exc:
+                    notification_failures += 1
+                    row.last_notification_error = str(exc)[:2000] or exc.__class__.__name__
                     log.exception("Failed to publish fleet alert %s", item["alert_id"])
             db.commit()
-        result = {"status": "ok", "vehicles": vehicles_checked, "notifications": notifications_sent, "evaluated_at": now.isoformat()}
+
+        result = {
+            "status": "ok",
+            "vehicles": vehicles_checked,
+            "notifications": notifications_sent,
+            "notification_failures": notification_failures,
+            "evaluated_at": now.isoformat(),
+        }
         redis_client.set("nbros:fleet-monitor:last-run", json.dumps(result), ex=86400)
         return result
     finally:
         current = redis_client.get(lock_key)
-        if current and current.decode("utf-8") == token: redis_client.delete(lock_key)
+        if current and current.decode("utf-8") == token:
+            redis_client.delete(lock_key)
 
 
 def main() -> None:
@@ -75,8 +97,10 @@ def main() -> None:
     log.info("NBros Fleet monitor started; interval=%ss", interval)
     while True:
         started = time.monotonic()
-        try: log.info("Fleet monitor result: %s", monitor_once(redis_client))
-        except Exception: log.exception("Fleet monitor cycle failed")
+        try:
+            log.info("Fleet monitor result: %s", monitor_once(redis_client))
+        except Exception:
+            log.exception("Fleet monitor cycle failed")
         time.sleep(max(interval - (time.monotonic() - started), 1))
 
 
