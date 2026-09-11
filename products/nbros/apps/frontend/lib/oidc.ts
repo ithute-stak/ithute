@@ -3,6 +3,7 @@ export type OidcDiscovery = {
   authorization_endpoint: string;
   token_endpoint: string;
   jwks_uri: string;
+  password_login_endpoint?: string;
 };
 
 export function authIssuer(): string {
