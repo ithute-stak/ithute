@@ -2,13 +2,13 @@ name: Deploy NBros Production
 
 on:
   workflow_run:
-    workflows: ["NBros Main Release Gate"]
+    workflows: ["Build and Deploy Production"]
     types: [completed]
     branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: ithute-production-vps
+  group: ithute-production
   cancel-in-progress: false
 
 permissions:
