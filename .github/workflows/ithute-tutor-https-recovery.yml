@@ -8,6 +8,7 @@ on:
       - '.github/workflows/enforce-production-domain-identity.yml'
       - 'scripts/ithute-tutor-edge-finalize.sh'
       - 'scripts/enforce-production-domain-identity.sh'
+      - 'products/nbros/deploy/render-shared-edge.py'
       - 'infrastructure/ithute-edge/default.conf.template'
       - 'infrastructure/caddy/Caddyfile'
   workflow_run:
@@ -46,12 +47,20 @@ jobs:
           set -eu
           sh -n scripts/ithute-tutor-edge-finalize.sh
           sh -n scripts/enforce-production-domain-identity.sh
+          python3 -m py_compile products/nbros/deploy/render-shared-edge.py
           grep -Fq 'cert-name ithute-edge' scripts/ithute-tutor-edge-finalize.sh
           grep -Fq 'panel.ithute.co.ls' scripts/ithute-tutor-edge-finalize.sh
           grep -Fq 'push.ithute.co.ls' scripts/ithute-tutor-edge-finalize.sh
           grep -Fq 'realtime.ithute.co.ls' scripts/ithute-tutor-edge-finalize.sh
           grep -Fq 'nginx -t' scripts/ithute-tutor-edge-finalize.sh
           grep -Fq 'EDGE_HEALTH_HOST:-panel.ithute.co.ls' scripts/ithute-tutor-edge-finalize.sh
+          grep -Fq 'Refusing staged edge template with retired BuildTrack upstreams' scripts/ithute-tutor-edge-finalize.sh
+          python3 products/nbros/deploy/render-shared-edge.py \
+            infrastructure/ithute-edge/default.conf.template /tmp/ithute-tutor-edge-validated.conf
+          grep -Fq 'server_name nbro.ithute.co.ls;' /tmp/ithute-tutor-edge-validated.conf
+          grep -Fq 'nbros-backend:8000' /tmp/ithute-tutor-edge-validated.conf
+          grep -Fq 'nbros-frontend:3000' /tmp/ithute-tutor-edge-validated.conf
+          ! grep -Eq 'buildtrack-(backend|frontend)' /tmp/ithute-tutor-edge-validated.conf
           if grep -Eq 'docker[[:space:]]+volume[[:space:]]+(rm|prune)|--remove-orphans|--volumes' scripts/ithute-tutor-edge-finalize.sh; then
             echo '::error::Tutor HTTPS recovery must not remove shared product containers or persistent volumes.'
             exit 1
@@ -82,6 +91,7 @@ jobs:
           set -eu
           [ -n "${VPS_SSH_KEY:-}" ] || { echo '::error::VPS_SSH_KEY is required'; exit 1; }
           sh -n scripts/ithute-tutor-edge-finalize.sh
+          python3 -m py_compile products/nbros/deploy/render-shared-edge.py
 
       - name: Configure SSH identity
         run: |
@@ -114,8 +124,15 @@ jobs:
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
+          rendered="/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf"
+          python3 products/nbros/deploy/render-shared-edge.py \
+            infrastructure/ithute-edge/default.conf.template "$rendered"
+          grep -Fq 'server_name nbro.ithute.co.ls;' "$rendered"
+          grep -Fq 'nbros-backend:8000' "$rendered"
+          grep -Fq 'nbros-frontend:3000' "$rendered"
+          ! grep -Eq 'buildtrack-(backend|frontend)' "$rendered"
           scp scripts/ithute-tutor-edge-finalize.sh "$remote:/tmp/ithute-tutor-edge-finalize-${DEPLOY_SHA}.sh"
-          scp infrastructure/ithute-edge/default.conf.template "$remote:/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf"
+          scp "$rendered" "$remote:/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf"
 
       - name: Finalize shared HTTPS edge
         run: |
