@@ -1,4 +1,7 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
+
+import RealtimeAlerts from "@/components/realtime-alerts";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -6,10 +9,16 @@ export const metadata: Metadata = {
   description: "NBros by Ithute Solutions",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const store = await cookies();
+  const signedIn = Boolean(store.get("nbros_access")?.value);
+
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {signedIn ? <RealtimeAlerts /> : null}
+        {children}
+      </body>
     </html>
   );
 }

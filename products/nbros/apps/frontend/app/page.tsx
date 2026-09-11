@@ -1,29 +1,43 @@
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
 export default async function Home() {
   const store = await cookies();
   const signedIn = Boolean(store.get("nbros_access")?.value);
 
+  if (signedIn) redirect("/fleet");
+
   return (
-    <main>
-      <section className="card">
-        <div className="badge">Ithute Solutions · NBros</div>
-        <h1>NBros foundation is ready.</h1>
-        <p>
-          Central authentication, product-owned PostgreSQL and Redis, Alembic migrations,
-          FastAPI, Next.js, and the central Ithute realtime contract are prepared. Business
-          functionality will begin only after the project description is supplied.
-        </p>
-        <div className="actions">
-          {!signedIn ? (
+    <main className="foundation-page">
+      <header className="brand-header">
+        <div className="brand-lockup">
+          <div className="brand-mark">NB</div>
+          <div>
+            <strong>Nthane Brothers</strong>
+            <span>NBros Management Platform</span>
+          </div>
+        </div>
+        <span className="ithute-credit">Powered by !thute</span>
+      </header>
+      <div className="slate-band" />
+      <section className="foundation-stage">
+        <div className="foundation-card">
+          <span className="eyebrow">NBros · Secure Operations Platform</span>
+          <h1>Fleet Management starts here.</h1>
+          <p>
+            Manage branch-owned vehicles, compliance documents, services, mechanical
+            condition, inspections, drivers, trips, reservations and operational readiness
+            from one decision-driven system.
+          </p>
+          <div className="actions">
             <a className="primary" href="/api/auth/login">Sign in with !thute</a>
-          ) : (
-            <form action="/api/auth/logout" method="post">
-              <button className="secondary" type="submit">Sign out</button>
-            </form>
-          )}
+          </div>
         </div>
       </section>
+      <footer className="brand-footer">
+        <strong>NTHANE BROTHERS</strong>
+        <span>NBros · Fleet Management System</span>
+      </footer>
     </main>
   );
 }

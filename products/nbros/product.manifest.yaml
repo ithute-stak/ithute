@@ -18,4 +18,5 @@ deployment:
   preserve_existing_data: true
   require_pre_migration_backup: true
   reject_unexpected_volume_change: true
-capabilities: []
+capabilities:
+  - fleet-management

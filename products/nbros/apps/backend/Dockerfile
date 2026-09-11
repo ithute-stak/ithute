@@ -8,7 +8,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN addgroup --system app && adduser --system --ingroup app --home /app app
+RUN addgroup --system app \
+    && adduser --system --ingroup app --home /app app \
+    && mkdir -p /data/uploads \
+    && chown -R app:app /data
 
 COPY requirements.txt ./
 RUN python -m pip install --upgrade pip && python -m pip install -r requirements.txt
