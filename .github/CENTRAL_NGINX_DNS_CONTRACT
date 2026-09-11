@@ -1,0 +1,1 @@
+Central Ithute Auth, Push and Realtime routing must use request-time Docker DNS through infrastructure/nginx/default.conf. Static proxy_pass targets for ithute-auth, ithute-push or ithute-realtime are forbidden because those containers are independently recreated in production.
