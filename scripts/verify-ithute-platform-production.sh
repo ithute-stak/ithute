@@ -42,13 +42,22 @@ grep -q 'REALTIME_PUSH_URL: http://ithute-push:8080' "$compose_file" || fail "Re
 grep -q 'PUSH_DELEGATED_SERVICE_CLIENTS:' "$compose_file" || fail "delegated Push allowlist is missing"
 
 # Internal nginx is the single platform upstream used by the shared public edge.
+# Auth, Push and Realtime are independently recreated during product releases,
+# so their service names must be resolved through Docker DNS at request time.
+grep -q 'resolver 127\.0\.0\.11' "$nginx_file" || fail "Docker DNS resolver is missing"
 grep -q 'server_name auth\.ithute\.co\.ls;' "$nginx_file" || fail "Auth hostname route is missing"
-grep -q 'proxy_pass http://ithute-auth:8080;' "$nginx_file" || fail "Auth hostname is not routed to Auth"
+grep -Fq 'set $ithute_auth_upstream http://ithute-auth:8080;' "$nginx_file" || fail "Auth dynamic upstream is missing"
+grep -Fq 'proxy_pass $ithute_auth_upstream;' "$nginx_file" || fail "Auth hostname is not routed through dynamic Docker DNS"
 grep -q 'server_name push\.ithute\.co\.ls;' "$nginx_file" || fail "Push hostname route is missing"
-grep -q 'proxy_pass http://ithute-push:8080;' "$nginx_file" || fail "Push hostname is not routed to Push"
+grep -Fq 'set $ithute_push_upstream http://ithute-push:8080;' "$nginx_file" || fail "Push dynamic upstream is missing"
+grep -Fq 'proxy_pass $ithute_push_upstream;' "$nginx_file" || fail "Push hostname is not routed through dynamic Docker DNS"
 grep -q 'server_name realtime\.ithute\.co\.ls;' "$nginx_file" || fail "Realtime hostname route is missing"
-grep -q 'proxy_pass http://ithute-realtime:8080/v1/ws;' "$nginx_file" || fail "Realtime WebSocket is not routed"
+grep -Fq 'set $ithute_realtime_upstream http://ithute-realtime:8080;' "$nginx_file" || fail "Realtime dynamic upstream is missing"
+[ "$(grep -Fc 'proxy_pass $ithute_realtime_upstream;' "$nginx_file")" -eq 2 ] || fail "Realtime HTTP and WebSocket routes are not both dynamic"
 grep -q 'proxy_set_header Upgrade \$http_upgrade;' "$nginx_file" || fail "WebSocket upgrade header is missing"
+if grep -Eq 'proxy_pass[[:space:]]+http://ithute-(auth|push|realtime):' "$nginx_file"; then
+  fail "central Nginx contains a static Docker service upstream"
+fi
 
 # Production deployment must back up all central databases before migrations,
 # wait for all APIs, and verify host-based routing through nginx.
