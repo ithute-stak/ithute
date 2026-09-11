@@ -9,6 +9,7 @@ from app import models  # noqa: F401
 from app import fleet_alerts  # noqa: F401
 from app import fleet_inventory  # noqa: F401
 from app import enterprise_models  # noqa: F401
+from app import enterprise_maturity_models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
