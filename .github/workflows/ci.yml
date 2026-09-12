@@ -12,7 +12,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -41,13 +41,13 @@ jobs:
           bash -n scripts/bootstrap-mail.sh
           bash -n mail/renew-tls.sh
 
-      - name: Enforce VPS deployment safety boundary
+      - name: Enforce runtime-only VPS deployment boundary
         run: |
           set -eu
           python3 - <<'PY'
           from pathlib import Path
 
-          targets = [
+          runtime_targets = [
               Path('.github/workflows/fresh-cutover.yml'),
               Path('.github/workflows/deploy-production.yml'),
               Path('.github/workflows/finalize-mail.yml'),
@@ -63,17 +63,32 @@ jobs:
               'global network prune': 'docker network prune',
               'global builder prune': 'docker builder prune',
               'global system prune': 'docker system prune',
+              'VPS source clone': 'git clone',
+              'VPS source fetch': 'git fetch',
+              'VPS source reset': 'git reset --hard',
           }
 
           failures = []
-          for path in targets:
+          for path in runtime_targets:
               text = path.read_text(encoding='utf-8')
               for label, needle in forbidden.items():
                   if needle in text:
                       failures.append(f'{path}: {label} ({needle})')
 
           if failures:
-              raise SystemExit('Unsafe VPS-wide deployment command found:\n' + '\n'.join(failures))
+              raise SystemExit('Unsafe or source-based VPS deployment operation found:\n' + '\n'.join(failures))
+
+          compose = Path('compose.production.yml').read_text(encoding='utf-8')
+          if '\n    build:' in compose or '\n      build:' in compose:
+              raise SystemExit('Production compose must not contain application build contexts.')
+          for image in ('ithute-web:', 'ithute-auth:', 'ithute-push:', 'ithute-realtime:'):
+              if f'image: {image}${{ITHUTE_IMAGE_TAG' not in compose:
+                  raise SystemExit(f'Missing immutable runtime image declaration for {image}')
+
+          deploy = Path('.github/workflows/deploy-production.yml').read_text(encoding='utf-8')
+          for source_dir in ('apps', 'platform'):
+              if f'            {source_dir} \\' in deploy:
+                  raise SystemExit(f'Production bundle still contains source directory: {source_dir}')
           PY
 
           grep -Fq 'group: ithute-vps-production' .github/workflows/fresh-cutover.yml
@@ -84,9 +99,13 @@ jobs:
           grep -Fq '/home/administrator/ithute-platform' scripts/bootstrap-vps.sh
           ! grep -Fq " sh -s\" <<'REMOTE'" .github/workflows/deploy-production.yml
           grep -Fq " bash -s\" <<'REMOTE'" .github/workflows/deploy-production.yml
+          grep -Fq 'compose up -d --remove-orphans --no-build' scripts/deploy-production.sh
+          ! grep -Fq 'compose build' scripts/deploy-production.sh
+          ! grep -Fq 'docker compose build' scripts/deploy-production.sh
 
       - name: Render standalone application topology
         env:
+          ITHUTE_IMAGE_TAG: 0000000000000000000000000000000000000000
           ITHUTE_AUTH_DB_PASSWORD: ci-auth-db-password
           ITHUTE_PUSH_DB_PASSWORD: ci-push-db-password
           ITHUTE_REALTIME_DB_PASSWORD: ci-realtime-db-password
@@ -105,6 +124,7 @@ jobs:
           grep -q 'ithute-realtime:' /tmp/ithute-production.yml
           grep -q 'caddy:' /tmp/ithute-production.yml
           ! grep -Eq 'external:[[:space:]]*true' /tmp/ithute-production.yml
+          ! grep -Eq '^[[:space:]]*build:' /tmp/ithute-production.yml
           ! grep -Eiq 'loanhub|nbros|buildtrack|mailbox-dns|ithute-tutor|ithute-pay' /tmp/ithute-production.yml
 
       - name: Validate Ithute-only ingress
@@ -127,19 +147,43 @@ jobs:
           ! grep -Eq 'external:[[:space:]]*true' /tmp/ithute-mail.yml
           ! grep -Eiq 'loanhub|nbros|buildtrack|ithute-tutor|ithute-pay|mailbox-dns' /tmp/ithute-mail.yml
 
-      - name: Build all standalone Ithute images
-        env:
-          ITHUTE_AUTH_DB_PASSWORD: ci-auth-db-password
-          ITHUTE_PUSH_DB_PASSWORD: ci-push-db-password
-          ITHUTE_REALTIME_DB_PASSWORD: ci-realtime-db-password
-          ITHUTE_AUTH_TOTP_ENCRYPTION_KEY: eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg=
-          ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY: eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXk=
-          ITHUTE_SERVICE_REALTIME_SECRET: ci-realtime-service-secret-0000000000000000
-          ITHUTE_SYSTEM_OWNER_PASSWORD: ci-owner-password-12345
-          ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON: '{"ithute-realtime":"ci-realtime-service-secret-0000000000000000"}'
-          ITHUTE_AUTH_REDIRECT_URIS_JSON: '{}'
+      - name: Build immutable Ithute images on GitHub runner
         run: |
-          docker compose -f compose.production.yml build ithute-web ithute-auth ithute-push ithute-realtime
+          set -euo pipefail
+          tag="$GITHUB_SHA"
+          docker build --pull --target runner -t "ithute-web:$tag" ./apps/frontend
+          docker build --pull -t "ithute-auth:$tag" ./platform/ithute-auth
+          docker build --pull -t "ithute-push:$tag" ./platform/ithute-push
+          docker build --pull -t "ithute-realtime:$tag" ./platform/ithute-realtime
+          docker image inspect "ithute-web:$tag" >/dev/null
+          docker image inspect "ithute-auth:$tag" >/dev/null
+          docker image inspect "ithute-push:$tag" >/dev/null
+          docker image inspect "ithute-realtime:$tag" >/dev/null
+
+      - name: Package tested images for production deployment
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_SHA"
+          docker save \
+            "ithute-web:$tag" \
+            "ithute-auth:$tag" \
+            "ithute-push:$tag" \
+            "ithute-realtime:$tag" \
+            | gzip -1 > "ithute-images-$tag.tar.gz"
+          sha256sum "ithute-images-$tag.tar.gz" > "ithute-images-$tag.sha256"
+
+      - name: Upload tested image bundle
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ithute-images-${{ github.sha }}
+          path: |
+            ithute-images-${{ github.sha }}.tar.gz
+            ithute-images-${{ github.sha }}.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
 
       - name: Enforce repository boundary
         run: |
