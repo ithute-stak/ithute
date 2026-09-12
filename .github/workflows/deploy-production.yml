@@ -64,7 +64,20 @@ jobs:
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
+      - name: Check fresh-bootstrap state
+        id: bootstrap
+        run: |
+          set -eu
+          remote="${VPS_USER}@${VPS_HOST}"
+          if ssh "$remote" "test -f '$VPS_APP_DIR/.ithute-bootstrapped' && test -f '$VPS_APP_DIR/.env.production'"; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo 'VPS is not freshly bootstrapped yet; automatic deployment will be skipped cleanly.'
+          fi
+
       - name: Build deployment bundle
+        if: steps.bootstrap.outputs.ready == 'true'
         run: |
           set -eu
           tar -czf "/tmp/ithute-${DEPLOY_SHA}.tgz" \
@@ -79,23 +92,20 @@ jobs:
             SECURITY.md
 
       - name: Upload and deploy only Ithute
+        if: steps.bootstrap.outputs.ready == 'true'
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "mkdir -p '$VPS_APP_DIR' && chmod 700 '$VPS_APP_DIR'"
           scp "/tmp/ithute-${DEPLOY_SHA}.tgz" "$remote:/tmp/ithute-${DEPLOY_SHA}.tgz"
           ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' sh -s" <<'REMOTE'
           set -eu
           tar -xzf "/tmp/ithute-${DEPLOY_SHA}.tgz" -C "$APP_DIR"
           rm -f "/tmp/ithute-${DEPLOY_SHA}.tgz"
-          test -f "$APP_DIR/.env.production" || {
-            echo "Fresh VPS bootstrap has not been completed. Run bash scripts/bootstrap-vps.sh on the VPS once." >&2
-            exit 2
-          }
           ITHUTE_APP_DIR="$APP_DIR" ITHUTE_REQUIRE_PUBLIC_HEALTH=1 bash "$APP_DIR/scripts/deploy-production.sh"
           REMOTE
 
       - name: Verify public Ithute endpoints
+        if: steps.bootstrap.outputs.ready == 'true'
         run: |
           set -eu
           html="$(curl --retry 12 --retry-delay 3 --retry-all-errors -fsS https://ithute.co.ls/)"
@@ -103,3 +113,9 @@ jobs:
           curl --retry 8 --retry-delay 2 --retry-all-errors -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth
           curl --retry 8 --retry-delay 2 --retry-all-errors -fsS https://push.ithute.co.ls/readyz | grep -q '"status":"ready"'
           curl --retry 8 --retry-delay 2 --retry-all-errors -fsS https://realtime.ithute.co.ls/readyz | grep -q '"status":"ready"'
+
+      - name: Fresh bootstrap required
+        if: steps.bootstrap.outputs.ready != 'true'
+        run: |
+          echo 'Automatic deployment skipped: run the one-time fresh VPS bootstrap first.'
+          echo 'After bootstrap creates .ithute-bootstrapped, future successful main CI runs deploy automatically.'
