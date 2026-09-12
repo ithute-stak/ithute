@@ -8,6 +8,7 @@ BOOTSTRAP_MARKER="$APP_DIR/.ithute-bootstrapped"
 DEPLOY_SCRIPT="${ITHUTE_DEPLOY_SCRIPT:-/tmp/ithute-deploy-production.sh}"
 IMAGE_TAG="${ITHUTE_IMAGE_TAG:-}"
 OWNER_EMAIL="thekoetlisi@ithute.co.ls"
+PUBLIC_IPV4="${ITHUTE_PUBLIC_IPV4:-204.12.205.224}"
 
 for command in docker openssl curl; do
   command -v "$command" >/dev/null 2>&1 || { echo "Required command not found: $command" >&2; exit 2; }
@@ -35,11 +36,20 @@ if [ "${#IMAGE_TAG}" -ne 40 ]; then
   echo "ITHUTE_IMAGE_TAG must be a full 40-character Git commit SHA." >&2
   exit 2
 fi
+case "$PUBLIC_IPV4" in
+  ''|*[!0-9.]*) echo "ITHUTE_PUBLIC_IPV4 must be an IPv4 address." >&2; exit 2 ;;
+esac
 
 test -x "$DEPLOY_SCRIPT" || { echo "Missing executable deployment script: $DEPLOY_SCRIPT" >&2; exit 2; }
-mkdir -p "$APP_DIR/infrastructure/caddy" "$APP_DIR/secrets/ithute-auth" "$APP_DIR/secrets/ithute-push"
+mkdir -p \
+  "$APP_DIR/infrastructure/caddy" \
+  "$APP_DIR/infrastructure/dns/zones" \
+  "$APP_DIR/secrets/ithute-auth" \
+  "$APP_DIR/secrets/ithute-push"
 test -f "$APP_DIR/compose.production.yml" || { echo "Missing runtime compose file" >&2; exit 2; }
 test -f "$APP_DIR/infrastructure/caddy/Caddyfile" || { echo "Missing runtime Caddyfile" >&2; exit 2; }
+test -f "$APP_DIR/infrastructure/dns/named.conf" || { echo "Missing authoritative DNS config" >&2; exit 2; }
+test -f "$APP_DIR/infrastructure/dns/zones/db.ithute.co.ls" || { echo "Missing Ithute authoritative zone" >&2; exit 2; }
 
 if [ -f "$ENV_FILE" ]; then
   echo "$ENV_FILE already exists; refusing to overwrite production secrets." >&2
@@ -79,6 +89,7 @@ openssl pkey -in "$APP_DIR/secrets/ithute-auth/jwt-private.pem" -pubout -out "$A
 chmod 600 "$APP_DIR/secrets/ithute-auth/jwt-private.pem" "$APP_DIR/secrets/ithute-auth/jwt-public.pem"
 
 cat > "$ENV_FILE" <<EOF
+ITHUTE_PUBLIC_IPV4=$PUBLIC_IPV4
 ITHUTE_AUTH_ISSUER=https://auth.ithute.co.ls
 ITHUTE_AUTH_ACCOUNT_BASE_URL=https://auth.ithute.co.ls
 ITHUTE_REALTIME_PUBLIC_URL=https://realtime.ithute.co.ls
@@ -129,4 +140,5 @@ printf 'Application runtime directory: %s\n' "$APP_DIR"
 printf 'Image tag: %s\n' "$IMAGE_TAG"
 printf 'Owner login: %s\n' "$OWNER_EMAIL"
 printf 'Auth portal: https://auth.ithute.co.ls/account/login\n'
+printf 'Authoritative DNS: ns1.ithute.co.ls and ns2.ithute.co.ls -> %s\n' "$PUBLIC_IPV4"
 printf 'Application source code was not cloned to the VPS.\n'
