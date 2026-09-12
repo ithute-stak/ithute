@@ -1,6 +1,9 @@
 name: Provision NBros Central Auth Login
 
 on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/nbros-auth-provision.yml"]
   workflow_run:
     workflows: ["Deploy NBros Production"]
     types: [completed]
@@ -24,6 +27,7 @@ jobs:
   provision:
     name: Provision and verify NBros login
     if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main') ||
@@ -176,6 +180,38 @@ jobs:
           print("Provisioned NBros credential verified inside deployed Ithute Auth.")
           PY
 
+          # Recreate the central Auth service after the credential is proven.
+          # Then reload both reverse proxies so public Auth cannot retain an
+          # obsolete container target after an earlier central release.
+          compose up -d --no-build --no-deps --force-recreate ithute-auth ithute-auth-push-event-worker
+          auth_id="$(compose ps -q ithute-auth)"
+          [ -n "$auth_id" ] || { echo "Central Ithute Auth did not restart." >&2; exit 1; }
+          auth_ready=false
+          for attempt in $(seq 1 60); do
+            auth_state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$auth_id" 2>/dev/null || true)"
+            if [ "$auth_state" = "healthy" ] || [ "$auth_state" = "running" ]; then
+              auth_ready=true
+              break
+            fi
+            if [ "$auth_state" = "unhealthy" ] || [ "$auth_state" = "exited" ] || [ "$auth_state" = "dead" ]; then
+              break
+            fi
+            sleep 2
+          done
+          [ "$auth_ready" = true ] || { echo "Central Ithute Auth did not become healthy: $auth_state" >&2; exit 1; }
+
+          gateway_id="$(compose ps -q nginx 2>/dev/null || true)"
+          if [ -n "$gateway_id" ]; then
+            compose exec -T nginx nginx -t
+            compose exec -T nginx nginx -s reload
+          fi
+
+          edge_compose="/home/administrator/ithute-edge/docker-compose.ithute-edge.yml"
+          [ -s "$edge_compose" ] || { echo "Shared Ithute edge compose file is missing." >&2; exit 1; }
+          docker compose -p ithute-edge -f "$edge_compose" exec -T edge-nginx nginx -t
+          docker compose -p ithute-edge -f "$edge_compose" exec -T edge-nginx nginx -s reload
+          sleep 3
+
           # Verify the exact central email/password flow for the NBros client
           # without printing the credential or returned bearer token.
           payload="$(NBROS_ADMIN_EMAIL="$NBROS_ADMIN_EMAIL" NBROS_ADMIN_PASSWORD="$NBROS_ADMIN_PASSWORD" python3 - <<'PY'
@@ -187,12 +223,15 @@ jobs:
           }))
           PY
           )"
-          login_code="$(curl --silent --show-error \
+          if ! login_code="$(curl --silent --show-error \
             --connect-timeout 8 --max-time 20 \
             -o /tmp/nbros-auth-token.json -w '%{http_code}' \
             -H 'content-type: application/json' \
             -d "$payload" \
-            https://auth.ithute.co.ls/v1/auth/login)"
+            https://auth.ithute.co.ls/v1/auth/login)"; then
+            echo "Public Central Auth could not be reached after its service and gateways were refreshed." >&2
+            exit 1
+          fi
           if [ "$login_code" != "200" ]; then
             echo "Public Central Auth login returned HTTP $login_code after the credential verified inside its deployed container." >&2
             echo "This indicates that public Auth routing is not reaching the provisioned Auth service/database." >&2
