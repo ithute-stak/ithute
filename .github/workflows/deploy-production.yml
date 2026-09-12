@@ -189,56 +189,53 @@ jobs:
             --expected-ip "$EXPECTED_IPV4" \
             --timeout 8
 
-      - name: Verify and recover public Ithute HTTPS when DNS is ready
+      - name: Keep temporary IP access until public HTTPS is ready
         run: |
           set -euo pipefail
+
+          curl --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 10 \
+            -fsS -D /tmp/ithute-ip-headers "http://${EXPECTED_IPV4}/" \
+            -o /tmp/ithute-ip-home.html
+          grep -Fiq 'X-Ithute-Temporary-IP: true' /tmp/ithute-ip-headers
+          grep -Fq 'One focused platform.' /tmp/ithute-ip-home.html
+
           dns_ready=true
           for host in ithute.co.ls auth.ithute.co.ls push.ithute.co.ls realtime.ithute.co.ls; do
             if ! getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | grep -Fxq "$EXPECTED_IPV4"; then
               dns_ready=false
             fi
           done
+
           if [ "$dns_ready" != true ]; then
-            echo 'Authoritative DNS is healthy on the VPS; parent/registrar DNS is not resolving all Ithute HTTPS names to the VPS yet, so HTTPS verification is deferred.'
+            echo "Authoritative DNS and direct-IP access are healthy. Recursive DNS is still propagating; temporary access remains at http://${EXPECTED_IPV4}/."
             exit 0
           fi
 
-          if ! curl --connect-timeout 10 -fsS https://ithute.co.ls/ >/tmp/ithute-home-initial.html; then
-            echo 'Public DNS reaches this VPS, but TLS is not ready. Restarting Caddy once to clear ACME retry backoff after DNS changes.'
-            remote="${VPS_USER}@${VPS_HOST}"
-            ssh "$remote" "APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
-            set -euo pipefail
-            cd "$APP_DIR"
-            compose() {
-              docker compose \
-                --env-file .env.production \
-                --env-file .image.env \
-                -p ithute \
-                -f compose.production.yml \
-                "$@"
-            }
-            compose restart caddy
-            REMOTE
-            sleep 10
+          if ! html="$(curl --connect-timeout 10 -fsS https://ithute.co.ls/)"; then
+            echo "Public DNS now reaches the VPS, but TLS/ACME is still settling. Leaving temporary access at http://${EXPECTED_IPV4}/ and allowing Caddy to retry naturally."
+            exit 0
+          fi
+          printf '%s' "$html" | grep -Fq 'One focused platform.'
+
+          if ! curl --connect-timeout 10 -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth; then
+            echo "Apex HTTPS works, but Auth HTTPS is not ready yet. Temporary IP access remains enabled."
+            exit 0
+          fi
+          if ! curl --connect-timeout 10 -fsS https://push.ithute.co.ls/readyz | grep -q '"status":"ready"'; then
+            echo "Apex HTTPS works, but Push HTTPS is not ready yet. Temporary IP access remains enabled."
+            exit 0
+          fi
+          if ! curl --connect-timeout 10 -fsS https://realtime.ithute.co.ls/readyz | grep -q '"status":"ready"'; then
+            echo "Apex HTTPS works, but Realtime HTTPS is not ready yet. Temporary IP access remains enabled."
+            exit 0
           fi
 
-          if ! html="$(curl --retry 20 --retry-delay 3 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/)"; then
-            echo 'TLS is still unavailable after the controlled Caddy restart. Caddy logs follow.' >&2
-            remote="${VPS_USER}@${VPS_HOST}"
-            ssh "$remote" "APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE' >&2 || true
-            set -u
-            cd "$APP_DIR"
-            docker compose \
-              --env-file .env.production \
-              --env-file .image.env \
-              -p ithute \
-              -f compose.production.yml \
-              logs --tail=200 caddy
-            REMOTE
+          echo 'All public Ithute HTTPS endpoints are healthy. Disabling temporary direct-IP access.'
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "set -euo pipefail; cd '$VPS_APP_DIR'; sed -i '/^# BEGIN ITHUTE TEMPORARY IP FALLBACK$/,/^# END ITHUTE TEMPORARY IP FALLBACK$/d' infrastructure/caddy/Caddyfile; docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null; docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile"
+
+          if curl --connect-timeout 5 -sS -D /tmp/ithute-ip-disabled-headers "http://${EXPECTED_IPV4}/" -o /tmp/ithute-ip-disabled-body && grep -Fiq 'X-Ithute-Temporary-IP: true' /tmp/ithute-ip-disabled-headers; then
+            echo 'Temporary direct-IP route is still active after HTTPS cutover.' >&2
             exit 1
           fi
-
-          printf '%s' "$html" | grep -Fq 'One focused platform.'
-          curl --retry 12 --retry-delay 2 --retry-all-errors -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth
-          curl --retry 12 --retry-delay 2 --retry-all-errors -fsS https://push.ithute.co.ls/readyz | grep -q '"status":"ready"'
-          curl --retry 12 --retry-delay 2 --retry-all-errors -fsS https://realtime.ithute.co.ls/readyz | grep -q '"status":"ready"'
+          echo 'Public HTTPS is healthy and temporary direct-IP access is disabled.'
