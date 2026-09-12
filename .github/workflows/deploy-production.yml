@@ -2,7 +2,7 @@ name: Deploy Ithute Production
 
 on:
   workflow_run:
-    workflows: ["Ithute Web CI"]
+    workflows: ["Ithute Standalone CI"]
     types: [completed]
     branches: [main]
   workflow_dispatch:
@@ -15,62 +15,23 @@ permissions:
   contents: read
 
 env:
-  REGISTRY: ghcr.io
-  GHCR_USERNAME: ithute-stak
-  ITHUTE_WEB_IMAGE: ghcr.io/ithute-stak/ithute-web
   VPS_HOST: 204.12.205.224
   VPS_USER: administrator
   VPS_APP_DIR: /home/administrator/ithute
 
 jobs:
-  build-and-publish:
+  deploy:
     if: >-
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
-    timeout-minutes: 35
-    permissions:
-      contents: read
-      packages: write
-    env:
-      DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-    steps:
-      - name: Checkout validated commit
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ env.DEPLOY_SHA }}
-          persist-credentials: false
-
-      - name: Authenticate GitHub Container Registry
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: printf '%s' "$GHCR_TOKEN" | docker login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin
-
-      - name: Build and publish Ithute web
-        run: |
-          set -eu
-          docker buildx create --name ithute-builder --use
-          docker buildx inspect --bootstrap
-          docker buildx build --platform linux/amd64 --pull --push --target runner \
-            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
-            --label "org.opencontainers.image.revision=${DEPLOY_SHA}" \
-            -t "${ITHUTE_WEB_IMAGE}:${DEPLOY_SHA}" \
-            -t "${ITHUTE_WEB_IMAGE}:latest" \
-            ./apps/frontend
-
-  deploy:
-    needs: build-and-publish
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     environment: production
-    permissions:
-      contents: read
-      packages: read
     env:
       DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
-      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     steps:
       - name: Checkout validated commit
         uses: actions/checkout@v5
@@ -103,70 +64,42 @@ jobs:
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Prepare standalone Ithute bundle
+      - name: Build deployment bundle
         run: |
           set -eu
-          tar -czf "/tmp/ithute-${DEPLOY_SHA}.tgz" docker-compose.ithute-edge.yml infrastructure/ithute-edge
+          tar -czf "/tmp/ithute-${DEPLOY_SHA}.tgz" \
+            apps \
+            platform \
+            infrastructure/caddy \
+            mail \
+            scripts \
+            compose.production.yml \
+            .env.example \
+            README.md \
+            SECURITY.md
 
-      - name: Authenticate VPS to GHCR
-        run: printf '%s' "$GHCR_TOKEN" | ssh "${VPS_USER}@${VPS_HOST}" "docker login '$REGISTRY' -u '$GHCR_USERNAME' --password-stdin"
-
-      - name: Deploy deterministic Ithute edge
+      - name: Upload and deploy only Ithute
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "mkdir -p '$VPS_APP_DIR' && chmod 755 '$VPS_APP_DIR'"
+          ssh "$remote" "mkdir -p '$VPS_APP_DIR' && chmod 700 '$VPS_APP_DIR'"
           scp "/tmp/ithute-${DEPLOY_SHA}.tgz" "$remote:/tmp/ithute-${DEPLOY_SHA}.tgz"
           ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' sh -s" <<'REMOTE'
           set -eu
-          OLD_DIR=/home/administrator/mailbox-dns
           tar -xzf "/tmp/ithute-${DEPLOY_SHA}.tgz" -C "$APP_DIR"
-          cd "$APP_DIR"
-
-          # Preserve the already-running central Ithute platform network and TLS
-          # volumes. This deployment never recreates product databases or volumes.
-          docker network inspect "${ITHUTE_PLATFORM_NETWORK_NAME:-mailbox-dns_mailbox_dns}" >/dev/null
-          docker volume inspect "${ITHUTE_EDGE_LETSENCRYPT_VOLUME:-loanhub_edge_letsencrypt}" >/dev/null
-          docker volume inspect "${ITHUTE_EDGE_CERTBOT_WEBROOT_VOLUME:-loanhub_edge_certbot_webroot}" >/dev/null
-
-          # Retire only the old shared edge. No application or database stack is
-          # brought down here.
-          if [ -f "$OLD_DIR/docker-compose.ithute-edge.yml" ]; then
-            docker compose -p ithute-edge -f "$OLD_DIR/docker-compose.ithute-edge.yml" down --remove-orphans || true
-          fi
-
-          export ITHUTE_WEB_IMAGE_TAG="$DEPLOY_SHA"
-          docker compose -p ithute-edge -f docker-compose.ithute-edge.yml pull
-          docker compose -p ithute-edge -f docker-compose.ithute-edge.yml up -d --remove-orphans
-
-          for attempt in $(seq 1 40); do
-            if docker compose -p ithute-edge -f docker-compose.ithute-edge.yml exec -T ithute-web wget -qO- http://127.0.0.1:3000/health | grep -Fq 'ithute-web'; then
-              break
-            fi
-            if [ "$attempt" -eq 40 ]; then
-              docker compose -p ithute-edge -f docker-compose.ithute-edge.yml ps
-              docker compose -p ithute-edge -f docker-compose.ithute-edge.yml logs --tail=100
-              exit 1
-            fi
-            sleep 2
-          done
-          docker compose -p ithute-edge -f docker-compose.ithute-edge.yml exec -T edge-nginx nginx -t
           rm -f "/tmp/ithute-${DEPLOY_SHA}.tgz"
+          test -f "$APP_DIR/.env.production" || {
+            echo "Fresh VPS bootstrap has not been completed. Run bash scripts/bootstrap-vps.sh on the VPS once." >&2
+            exit 2
+          }
+          ITHUTE_APP_DIR="$APP_DIR" ITHUTE_REQUIRE_PUBLIC_HEALTH=1 bash "$APP_DIR/scripts/deploy-production.sh"
           REMOTE
 
-      - name: Verify live Ithute identity and CSS
+      - name: Verify public Ithute endpoints
         run: |
           set -eu
-          html="$(curl --retry 10 --retry-delay 3 --retry-all-errors -fsS https://ithute.co.ls/)"
+          html="$(curl --retry 12 --retry-delay 3 --retry-all-errors -fsS https://ithute.co.ls/)"
           printf '%s' "$html" | grep -Fq 'One focused platform.'
-          if printf '%s' "$html" | grep -Eiq 'Fleet Management starts here|NBros Management Platform|LoanHub|Ithute Tutor|Ithute Pay|Mailbox DNS'; then
-            echo '::error::ithute.co.ls is serving content from another application'
-            exit 1
-          fi
-          headers="$(curl --retry 5 --retry-delay 2 -fsSI https://ithute.co.ls/)"
-          printf '%s' "$headers" | grep -Eiq '^x-ithute-service:[[:space:]]*web'
-          css_path="$(printf '%s' "$html" | grep -oE '/_next/static/css/[^"?]+\.css' | head -n1)"
-          test -n "$css_path"
-          css_headers="$(curl --retry 5 --retry-delay 2 -fsSI "https://ithute.co.ls${css_path}")"
-          printf '%s' "$css_headers" | grep -Eiq '^content-type:[[:space:]]*text/css'
-          curl --retry 5 --retry-delay 2 -fsS "https://ithute.co.ls${css_path}" | grep -Fq -- '--pine-950'
+          curl --retry 8 --retry-delay 2 --retry-all-errors -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth
+          curl --retry 8 --retry-delay 2 --retry-all-errors -fsS https://push.ithute.co.ls/readyz | grep -q '"status":"ready"'
+          curl --retry 8 --retry-delay 2 --retry-all-errors -fsS https://realtime.ithute.co.ls/readyz | grep -q '"status":"ready"'
