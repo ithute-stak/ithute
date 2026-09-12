@@ -189,7 +189,7 @@ jobs:
             --expected-ip "$EXPECTED_IPV4" \
             --timeout 8
 
-      - name: Verify public Ithute endpoints when delegation is ready
+      - name: Verify and recover public Ithute HTTPS when DNS is ready
         run: |
           set -euo pipefail
           dns_ready=true
@@ -199,11 +199,46 @@ jobs:
             fi
           done
           if [ "$dns_ready" != true ]; then
-            echo 'Authoritative DNS is healthy on the VPS; parent/registrar delegation has not propagated yet, so HTTPS verification is deferred.'
+            echo 'Authoritative DNS is healthy on the VPS; parent/registrar DNS is not resolving all Ithute HTTPS names to the VPS yet, so HTTPS verification is deferred.'
             exit 0
           fi
-          html="$(curl --retry 12 --retry-delay 3 --retry-all-errors -fsS https://ithute.co.ls/)"
+
+          if ! curl --connect-timeout 10 -fsS https://ithute.co.ls/ >/tmp/ithute-home-initial.html; then
+            echo 'Public DNS reaches this VPS, but TLS is not ready. Restarting Caddy once to clear ACME retry backoff after DNS changes.'
+            remote="${VPS_USER}@${VPS_HOST}"
+            ssh "$remote" "APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
+            set -euo pipefail
+            cd "$APP_DIR"
+            compose() {
+              docker compose \
+                --env-file .env.production \
+                --env-file .image.env \
+                -p ithute \
+                -f compose.production.yml \
+                "$@"
+            }
+            compose restart caddy
+            REMOTE
+            sleep 10
+          fi
+
+          if ! html="$(curl --retry 20 --retry-delay 3 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/)"; then
+            echo 'TLS is still unavailable after the controlled Caddy restart. Caddy logs follow.' >&2
+            remote="${VPS_USER}@${VPS_HOST}"
+            ssh "$remote" "APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE' >&2 || true
+            set -u
+            cd "$APP_DIR"
+            docker compose \
+              --env-file .env.production \
+              --env-file .image.env \
+              -p ithute \
+              -f compose.production.yml \
+              logs --tail=200 caddy
+            REMOTE
+            exit 1
+          fi
+
           printf '%s' "$html" | grep -Fq 'One focused platform.'
-          curl --retry 8 --retry-delay 2 --retry-all-errors -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth
-          curl --retry 8 --retry-delay 2 --retry-all-errors -fsS https://push.ithute.co.ls/readyz | grep -q '"status":"ready"'
-          curl --retry 8 --retry-delay 2 --retry-all-errors -fsS https://realtime.ithute.co.ls/readyz | grep -q '"status":"ready"'
+          curl --retry 12 --retry-delay 2 --retry-all-errors -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth
+          curl --retry 12 --retry-delay 2 --retry-all-errors -fsS https://push.ithute.co.ls/readyz | grep -q '"status":"ready"'
+          curl --retry 12 --retry-delay 2 --retry-all-errors -fsS https://realtime.ithute.co.ls/readyz | grep -q '"status":"ready"'
