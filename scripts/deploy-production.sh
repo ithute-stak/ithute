@@ -12,6 +12,8 @@ cd "$APP_DIR"
 test -f "$ENV_FILE" || { echo "Missing $ENV_FILE. Run the safe bootstrap once first." >&2; exit 2; }
 test -f "$COMPOSE_FILE" || { echo "Missing $COMPOSE_FILE" >&2; exit 2; }
 test -f "$APP_DIR/infrastructure/caddy/Caddyfile" || { echo "Missing Caddyfile" >&2; exit 2; }
+test -f "$APP_DIR/infrastructure/dns/named.conf" || { echo "Missing authoritative DNS config" >&2; exit 2; }
+test -f "$APP_DIR/infrastructure/dns/zones/db.ithute.co.ls" || { echo "Missing Ithute DNS zone" >&2; exit 2; }
 test -f "$APP_DIR/secrets/ithute-auth/jwt-private.pem" || { echo "Missing Auth private key" >&2; exit 2; }
 test -f "$APP_DIR/secrets/ithute-auth/jwt-public.pem" || { echo "Missing Auth public key" >&2; exit 2; }
 
@@ -73,7 +75,7 @@ fi
 
 # Only third-party base images are pulled on the VPS. Ithute application images
 # were already built in GitHub Actions and loaded from the deployment artifact.
-compose pull ithute-auth-db ithute-push-db ithute-realtime-db ithute-realtime-redis caddy
+compose pull ithute-auth-db ithute-push-db ithute-realtime-db ithute-realtime-redis ithute-dns caddy
 compose up -d --remove-orphans --no-build
 
 check_service() {
@@ -96,6 +98,7 @@ check_service ithute-web "wget -qO- http://127.0.0.1:3000/health | grep -q ithut
 check_service ithute-auth "curl -fsS http://127.0.0.1:8080/healthz | grep -q ithute-auth"
 check_service ithute-push "curl -fsS http://127.0.0.1:8080/readyz | grep -q '\"status\":\"ready\"'"
 check_service ithute-realtime "curl -fsS http://127.0.0.1:8080/readyz | grep -q '\"status\":\"ready\"'"
+check_service ithute-dns "named-checkconf /etc/bind/named.conf && named-checkzone ithute.co.ls /etc/bind/zones/db.ithute.co.ls >/dev/null"
 compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
 
 if [ "${ITHUTE_REQUIRE_PUBLIC_HEALTH:-0}" = "1" ]; then
@@ -108,4 +111,4 @@ fi
 
 compose ps
 compose images
-printf '\nIthute immutable-image deployment is healthy.\n'
+printf '\nIthute immutable-image deployment and authoritative DNS are healthy.\n'

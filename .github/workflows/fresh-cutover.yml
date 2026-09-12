@@ -107,7 +107,9 @@ jobs:
           set -euo pipefail
           tar -czf "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" \
             compose.production.yml \
-            infrastructure/caddy/Caddyfile
+            infrastructure/caddy/Caddyfile \
+            infrastructure/dns/named.conf \
+            infrastructure/dns/zones/db.ithute.co.ls
           ! tar -tzf "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" | grep -Eq '^(apps|platform)/'
 
       - name: Transfer runtime, images and protected owner secret
@@ -131,7 +133,7 @@ jobs:
           remote="${VPS_USER}@${VPS_HOST}"
           ssh "$remote" "APP_DIR='$VPS_APP_DIR' MAIL_DIR='$VPS_MAIL_DIR' DEPLOY_SHA='$DEPLOY_SHA' bash -s" <<'REMOTE'
           set -euo pipefail
-          mkdir -p "$APP_DIR/infrastructure/caddy"
+          mkdir -p "$APP_DIR/infrastructure/caddy" "$APP_DIR/infrastructure/dns/zones"
           tar -xzf "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" -C "$APP_DIR"
           gzip -dc "/tmp/ithute-images-${DEPLOY_SHA}.tar.gz" | docker load
 
@@ -139,6 +141,7 @@ jobs:
           chmod 700 /tmp/ithute-bootstrap-vps.sh /tmp/ithute-deploy-production.sh
           ITHUTE_APP_DIR="$APP_DIR" \
           ITHUTE_MAIL_DIR="$MAIL_DIR" \
+          ITHUTE_PUBLIC_IPV4="$EXPECTED_IPV4" \
           ITHUTE_DEPLOY_SCRIPT=/tmp/ithute-deploy-production.sh \
           ITHUTE_IMAGE_TAG="$DEPLOY_SHA" \
           ITHUTE_SYSTEM_OWNER_PASSWORD_B64="$owner_password_b64" \
@@ -173,10 +176,21 @@ jobs:
           compose exec -T ithute-auth curl -fsS http://127.0.0.1:8080/healthz | grep -q ithute-auth
           compose exec -T ithute-push curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
           compose exec -T ithute-realtime curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
+          compose exec -T ithute-dns named-checkconf /etc/bind/named.conf
+          compose exec -T ithute-dns named-checkzone ithute.co.ls /etc/bind/zones/db.ithute.co.ls >/dev/null
           compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
           REMOTE
 
-      - name: Verify public Ithute services when DNS is ready
+      - name: Verify authoritative DNS on public IPv4
+        if: steps.state.outputs.bootstrap == 'true'
+        run: |
+          set -euo pipefail
+          python3 scripts/verify-authoritative-dns.py \
+            --server "$EXPECTED_IPV4" \
+            --expected-ip "$EXPECTED_IPV4" \
+            --timeout 8
+
+      - name: Verify public Ithute services when delegation is ready
         if: steps.state.outputs.bootstrap == 'true'
         run: |
           set -euo pipefail
@@ -187,7 +201,7 @@ jobs:
             fi
           done
           if [ "$dns_ready" != true ]; then
-            echo 'Runtime is healthy; public DNS verification is deferred.'
+            echo 'Authoritative DNS is healthy on the VPS; parent/registrar delegation has not propagated yet, so HTTPS verification is deferred.'
             exit 0
           fi
           html="$(curl --retry 15 --retry-delay 3 --retry-all-errors -fsS https://ithute.co.ls/)"

@@ -215,6 +215,25 @@ services:
       start_period: 20s
     networks: [ithute]
 
+  ithute-dns:
+    image: internetsystemsconsortium/bind9:9.20
+    restart: unless-stopped
+    command: ["-g", "-c", "/etc/bind/named.conf"]
+    ports:
+      - "${ITHUTE_PUBLIC_IPV4:-204.12.205.224}:53:53/tcp"
+      - "${ITHUTE_PUBLIC_IPV4:-204.12.205.224}:53:53/udp"
+    volumes:
+      - ./infrastructure/dns/named.conf:/etc/bind/named.conf:ro
+      - ./infrastructure/dns/zones:/etc/bind/zones:ro
+      - ithute_bind_cache:/var/cache/bind
+    healthcheck:
+      test: ["CMD-SHELL", "named-checkconf /etc/bind/named.conf && named-checkzone ithute.co.ls /etc/bind/zones/db.ithute.co.ls >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [ithute]
+
   caddy:
     image: caddy:2.11.4-alpine
     restart: unless-stopped
@@ -226,6 +245,8 @@ services:
       ithute-push:
         condition: service_healthy
       ithute-realtime:
+        condition: service_healthy
+      ithute-dns:
         condition: service_healthy
     ports:
       - "80:80"
@@ -246,5 +267,6 @@ volumes:
   ithute_push_postgres:
   ithute_realtime_postgres:
   ithute_realtime_redis:
+  ithute_bind_cache:
   ithute_caddy_data:
   ithute_caddy_config:
