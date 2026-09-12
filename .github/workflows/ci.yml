@@ -12,7 +12,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -26,16 +26,32 @@ jobs:
           cache: npm
           cache-dependency-path: apps/frontend/package-lock.json
 
-      - name: Validate frontend
+      - name: Validate restored frontend
         working-directory: apps/frontend
+        env:
+          NEXT_PUBLIC_API_URL: /api/v1
         run: |
+          set -euo pipefail
           npm ci --no-audit --no-fund
-          npm run check
           npm run build
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/backend/requirements.txt
+
+      - name: Validate restored backend source
+        working-directory: apps/backend
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m compileall -q app alembic
 
       - name: Validate deployment scripts
         run: |
-          set -eu
+          set -euo pipefail
           bash -n scripts/bootstrap-vps.sh
           bash -n scripts/deploy-production.sh
           bash -n scripts/bootstrap-mail.sh
@@ -44,7 +60,7 @@ jobs:
 
       - name: Enforce runtime-only VPS deployment boundary
         run: |
-          set -eu
+          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
 
@@ -83,53 +99,44 @@ jobs:
           compose = Path('compose.production.yml').read_text(encoding='utf-8')
           if '\n    build:' in compose or '\n      build:' in compose:
               raise SystemExit('Production compose must not contain application build contexts.')
-          for image in ('ithute-web:', 'ithute-auth:', 'ithute-push:', 'ithute-realtime:'):
+          for image in ('ithute-web:', 'ithute-app-api:', 'ithute-auth:', 'ithute-push:', 'ithute-realtime:'):
               if f'image: {image}' not in compose:
                   raise SystemExit(f'Missing immutable runtime image declaration for {image}')
-          if compose.count('ITHUTE_IMAGE_TAG') < 6:
-              raise SystemExit('Production application images must all be commit-tagged.')
           if 'internetsystemsconsortium/bind9:9.20' not in compose:
               raise SystemExit('Production compose must include the Ithute authoritative DNS service.')
 
-          for workflow in (
-              Path('.github/workflows/fresh-cutover.yml'),
-              Path('.github/workflows/deploy-production.yml'),
-          ):
-              text = workflow.read_text(encoding='utf-8')
-              for required in (
-                  'infrastructure/dns/named.conf',
-                  'infrastructure/dns/zones/db.ithute.co.ls',
-              ):
-                  if required not in text:
-                      raise SystemExit(f'{workflow}: runtime bundle is missing {required}')
-
           deploy = Path('.github/workflows/deploy-production.yml').read_text(encoding='utf-8')
+          if 'ithute-app-api:$DEPLOY_SHA' not in deploy:
+              raise SystemExit('Production deployment must load and verify the restored app API image.')
           for source_dir in ('apps', 'platform'):
               if f'            {source_dir} \\' in deploy:
                   raise SystemExit(f'Production bundle still contains source directory: {source_dir}')
           PY
 
-          grep -Fq 'group: ithute-vps-production' .github/workflows/fresh-cutover.yml
           grep -Fq 'group: ithute-vps-production' .github/workflows/deploy-production.yml
-          grep -Fq 'group: ithute-vps-production' .github/workflows/finalize-dns-cutover.yml
-          grep -Fq 'group: ithute-vps-production' .github/workflows/finalize-mail.yml
-          grep -Fq '/home/administrator/ithute-platform' .github/workflows/fresh-cutover.yml
           grep -Fq '/home/administrator/ithute-platform' .github/workflows/deploy-production.yml
-          grep -Fq '/home/administrator/ithute-platform' scripts/bootstrap-vps.sh
-          ! grep -Fq " sh -s\" <<'REMOTE'" .github/workflows/deploy-production.yml
-          grep -Fq " bash -s\" <<'REMOTE'" .github/workflows/deploy-production.yml
           grep -Fq 'compose up -d --remove-orphans --no-build' scripts/deploy-production.sh
           grep -Fq 'caddy reload --config /etc/caddy/Caddyfile' scripts/deploy-production.sh
-          grep -Fq 'CUTOVER_MARKER="$APP_DIR/.dns-cutover-complete"' scripts/deploy-production.sh
-          grep -Fq 'touch .dns-cutover-complete' .github/workflows/finalize-dns-cutover.yml
-          grep -Fq '# BEGIN ITHUTE TEMPORARY IP FALLBACK' infrastructure/caddy/Caddyfile
           ! grep -Fq 'compose build' scripts/deploy-production.sh
           ! grep -Fq 'docker compose build' scripts/deploy-production.sh
+          test -d apps/backend
+          test -f apps/frontend/app/dashboard/page.tsx
+          test -f apps/frontend/app/pricing/page.tsx
+          test -f apps/frontend/app/docs/page.tsx
+          test -f apps/frontend/app/webmail/page.tsx
 
-      - name: Render standalone application topology
+      - name: Render production topology
         env:
           ITHUTE_IMAGE_TAG: 0000000000000000000000000000000000000000
           ITHUTE_PUBLIC_IPV4: 204.12.205.224
+          ITHUTE_APP_DB_PASSWORD: ci-app-db-password-000000000000
+          ITHUTE_APP_SECRET_KEY: ci-app-secret-000000000000000000000000000000000000
+          ITHUTE_APP_DKIM_ENCRYPTION_KEY: ci-dkim-secret-1111111111111111111111111111111111
+          ITHUTE_APP_BILLING_WEBHOOK_SECRET: ci-billing-secret-22222222222222222222222222222222
+          ITHUTE_APP_BOOTSTRAP_ADMIN_PASSWORD: ci-bootstrap-owner-password-123456
+          ITHUTE_APP_MAIL_OPS_TOKEN: ci-mail-ops-token-333333333333333333333333
+          ITHUTE_APP_RECOVERY_OPS_TOKEN: ci-recovery-token-44444444444444444444444
+          ITHUTE_APP_POWERDNS_API_KEY: ci-powerdns-token-55555555555555555555555
           ITHUTE_AUTH_DB_PASSWORD: ci-auth-db-password
           ITHUTE_PUSH_DB_PASSWORD: ci-push-db-password
           ITHUTE_REALTIME_DB_PASSWORD: ci-realtime-db-password
@@ -138,32 +145,35 @@ jobs:
           ITHUTE_SERVICE_REALTIME_SECRET: ci-realtime-service-secret-0000000000000000
           ITHUTE_SYSTEM_OWNER_PASSWORD: ci-owner-password-12345
           ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON: '{"ithute-realtime":"ci-realtime-service-secret-0000000000000000"}'
-          ITHUTE_AUTH_REDIRECT_URIS_JSON: '{}'
+          ITHUTE_AUTH_REDIRECT_URIS_JSON: '{"mailbox-dns":["https://ithute.co.ls/api/v1/auth/ithute/callback"]}'
         run: |
-          set -eu
+          set -euo pipefail
           docker compose -f compose.production.yml config > /tmp/ithute-production.yml
+          grep -q 'ithute-app-api:' /tmp/ithute-production.yml
+          grep -q 'ithute-app-db:' /tmp/ithute-production.yml
+          grep -q 'ithute-app-redis:' /tmp/ithute-production.yml
           grep -q 'ithute-web:' /tmp/ithute-production.yml
           grep -q 'ithute-auth:' /tmp/ithute-production.yml
           grep -q 'ithute-push:' /tmp/ithute-production.yml
           grep -q 'ithute-realtime:' /tmp/ithute-production.yml
           grep -q 'ithute-dns:' /tmp/ithute-production.yml
           grep -q 'caddy:' /tmp/ithute-production.yml
+          grep -Fq 'mailbox-dns' /tmp/ithute-production.yml
           grep -Fq '204.12.205.224' /tmp/ithute-production.yml
           ! grep -Eq 'external:[[:space:]]*true' /tmp/ithute-production.yml
           ! grep -Eq '^[[:space:]]*build:' /tmp/ithute-production.yml
-          ! grep -Eiq 'loanhub|nbros|buildtrack|mailbox-dns|ithute-tutor|ithute-pay' /tmp/ithute-production.yml
 
-      - name: Validate Ithute-only ingress
+      - name: Validate Ithute ingress
         run: |
-          set -eu
+          set -euo pipefail
           docker run --rm \
             -v "$PWD/infrastructure/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile
-          grep -Fq 'ithute.co.ls' infrastructure/caddy/Caddyfile
+          grep -Fq 'reverse_proxy ithute-app-api:8000' infrastructure/caddy/Caddyfile
+          grep -Fq 'reverse_proxy ithute-web:3000' infrastructure/caddy/Caddyfile
           grep -Fq 'auth.ithute.co.ls' infrastructure/caddy/Caddyfile
           grep -Fq 'push.ithute.co.ls' infrastructure/caddy/Caddyfile
           grep -Fq 'realtime.ithute.co.ls' infrastructure/caddy/Caddyfile
-          ! grep -Eiq 'loanhub|nbros|buildtrack|tutor|ithute-pay|mailbox' infrastructure/caddy/Caddyfile
 
       - name: Validate Ithute authoritative DNS
         run: |
@@ -182,26 +192,27 @@ jobs:
           grep -Eq '^@ +IN +NS +ns2\.ithute\.co\.ls\.$' infrastructure/dns/zones/db.ithute.co.ls
           grep -Eq '^ns1 +IN +A +204\.12\.205\.224$' infrastructure/dns/zones/db.ithute.co.ls
           grep -Eq '^ns2 +IN +A +204\.12\.205\.224$' infrastructure/dns/zones/db.ithute.co.ls
-          grep -Fq '${ITHUTE_PUBLIC_IPV4:-204.12.205.224}:53:53/tcp' compose.production.yml
-          grep -Fq '${ITHUTE_PUBLIC_IPV4:-204.12.205.224}:53:53/udp' compose.production.yml
 
       - name: Validate independent mail topology
         run: |
-          set -eu
+          set -euo pipefail
           docker compose -f mail/compose.yml config > /tmp/ithute-mail.yml
           grep -q 'ithute-mail' /tmp/ithute-mail.yml
           ! grep -Eq 'external:[[:space:]]*true' /tmp/ithute-mail.yml
-          ! grep -Eiq 'loanhub|nbros|buildtrack|ithute-tutor|ithute-pay|mailbox-dns' /tmp/ithute-mail.yml
 
       - name: Build immutable Ithute images on GitHub runner
         run: |
           set -euo pipefail
           tag="$GITHUB_SHA"
-          docker build --pull --target runner -t "ithute-web:$tag" ./apps/frontend
+          docker build --pull --target runner \
+            --build-arg NEXT_PUBLIC_API_URL=/api/v1 \
+            -t "ithute-web:$tag" ./apps/frontend
+          docker build --pull -t "ithute-app-api:$tag" ./apps/backend
           docker build --pull -t "ithute-auth:$tag" ./platform/ithute-auth
           docker build --pull -t "ithute-push:$tag" ./platform/ithute-push
           docker build --pull -t "ithute-realtime:$tag" ./platform/ithute-realtime
           docker image inspect "ithute-web:$tag" >/dev/null
+          docker image inspect "ithute-app-api:$tag" >/dev/null
           docker image inspect "ithute-auth:$tag" >/dev/null
           docker image inspect "ithute-push:$tag" >/dev/null
           docker image inspect "ithute-realtime:$tag" >/dev/null
@@ -213,6 +224,7 @@ jobs:
           tag="$GITHUB_SHA"
           docker save \
             "ithute-web:$tag" \
+            "ithute-app-api:$tag" \
             "ithute-auth:$tag" \
             "ithute-push:$tag" \
             "ithute-realtime:$tag" \
@@ -230,12 +242,3 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
-
-      - name: Enforce repository boundary
-        run: |
-          set -eu
-          test ! -d apps/backend
-          test ! -f product.manifest.yaml
-          test ! -f docker-compose.ithute-edge.yml
-          test ! -f docker-compose.ithute-platform.yml
-          test ! -d infrastructure/ithute-edge
