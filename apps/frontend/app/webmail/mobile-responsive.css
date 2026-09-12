@@ -1,0 +1,832 @@
+/* iMail phone experience
+ *
+ * The webmail remains one responsive application. These rules only reshape
+ * the existing hosted/external mailbox controls below tablet width so mobile
+ * behaves like a purpose-built mail client while desktop keeps its multi-pane
+ * workspace.
+ */
+
+@media (max-width: 767px) {
+  .sourceGmailSkin {
+    --imail-mobile-bg: #f3f6fc;
+    --imail-mobile-surface: #ffffff;
+    --imail-mobile-green: #075c43;
+    --imail-mobile-green-dark: #064735;
+    --imail-mobile-green-soft: #dcefe7;
+    --imail-mobile-gold: #d8b241;
+    --imail-mobile-text: #202124;
+    --imail-mobile-muted: #667085;
+    min-height: 100dvh;
+    background: var(--imail-mobile-bg) !important;
+    color: var(--imail-mobile-text);
+    overscroll-behavior: none;
+  }
+
+  .sourceGmailSkin button,
+  .sourceGmailSkin a,
+  .sourceGmailSkin input,
+  .sourceGmailSkin textarea,
+  .sourceGmailSkin select {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .sourceGmailSkin button,
+  .sourceGmailSkin a {
+    touch-action: manipulation;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Hosted mailbox: phone app bar                                          */
+  /* ---------------------------------------------------------------------- */
+  .sourceGmailSkin > div.h-screen {
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    background: var(--imail-mobile-bg) !important;
+  }
+
+  .sourceGmailSkin > div.h-screen > header {
+    height: 72px !important;
+    min-height: 72px !important;
+    padding: 10px 12px !important;
+    gap: 8px !important;
+    border: 0 !important;
+    background: var(--imail-mobile-bg) !important;
+  }
+
+  .sourceGmailSkin > div.h-screen > header > button:first-child {
+    width: 44px !important;
+    height: 44px !important;
+    color: #3f4b47 !important;
+  }
+
+  /* On phones the search field is the brand surface. Keep the logo inside
+     the drawer so the header has the familiar hamburger/search/avatar shape. */
+  .sourceGmailSkin > div.h-screen > header > div:nth-child(2) {
+    display: none !important;
+  }
+
+  .sourceGmailSkin > div.h-screen > header > div:nth-child(3) {
+    order: 2;
+    width: auto !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    flex: 1 1 auto !important;
+    margin: 0 !important;
+  }
+
+  .sourceGmailSkin > div.h-screen > header > div:nth-child(3) form {
+    height: 52px !important;
+    max-width: none !important;
+    padding: 0 14px !important;
+    border: 1px solid rgba(7, 92, 67, .06) !important;
+    border-radius: 26px !important;
+    background: #fff !important;
+    box-shadow: 0 1px 3px rgba(27, 41, 36, .08) !important;
+  }
+
+  .sourceGmailSkin > div.h-screen > header > div:nth-child(3) form input {
+    font-size: 15px !important;
+  }
+
+  .sourceGmailSkin > div.h-screen > header > div:last-child {
+    order: 3;
+    margin-left: 0 !important;
+  }
+
+  .sourceGmailSkin > div.h-screen > header > div:last-child > :not(:last-child) {
+    display: none !important;
+  }
+
+  .sourceGmailSkin > div.h-screen > header > div:last-child > div:last-child > button {
+    width: 46px !important;
+    height: 46px !important;
+    margin-left: 0 !important;
+    border: 0 !important;
+    background: var(--imail-mobile-green) !important;
+    color: #fff !important;
+    font-size: 14px !important;
+    box-shadow: 0 2px 8px rgba(7, 92, 67, .16) !important;
+  }
+
+  .sourceGmailSkin > div.h-screen > div.flex {
+    height: calc(100dvh - 72px) !important;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Hosted mailbox: app-like inbox                                          */
+  /* ---------------------------------------------------------------------- */
+  .sourceGmailSkin > div.h-screen main {
+    margin: 0 !important;
+    border-radius: 0 !important;
+    background: var(--imail-mobile-bg) !important;
+    box-shadow: none !important;
+  }
+
+  /* Keep the compact utility bar available, but make it recede behind the
+     prominent Primary title just like a native phone mailbox. */
+  .sourceGmailSkin > div.h-screen main > div.flex.h-full.flex-col > div:first-child {
+    height: 42px !important;
+    min-height: 42px !important;
+    margin: 0 12px !important;
+    padding: 0 2px !important;
+    border: 0 !important;
+    background: transparent !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main .h-14.shrink-0.items-end {
+    height: 68px !important;
+    min-height: 68px !important;
+    align-items: center !important;
+    padding: 2px 20px 0 !important;
+    border: 0 !important;
+    overflow: visible !important;
+    background: transparent !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main .h-14.shrink-0.items-end > button {
+    display: none !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main .h-14.shrink-0.items-end > button:first-child {
+    display: flex !important;
+    min-width: 0 !important;
+    width: auto !important;
+    height: auto !important;
+    justify-content: flex-start !important;
+    padding: 0 !important;
+    color: #242a28 !important;
+    font-size: 27px !important;
+    font-weight: 750 !important;
+    line-height: 1.1 !important;
+    text-transform: capitalize !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main .h-14.shrink-0.items-end > button:first-child > svg,
+  .sourceGmailSkin > div.h-screen main .h-14.shrink-0.items-end > button:first-child > span {
+    display: none !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main .group {
+    min-height: 100px !important;
+    margin: 8px 14px !important;
+    overflow: hidden !important;
+    border: 0 !important;
+    border-radius: 22px !important;
+    background: #fff !important;
+    box-shadow: 0 1px 3px rgba(33, 46, 41, .055) !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main .group:hover {
+    background: #fff !important;
+    box-shadow: 0 2px 8px rgba(33, 46, 41, .08) !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main .group > div:last-child {
+    min-height: 100px !important;
+    align-items: center !important;
+    gap: 12px !important;
+    padding: 13px 14px !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main .group > div:last-child > button:first-child {
+    width: 48px !important;
+    height: 48px !important;
+    background: #5f88bc !important;
+    color: #fff !important;
+    font-size: 15px !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main .group > div:last-child > button:nth-child(2) > div:first-child span:first-child {
+    font-size: 16px !important;
+    line-height: 1.25 !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main .group > div:last-child > button:nth-child(2) > p:first-of-type {
+    margin-top: 3px !important;
+    font-size: 14px !important;
+    line-height: 1.25 !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main .group > div:last-child > button:nth-child(2) > p:last-of-type {
+    margin-top: 5px !important;
+    color: #7b8390 !important;
+    font-size: 12px !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main .group > div:last-child > button:last-child {
+    width: 38px !important;
+    height: 38px !important;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Floating Compose: reuse the real sidebar compose button when the drawer
+     is closed. The button remains the same functional React control.         */
+  /* ---------------------------------------------------------------------- */
+  .sourceGmailSkin > div.h-screen aside.hidden {
+    display: flex !important;
+    position: static !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    pointer-events: none !important;
+    background: transparent !important;
+  }
+
+  .sourceGmailSkin > div.h-screen aside.hidden > button[aria-label="Close sidebar overlay"] {
+    display: none !important;
+  }
+
+  .sourceGmailSkin > div.h-screen aside.hidden > div {
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+  }
+
+  .sourceGmailSkin > div.h-screen aside.hidden > div > :not(button[title="Compose"]) {
+    display: none !important;
+  }
+
+  .sourceGmailSkin > div.h-screen aside.hidden > div > button[title="Compose"] {
+    display: flex !important;
+    position: fixed !important;
+    right: 18px !important;
+    bottom: max(18px, env(safe-area-inset-bottom)) !important;
+    z-index: 45 !important;
+    width: auto !important;
+    min-width: 144px !important;
+    height: 58px !important;
+    margin: 0 !important;
+    padding: 0 22px !important;
+    justify-content: center !important;
+    gap: 10px !important;
+    border: 0 !important;
+    border-radius: 20px !important;
+    background: #d8efe4 !important;
+    color: var(--imail-mobile-green-dark) !important;
+    font-size: 15px !important;
+    font-weight: 800 !important;
+    box-shadow: 0 8px 22px rgba(22, 62, 48, .20) !important;
+    pointer-events: auto !important;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Drawer                                                                  */
+  /* ---------------------------------------------------------------------- */
+  .sourceGmailSkin > div.h-screen aside.fixed {
+    background: rgba(17, 25, 23, .45) !important;
+    backdrop-filter: blur(2px) !important;
+  }
+
+  .sourceGmailSkin > div.h-screen aside.fixed > div {
+    width: 86% !important;
+    max-width: 330px !important;
+    padding: 12px 16px calc(18px + env(safe-area-inset-bottom)) !important;
+    border-radius: 0 28px 28px 0 !important;
+    background: #fff !important;
+    box-shadow: 18px 0 48px rgba(15, 34, 27, .18) !important;
+  }
+
+  .sourceGmailSkin > div.h-screen aside.fixed > div > div:first-child {
+    min-height: 94px !important;
+    margin: 0 0 6px !important;
+    padding: 18px 6px 12px !important;
+    align-items: flex-start !important;
+  }
+
+  .sourceGmailSkin > div.h-screen aside.fixed > div > div:first-child > span:first-child {
+    color: transparent !important;
+    font-size: 0 !important;
+  }
+
+  .sourceGmailSkin > div.h-screen aside.fixed > div > div:first-child > span:first-child::before {
+    content: "iMail";
+    display: block;
+    color: var(--imail-mobile-green-dark);
+    font-size: 34px;
+    font-weight: 850;
+    letter-spacing: -.05em;
+  }
+
+  .sourceGmailSkin > div.h-screen aside.fixed button[title="Compose"] {
+    width: 100% !important;
+    min-height: 54px !important;
+    margin: 4px 0 14px !important;
+    justify-content: flex-start !important;
+    border-radius: 18px !important;
+    background: var(--imail-mobile-green-soft) !important;
+    color: var(--imail-mobile-green-dark) !important;
+  }
+
+  .sourceGmailSkin > div.h-screen aside.fixed nav,
+  .sourceGmailSkin > div.h-screen aside.fixed .space-y-0\.5 {
+    padding-right: 4px !important;
+  }
+
+  .sourceGmailSkin > div.h-screen aside.fixed button:not([title="Compose"]),
+  .sourceGmailSkin > div.h-screen aside.fixed a {
+    min-height: 48px !important;
+    border-radius: 16px !important;
+    font-size: 15px !important;
+  }
+
+  .sourceGmailSkin > div.h-screen aside.fixed .bg-\[\#d3e3fd\] {
+    background: #dcefe7 !important;
+    color: var(--imail-mobile-green-dark) !important;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Account menu -> native-style bottom sheet                              */
+  /* ---------------------------------------------------------------------- */
+  .sourceGmailSkin > div.h-screen > header div.relative > div[class*="absolute"][class*="right-0"][class*="top-12"] {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    bottom: 0 !important;
+    z-index: 90 !important;
+    width: 100% !important;
+    max-width: none !important;
+    padding: 30px 20px calc(22px + env(safe-area-inset-bottom)) !important;
+    border: 0 !important;
+    border-radius: 30px 30px 0 0 !important;
+    background: #fff !important;
+    box-shadow: 0 -100vh 0 100vh rgba(21, 27, 25, .52), 0 -12px 36px rgba(15, 31, 25, .16) !important;
+  }
+
+  .sourceGmailSkin > div.h-screen > header div.relative > div[class*="absolute"][class*="right-0"][class*="top-12"]::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 10px;
+    width: 52px;
+    height: 5px;
+    transform: translateX(-50%);
+    border-radius: 999px;
+    background: #47544f;
+  }
+
+  .sourceGmailSkin > div.h-screen > header div.relative > div[class*="absolute"][class*="right-0"][class*="top-12"] > div:first-child {
+    padding: 15px !important;
+    border-radius: 18px !important;
+    background: #f5f8f6 !important;
+  }
+
+  .sourceGmailSkin > div.h-screen > header div.relative > div[class*="absolute"][class*="right-0"][class*="top-12"] a,
+  .sourceGmailSkin > div.h-screen > header div.relative > div[class*="absolute"][class*="right-0"][class*="top-12"] button {
+    min-height: 54px !important;
+    margin-top: 4px !important;
+    border-radius: 16px !important;
+    font-size: 16px !important;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Open message: clean native-reader proportions                           */
+  /* ---------------------------------------------------------------------- */
+  .sourceGmailSkin > div.h-screen main > div.h-full.overflow-y-auto {
+    background: #fff !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main > div.h-full.overflow-y-auto > div:first-child {
+    height: 60px !important;
+    min-height: 60px !important;
+    padding: 0 10px !important;
+    border: 0 !important;
+    background: #fff !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main article {
+    max-width: none !important;
+    padding: 20px 20px calc(28px + env(safe-area-inset-bottom)) !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main article > h1 {
+    font-size: 29px !important;
+    font-weight: 700 !important;
+    line-height: 1.18 !important;
+    letter-spacing: -.02em !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main article > h1 + div {
+    margin-top: 28px !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main article > h1 + div > div:first-child {
+    width: 48px !important;
+    height: 48px !important;
+    background: #e44b40 !important;
+    color: #fff !important;
+    font-size: 15px !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main article > div[class*="whitespace-pre-wrap"] {
+    margin-top: 42px !important;
+    color: #252827 !important;
+    font-size: 17px !important;
+    line-height: 1.75 !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main article > div.mt-12 {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+    margin-top: 38px !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main article > div.mt-12 > button {
+    min-height: 64px !important;
+    justify-content: center !important;
+    border-radius: 22px !important;
+    padding: 0 14px !important;
+    background: #fff !important;
+    font-size: 14px !important;
+    box-shadow: 0 1px 3px rgba(31, 41, 37, .05) !important;
+  }
+
+  /* External reader already has Reply / Reply all / Forward. Make those
+     actions look like the approved three-button phone reader. */
+  .sourceGmailSkin section > div[class*="overflow-y-auto"] div.mt-9.flex.flex-wrap.gap-2 {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+    padding-bottom: max(10px, env(safe-area-inset-bottom)) !important;
+  }
+
+  .sourceGmailSkin section > div[class*="overflow-y-auto"] div.mt-9.flex.flex-wrap.gap-2 > button {
+    min-width: 0 !important;
+    min-height: 62px !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    gap: 5px !important;
+    padding: 8px 4px !important;
+    border-radius: 20px !important;
+    font-size: 12px !important;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* External mailbox: collapse the desktop chrome into phone surfaces       */
+  /* ---------------------------------------------------------------------- */
+  .sourceGmailSkin > main.min-h-screen {
+    min-height: 100dvh !important;
+    background: var(--imail-mobile-bg) !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen > header {
+    height: 66px !important;
+    min-height: 66px !important;
+    padding: 8px 10px !important;
+    border: 0 !important;
+    background: var(--imail-mobile-bg) !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen > header > button:first-child {
+    width: 44px !important;
+    height: 44px !important;
+    color: #3f4b47 !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen > header > a,
+  .sourceGmailSkin > main.min-h-screen > header > div:nth-of-type(1),
+  .sourceGmailSkin > main.min-h-screen > header > div:nth-of-type(2),
+  .sourceGmailSkin > main.min-h-screen > header > span {
+    display: none !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen > header > div:last-child {
+    margin-left: auto !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen > header > div:last-child > button:not(:first-child) {
+    display: none !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen > div.flex {
+    height: calc(100dvh - 66px) !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen > div.flex > aside.hidden {
+    display: block !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    pointer-events: none !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen > div.flex > aside.hidden > :not(button:first-child) {
+    display: none !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen > div.flex > aside.hidden > button:first-child {
+    position: fixed !important;
+    right: 18px !important;
+    bottom: max(18px, env(safe-area-inset-bottom)) !important;
+    z-index: 45 !important;
+    width: auto !important;
+    min-width: 144px !important;
+    height: 58px !important;
+    margin: 0 !important;
+    padding: 0 22px !important;
+    justify-content: center !important;
+    border-radius: 20px !important;
+    background: #d8efe4 !important;
+    color: var(--imail-mobile-green-dark) !important;
+    box-shadow: 0 8px 22px rgba(22, 62, 48, .20) !important;
+    pointer-events: auto !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen > div.flex > aside.fixed {
+    inset: 0 !important;
+    width: 86% !important;
+    max-width: 330px !important;
+    padding: 26px 16px 18px !important;
+    border: 0 !important;
+    border-radius: 0 28px 28px 0 !important;
+    background: #fff !important;
+    box-shadow: 18px 0 48px rgba(15, 34, 27, .18) !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen > div.flex > aside.fixed::before {
+    content: "iMail";
+    display: block;
+    margin: 8px 8px 22px;
+    color: var(--imail-mobile-green-dark);
+    font-size: 34px;
+    font-weight: 850;
+    letter-spacing: -.05em;
+  }
+
+  .sourceGmailSkin > main.min-h-screen > div.flex > aside.fixed > button:first-of-type {
+    min-height: 54px !important;
+    border-radius: 18px !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen > div.flex > aside.fixed nav button {
+    min-height: 48px !important;
+    border-radius: 16px !important;
+    font-size: 15px !important;
+  }
+
+  /* External search and list become the top search + rounded message cards. */
+  .sourceGmailSkin > main.min-h-screen section.flex.min-h-0.flex-1.flex-col > div:first-child {
+    padding: 6px 12px 8px !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen section.flex.min-h-0.flex-1.flex-col > div:first-child form {
+    height: 52px !important;
+    border: 0 !important;
+    border-radius: 26px !important;
+    background: #fff !important;
+    box-shadow: 0 1px 3px rgba(27, 41, 36, .08) !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen section article.group {
+    min-height: 98px !important;
+    margin: 8px 12px !important;
+    padding: 11px 10px !important;
+    border: 0 !important;
+    border-radius: 22px !important;
+    background: #fff !important;
+    box-shadow: 0 1px 3px rgba(33, 46, 41, .055) !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen section article.group > button:first-child {
+    order: 3 !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen section article.group > span {
+    display: grid !important;
+    width: 48px !important;
+    height: 48px !important;
+    background: #5f88bc !important;
+    color: #fff !important;
+    font-size: 14px !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen section article.group > div:nth-of-type(1) {
+    display: block !important;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Compose: on a phone iMail Studio is a true full-screen writing surface */
+  /* ---------------------------------------------------------------------- */
+  .sourceGmailSkin div[class*="fixed"][class*="z-[100]"] {
+    inset: 0 !important;
+    display: flex !important;
+    align-items: stretch !important;
+    justify-content: stretch !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  .sourceGmailSkin div[class*="fixed"][class*="z-[100]"] > form {
+    width: 100vw !important;
+    max-width: none !important;
+    height: 100dvh !important;
+    max-height: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .sourceGmailSkin div[class*="fixed"][class*="z-[100]"] > form > div > div:first-child {
+    height: 58px !important;
+    min-height: 58px !important;
+    padding: 0 12px !important;
+  }
+
+  .sourceGmailSkin div[class*="fixed"][class*="z-[100]"] [contenteditable="true"] {
+    padding: 20px 18px 120px !important;
+    font-size: 16px !important;
+    line-height: 1.65 !important;
+  }
+
+  .sourceGmailSkin div[class*="fixed"][class*="z-[100]"] form > div > div:last-child {
+    min-height: 64px !important;
+    padding-bottom: max(8px, env(safe-area-inset-bottom)) !important;
+    background: #fff !important;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Settings panel: phone cards and native switches                         */
+  /* ---------------------------------------------------------------------- */
+  .sourceGmailSkin div.fixed.z-\[110\] {
+    background: var(--imail-mobile-bg) !important;
+    backdrop-filter: none !important;
+  }
+
+  .sourceGmailSkin div.fixed.z-\[110\] > aside {
+    width: 100% !important;
+    max-width: none !important;
+    border: 0 !important;
+    background: var(--imail-mobile-bg) !important;
+    box-shadow: none !important;
+  }
+
+  .sourceGmailSkin div.fixed.z-\[110\] > aside > div:first-child {
+    height: 72px !important;
+    padding: 0 16px !important;
+    border: 0 !important;
+    background: var(--imail-mobile-bg) !important;
+  }
+
+  .sourceGmailSkin div.fixed.z-\[110\] > aside > div:first-child > span {
+    display: none !important;
+  }
+
+  .sourceGmailSkin div.fixed.z-\[110\] > aside > div:first-child p:first-child {
+    color: #202725 !important;
+    font-size: 25px !important;
+    font-weight: 700 !important;
+  }
+
+  .sourceGmailSkin div.fixed.z-\[110\] > aside > div:first-child p:last-child {
+    display: none !important;
+  }
+
+  .sourceGmailSkin div.fixed.z-\[110\] > aside > div:nth-child(2) {
+    display: grid !important;
+    gap: 14px !important;
+    padding: 10px 14px 32px !important;
+  }
+
+  .sourceGmailSkin div.fixed.z-\[110\] > aside > div:nth-child(2) > section {
+    margin: 0 !important;
+    padding: 20px 18px !important;
+    border-radius: 26px !important;
+    background: #fff !important;
+    box-shadow: 0 1px 3px rgba(35, 48, 43, .04) !important;
+  }
+
+  .sourceGmailSkin div.fixed.z-\[110\] > aside > div:nth-child(2) > section h2 {
+    color: var(--imail-mobile-green-dark) !important;
+    font-size: 16px !important;
+    letter-spacing: 0 !important;
+    text-transform: none !important;
+  }
+
+  .sourceGmailSkin div.fixed.z-\[110\] input[type="checkbox"] {
+    appearance: none !important;
+    width: 54px !important;
+    height: 32px !important;
+    flex: 0 0 54px !important;
+    border: 2px solid #8e9793 !important;
+    border-radius: 999px !important;
+    background: #d9dddb !important;
+    position: relative !important;
+    cursor: pointer !important;
+    transition: .18s ease !important;
+  }
+
+  .sourceGmailSkin div.fixed.z-\[110\] input[type="checkbox"]::after {
+    content: "";
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #7d8582;
+    transition: .18s ease;
+  }
+
+  .sourceGmailSkin div.fixed.z-\[110\] input[type="checkbox"]:checked {
+    border-color: var(--imail-mobile-green) !important;
+    background: var(--imail-mobile-green) !important;
+  }
+
+  .sourceGmailSkin div.fixed.z-\[110\] input[type="checkbox"]:checked::after {
+    left: 26px;
+    background: #fff;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Dedicated hosted settings route                                        */
+  /* ---------------------------------------------------------------------- */
+  .sourceGmailSkin > main.min-h-screen.bg-\[\#f5f7f6\] > header {
+    height: 72px !important;
+    min-height: 72px !important;
+    padding: 0 14px !important;
+    border: 0 !important;
+    background: var(--imail-mobile-bg) !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen.bg-\[\#f5f7f6\] > header > div {
+    margin-left: 10px !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen.bg-\[\#f5f7f6\] > header > div > div:first-child {
+    display: none !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen.bg-\[\#f5f7f6\] > header > div p:first-child {
+    color: #202725 !important;
+    font-size: 25px !important;
+    font-weight: 700 !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen.bg-\[\#f5f7f6\] > header > div p:first-child::before {
+    content: "iMail settings";
+    font-size: inherit;
+  }
+
+  .sourceGmailSkin > main.min-h-screen.bg-\[\#f5f7f6\] > header > div p:first-child {
+    font-size: 0 !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen.bg-\[\#f5f7f6\] > header > div p:first-child::before {
+    font-size: 25px !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen.bg-\[\#f5f7f6\] > header > div p:last-child {
+    display: none !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen.bg-\[\#f5f7f6\] > div.mx-auto.grid.max-w-6xl {
+    display: block !important;
+    max-width: none !important;
+    padding: 8px 14px 32px !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen.bg-\[\#f5f7f6\] > div.mx-auto.grid.max-w-6xl > aside {
+    display: none !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen.bg-\[\#f5f7f6\] section > div,
+  .sourceGmailSkin > main.min-h-screen.bg-\[\#f5f7f6\] section > form,
+  .sourceGmailSkin > main.min-h-screen.bg-\[\#f5f7f6\] form.scroll-mt-24 {
+    border-radius: 26px !important;
+  }
+
+  .sourceGmailSkin > main.min-h-screen.bg-\[\#f5f7f6\] section.min-w-0 > div:first-child {
+    display: none !important;
+  }
+}
+
+/* Small phones need a little more horizontal room for content than controls. */
+@media (max-width: 390px) {
+  .sourceGmailSkin > div.h-screen > header {
+    padding-inline: 7px !important;
+  }
+
+  .sourceGmailSkin > div.h-screen > header > button:first-child {
+    width: 40px !important;
+  }
+
+  .sourceGmailSkin > div.h-screen > header > div:last-child > div:last-child > button {
+    width: 42px !important;
+    height: 42px !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main .group {
+    margin-inline: 9px !important;
+  }
+
+  .sourceGmailSkin > div.h-screen main article {
+    padding-inline: 16px !important;
+  }
+
+  .sourceGmailSkin section > div[class*="overflow-y-auto"] div.mt-9.flex.flex-wrap.gap-2 > button {
+    font-size: 11px !important;
+  }
+}

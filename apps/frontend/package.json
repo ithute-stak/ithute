@@ -1,12 +1,12 @@
 {
-  "name": "ithute-web",
-  "version": "1.0.0",
+  "name": "lelefa-mail-frontend",
+  "version": "0.3.0",
   "private": true,
   "scripts": {
     "dev": "next dev -H 0.0.0.0",
     "build": "next build",
     "start": "next start -H 0.0.0.0",
-    "check": "tsc --noEmit"
+    "lint": "next lint"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
