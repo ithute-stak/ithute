@@ -3,6 +3,7 @@ set -euo pipefail
 
 APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute-platform}"
 MAIL_DIR="${ITHUTE_MAIL_DIR:-/home/administrator/ithute-platform-mail}"
+SOURCE_DIR="${ITHUTE_SOURCE_DIR:-$APP_DIR}"
 MAIL_HOST="mail.ithute.co.ls"
 EXPECTED_IPV4="${ITHUTE_VPS_IPV4:-204.12.205.224}"
 CERT_EMAIL="${ITHUTE_CERT_EMAIL:-thekoetlisi@ithute.co.ls}"
@@ -18,11 +19,14 @@ if [ "$APP_DIR" = "$MAIL_DIR" ]; then
 fi
 
 test -f "$APP_DIR/.env.production" || { echo "Missing $APP_DIR/.env.production" >&2; exit 2; }
+test -f "$APP_DIR/.image.env" || { echo "Missing $APP_DIR/.image.env" >&2; exit 2; }
 test -f "$APP_DIR/compose.production.yml" || { echo "Missing $APP_DIR/compose.production.yml" >&2; exit 2; }
+test -f "$SOURCE_DIR/mail/compose.yml" || { echo "Missing mail compose template in $SOURCE_DIR" >&2; exit 2; }
+test -f "$SOURCE_DIR/mail/renew-tls.sh" || { echo "Missing mail TLS script in $SOURCE_DIR" >&2; exit 2; }
 
 mkdir -p "$MAIL_DIR" "$MAIL_DIR/config" "$MAIL_DIR/data/mail-data" "$MAIL_DIR/data/mail-state" "$MAIL_DIR/data/mail-logs" "$MAIL_DIR/letsencrypt"
-cp "$APP_DIR/mail/compose.yml" "$MAIL_DIR/compose.yml"
-cp "$APP_DIR/mail/renew-tls.sh" "$MAIL_DIR/renew-tls.sh"
+cp "$SOURCE_DIR/mail/compose.yml" "$MAIL_DIR/compose.yml"
+cp "$SOURCE_DIR/mail/renew-tls.sh" "$MAIL_DIR/renew-tls.sh"
 chmod 700 "$MAIL_DIR/renew-tls.sh"
 
 DNS_FILE="$MAIL_DIR/mail-dns-required.txt"
@@ -47,7 +51,12 @@ if ! getent ahostsv4 "$MAIL_HOST" 2>/dev/null | awk '{print $1}' | grep -Fxq "$E
 fi
 
 app_compose() {
-  docker compose --env-file "$APP_DIR/.env.production" -p ithute -f "$APP_DIR/compose.production.yml" "$@"
+  docker compose \
+    --env-file "$APP_DIR/.env.production" \
+    --env-file "$APP_DIR/.image.env" \
+    -p ithute \
+    -f "$APP_DIR/compose.production.yml" \
+    "$@"
 }
 mail_compose() {
   docker compose -p ithute-mail -f "$MAIL_DIR/compose.yml" "$@"

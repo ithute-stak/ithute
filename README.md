@@ -14,21 +14,48 @@ The production application project is `ithute`:
 - dedicated Realtime Redis
 - a Caddy instance that routes **only** Ithute hostnames
 
-The public site and every platform service are built as separate Docker images from this repository. `compose.production.yml` declares no external Docker network and no external named volume.
+`compose.production.yml` contains **no application build contexts**. Production uses immutable Docker images tagged with the exact Git commit SHA.
 
-Production files live under:
+## Build once in GitHub, run on the VPS
+
+Application source is compiled and packaged only on GitHub Actions runners. `Ithute Standalone CI` performs the frontend checks, validates the deployment boundary, builds these four Docker images and packages the exact tested images as a workflow artifact:
+
+```text
+ithute-web:<commit-sha>
+ithute-auth:<commit-sha>
+ithute-push:<commit-sha>
+ithute-realtime:<commit-sha>
+```
+
+`Deploy Ithute Production` downloads that image artifact from the successful CI run, verifies its SHA-256 checksum, transfers the compressed Docker image bundle to the VPS, runs `docker load`, uploads only the small runtime configuration bundle, and starts the Compose project with `--no-build`.
+
+The VPS does **not** need the Git repository, `apps/`, `platform/`, Node.js source, Python source, `npm`, or `pip` to deploy Ithute. It only needs Docker/Compose, runtime configuration, secrets and persistent volumes.
+
+Production runtime files live under:
 
 ```text
 /home/administrator/ithute-platform
 ```
+
+The required application runtime files are limited to items such as:
+
+```text
+.env.production
+.image.env
+.ithute-bootstrapped
+.deployed-sha
+compose.production.yml
+infrastructure/caddy/Caddyfile
+secrets/
+```
+
+A directory that still contains `apps/`, `platform/` or `.git` is legacy material from the former source-based deployment. The current Compose/deployment path does not use those directories.
 
 Independent mail state lives under:
 
 ```text
 /home/administrator/ithute-platform-mail
 ```
-
-These paths intentionally avoid historical deployment directories that may have different ownership or belong to retired layouts.
 
 ## System owner
 
@@ -42,9 +69,9 @@ The password is never stored in Git. GitHub Actions provides the protected produ
 
 ## Safe VPS bootstrap
 
-The `Safe Ithute VPS Bootstrap` workflow performs the initial deployment. It is intentionally **non-destructive outside Ithute**. It does not run VPS-wide Docker container/image/volume deletion, Docker prune operations, or delete/move other product deployment directories.
+`Safe Ithute VPS Bootstrap` is manual and intended only for a new production runtime. It builds the application images on the GitHub runner, transfers the Docker image bundle and runtime configuration, loads the images on the VPS and generates the production secrets. It does **not** clone the repository onto the VPS.
 
-The bootstrap creates or updates only the isolated Ithute application directory, the `ithute` Docker Compose project, and the separate `ithute-mail` project when mail DNS is ready.
+The bootstrap is intentionally non-destructive outside Ithute. It does not run VPS-wide Docker container/image/volume deletion, Docker prune operations, or delete/move other product deployment directories.
 
 After bootstrap creates both:
 
@@ -53,21 +80,35 @@ After bootstrap creates both:
 /home/administrator/ithute-platform/.ithute-bootstrapped
 ```
 
-normal successful `main` CI runs are deployed by `Deploy Ithute Production`.
+normal successful `main` CI runs are deployed automatically by `Deploy Ithute Production`.
 
 All production workflows that mutate the VPS share the same `ithute-vps-production` concurrency group so application deployment, bootstrap and mail finalization cannot modify Ithute production simultaneously.
 
 ## Deployment safety boundary
 
-CI rejects deployment scripts that contain VPS-wide Docker deletion/prune commands. The Ithute deployment may manage the `ithute` and `ithute-mail` Compose projects only. LoanHub, NBros, Tutor, Pay and other repositories must manage their own runtime resources independently.
+CI rejects deployment scripts that contain VPS-wide Docker deletion/prune commands or VPS-side Git clone/fetch/reset operations. It also rejects application `build:` contexts in `compose.production.yml` and source directories in the production runtime bundle.
 
-Routine deployment never removes another repository's containers, images, networks, volumes or data.
+The Ithute deployment may manage the `ithute` and `ithute-mail` Compose projects only. LoanHub, NBros, Tutor, Pay and other repositories manage their own runtime resources independently.
+
+Routine application deployment follows this path:
+
+```text
+GitHub source
+  -> CI tests
+  -> Docker build on GitHub runner
+  -> tested image artifact
+  -> SCP image artifact to VPS
+  -> docker load
+  -> docker compose up --no-build
+```
 
 ## Mail-only domains
 
 Mail is a separate Docker Compose project, `ithute-mail`, with its own network and host storage under `/home/administrator/ithute-platform-mail`. It does not join the Ithute application network.
 
-The fresh deployment provisions these mailboxes when public mail DNS is ready:
+Mail finalization also avoids a repository checkout on the VPS. GitHub Actions transfers only the transient mail runtime templates needed for provisioning; persistent mail configuration and data remain in `/home/administrator/ithute-platform-mail`.
+
+The deployment provisions these mailboxes when public mail DNS is ready:
 
 ```text
 info@ithute.co.ls
@@ -83,7 +124,7 @@ The mail provisioning script writes two protected files on the VPS:
 - `/home/administrator/ithute-platform-mail/mailbox-credentials.txt`
 - `/home/administrator/ithute-platform-mail/mail-dns-required.txt`
 
-Docker can configure the mail server and accounts, but public DNS is authoritative outside Docker. For Internet mail delivery each domain still needs its MX/SPF/DKIM/DMARC records applied at its DNS provider, and the VPS reverse-DNS/PTR should identify the mail host. The generated DNS file contains the required records and generated DKIM material.
+Docker can configure the mail server and accounts, but public DNS is authoritative outside Docker. For Internet mail delivery each domain still needs its MX/SPF/DKIM/DMARC records applied at its DNS provider, and the VPS reverse-DNS/PTR should identify the mail host.
 
 ## Local website
 
@@ -99,4 +140,4 @@ npm run dev
 
 Copy `.env.example` only as a reference. Production secrets live exclusively in `.env.production` on the VPS and in the untracked `secrets/` directory.
 
-The fresh script generates new independent database passwords, encryption keys and JWT signing keys. Push starts without a mandatory FCM provider so the platform can become healthy on a clean server; FCM can be enabled later by installing its service-account credential and setting `ITHUTE_PUSH_REQUIRED_PROVIDERS=fcm`.
+The fresh bootstrap generates independent database passwords, encryption keys and JWT signing keys. Push starts without a mandatory FCM provider so the platform can become healthy on a clean server; FCM can be enabled later by installing its service-account credential and setting `ITHUTE_PUSH_REQUIRED_PROVIDERS=fcm`.

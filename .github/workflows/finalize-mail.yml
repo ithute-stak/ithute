@@ -26,6 +26,12 @@ jobs:
       VPS_MAIL_DIR: /home/administrator/ithute-platform-mail
 
     steps:
+      - name: Checkout mail configuration on GitHub runner
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          persist-credentials: false
+
       - name: Validate VPS secrets
         run: |
           set -euo pipefail
@@ -57,24 +63,36 @@ jobs:
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
+      - name: Package mail runtime files
+        run: |
+          set -euo pipefail
+          tar -czf /tmp/ithute-mail-runtime.tgz mail scripts/bootstrap-mail.sh
+
       - name: Finalize mail automatically when DNS is ready
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
+          scp /tmp/ithute-mail-runtime.tgz "$remote:/tmp/ithute-mail-runtime.tgz"
           ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' VPS_MAIL_DIR='$VPS_MAIL_DIR' bash -s" <<'REMOTE'
           set -uo pipefail
           if [ ! -f "$VPS_APP_DIR/.ithute-bootstrapped" ]; then
-            echo 'Ithute fresh bootstrap is not complete yet; mail finalization will retry later.'
+            echo 'Ithute bootstrap is not complete yet; mail finalization will retry later.'
             exit 0
           fi
 
-          cd "$VPS_APP_DIR"
-          git fetch --prune origin main
-          git checkout main
-          git reset --hard origin/main
+          tmpdir="$(mktemp -d /tmp/ithute-mail-runtime.XXXXXX)"
+          cleanup() {
+            rm -f /tmp/ithute-mail-runtime.tgz
+            rm -rf "$tmpdir"
+          }
+          trap cleanup EXIT
+          tar -xzf /tmp/ithute-mail-runtime.tgz -C "$tmpdir"
 
           set +e
-          ITHUTE_APP_DIR="$VPS_APP_DIR" ITHUTE_MAIL_DIR="$VPS_MAIL_DIR" bash scripts/bootstrap-mail.sh
+          ITHUTE_APP_DIR="$VPS_APP_DIR" \
+          ITHUTE_MAIL_DIR="$VPS_MAIL_DIR" \
+          ITHUTE_SOURCE_DIR="$tmpdir" \
+            bash "$tmpdir/scripts/bootstrap-mail.sh"
           status=$?
           set -e
           if [ "$status" -eq 3 ]; then

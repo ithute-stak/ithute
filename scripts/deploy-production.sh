@@ -1,20 +1,64 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute}"
+APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute-platform}"
 ENV_FILE="${ITHUTE_ENV_FILE:-$APP_DIR/.env.production}"
+IMAGE_ENV_FILE="${ITHUTE_IMAGE_ENV_FILE:-$APP_DIR/.image.env}"
 COMPOSE_FILE="$APP_DIR/compose.production.yml"
 PROJECT_NAME="ithute"
 
 cd "$APP_DIR"
 
-test -f "$ENV_FILE" || { echo "Missing $ENV_FILE. Run scripts/bootstrap-vps.sh once first." >&2; exit 2; }
+test -f "$ENV_FILE" || { echo "Missing $ENV_FILE. Run the safe bootstrap once first." >&2; exit 2; }
 test -f "$COMPOSE_FILE" || { echo "Missing $COMPOSE_FILE" >&2; exit 2; }
+test -f "$APP_DIR/infrastructure/caddy/Caddyfile" || { echo "Missing Caddyfile" >&2; exit 2; }
 test -f "$APP_DIR/secrets/ithute-auth/jwt-private.pem" || { echo "Missing Auth private key" >&2; exit 2; }
 test -f "$APP_DIR/secrets/ithute-auth/jwt-public.pem" || { echo "Missing Auth public key" >&2; exit 2; }
 
+if [ -n "${ITHUTE_IMAGE_TAG:-}" ]; then
+  case "$ITHUTE_IMAGE_TAG" in
+    *[!0-9a-f]*|'') echo "ITHUTE_IMAGE_TAG must be a lowercase Git commit SHA." >&2; exit 2 ;;
+  esac
+  if [ "${#ITHUTE_IMAGE_TAG}" -ne 40 ]; then
+    echo "ITHUTE_IMAGE_TAG must be a full 40-character Git commit SHA." >&2
+    exit 2
+  fi
+  umask 077
+  printf 'ITHUTE_IMAGE_TAG=%s\n' "$ITHUTE_IMAGE_TAG" > "$IMAGE_ENV_FILE.tmp"
+  mv "$IMAGE_ENV_FILE.tmp" "$IMAGE_ENV_FILE"
+  chmod 600 "$IMAGE_ENV_FILE"
+fi
+
+test -f "$IMAGE_ENV_FILE" || { echo "Missing $IMAGE_ENV_FILE" >&2; exit 2; }
+IMAGE_TAG="$(sed -n 's/^ITHUTE_IMAGE_TAG=//p' "$IMAGE_ENV_FILE" | tail -n1)"
+case "$IMAGE_TAG" in
+  *[!0-9a-f]*|'') echo "Invalid image tag in $IMAGE_ENV_FILE" >&2; exit 2 ;;
+esac
+if [ "${#IMAGE_TAG}" -ne 40 ]; then
+  echo "Image tag must be a full 40-character Git commit SHA." >&2
+  exit 2
+fi
+
+for image in \
+  "ithute-web:$IMAGE_TAG" \
+  "ithute-auth:$IMAGE_TAG" \
+  "ithute-push:$IMAGE_TAG" \
+  "ithute-realtime:$IMAGE_TAG"
+do
+  docker image inspect "$image" >/dev/null 2>&1 || {
+    echo "Missing prebuilt image on VPS: $image" >&2
+    echo "Images must be built by GitHub Actions and loaded before deployment." >&2
+    exit 2
+  }
+done
+
 compose() {
-  docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
+  docker compose \
+    --env-file "$ENV_FILE" \
+    --env-file "$IMAGE_ENV_FILE" \
+    -p "$PROJECT_NAME" \
+    -f "$COMPOSE_FILE" \
+    "$@"
 }
 
 compose config >/tmp/ithute-compose.rendered.yml
@@ -22,9 +66,15 @@ if grep -Eq 'external:[[:space:]]*true' /tmp/ithute-compose.rendered.yml; then
   echo "Refusing deployment: standalone Ithute compose contains an external Docker resource." >&2
   exit 1
 fi
+if grep -Eq '^[[:space:]]*build:' /tmp/ithute-compose.rendered.yml; then
+  echo "Refusing deployment: production compose must use prebuilt images only." >&2
+  exit 1
+fi
 
-compose build --pull ithute-web ithute-auth ithute-push ithute-realtime
-compose up -d --remove-orphans
+# Only third-party base images are pulled on the VPS. Ithute application images
+# were already built in GitHub Actions and loaded from the deployment artifact.
+compose pull ithute-auth-db ithute-push-db ithute-realtime-db ithute-realtime-redis caddy
+compose up -d --remove-orphans --no-build
 
 check_service() {
   local name="$1"
@@ -57,4 +107,5 @@ if [ "${ITHUTE_REQUIRE_PUBLIC_HEALTH:-0}" = "1" ]; then
 fi
 
 compose ps
-printf '\nIthute standalone deployment is healthy.\n'
+compose images
+printf '\nIthute immutable-image deployment is healthy.\n'
