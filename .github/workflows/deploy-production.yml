@@ -132,19 +132,16 @@ jobs:
           tar -xzf "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" -C "$APP_DIR"
           chmod 700 /tmp/ithute-deploy-production.sh
           ITHUTE_APP_DIR="$APP_DIR" ITHUTE_IMAGE_TAG="$DEPLOY_SHA" bash /tmp/ithute-deploy-production.sh
-          printf '%s\n' "$DEPLOY_SHA" > "$APP_DIR/.deployed-sha"
-          chmod 600 "$APP_DIR/.deployed-sha"
           rm -f "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" /tmp/ithute-deploy-production.sh
           REMOTE
 
-      - name: Verify internal health and image-only runtime
+      - name: Verify internal health and exact running images
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
           ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' bash -s" <<'REMOTE'
           set -euo pipefail
           cd "$APP_DIR"
-          test "$(cat .deployed-sha)" = "$DEPLOY_SHA"
           grep -Fxq "ITHUTE_IMAGE_TAG=$DEPLOY_SHA" .image.env
           compose() {
             docker compose \
@@ -161,10 +158,22 @@ jobs:
           compose exec -T ithute-push curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
           compose exec -T ithute-realtime curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
           compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
-          compose config --images | grep -Fxq "ithute-web:$DEPLOY_SHA"
-          compose config --images | grep -Fxq "ithute-auth:$DEPLOY_SHA"
-          compose config --images | grep -Fxq "ithute-push:$DEPLOY_SHA"
-          compose config --images | grep -Fxq "ithute-realtime:$DEPLOY_SHA"
+
+          verify_running_image() {
+            service="$1"
+            expected="$2"
+            container_id="$(compose ps -q "$service")"
+            test -n "$container_id"
+            actual="$(docker inspect --format '{{.Config.Image}}' "$container_id")"
+            test "$actual" = "$expected"
+          }
+
+          verify_running_image ithute-web "ithute-web:$DEPLOY_SHA"
+          verify_running_image ithute-auth "ithute-auth:$DEPLOY_SHA"
+          verify_running_image ithute-auth-push-event-worker "ithute-auth:$DEPLOY_SHA"
+          verify_running_image ithute-push "ithute-push:$DEPLOY_SHA"
+          verify_running_image ithute-push-worker "ithute-push:$DEPLOY_SHA"
+          verify_running_image ithute-realtime "ithute-realtime:$DEPLOY_SHA"
           REMOTE
 
       - name: Verify public Ithute endpoints when DNS is ready
