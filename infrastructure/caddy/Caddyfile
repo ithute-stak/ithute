@@ -26,7 +26,7 @@ ithute.co.ls {
   header X-Frame-Options "DENY"
   header Referrer-Policy "strict-origin-when-cross-origin"
 
-  @app_api path /api/* /docs /docs/* /redoc /redoc/* /openapi.json /mail/config-v1.1.xml /.well-known/autoconfig/mail/config-v1.1.xml /autodiscover/autodiscover.xml
+  @app_api path /api/* /redoc /redoc/* /openapi.json /mail/config-v1.1.xml /.well-known/autoconfig/mail/config-v1.1.xml /autodiscover/autodiscover.xml
   handle @app_api {
     header X-Ithute-Service "app-api"
     reverse_proxy ithute-app-api:8000
