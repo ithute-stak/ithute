@@ -1,0 +1,149 @@
+name: Recover Ithute Owner Access
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/recover-owner-access.yml
+      - scripts/recover-system-owner-access.sh
+
+concurrency:
+  group: ithute-vps-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_APP_DIR: /home/administrator/ithute-platform
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+      ITHUTE_SYSTEM_OWNER_PASSWORD: ${{ secrets.ITHUTE_SYSTEM_OWNER_PASSWORD }}
+      OWNER_EMAIL: thekoetlisi@ithute.co.ls
+      EXPECTED_IPV4: 204.12.205.224
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Validate protected recovery inputs
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_KEY"
+          test -n "$ITHUTE_SYSTEM_OWNER_PASSWORD"
+          test "${#ITHUTE_SYSTEM_OWNER_PASSWORD}" -ge 12
+          test "$VPS_HOST" = "$EXPECTED_IPV4"
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_owner_recovery"
+          chmod 600 "$HOME/.ssh/ithute_owner_recovery"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/ithute-owner-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/ithute-owner-askpass.sh
+            SSH_ASKPASS=/tmp/ithute-owner-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh-add "$HOME/.ssh/ithute_owner_recovery" </dev/null
+            rm -f /tmp/ithute-owner-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/ithute_owner_recovery" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Recover configured system-owner access
+        id: recovery
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          printf '%s' "$ITHUTE_SYSTEM_OWNER_PASSWORD" | base64 -w0 > /tmp/ithute-owner-password.b64
+          chmod 600 /tmp/ithute-owner-password.b64
+          scp scripts/recover-system-owner-access.sh "$remote:/tmp/ithute-recover-system-owner-access.sh"
+          scp /tmp/ithute-owner-password.b64 "$remote:/tmp/ithute-owner-password.b64"
+          rm -f /tmp/ithute-owner-password.b64
+
+          result="$(ssh "$remote" "ITHUTE_APP_DIR='$VPS_APP_DIR' ITHUTE_OWNER_PASSWORD_FILE=/tmp/ithute-owner-password.b64 bash /tmp/ithute-recover-system-owner-access.sh; rc=\$?; rm -f /tmp/ithute-recover-system-owner-access.sh /tmp/ithute-owner-password.b64; exit \$rc")"
+          printf '%s\n' "$result"
+
+          mfa_enabled="$(printf '%s\n' "$result" | sed -n 's/^mfa_enabled=//p' | tail -n1)"
+          owner_active="$(printf '%s\n' "$result" | sed -n 's/^owner_active=//p' | tail -n1)"
+          owner_admin="$(printf '%s\n' "$result" | sed -n 's/^owner_admin=//p' | tail -n1)"
+          test "$owner_active" = true
+          test "$owner_admin" = true
+          case "$mfa_enabled" in true|false) ;; *) echo 'Could not determine system-owner MFA state.' >&2; exit 1 ;; esac
+          printf 'mfa_enabled=%s\n' "$mfa_enabled" >> "$GITHUB_OUTPUT"
+
+      - name: Verify public login and dashboard routes
+        run: |
+          set -euo pipefail
+          curl --retry 8 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS \
+            https://auth.ithute.co.ls/account/login -o /tmp/ithute-login.html
+          grep -Fq 'Sign in securely' /tmp/ithute-login.html
+
+          curl --retry 8 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS -L \
+            https://auth.ithute.co.ls/account -o /tmp/ithute-account-unauth.html
+          grep -Fq 'Sign in securely' /tmp/ithute-account-unauth.html
+
+          curl --retry 8 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS -L \
+            https://auth.ithute.co.ls/admin -o /tmp/ithute-admin-unauth.html
+          grep -Fq 'Sign in securely' /tmp/ithute-admin-unauth.html
+
+      - name: Verify owner sign-in reaches both dashboards
+        if: steps.recovery.outputs.mfa_enabled == 'false'
+        run: |
+          set -euo pipefail
+          jar=/tmp/ithute-owner-cookies.txt
+          curl --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS \
+            -c "$jar" https://auth.ithute.co.ls/account/login -o /tmp/ithute-owner-login.html
+          csrf="$(grep -o 'name="csrf_token" value="[^"]*"' /tmp/ithute-owner-login.html | head -n1 | sed 's/.*value="\([^"]*\)"/\1/')"
+          test -n "$csrf"
+
+          status="$(curl --connect-timeout 10 -sS \
+            -b "$jar" -c "$jar" \
+            -D /tmp/ithute-owner-login.headers \
+            -o /tmp/ithute-owner-login-response.html \
+            -w '%{http_code}' \
+            --data-urlencode "identifier=${OWNER_EMAIL}" \
+            --data-urlencode "password=${ITHUTE_SYSTEM_OWNER_PASSWORD}" \
+            --data-urlencode 'mfa_code=' \
+            --data-urlencode "csrf_token=${csrf}" \
+            https://auth.ithute.co.ls/account/login)"
+          test "$status" = 303
+          grep -Fiq 'location: /account' /tmp/ithute-owner-login.headers
+
+          curl --connect-timeout 10 -fsS -b "$jar" https://auth.ithute.co.ls/account -o /tmp/ithute-owner-account.html
+          grep -Fq 'Central identity' /tmp/ithute-owner-account.html
+          grep -Fq 'System owner' /tmp/ithute-owner-account.html
+
+          curl --connect-timeout 10 -fsS -b "$jar" https://auth.ithute.co.ls/admin -o /tmp/ithute-owner-admin.html
+          grep -Fq 'Identity administration' /tmp/ithute-owner-admin.html
+          echo 'System-owner password login, account dashboard and admin dashboard are verified.'
+
+      - name: Report MFA-protected owner access
+        if: steps.recovery.outputs.mfa_enabled == 'true'
+        run: |
+          echo 'The system owner is active, unlocked and platform-admin. MFA remains enabled, so interactive login also requires the configured authenticator or a recovery code.'
+          echo '### Ithute owner access' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Owner account: active and unlocked' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Platform admin: enabled' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Login page: reachable' >> "$GITHUB_STEP_SUMMARY"
+          echo '- MFA: enabled and intentionally preserved' >> "$GITHUB_STEP_SUMMARY"
