@@ -195,28 +195,50 @@ jobs:
       - name: Verify restored public application and central SSO
         run: |
           set -euo pipefail
-          html="$(curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/)"
-          printf '%s' "$html" | grep -Fq 'Mail & DNS'
 
-          pricing="$(curl --retry 8 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/pricing)"
-          printf '%s' "$pricing" | grep -Fq 'Choose capacity'
+          require_page() {
+            label="$1"
+            url="$2"
+            expected="$3"
+            body="$(curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS "$url")" || {
+              echo "Public check failed: $label could not be fetched at $url" >&2
+              return 1
+            }
+            if ! printf '%s' "$body" | grep -Fq "$expected"; then
+              echo "Public check failed: $label did not contain expected marker: $expected" >&2
+              return 1
+            fi
+            echo "Public check passed: $label"
+          }
 
-          docs="$(curl --retry 8 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/docs)"
-          printf '%s' "$docs" | grep -Fq 'Packages'
+          require_page 'Ithute home' 'https://ithute.co.ls/' 'One home for the systems that move organisations forward.'
+          require_page 'Pricing' 'https://ithute.co.ls/pricing' 'Choose capacity you can understand.'
+          require_page 'Documentation' 'https://ithute.co.ls/docs' 'Public configuration manual'
+          require_page 'Login' 'https://ithute.co.ls/login' 'Sign in with Ithute'
 
-          login="$(curl --retry 8 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/login)"
-          printf '%s' "$login" | grep -Fq 'Sign in with Ithute'
-
-          curl --retry 8 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth
-          curl --retry 8 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://push.ithute.co.ls/readyz | grep -q '"status":"ready"'
-          curl --retry 8 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://realtime.ithute.co.ls/readyz | grep -q '"status":"ready"'
+          require_page 'Central Auth health' 'https://auth.ithute.co.ls/healthz' 'ithute-auth'
+          require_page 'Push health' 'https://push.ithute.co.ls/readyz' '"status":"ready"'
+          require_page 'Realtime health' 'https://realtime.ithute.co.ls/readyz' '"status":"ready"'
 
           curl --connect-timeout 10 -sS -D /tmp/ithute-sso-headers \
             https://ithute.co.ls/api/v1/auth/ithute/login \
             -o /tmp/ithute-sso-body
-          grep -Eq '^HTTP/[^ ]+ 303' /tmp/ithute-sso-headers
-          grep -Fiq 'auth.ithute.co.ls/oauth/authorize' /tmp/ithute-sso-headers
-          grep -Fiq 'client_id=mailbox-dns' /tmp/ithute-sso-headers
+          if ! grep -Eq '^HTTP/[^ ]+ 303' /tmp/ithute-sso-headers; then
+            echo 'Public check failed: central SSO entry did not return HTTP 303.' >&2
+            cat /tmp/ithute-sso-headers >&2
+            exit 1
+          fi
+          if ! grep -Fiq 'auth.ithute.co.ls/oauth/authorize' /tmp/ithute-sso-headers; then
+            echo 'Public check failed: central SSO entry did not redirect to Ithute Auth.' >&2
+            cat /tmp/ithute-sso-headers >&2
+            exit 1
+          fi
+          if ! grep -Fiq 'client_id=mailbox-dns' /tmp/ithute-sso-headers; then
+            echo 'Public check failed: central SSO redirect is missing mailbox-dns client_id.' >&2
+            cat /tmp/ithute-sso-headers >&2
+            exit 1
+          fi
+          echo 'Public check passed: central SSO entry'
 
           remote="${VPS_USER}@${VPS_HOST}"
           if ssh "$remote" "test -f '$VPS_APP_DIR/.dns-cutover-complete'"; then
