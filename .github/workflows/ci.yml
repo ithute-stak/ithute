@@ -82,6 +82,8 @@ jobs:
           grep -Fq '/home/administrator/ithute-platform' .github/workflows/fresh-cutover.yml
           grep -Fq '/home/administrator/ithute-platform' .github/workflows/deploy-production.yml
           grep -Fq '/home/administrator/ithute-platform' scripts/bootstrap-vps.sh
+          ! grep -Fq " sh -s\" <<'REMOTE'" .github/workflows/deploy-production.yml
+          grep -Fq " bash -s\" <<'REMOTE'" .github/workflows/deploy-production.yml
 
       - name: Render standalone application topology
         env:
