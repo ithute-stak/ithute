@@ -5,7 +5,6 @@ on:
     workflows: ["Ithute Standalone CI"]
     types: [completed]
     branches: [main]
-  workflow_dispatch:
 
 concurrency:
   group: ithute-vps-production
@@ -13,17 +12,17 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   deploy:
-    if: >-
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     environment: production
     env:
-      DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+      SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
       VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_USER: ${{ secrets.VPS_USER }}
       VPS_APP_DIR: /home/administrator/ithute-platform
@@ -37,6 +36,22 @@ jobs:
         with:
           ref: ${{ env.DEPLOY_SHA }}
           persist-credentials: false
+
+      - name: Download tested Docker images from CI
+        uses: actions/download-artifact@v4
+        with:
+          name: ithute-images-${{ env.DEPLOY_SHA }}
+          path: /tmp/ithute-images
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          github-token: ${{ github.token }}
+
+      - name: Verify image artifact
+        run: |
+          set -euo pipefail
+          cd /tmp/ithute-images
+          test -f "ithute-images-${DEPLOY_SHA}.tar.gz"
+          test -f "ithute-images-${DEPLOY_SHA}.sha256"
+          sha256sum -c "ithute-images-${DEPLOY_SHA}.sha256"
 
       - name: Validate VPS inputs
         run: |
@@ -75,51 +90,81 @@ jobs:
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
           if ! ssh "$remote" "test -f '$VPS_APP_DIR/.ithute-bootstrapped' && test -f '$VPS_APP_DIR/.env.production'"; then
-            echo 'Ithute production is not bootstrapped in the isolated application directory.' >&2
+            echo 'Ithute production is not bootstrapped in the runtime directory.' >&2
             echo 'Run Safe Ithute VPS Bootstrap before routine deployment.' >&2
             exit 1
           fi
 
-      - name: Build deployment bundle
+      - name: Build runtime-only configuration bundle
         run: |
           set -euo pipefail
-          tar -czf "/tmp/ithute-${DEPLOY_SHA}.tgz" \
-            apps \
-            platform \
-            infrastructure/caddy \
-            mail \
-            scripts \
+          tar -czf "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" \
             compose.production.yml \
-            .env.example \
-            README.md \
-            SECURITY.md
+            infrastructure/caddy/Caddyfile
+          ! tar -tzf "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" | grep -Eq '^(apps|platform)/'
 
-      - name: Upload and deploy only Ithute
+      - name: Transfer and load GitHub-built images
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          scp "/tmp/ithute-${DEPLOY_SHA}.tgz" "$remote:/tmp/ithute-${DEPLOY_SHA}.tgz"
-          ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' bash -s" <<'REMOTE'
+          scp "/tmp/ithute-images/ithute-images-${DEPLOY_SHA}.tar.gz" "$remote:/tmp/ithute-images-${DEPLOY_SHA}.tar.gz"
+          ssh "$remote" "DEPLOY_SHA='$DEPLOY_SHA' bash -s" <<'REMOTE'
           set -euo pipefail
-          test -d "$APP_DIR"
-          tar -xzf "/tmp/ithute-${DEPLOY_SHA}.tgz" -C "$APP_DIR"
-          rm -f "/tmp/ithute-${DEPLOY_SHA}.tgz"
-          ITHUTE_APP_DIR="$APP_DIR" bash "$APP_DIR/scripts/deploy-production.sh"
+          archive="/tmp/ithute-images-${DEPLOY_SHA}.tar.gz"
+          test -s "$archive"
+          gzip -dc "$archive" | docker load
+          rm -f "$archive"
+          docker image inspect "ithute-web:$DEPLOY_SHA" >/dev/null
+          docker image inspect "ithute-auth:$DEPLOY_SHA" >/dev/null
+          docker image inspect "ithute-push:$DEPLOY_SHA" >/dev/null
+          docker image inspect "ithute-realtime:$DEPLOY_SHA" >/dev/null
           REMOTE
 
-      - name: Verify internal standalone health
+      - name: Upload runtime config and start images
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
+          scp "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" "$remote:/tmp/ithute-runtime-${DEPLOY_SHA}.tgz"
+          scp scripts/deploy-production.sh "$remote:/tmp/ithute-deploy-production.sh"
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          mkdir -p "$APP_DIR/infrastructure/caddy"
+          tar -xzf "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" -C "$APP_DIR"
+          chmod 700 /tmp/ithute-deploy-production.sh
+          ITHUTE_APP_DIR="$APP_DIR" ITHUTE_IMAGE_TAG="$DEPLOY_SHA" bash /tmp/ithute-deploy-production.sh
+          printf '%s\n' "$DEPLOY_SHA" > "$APP_DIR/.deployed-sha"
+          chmod 600 "$APP_DIR/.deployed-sha"
+          rm -f "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" /tmp/ithute-deploy-production.sh
+          REMOTE
+
+      - name: Verify internal health and image-only runtime
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' bash -s" <<'REMOTE'
           set -euo pipefail
           cd "$APP_DIR"
-          compose() { docker compose --env-file .env.production -p ithute -f compose.production.yml "$@"; }
+          test "$(cat .deployed-sha)" = "$DEPLOY_SHA"
+          grep -Fxq "ITHUTE_IMAGE_TAG=$DEPLOY_SHA" .image.env
+          compose() {
+            docker compose \
+              --env-file .env.production \
+              --env-file .image.env \
+              -p ithute \
+              -f compose.production.yml \
+              "$@"
+          }
+          compose config > /tmp/ithute-runtime-compose.yml
+          ! grep -Eq '^[[:space:]]*build:' /tmp/ithute-runtime-compose.yml
           compose exec -T ithute-web wget -qO- http://127.0.0.1:3000/health | grep -q ithute-web
           compose exec -T ithute-auth curl -fsS http://127.0.0.1:8080/healthz | grep -q ithute-auth
           compose exec -T ithute-push curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
           compose exec -T ithute-realtime curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
           compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
+          compose config --images | grep -Fxq "ithute-web:$DEPLOY_SHA"
+          compose config --images | grep -Fxq "ithute-auth:$DEPLOY_SHA"
+          compose config --images | grep -Fxq "ithute-push:$DEPLOY_SHA"
+          compose config --images | grep -Fxq "ithute-realtime:$DEPLOY_SHA"
           REMOTE
 
       - name: Verify public Ithute endpoints when DNS is ready
