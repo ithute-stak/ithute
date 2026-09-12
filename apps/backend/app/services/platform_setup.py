@@ -55,7 +55,10 @@ def platform_names(domain: str) -> PlatformNames:
     domain = normalize_platform_domain(domain)
     return PlatformNames(
         domain=domain,
-        panel=f"panel.{domain}",
+        # Keep the legacy `panel` field for database/config compatibility, but
+        # the public frontend now lives at the platform apex. There is no
+        # separate panel.<domain> application hostname.
+        panel=domain,
         api=f"api.{domain}",
         groupware=f"groupware.{domain}",
         mail=f"mail.{domain}",
