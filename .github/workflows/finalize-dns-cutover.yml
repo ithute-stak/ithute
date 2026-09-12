@@ -85,7 +85,7 @@ jobs:
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "set -euo pipefail; cd '$VPS_APP_DIR'; if grep -Fq '# BEGIN ITHUTE TEMPORARY IP FALLBACK' infrastructure/caddy/Caddyfile; then sed -i '/^# BEGIN ITHUTE TEMPORARY IP FALLBACK$/,/^# END ITHUTE TEMPORARY IP FALLBACK$/d' infrastructure/caddy/Caddyfile; docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null; docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile; fi"
+          ssh "$remote" "set -euo pipefail; cd '$VPS_APP_DIR'; if grep -Fq '# BEGIN ITHUTE TEMPORARY IP FALLBACK' infrastructure/caddy/Caddyfile; then sed -i '/^# BEGIN ITHUTE TEMPORARY IP FALLBACK$/,/^# END ITHUTE TEMPORARY IP FALLBACK$/d' infrastructure/caddy/Caddyfile; docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null; docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile; fi; touch .dns-cutover-complete"
 
           if curl --connect-timeout 5 -sS -D /tmp/ithute-ip-cutover-headers "http://${EXPECTED_IPV4}/" -o /tmp/ithute-ip-cutover-body && grep -Fiq 'X-Ithute-Temporary-IP: true' /tmp/ithute-ip-cutover-headers; then
             echo 'Temporary direct-IP route is still active after final cutover.' >&2
@@ -93,4 +93,4 @@ jobs:
           fi
 
           curl --connect-timeout 10 -fsS https://ithute.co.ls/ | grep -Fq 'One focused platform.'
-          echo 'DNS/TLS cutover is complete. Public Ithute uses its domain and direct-IP fallback is disabled.'
+          echo 'DNS/TLS cutover is complete. Public Ithute uses its domain and direct-IP fallback is disabled persistently.'
