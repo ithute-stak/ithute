@@ -64,7 +64,16 @@ jobs:
           docker compose -f docker-compose.ithute-edge.yml config > /tmp/ithute-edge.yml
           grep -q 'ithute-web:' /tmp/ithute-edge.yml
           grep -q 'edge-nginx:' /tmp/ithute-edge.yml
-          ! grep -Eiq 'loanhub|nbros|buildtrack|tutor|ithute-pay|mailbox_gateway|sandbox_frontend' infrastructure/ithute-edge/default.conf.template docker-compose.ithute-edge.yml
+
+          # Public routing may reference only Ithute-owned web/platform upstreams.
+          ! grep -Eiq 'nbros|buildtrack|tutor|ithute-pay|mailbox_gateway|sandbox_frontend|loanhub_frontend|loanhub_backend' \
+            infrastructure/ithute-edge/default.conf.template
+
+          # The edge may join only its private web network and the central Ithute
+          # platform network. It must never join an application/product network.
+          ! grep -Eq '^[[:space:]]+(loanhub|sandbox|mailbox_dns_shared):' docker-compose.ithute-edge.yml
+          grep -q 'ithute_web:' docker-compose.ithute-edge.yml
+          grep -q 'ithute_platform:' docker-compose.ithute-edge.yml
 
       - name: Enforce single-project frontend boundary
         run: |
