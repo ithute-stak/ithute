@@ -189,15 +189,41 @@ jobs:
             --expected-ip "$EXPECTED_IPV4" \
             --timeout 8
 
-      - name: Keep temporary IP access until public HTTPS is ready
+      - name: Verify propagation bridge or completed HTTPS cutover
         run: |
           set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
 
-          curl --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 10 \
+          if ssh "$remote" "test -f '$VPS_APP_DIR/.dns-cutover-complete'"; then
+            echo 'DNS/TLS cutover was already finalized. Verifying domain-only access.'
+            html="$(curl --retry 8 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/)"
+            printf '%s' "$html" | grep -Fq 'One focused platform.'
+            curl --retry 8 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth
+            curl --retry 8 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://push.ithute.co.ls/readyz | grep -q '"status":"ready"'
+            curl --retry 8 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://realtime.ithute.co.ls/readyz | grep -q '"status":"ready"'
+            if curl --connect-timeout 5 -sS -D /tmp/ithute-ip-disabled-headers "http://${EXPECTED_IPV4}/" -o /tmp/ithute-ip-disabled-body && grep -Fiq 'X-Ithute-Temporary-IP: true' /tmp/ithute-ip-disabled-headers; then
+              echo 'Cutover marker exists but temporary direct-IP route is active.' >&2
+              exit 1
+            fi
+            echo 'Public HTTPS is healthy and temporary direct-IP access remains disabled.'
+            exit 0
+          fi
+
+          if ! curl --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 10 \
             -fsS -D /tmp/ithute-ip-headers "http://${EXPECTED_IPV4}/" \
-            -o /tmp/ithute-ip-home.html
-          grep -Fiq 'X-Ithute-Temporary-IP: true' /tmp/ithute-ip-headers
-          grep -Fq 'One focused platform.' /tmp/ithute-ip-home.html
+            -o /tmp/ithute-ip-home.html; then
+            echo 'Temporary direct-IP route is not reachable even though internal Ithute health is green.' >&2
+            exit 1
+          fi
+          if ! grep -Fiq 'X-Ithute-Temporary-IP: true' /tmp/ithute-ip-headers; then
+            echo 'The VPS answered on HTTP, but the loaded Caddy configuration does not contain the Ithute temporary IP route.' >&2
+            cat /tmp/ithute-ip-headers >&2 || true
+            exit 1
+          fi
+          if ! grep -Fq 'One focused platform.' /tmp/ithute-ip-home.html; then
+            echo 'The temporary IP route is not serving the Ithute homepage.' >&2
+            exit 1
+          fi
 
           dns_ready=true
           for host in ithute.co.ls auth.ithute.co.ls push.ithute.co.ls realtime.ithute.co.ls; do
@@ -212,30 +238,22 @@ jobs:
           fi
 
           if ! html="$(curl --connect-timeout 10 -fsS https://ithute.co.ls/)"; then
-            echo "Public DNS now reaches the VPS, but TLS/ACME is still settling. Leaving temporary access at http://${EXPECTED_IPV4}/ and allowing Caddy to retry naturally."
+            echo "Public DNS reaches the VPS, but TLS/ACME is still settling. Temporary access remains at http://${EXPECTED_IPV4}/."
             exit 0
           fi
           printf '%s' "$html" | grep -Fq 'One focused platform.'
 
           if ! curl --connect-timeout 10 -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth; then
-            echo "Apex HTTPS works, but Auth HTTPS is not ready yet. Temporary IP access remains enabled."
+            echo 'Apex HTTPS works, but Auth HTTPS is not ready yet. Temporary IP access remains enabled.'
             exit 0
           fi
           if ! curl --connect-timeout 10 -fsS https://push.ithute.co.ls/readyz | grep -q '"status":"ready"'; then
-            echo "Apex HTTPS works, but Push HTTPS is not ready yet. Temporary IP access remains enabled."
+            echo 'Apex HTTPS works, but Push HTTPS is not ready yet. Temporary IP access remains enabled.'
             exit 0
           fi
           if ! curl --connect-timeout 10 -fsS https://realtime.ithute.co.ls/readyz | grep -q '"status":"ready"'; then
-            echo "Apex HTTPS works, but Realtime HTTPS is not ready yet. Temporary IP access remains enabled."
+            echo 'Apex HTTPS works, but Realtime HTTPS is not ready yet. Temporary IP access remains enabled.'
             exit 0
           fi
 
-          echo 'All public Ithute HTTPS endpoints are healthy. Disabling temporary direct-IP access.'
-          remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "set -euo pipefail; cd '$VPS_APP_DIR'; sed -i '/^# BEGIN ITHUTE TEMPORARY IP FALLBACK$/,/^# END ITHUTE TEMPORARY IP FALLBACK$/d' infrastructure/caddy/Caddyfile; docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null; docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile"
-
-          if curl --connect-timeout 5 -sS -D /tmp/ithute-ip-disabled-headers "http://${EXPECTED_IPV4}/" -o /tmp/ithute-ip-disabled-body && grep -Fiq 'X-Ithute-Temporary-IP: true' /tmp/ithute-ip-disabled-headers; then
-            echo 'Temporary direct-IP route is still active after HTTPS cutover.' >&2
-            exit 1
-          fi
-          echo 'Public HTTPS is healthy and temporary direct-IP access is disabled.'
+          echo 'All public Ithute HTTPS endpoints are healthy. Leaving the propagation bridge in place until the scheduled finalizer records the cutover.'
