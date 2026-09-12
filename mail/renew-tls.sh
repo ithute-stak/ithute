@@ -4,9 +4,15 @@ set -euo pipefail
 APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute-platform}"
 MAIL_DIR="${ITHUTE_MAIL_DIR:-/home/administrator/ithute-platform-mail}"
 ENV_FILE="$APP_DIR/.env.production"
+IMAGE_ENV_FILE="$APP_DIR/.image.env"
 
 app_compose() {
-  docker compose --env-file "$ENV_FILE" -p ithute -f "$APP_DIR/compose.production.yml" "$@"
+  docker compose \
+    --env-file "$ENV_FILE" \
+    --env-file "$IMAGE_ENV_FILE" \
+    -p ithute \
+    -f "$APP_DIR/compose.production.yml" \
+    "$@"
 }
 mail_compose() {
   docker compose -p ithute-mail -f "$MAIL_DIR/compose.yml" "$@"
