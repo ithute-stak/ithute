@@ -6,6 +6,7 @@ ENV_FILE="${ITHUTE_ENV_FILE:-$APP_DIR/.env.production}"
 IMAGE_ENV_FILE="${ITHUTE_IMAGE_ENV_FILE:-$APP_DIR/.image.env}"
 COMPOSE_FILE="$APP_DIR/compose.production.yml"
 PROJECT_NAME="ithute"
+CUTOVER_MARKER="$APP_DIR/.dns-cutover-complete"
 
 cd "$APP_DIR"
 
@@ -54,6 +55,14 @@ do
   }
 done
 
+# Once DNS/TLS cutover has been finalized, routine deployments must never
+# re-enable the temporary direct-IP route just because the repository still
+# carries the propagation fallback for first bootstrap.
+if [ -f "$CUTOVER_MARKER" ]; then
+  sed -i '/^# BEGIN ITHUTE TEMPORARY IP FALLBACK$/,/^# END ITHUTE TEMPORARY IP FALLBACK$/d' \
+    "$APP_DIR/infrastructure/caddy/Caddyfile"
+fi
+
 compose() {
   docker compose \
     --env-file "$ENV_FILE" \
@@ -78,6 +87,16 @@ fi
 compose pull ithute-auth-db ithute-push-db ithute-realtime-db ithute-realtime-redis ithute-dns caddy
 compose up -d --remove-orphans --no-build
 
+# Compose does not recreate a running service merely because a bind-mounted
+# configuration file changed. Explicitly activate the newly uploaded runtime
+# configuration so verification checks the configuration from this deployment,
+# not whatever Caddy/BIND had already loaded in memory.
+compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
+compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null
+if ! compose exec -T ithute-dns rndc reload >/dev/null 2>&1; then
+  compose restart ithute-dns >/dev/null
+fi
+
 check_service() {
   local name="$1"
   local command="$2"
@@ -99,7 +118,6 @@ check_service ithute-auth "curl -fsS http://127.0.0.1:8080/healthz | grep -q ith
 check_service ithute-push "curl -fsS http://127.0.0.1:8080/readyz | grep -q '\"status\":\"ready\"'"
 check_service ithute-realtime "curl -fsS http://127.0.0.1:8080/readyz | grep -q '\"status\":\"ready\"'"
 check_service ithute-dns "named-checkconf /etc/bind/named.conf && named-checkzone ithute.co.ls /etc/bind/zones/db.ithute.co.ls >/dev/null"
-compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
 
 if [ "${ITHUTE_REQUIRE_PUBLIC_HEALTH:-0}" = "1" ]; then
   html="$(curl --retry 15 --retry-delay 3 --retry-all-errors -fsS https://ithute.co.ls/)"
