@@ -40,6 +40,7 @@ jobs:
           bash -n scripts/deploy-production.sh
           bash -n scripts/bootstrap-mail.sh
           bash -n mail/renew-tls.sh
+          python3 -m py_compile scripts/verify-authoritative-dns.py
 
       - name: Enforce runtime-only VPS deployment boundary
         run: |
@@ -86,6 +87,20 @@ jobs:
                   raise SystemExit(f'Missing immutable runtime image declaration for {image}')
           if compose.count('ITHUTE_IMAGE_TAG') < 6:
               raise SystemExit('Production application images must all be commit-tagged.')
+          if 'internetsystemsconsortium/bind9:9.20' not in compose:
+              raise SystemExit('Production compose must include the Ithute authoritative DNS service.')
+
+          for workflow in (
+              Path('.github/workflows/fresh-cutover.yml'),
+              Path('.github/workflows/deploy-production.yml'),
+          ):
+              text = workflow.read_text(encoding='utf-8')
+              for required in (
+                  'infrastructure/dns/named.conf',
+                  'infrastructure/dns/zones/db.ithute.co.ls',
+              ):
+                  if required not in text:
+                      raise SystemExit(f'{workflow}: runtime bundle is missing {required}')
 
           deploy = Path('.github/workflows/deploy-production.yml').read_text(encoding='utf-8')
           for source_dir in ('apps', 'platform'):
@@ -108,6 +123,7 @@ jobs:
       - name: Render standalone application topology
         env:
           ITHUTE_IMAGE_TAG: 0000000000000000000000000000000000000000
+          ITHUTE_PUBLIC_IPV4: 204.12.205.224
           ITHUTE_AUTH_DB_PASSWORD: ci-auth-db-password
           ITHUTE_PUSH_DB_PASSWORD: ci-push-db-password
           ITHUTE_REALTIME_DB_PASSWORD: ci-realtime-db-password
@@ -124,7 +140,9 @@ jobs:
           grep -q 'ithute-auth:' /tmp/ithute-production.yml
           grep -q 'ithute-push:' /tmp/ithute-production.yml
           grep -q 'ithute-realtime:' /tmp/ithute-production.yml
+          grep -q 'ithute-dns:' /tmp/ithute-production.yml
           grep -q 'caddy:' /tmp/ithute-production.yml
+          grep -Fq '204.12.205.224' /tmp/ithute-production.yml
           ! grep -Eq 'external:[[:space:]]*true' /tmp/ithute-production.yml
           ! grep -Eq '^[[:space:]]*build:' /tmp/ithute-production.yml
           ! grep -Eiq 'loanhub|nbros|buildtrack|mailbox-dns|ithute-tutor|ithute-pay' /tmp/ithute-production.yml
@@ -140,6 +158,26 @@ jobs:
           grep -Fq 'push.ithute.co.ls' infrastructure/caddy/Caddyfile
           grep -Fq 'realtime.ithute.co.ls' infrastructure/caddy/Caddyfile
           ! grep -Eiq 'loanhub|nbros|buildtrack|tutor|ithute-pay|mailbox' infrastructure/caddy/Caddyfile
+
+      - name: Validate Ithute authoritative DNS
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/infrastructure/dns:/etc/bind:ro" \
+            --entrypoint named-checkconf \
+            internetsystemsconsortium/bind9:9.20 \
+            /etc/bind/named.conf
+          docker run --rm \
+            -v "$PWD/infrastructure/dns:/etc/bind:ro" \
+            --entrypoint named-checkzone \
+            internetsystemsconsortium/bind9:9.20 \
+            ithute.co.ls /etc/bind/zones/db.ithute.co.ls
+          grep -Eq '^@ +IN +NS +ns1\.ithute\.co\.ls\.$' infrastructure/dns/zones/db.ithute.co.ls
+          grep -Eq '^@ +IN +NS +ns2\.ithute\.co\.ls\.$' infrastructure/dns/zones/db.ithute.co.ls
+          grep -Eq '^ns1 +IN +A +204\.12\.205\.224$' infrastructure/dns/zones/db.ithute.co.ls
+          grep -Eq '^ns2 +IN +A +204\.12\.205\.224$' infrastructure/dns/zones/db.ithute.co.ls
+          grep -Fq '${ITHUTE_PUBLIC_IPV4:-204.12.205.224}:53:53/tcp' compose.production.yml
+          grep -Fq '${ITHUTE_PUBLIC_IPV4:-204.12.205.224}:53:53/udp' compose.production.yml
 
       - name: Validate independent mail topology
         run: |
