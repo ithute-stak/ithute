@@ -2,12 +2,11 @@
 set -euo pipefail
 
 APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute}"
+REPO_URL="${ITHUTE_REPO_URL:-https://github.com/ithute-stak/ithute.git}"
 ENV_FILE="$APP_DIR/.env.production"
 OWNER_EMAIL="thekoetlisi@ithute.co.ls"
 
-cd "$APP_DIR"
-
-for command in docker openssl curl; do
+for command in docker git openssl curl; do
   command -v "$command" >/dev/null 2>&1 || { echo "Required command not found: $command" >&2; exit 2; }
 done
 docker compose version >/dev/null
@@ -17,6 +16,21 @@ if [ -e /home/administrator/ithute-edge ] || [ -e /home/administrator/mailbox-dn
   echo "Complete the explicit one-time VPS cleanup before running this bootstrap." >&2
   exit 2
 fi
+
+if [ ! -d "$APP_DIR/.git" ]; then
+  if [ -e "$APP_DIR" ] && [ -n "$(ls -A "$APP_DIR" 2>/dev/null || true)" ]; then
+    echo "$APP_DIR exists but is not a clean Git checkout; refusing to overwrite it." >&2
+    exit 2
+  fi
+  rmdir "$APP_DIR" 2>/dev/null || true
+  git clone --branch main --single-branch "$REPO_URL" "$APP_DIR"
+else
+  git -C "$APP_DIR" fetch --prune origin main
+  git -C "$APP_DIR" checkout main
+  git -C "$APP_DIR" reset --hard origin/main
+fi
+
+cd "$APP_DIR"
 
 if [ -f "$ENV_FILE" ]; then
   echo "$ENV_FILE already exists; refusing to overwrite production secrets." >&2
