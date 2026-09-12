@@ -253,7 +253,10 @@ services:
       - "443:443"
       - "443:443/udp"
     volumes:
-      - ./infrastructure/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Mount the directory, not the individual Caddyfile inode. Runtime bundles
+      # replace files atomically on the host; a directory bind keeps those
+      # replacements visible inside the already-running Caddy container.
+      - ./infrastructure/caddy:/etc/caddy:ro
       - ithute_caddy_data:/data
       - ithute_caddy_config:/config
     networks: [ithute]
