@@ -32,7 +32,7 @@ for repository in (
 assert "source_path\": \"products/" not in content
 PYCODE
 
-if git grep -nE 'products/(LoanHub|ithute-pay|ithute-tutor|nbros)' --   ':!.github/**'; then
+if git grep -nE 'products/(LoanHub|ithute-pay|ithute-tutor|nbros)' -- .; then
   echo 'Extracted product source path remains in the Ithute platform repository.' >&2
   exit 1
 fi
