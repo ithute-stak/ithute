@@ -128,7 +128,7 @@ jobs:
           PYCODE
 
           if git grep -nE 'products/(LoanHub|ithute-pay|ithute-tutor|nbros)' -- \
-            ':!.github/workflows/finalize-product-separation.yml'; then
+            ':!.github/**'; then
             echo 'Extracted product source path remains in the Ithute platform repository.' >&2
             exit 1
           fi
@@ -187,6 +187,11 @@ jobs:
           routing.write_text(routing_text, encoding="utf-8")
           PY
 
+          # GitHub Actions' token cannot change workflow files. Restore every
+          # workflow before this action commits; those files are changed through
+          # the repository connection once this source cleanup has succeeded.
+          git restore --staged --worktree .github/workflows
+
       - name: Validate the cleaned platform repository
         run: |
           set -euo pipefail
@@ -200,7 +205,6 @@ jobs:
       - name: Commit source cleanup
         run: |
           set -euo pipefail
-          git rm --ignore-unmatch .github/workflows/finalize-product-separation.yml
           git add --all
           git diff --cached --check
           git config user.name "github-actions[bot]"
