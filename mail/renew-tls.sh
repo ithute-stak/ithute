@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute}"
-MAIL_DIR="${ITHUTE_MAIL_DIR:-/home/administrator/ithute-mail}"
+APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute-platform}"
+MAIL_DIR="${ITHUTE_MAIL_DIR:-/home/administrator/ithute-platform-mail}"
 ENV_FILE="$APP_DIR/.env.production"
 
 app_compose() {
