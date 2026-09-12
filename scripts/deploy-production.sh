@@ -30,6 +30,27 @@ if [ -n "${ITHUTE_IMAGE_TAG:-}" ]; then
 fi
 
 test -f "$IMAGE_ENV_FILE" || { echo "Missing $IMAGE_ENV_FILE" >&2; exit 2; }
+IMAGE_TAG="$(sed -n 's/^ITHUTE_IMAGE_TAG=//p' "$IMAGE_ENV_FILE" | tail -n1)"
+case "$IMAGE_TAG" in
+  *[!0-9a-f]*|'') echo "Invalid image tag in $IMAGE_ENV_FILE" >&2; exit 2 ;;
+esac
+if [ "${#IMAGE_TAG}" -ne 40 ]; then
+  echo "Image tag must be a full 40-character Git commit SHA." >&2
+  exit 2
+fi
+
+for image in \
+  "ithute-web:$IMAGE_TAG" \
+  "ithute-auth:$IMAGE_TAG" \
+  "ithute-push:$IMAGE_TAG" \
+  "ithute-realtime:$IMAGE_TAG"
+do
+  docker image inspect "$image" >/dev/null 2>&1 || {
+    echo "Missing prebuilt image on VPS: $image" >&2
+    echo "Images must be built by GitHub Actions and loaded before deployment." >&2
+    exit 2
+  }
+done
 
 compose() {
   docker compose \
@@ -49,14 +70,10 @@ if grep -Eq '^[[:space:]]*build:' /tmp/ithute-compose.rendered.yml; then
   echo "Refusing deployment: production compose must use prebuilt images only." >&2
   exit 1
 fi
-if ! grep -Fq "ghcr.io/ithute-stak/ithute-web:" /tmp/ithute-compose.rendered.yml; then
-  echo "Refusing deployment: Ithute web image is not sourced from GHCR." >&2
-  exit 1
-fi
 
-# Images are built and published by GitHub Actions. The VPS only pulls and runs
-# the immutable commit-tagged images; it never builds application source.
-compose pull
+# Only third-party base images are pulled on the VPS. Ithute application images
+# were already built in GitHub Actions and loaded from the deployment artifact.
+compose pull ithute-auth-db ithute-push-db ithute-realtime-db ithute-realtime-redis caddy
 compose up -d --remove-orphans --no-build
 
 check_service() {
