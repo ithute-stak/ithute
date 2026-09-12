@@ -17,6 +17,12 @@ services:
   edge-nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-loanhub.co.ls}
+      API_DOMAIN: ${API_DOMAIN:-api.loanhub.co.ls}
+      WWW_DOMAIN: ${WWW_DOMAIN:-www.loanhub.co.ls}
+      SANDBOX_APP_DOMAIN: ${SANDBOX_APP_DOMAIN:-sandbox.loanhub.co.ls}
+      SANDBOX_API_DOMAIN: ${SANDBOX_API_DOMAIN:-api-sandbox.loanhub.co.ls}
     depends_on:
       ithute-web:
         condition: service_healthy
@@ -38,6 +44,8 @@ services:
     networks:
       - ithute_web
       - ithute_platform
+      - loanhub
+      - loanhub_sandbox
 
   certbot:
     image: certbot/certbot:latest
@@ -61,6 +69,14 @@ networks:
   ithute_platform:
     external: true
     name: ${ITHUTE_PLATFORM_NETWORK_NAME:-mailbox-dns_mailbox_dns}
+  # LoanHub owns these networks and all application/database services on them.
+  # The shared edge joins them only to reach stable frontend/backend aliases.
+  loanhub:
+    external: true
+    name: ${ITHUTE_LOANHUB_NETWORK_NAME:-loanhub_loanhub}
+  loanhub_sandbox:
+    external: true
+    name: ${ITHUTE_LOANHUB_SANDBOX_NETWORK_NAME:-loanhub_sandbox}
 
 volumes:
   edge_letsencrypt:

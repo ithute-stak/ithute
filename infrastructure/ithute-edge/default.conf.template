@@ -25,10 +25,36 @@ upstream ithute_realtime {
     keepalive 16;
 }
 
+# LoanHub remains a standalone product. The shared public edge only resolves
+# stable Docker aliases on LoanHub's own network; it does not own LoanHub code,
+# containers, databases, or volumes.
+upstream loanhub_frontend {
+    server loanhub-frontend:3000;
+    keepalive 16;
+}
+
+upstream loanhub_backend {
+    server loanhub-backend:8000;
+    keepalive 16;
+}
+
+# Redirect only hostnames explicitly owned by this shared edge. Unknown HTTP
+# hosts are handled by the separate default server below and never fall through
+# to Ithute or LoanHub.
 server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    server_name ithute.co.ls www.ithute.co.ls auth.ithute.co.ls push.ithute.co.ls realtime.ithute.co.ls;
+    listen 80;
+    listen [::]:80;
+    server_name
+        ithute.co.ls
+        www.ithute.co.ls
+        auth.ithute.co.ls
+        push.ithute.co.ls
+        realtime.ithute.co.ls
+        ${APP_DOMAIN}
+        ${WWW_DOMAIN}
+        ${API_DOMAIN}
+        ${SANDBOX_APP_DOMAIN}
+        ${SANDBOX_API_DOMAIN};
 
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/certbot;
@@ -38,6 +64,22 @@ server {
 
     location / {
         return 308 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 404;
     }
 }
 
@@ -54,9 +96,12 @@ server {
     return 308 https://ithute.co.ls$request_uri;
 }
 
+# Ithute owns only its explicit apex hostname. It is deliberately not the TLS
+# default server, so another domain can never render the Ithute application by
+# accident.
 server {
-    listen 443 ssl default_server;
-    listen [::]:443 ssl default_server;
+    listen 443 ssl;
+    listen [::]:443 ssl;
     http2 on;
     server_name ithute.co.ls;
 
@@ -162,10 +207,130 @@ server {
     }
 }
 
-# Unknown hostnames must never fall through to another Ithute application.
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
+    http2 on;
+    server_name ${WWW_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/ithute-edge/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ithute-edge/privkey.pem;
+    include /etc/nginx/snippets/ithute-tls.conf;
+
+    return 308 https://${APP_DOMAIN}$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${APP_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/ithute-edge/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ithute-edge/privkey.pem;
+    include /etc/nginx/snippets/ithute-tls.conf;
+
+    add_header X-Ithute-Edge-Service "loanhub-web" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    location / {
+        proxy_pass http://loanhub_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 120s;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${API_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/ithute-edge/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ithute-edge/privkey.pem;
+    include /etc/nginx/snippets/ithute-tls.conf;
+
+    client_max_body_size 30m;
+    add_header X-Ithute-Edge-Service "loanhub-api" always;
+
+    location / {
+        proxy_pass http://loanhub_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 120s;
+    }
+}
+
+# Sandbox services are optional. Resolve them dynamically so stopping the
+# training stack cannot prevent the public edge from starting.
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${SANDBOX_APP_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/ithute-edge/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ithute-edge/privkey.pem;
+    include /etc/nginx/snippets/ithute-tls.conf;
+
+    add_header X-Robots-Tag "noindex, nofollow, noarchive" always;
+
+    location / {
+        set $sandbox_frontend_upstream http://sandbox_frontend:3000;
+        proxy_pass $sandbox_frontend_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${SANDBOX_API_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/ithute-edge/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ithute-edge/privkey.pem;
+    include /etc/nginx/snippets/ithute-tls.conf;
+
+    client_max_body_size 30m;
+    add_header X-Robots-Tag "noindex, nofollow, noarchive" always;
+
+    location / {
+        set $sandbox_backend_upstream http://sandbox_backend:8000;
+        proxy_pass $sandbox_backend_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+
+# Unknown HTTPS hostnames are rejected by the one and only TLS default server.
+# This prevents accidental cross-product routing when a hostname is missing or
+# temporarily misconfigured.
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
     http2 on;
     server_name _;
 
