@@ -2,12 +2,6 @@ name: Safe Ithute VPS Bootstrap
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/fresh-cutover.yml
-      - scripts/bootstrap-vps.sh
-      - scripts/bootstrap-mail.sh
 
 concurrency:
   group: ithute-vps-production
@@ -22,6 +16,7 @@ jobs:
     timeout-minutes: 75
     environment: production
     env:
+      DEPLOY_SHA: ${{ github.sha }}
       VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_USER: ${{ secrets.VPS_USER }}
       VPS_APP_DIR: /home/administrator/ithute-platform
@@ -32,7 +27,7 @@ jobs:
       EXPECTED_IPV4: 204.12.205.224
 
     steps:
-      - name: Checkout main
+      - name: Checkout main on GitHub runner
         uses: actions/checkout@v5
         with:
           ref: main
@@ -46,24 +41,7 @@ jobs:
           test -n "$VPS_SSH_KEY"
           test -n "$ITHUTE_SYSTEM_OWNER_PASSWORD"
           test "${#ITHUTE_SYSTEM_OWNER_PASSWORD}" -ge 12
-          test "$VPS_HOST" = "$EXPECTED_IPV4" || {
-            echo "VPS_HOST does not match the approved production host $EXPECTED_IPV4" >&2
-            exit 1
-          }
-
-      - name: Observe public DNS without blocking bootstrap
-        run: |
-          set -euo pipefail
-          for host in ithute.co.ls auth.ithute.co.ls push.ithute.co.ls realtime.ithute.co.ls mail.ithute.co.ls; do
-            addresses="$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ' || true)"
-            if printf '%s\n' "$addresses" | tr ' ' '\n' | grep -Fxq "$EXPECTED_IPV4"; then
-              echo "$host -> $EXPECTED_IPV4"
-            elif [ -n "$addresses" ]; then
-              echo "$host currently resolves to: $addresses"
-            else
-              echo "$host currently has no public IPv4 answer. Internal bootstrap will continue."
-            fi
-          done
+          test "$VPS_HOST" = "$EXPECTED_IPV4"
 
       - name: Configure SSH
         run: |
@@ -93,7 +71,7 @@ jobs:
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "set -eu; command -v docker >/dev/null; command -v git >/dev/null; command -v openssl >/dev/null; command -v curl >/dev/null; docker info >/dev/null; docker compose version >/dev/null"
+          ssh "$remote" "set -eu; command -v docker >/dev/null; command -v openssl >/dev/null; command -v curl >/dev/null; docker info >/dev/null; docker compose version >/dev/null"
 
       - name: Determine bootstrap state
         id: state
@@ -102,68 +80,95 @@ jobs:
           remote="${VPS_USER}@${VPS_HOST}"
           if ssh "$remote" "test -f '$VPS_APP_DIR/.ithute-bootstrapped' && test -f '$VPS_APP_DIR/.env.production'"; then
             echo 'bootstrap=false' >> "$GITHUB_OUTPUT"
-            echo 'Ithute is already bootstrapped; applying a normal deployment.'
+            echo 'Ithute is already bootstrapped. Routine CI image deployment should be used.'
           else
             echo 'bootstrap=true' >> "$GITHUB_OUTPUT"
-            echo 'Fresh isolated Ithute bootstrap is required.'
           fi
 
-      - name: Transfer bootstrap and protected owner secret
+      - name: Build immutable images on GitHub runner
+        if: steps.state.outputs.bootstrap == 'true'
+        run: |
+          set -euo pipefail
+          tag="$DEPLOY_SHA"
+          docker build --pull --target runner -t "ithute-web:$tag" ./apps/frontend
+          docker build --pull -t "ithute-auth:$tag" ./platform/ithute-auth
+          docker build --pull -t "ithute-push:$tag" ./platform/ithute-push
+          docker build --pull -t "ithute-realtime:$tag" ./platform/ithute-realtime
+          docker save \
+            "ithute-web:$tag" \
+            "ithute-auth:$tag" \
+            "ithute-push:$tag" \
+            "ithute-realtime:$tag" \
+            | gzip -1 > "/tmp/ithute-images-$tag.tar.gz"
+
+      - name: Prepare runtime-only bundle
+        if: steps.state.outputs.bootstrap == 'true'
+        run: |
+          set -euo pipefail
+          tar -czf "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" \
+            compose.production.yml \
+            infrastructure/caddy/Caddyfile
+          ! tar -tzf "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" | grep -Eq '^(apps|platform)/'
+
+      - name: Transfer runtime, images and protected owner secret
         if: steps.state.outputs.bootstrap == 'true'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
+          scp "/tmp/ithute-images-${DEPLOY_SHA}.tar.gz" "$remote:/tmp/ithute-images-${DEPLOY_SHA}.tar.gz"
+          scp "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" "$remote:/tmp/ithute-runtime-${DEPLOY_SHA}.tgz"
           scp scripts/bootstrap-vps.sh "$remote:/tmp/ithute-bootstrap-vps.sh"
+          scp scripts/deploy-production.sh "$remote:/tmp/ithute-deploy-production.sh"
           printf '%s' "$ITHUTE_SYSTEM_OWNER_PASSWORD" | base64 -w0 > /tmp/ithute-owner-password.b64
           chmod 600 /tmp/ithute-owner-password.b64
           scp /tmp/ithute-owner-password.b64 "$remote:/tmp/ithute-owner-password.b64"
           rm -f /tmp/ithute-owner-password.b64
 
-      - name: Bootstrap only Ithute-owned resources
+      - name: Bootstrap runtime from GitHub-built images
         if: steps.state.outputs.bootstrap == 'true'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' VPS_MAIL_DIR='$VPS_MAIL_DIR' bash -s" <<'REMOTE'
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' MAIL_DIR='$VPS_MAIL_DIR' DEPLOY_SHA='$DEPLOY_SHA' bash -s" <<'REMOTE'
           set -euo pipefail
-          cleanup_bootstrap_tmp() {
-            rm -f /tmp/ithute-owner-password.b64 /tmp/ithute-bootstrap-vps.sh
-          }
-          trap cleanup_bootstrap_tmp EXIT
-
-          test -f /tmp/ithute-bootstrap-vps.sh
-          test -s /tmp/ithute-owner-password.b64
+          mkdir -p "$APP_DIR/infrastructure/caddy"
+          tar -xzf "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" -C "$APP_DIR"
+          gzip -dc "/tmp/ithute-images-${DEPLOY_SHA}.tar.gz" | docker load
 
           owner_password_b64="$(cat /tmp/ithute-owner-password.b64)"
-          chmod 700 /tmp/ithute-bootstrap-vps.sh
-
-          ITHUTE_APP_DIR="$VPS_APP_DIR" \
-          ITHUTE_MAIL_DIR="$VPS_MAIL_DIR" \
+          chmod 700 /tmp/ithute-bootstrap-vps.sh /tmp/ithute-deploy-production.sh
+          ITHUTE_APP_DIR="$APP_DIR" \
+          ITHUTE_MAIL_DIR="$MAIL_DIR" \
+          ITHUTE_DEPLOY_SCRIPT=/tmp/ithute-deploy-production.sh \
+          ITHUTE_IMAGE_TAG="$DEPLOY_SHA" \
           ITHUTE_SYSTEM_OWNER_PASSWORD_B64="$owner_password_b64" \
             bash /tmp/ithute-bootstrap-vps.sh
-
           unset owner_password_b64
+
+          rm -f \
+            "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" \
+            "/tmp/ithute-images-${DEPLOY_SHA}.tar.gz" \
+            /tmp/ithute-owner-password.b64 \
+            /tmp/ithute-bootstrap-vps.sh \
+            /tmp/ithute-deploy-production.sh
           REMOTE
 
-      - name: Deploy latest main when already bootstrapped
-        if: steps.state.outputs.bootstrap != 'true'
+      - name: Verify image-only runtime and internal health
+        if: steps.state.outputs.bootstrap == 'true'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "cd '$VPS_APP_DIR' && git fetch --prune origin main && git checkout main && git reset --hard origin/main && ITHUTE_APP_DIR='$VPS_APP_DIR' bash scripts/deploy-production.sh"
-
-      - name: Verify isolated runtime and internal health on VPS
-        run: |
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' bash -s" <<'REMOTE'
           set -euo pipefail
-          remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
-          set -euo pipefail
-          test -f "$VPS_APP_DIR/.ithute-bootstrapped"
-          test -f "$VPS_APP_DIR/.env.production"
-
-          cd "$VPS_APP_DIR"
-          compose() { docker compose --env-file .env.production -p ithute -f compose.production.yml "$@"; }
-          compose ps
+          cd "$APP_DIR"
+          test -f .ithute-bootstrapped
+          test -f .env.production
+          grep -Fxq "ITHUTE_IMAGE_TAG=$DEPLOY_SHA" .image.env
+          compose() {
+            docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml "$@"
+          }
+          compose config > /tmp/ithute-bootstrap-compose.yml
+          ! grep -Eq '^[[:space:]]*build:' /tmp/ithute-bootstrap-compose.yml
           compose exec -T ithute-web wget -qO- http://127.0.0.1:3000/health | grep -q ithute-web
           compose exec -T ithute-auth curl -fsS http://127.0.0.1:8080/healthz | grep -q ithute-auth
           compose exec -T ithute-push curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
@@ -172,6 +177,7 @@ jobs:
           REMOTE
 
       - name: Verify public Ithute services when DNS is ready
+        if: steps.state.outputs.bootstrap == 'true'
         run: |
           set -euo pipefail
           dns_ready=true
@@ -181,27 +187,11 @@ jobs:
             fi
           done
           if [ "$dns_ready" != true ]; then
-            echo 'Standalone VPS deployment is healthy, but public Ithute DNS is not pointed at this VPS yet.'
-            echo 'Public verification is deferred; no VPS action is required.'
+            echo 'Runtime is healthy; public DNS verification is deferred.'
             exit 0
           fi
-
           html="$(curl --retry 15 --retry-delay 3 --retry-all-errors -fsS https://ithute.co.ls/)"
           printf '%s' "$html" | grep -Fq 'One focused platform.'
           curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth
           curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://push.ithute.co.ls/readyz | grep -q '"status":"ready"'
           curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://realtime.ithute.co.ls/readyz | grep -q '"status":"ready"'
-          curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://auth.ithute.co.ls/account/login >/dev/null
-
-      - name: Report mail status
-        run: |
-          set -euo pipefail
-          remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "VPS_MAIL_DIR='$VPS_MAIL_DIR' bash -s" <<'REMOTE'
-          set -euo pipefail
-          if [ -f "$VPS_MAIL_DIR/mailbox-credentials.txt" ]; then
-            echo 'All requested info@ mailboxes are provisioned.'
-          else
-            echo 'Mail DNS is not ready yet; scheduled finalization will retry automatically.'
-          fi
-          REMOTE
