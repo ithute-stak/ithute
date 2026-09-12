@@ -204,7 +204,7 @@ jobs:
               echo "Public check failed: $label could not be fetched at $url" >&2
               return 1
             }
-            if ! printf '%s' "$body" | grep -Fq "$expected"; then
+            if [[ "$body" != *"$expected"* ]]; then
               echo "Public check failed: $label did not contain expected marker: $expected" >&2
               return 1
             fi
