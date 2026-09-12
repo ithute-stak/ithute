@@ -10,11 +10,34 @@ The production application project is `ithute`:
 - `ithute-auth` — `https://auth.ithute.co.ls`
 - `ithute-push` — `https://push.ithute.co.ls`
 - `ithute-realtime` — `https://realtime.ithute.co.ls`
+- `ithute-dns` — authoritative DNS for the `ithute.co.ls` zone on TCP/UDP 53
 - dedicated Auth, Push and Realtime PostgreSQL services
 - dedicated Realtime Redis
 - a Caddy instance that routes **only** Ithute hostnames
 
 `compose.production.yml` contains **no application build contexts**. Production uses immutable Docker images tagged with the exact Git commit SHA.
+
+## Authoritative DNS and registrar delegation
+
+Ithute now serves its own authoritative `ithute.co.ls` zone from the production VPS at `204.12.205.224`.
+
+The authoritative names are:
+
+```text
+ns1.ithute.co.ls -> 204.12.205.224
+ns2.ithute.co.ls -> 204.12.205.224
+```
+
+Because both nameservers are children of `ithute.co.ls`, the `.ls` parent cannot discover their addresses from the child zone until the registrar/reseller publishes **glue records**. At the domain reseller, register both child nameserver/host records above, then delegate `ithute.co.ls` to:
+
+```text
+ns1.ithute.co.ls
+ns2.ithute.co.ls
+```
+
+The production zone also publishes the apex, `www`, `auth`, `push`, `realtime`, and `mail` A records to `204.12.205.224`, together with the Ithute MX/SPF/DMARC/CAA policy records. GitHub Actions validates the zone before merge and, after deployment, queries the production VPS directly over both UDP and TCP port 53 before considering authoritative DNS healthy.
+
+Using two nameserver names on one IPv4 is sufficient for the requested registrar setup if the reseller accepts it, but it is not infrastructure redundancy. A future second authoritative DNS node should place `ns2.ithute.co.ls` on a different server/network and use zone transfer or another replicated backend.
 
 ## Build once in GitHub, run on the VPS
 
@@ -43,9 +66,10 @@ The required application runtime files are limited to items such as:
 .env.production
 .image.env
 .ithute-bootstrapped
-.deployed-sha
 compose.production.yml
 infrastructure/caddy/Caddyfile
+infrastructure/dns/named.conf
+infrastructure/dns/zones/db.ithute.co.ls
 secrets/
 ```
 
@@ -124,7 +148,7 @@ The mail provisioning script writes two protected files on the VPS:
 - `/home/administrator/ithute-platform-mail/mailbox-credentials.txt`
 - `/home/administrator/ithute-platform-mail/mail-dns-required.txt`
 
-Docker can configure the mail server and accounts, but public DNS is authoritative outside Docker. For Internet mail delivery each domain still needs its MX/SPF/DKIM/DMARC records applied at its DNS provider, and the VPS reverse-DNS/PTR should identify the mail host.
+Ithute is authoritative for the `ithute.co.ls` DNS zone. The other mail-only domains remain authoritative wherever their registrars currently delegate them, unless they are separately migrated to Ithute DNS. Their MX/SPF/DKIM/DMARC records still need to be applied at their authoritative DNS providers, and the VPS reverse-DNS/PTR should identify the mail host.
 
 ## Local website
 
