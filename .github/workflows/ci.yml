@@ -82,8 +82,10 @@ jobs:
           if '\n    build:' in compose or '\n      build:' in compose:
               raise SystemExit('Production compose must not contain application build contexts.')
           for image in ('ithute-web:', 'ithute-auth:', 'ithute-push:', 'ithute-realtime:'):
-              if f'image: {image}${{ITHUTE_IMAGE_TAG' not in compose:
+              if f'image: {image}' not in compose:
                   raise SystemExit(f'Missing immutable runtime image declaration for {image}')
+          if compose.count('ITHUTE_IMAGE_TAG') < 6:
+              raise SystemExit('Production application images must all be commit-tagged.')
 
           deploy = Path('.github/workflows/deploy-production.yml').read_text(encoding='utf-8')
           for source_dir in ('apps', 'platform'):
