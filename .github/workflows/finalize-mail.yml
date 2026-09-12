@@ -1,0 +1,99 @@
+name: Finalize Ithute Mail
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+concurrency:
+  group: ithute-mail-finalize
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+      VPS_APP_DIR: /home/administrator/ithute
+
+    steps:
+      - name: Validate VPS secrets
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_KEY"
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_mail"
+          chmod 600 "$HOME/.ssh/ithute_mail"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/ithute-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/ithute-askpass.sh
+            SSH_ASKPASS=/tmp/ithute-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh-add "$HOME/.ssh/ithute_mail" </dev/null
+            rm -f /tmp/ithute-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/ithute_mail" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Finalize mail automatically when DNS is ready
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
+          set -uo pipefail
+          if [ ! -f "$VPS_APP_DIR/.ithute-bootstrapped" ]; then
+            echo 'Ithute fresh bootstrap is not complete yet; mail finalization will retry later.'
+            exit 0
+          fi
+
+          cd "$VPS_APP_DIR"
+          git fetch --prune origin main
+          git checkout main
+          git reset --hard origin/main
+
+          set +e
+          ITHUTE_APP_DIR="$VPS_APP_DIR" bash scripts/bootstrap-mail.sh
+          status=$?
+          set -e
+          if [ "$status" -eq 3 ]; then
+            echo 'Mail DNS is not ready yet; scheduled GitHub Actions will retry automatically.'
+            exit 0
+          fi
+          exit "$status"
+          REMOTE
+
+      - name: Verify mail service when provisioned
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "bash -s" <<'REMOTE'
+          set -euo pipefail
+          if [ ! -f /home/administrator/ithute-mail/mailbox-credentials.txt ]; then
+            echo 'Mail is waiting for public DNS; no VPS action is required.'
+            exit 0
+          fi
+          test -f /home/administrator/ithute-mail/mail-dns-required.txt
+          docker compose -p ithute-mail -f /home/administrator/ithute-mail/compose.yml ps
+          docker inspect --format '{{.State.Health.Status}}' ithute-mail | grep -Eq 'healthy|starting'
+          REMOTE
