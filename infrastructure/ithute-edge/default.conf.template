@@ -20,13 +20,22 @@ upstream loanhub_backend {
     keepalive 16;
 }
 
+# Legacy panel bookmarks must never render the application. During DNS/cache
+# transition they are sent to the canonical apex and preserve the requested path.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name panel.ithute.co.ls;
+
+    return 308 https://ithute.co.ls$request_uri;
+}
+
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name
         ithute.co.ls
         www.ithute.co.ls
-        panel.ithute.co.ls
         api.ithute.co.ls
         auth.ithute.co.ls
         push.ithute.co.ls
@@ -60,6 +69,19 @@ server {
     listen [::]:443 ssl;
     http2 on;
     server_name www.ithute.co.ls;
+
+    ssl_certificate /etc/letsencrypt/live/ithute-edge/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ithute-edge/privkey.pem;
+    include /etc/nginx/snippets/ithute-tls.conf;
+
+    return 308 https://ithute.co.ls$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name panel.ithute.co.ls;
 
     ssl_certificate /etc/letsencrypt/live/ithute-edge/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/ithute-edge/privkey.pem;
@@ -148,7 +170,6 @@ server {
     http2 on;
     server_name
         ithute.co.ls
-        panel.ithute.co.ls
         api.ithute.co.ls
         auth.ithute.co.ls
         push.ithute.co.ls
