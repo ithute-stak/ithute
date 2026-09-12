@@ -6,13 +6,11 @@ on:
     paths:
       - 'infrastructure/nginx/default.conf'
       - '.github/workflows/central-nginx-routing.yml'
-      - 'products/nbros/deploy/deploy-production.sh'
   push:
     branches: [main]
     paths:
       - 'infrastructure/nginx/default.conf'
       - '.github/workflows/central-nginx-routing.yml'
-      - 'products/nbros/deploy/deploy-production.sh'
 
 permissions:
   contents: read

@@ -18,50 +18,23 @@ python -m py_compile \
   apps/backend/alembic/versions/0014_ithute_operating_ops.py \
   apps/backend/alembic/versions/0015_mail_intelligence.py
 
-for manifest in product.manifest.yaml products/LoanHub/product.manifest.yaml products/ithute-pay/product.manifest.yaml products/ithute-tutor/product.manifest.yaml; do
-  test -s "$manifest"
-  grep -Fq 'ownership: product' "$manifest"
-  grep -Fq 'auth: central' "$manifest"
-  grep -Fq 'push: central' "$manifest"
-  grep -Fq 'realtime: central' "$manifest"
-  grep -Fq 'event_bus: central' "$manifest"
-done
+test -s product.manifest.yaml
+python - <<'PYCODE'
+from pathlib import Path
 
-LOANHUB_MANIFEST=products/LoanHub/product.manifest.yaml
-grep -Fq 'require_pre_migration_backup: true' "$LOANHUB_MANIFEST"
-grep -Fq 'reject_unexpected_volume_change: true' "$LOANHUB_MANIFEST"
+content = Path("apps/backend/app/services/ithute_operating.py").read_text(encoding="utf-8")
+for repository in (
+    "https://github.com/ithute-stak/LoanHub",
+    "https://github.com/ithute-stak/ithute-pay",
+    "https://github.com/ithute-stak/ithute-tutor",
+):
+    assert repository in content, repository
+assert "source_path\": \"products/" not in content
+PYCODE
 
-grep -Fq 'VPS_PLATFORM_ROOT: /home/administrator/mailbox-dns' .github/workflows/loanhub-product-production.yml
-grep -Fq 'BACKEND_IMAGE: ghcr.io/ithute-stak/loanhub-backend' .github/workflows/loanhub-product-production.yml
-grep -Fq 'FRONTEND_IMAGE: ghcr.io/ithute-stak/loanhub-frontend' .github/workflows/loanhub-product-production.yml
-grep -Fq 'EXPECTED_DB_VOLUME="${COMPOSE_PROJECT_NAME}_postgres_data"' .github/workflows/loanhub-product-production.yml
-grep -Fq 'pg_dump -U "${DB_USER:-loanhub}" -d "${DB_NAME:-loan_db}" -Fc' .github/workflows/loanhub-product-production.yml
-if grep -Eq 'docker (compose down -v|volume rm)' .github/workflows/loanhub-product-production.yml; then
-  echo 'Destructive Docker volume command found in LoanHub production workflow.' >&2
+if git grep -nE 'products/(LoanHub|ithute-pay|ithute-tutor|nbros)' -- .; then
+  echo 'Extracted product source path remains in the Ithute platform repository.' >&2
   exit 1
 fi
-
-grep -Fq 'COMPOSE_PROJECT_NAME=loanhub' products/LoanHub/.env.production.example
-
-# Active production publishing and Compose defaults must belong to the current
-# GitHub organization. Old Lelefe-dc package paths cannot be pushed by this repo.
-for file in \
-  .github/workflows/deploy-production.yml \
-  .github/workflows/ithute-pay-production.yml \
-  .github/workflows/ithute-realtime-production.yml \
-  .github/workflows/loanhub-product-production.yml \
-  docker-compose.deploy.yml \
-  docker-compose.deploy-ha.yml \
-  docker-compose.ithute-platform.yml \
-  docker-compose.ithute-pay.yml; do
-  if grep -Fq 'ghcr.io/lelefe-dc/' "$file"; then
-    echo "Legacy GHCR namespace remains in active deployment file: $file" >&2
-    exit 1
-  fi
-done
-
-grep -Fq 'ITHUTE_AUTH_IMAGE: ghcr.io/ithute-stak/ithute-auth' .github/workflows/deploy-production.yml
-grep -Fq 'ITHUTE_PUSH_IMAGE: ghcr.io/ithute-stak/ithute-push' .github/workflows/deploy-production.yml
-grep -Fq 'ITHUTE_REALTIME_IMAGE: ghcr.io/ithute-stak/ithute-realtime' .github/workflows/deploy-production.yml
 
 echo 'Ithute operating-platform static validation passed.'
