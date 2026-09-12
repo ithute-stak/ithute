@@ -1,72 +1,58 @@
-# Mailbox DNS
+# Ithute
 
-Mailbox DNS is a production-oriented, multi-tenant **business email + authoritative DNS + hosting-company platform** built by Lelefa Infrastructure.
+Ithute is a **standalone platform repository**. It is no longer a monorepo of application products.
 
-The original technical roadmap is complete at Phase 13/13. Commercial Release A (Business Launch), Release B (Professional Email) and Release C (Hosting Company) are represented in the control plane and production stack.
+The repository has one clear responsibility: operate the Ithute website and the shared Ithute platform services that belong to Ithute itself.
 
-## Current product surface
+## Active architecture
 
-- Multi-tenant organizations, memberships, RBAC, MFA, sessions and tenant-scoped API keys
-- Protected public signup, email verification, rate limiting and optional Cloudflare Turnstile
-- Domain ownership verification and lifecycle
-- PowerDNS authoritative zones, DNSSEC, delegation diagnostics and record automation
-- Postfix + Dovecot + Rspamd + Unbound mail data plane
-- Database-backed mailboxes, quotas, aliases and distribution groups
-- Shared/delegated mailboxes, vacation responders and Sieve filtering
-- Google Workspace/Gmail, Microsoft 365, cPanel and generic IMAP mailbox migration
-- Per-mailbox encrypted-backup recovery and deliverability/reputation snapshots
-- Webmail with folders, search, drafts, attachments, HTML sanitization, contacts and signatures
-- SPF/DKIM/DMARC readiness, DKIM lifecycle, sender ownership and queue operations
-- SMTP-only application credentials and tenant API transactional email
-- CalDAV/CardDAV groupware using Radicale
-- Reseller accounts, reseller/customer hierarchy and white-label brand settings
-- OpenSRS domain lookup/registration adapter, credential-gated until reseller credentials are supplied
-- DPO Pay hosted checkout adapter plus manual/EFT invoicing, credential-gated until merchant credentials are supplied
-- Starter/Business/Enterprise entitlement enforcement for domains, mailboxes, allocated storage and API keys
-- Encrypted Restic backups, restore drills and private mailbox recovery service
-- Prometheus, Grafana, Alertmanager and synthetic SMTP/IMAP/DNS monitoring
-- Mail-node registry, optional Dovecot dsync replication and optional HAProxy TCP mail edge
-- Customer billing portal, notifications, support centre and public service status
-- Caddy HTTPS production edge and production preflight validation
+- `apps/frontend` — the public `ithute.co.ls` website. It is a small standalone Next.js application with no embedded product routes.
+- `platform/ithute-auth` — central identity and authentication.
+- `platform/ithute-push` — central push-notification infrastructure.
+- `platform/ithute-realtime` — central realtime infrastructure.
+- `infrastructure/ithute-edge` — deterministic routing only for Ithute-owned hostnames.
+- `docker-compose.ithute-edge.yml` — production edge and public website deployment.
 
-## Development
+Application systems belong in their own repositories, with their own frontend, backend, database, CI/CD and deployment lifecycle. They may authenticate against Ithute Auth, but their application code is not nested here.
+
+## Public routing contract
+
+| Hostname | Owner in this repository | Upstream |
+| --- | --- | --- |
+| `ithute.co.ls` | Ithute web | `ithute-web:3000` |
+| `www.ithute.co.ls` | Redirect | `https://ithute.co.ls` |
+| `auth.ithute.co.ls` | Ithute Auth | `ithute-auth:8080` |
+| `push.ithute.co.ls` | Ithute Push | `ithute-push:8080` |
+| `realtime.ithute.co.ls` | Ithute Realtime | `ithute-realtime:8080` |
+
+Unknown HTTPS hostnames return `404`; they cannot fall through to another application.
+
+## Local website
 
 ```bash
-cp .env.example .env
-docker compose up -d --build
+cd apps/frontend
+npm ci
+npm run dev
 ```
 
-Default endpoints: frontend `http://localhost:3006`, backend `http://localhost:8006`, API docs `http://localhost:8006/docs`, SMTP `localhost:2525`, submission `localhost:2587`, IMAPS `localhost:2993`.
+Open `http://localhost:3000`.
 
-Add the mail overlay for SMTP/IMAP/Rspamd/Radicale services:
+Before committing frontend changes:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.phase6-mail.yml up -d --build
+npm run check
+npm run build
 ```
 
-## Commercial regression
+## Production safety
 
-```bash
-sh scripts/verify-commercial-release.sh
-```
+The production workflow builds an immutable `ghcr.io/ithute-stak/ithute-web:<commit>` image and deploys only the Ithute edge project. It does **not** recreate application databases or application containers.
 
-The gate runs the historical Phase 1–13 regression chain, Commercial A/B/C API tests, current Alembic head validation, production frontend build, unified production Compose, optional HA mail Compose and Caddy configuration validation. GitHub Actions runs the same gate on `development`, `main`, pull requests to `main`, and manual dispatch.
+The deploy verification rejects a release when:
 
-## Production
+- `ithute.co.ls` renders content from another system;
+- the Ithute routing marker header is missing;
+- the generated Next.js stylesheet cannot be fetched as `text/css`; or
+- the homepage does not contain the expected Ithute identity marker.
 
-Read `docs/COMMERCIAL-RELEASE.md`, `docs/COMMERCIAL-RELEASES-BC.md` and `docs/PRODUCTION-TOPOLOGY.md`, create a secure production `.env`, then run:
-
-```bash
-sh scripts/prod-preflight.sh
-sh scripts/prod-up.sh
-```
-
-The normal primary stack includes the customer/control plane, mail data plane, primary authoritative DNS, encrypted backup scheduler, groupware, monitoring and ACME HTTPS edge. `HA_MAIL_ENABLED=true` adds the HAProxy TCP mail edge and requires independently addressable mail nodes.
-
-**Production NS2 must run on an independent public server/failure domain.** Off-site Restic storage must also be a separate failure domain. DPO merchant credentials, OpenSRS reseller credentials, public TLS/PTR configuration and external accounts are operator prerequisites and are intentionally not fabricated in source control.
-
-Before moving real customer MX or nameserver delegation: use real public hostnames/IPs, configure PTR/rDNS, use public mail TLS certificates, verify port 25/587/993/53 access, externally validate SPF/DKIM/DMARC, isolate replication/operations ports, run the commercial regression and complete a real external delivery/restore test.
-
-Repository production policy is documented in `docs/PRODUCTION-READINESS.md` and vulnerability handling in `SECURITY.md`. Frontend dependencies are locked with `package-lock.json`; production images use `npm ci`; Dependabot targets `development`; and GitHub Actions dependencies are pinned to immutable commit SHAs.
-# ithute
-# ithute
+Existing TLS volumes and the existing central-platform Docker network are reused during the routing transition so certificate and identity data are not destroyed.

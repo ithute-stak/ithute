@@ -1,3 +1,0 @@
-services:
-  mail-edge:
-    image: ${MAILBOX_DNS_MAIL_EDGE_IMAGE:-ghcr.io/ithute-stak/mailbox-dns-mail-edge}:${MAILBOX_DNS_IMAGE_TAG:-latest}
