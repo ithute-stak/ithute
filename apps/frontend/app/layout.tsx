@@ -1,37 +1,26 @@
 import type { Metadata } from "next";
-import { BackgroundRefresh } from "@/components/background-refresh";
-import { CommandPalette } from "@/components/command-palette";
-import { FormEnhancer } from "@/components/form-enhancer";
-import { NavigationMemory } from "@/components/navigation-memory";
-import { ToastProvider } from "@/components/toast-provider";
 import "./globals.css";
-import "./forms.css";
-import "./platform-ux.css";
-import "./control-polish.css";
 
 export const metadata: Metadata = {
-  title: { default: "Mailbox DNS · Lelefa Infrastructure", template: "%s · Mailbox DNS" },
-  description: "Multi-tenant mail and authoritative DNS infrastructure control plane.",
-  applicationName: "Mailbox DNS",
-  keywords: ["DNS hosting", "mail hosting", "PowerDNS", "infrastructure control plane"],
-  robots: { index: false, follow: false },
+  metadataBase: new URL("https://ithute.co.ls"),
+  title: {
+    default: "Ithute · Digital infrastructure",
+    template: "%s · Ithute",
+  },
+  description:
+    "Ithute is a standalone digital infrastructure platform for secure identity, realtime communication, notifications and production operations.",
+  applicationName: "Ithute",
+  alternates: { canonical: "/" },
+  robots: { index: true, follow: true },
   icons: {
-    icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23123a38'/%3E%3Ctext x='32' y='41' font-size='25' text-anchor='middle' fill='%23d8c56a' font-family='Arial' font-weight='700'%3EMD%3C/text%3E%3C/svg%3E",
+    icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230d2f2b'/%3E%3Ctext x='32' y='44' font-size='38' text-anchor='middle' fill='%23f4df85' font-family='Arial' font-weight='900'%3E!%3C/text%3E%3C/svg%3E",
   },
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body>
-        <ToastProvider>
-          <FormEnhancer />
-          <NavigationMemory />
-          <CommandPalette />
-          <BackgroundRefresh />
-          {children}
-        </ToastProvider>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

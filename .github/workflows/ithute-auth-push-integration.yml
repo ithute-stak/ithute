@@ -6,7 +6,6 @@ on:
       - "platform/ithute-auth/**"
       - "platform/ithute-push/**"
       - "docker-compose.ithute-platform.yml"
-      - "scripts/validate-auth-push-integration.sh"
       - ".github/workflows/ithute-auth-push-integration.yml"
   push:
     branches: [main]
@@ -14,7 +13,6 @@ on:
       - "platform/ithute-auth/**"
       - "platform/ithute-push/**"
       - "docker-compose.ithute-platform.yml"
-      - "scripts/validate-auth-push-integration.sh"
       - ".github/workflows/ithute-auth-push-integration.yml"
   workflow_dispatch:
 
@@ -24,12 +22,35 @@ permissions:
 jobs:
   auth-push-contract:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
 
-      - name: Validate Auth Push integration
-        run: bash scripts/validate-auth-push-integration.sh
+      - name: Validate Auth and Push source trees
+        run: |
+          set -eu
+          python3 -m compileall -q platform/ithute-auth/app platform/ithute-push/app
+          test -f platform/ithute-auth/Dockerfile
+          test -f platform/ithute-push/Dockerfile
+
+      - name: Validate Auth to Push delivery contract
+        run: |
+          set -eu
+          compose=docker-compose.ithute-platform.yml
+          grep -Fq 'AUTH_PUSH_EVENTS_URL:' "$compose"
+          grep -Fq 'AUTH_PUSH_EVENT_WORKER_POLL_SECONDS:' "$compose"
+          grep -Fq 'command: ["push-event-worker"]' "$compose"
+          grep -Fq 'PUSH_AUTH_ISSUER:' "$compose"
+          grep -Fq 'PUSH_AUTH_JWKS_URL:' "$compose"
+          grep -Fq 'ithute-push-worker:' "$compose"
+          grep -Fq 'ithute-auth:' "$compose"
+          grep -Fq 'ithute-push:' "$compose"
+
+      - name: Reject product application coupling
+        run: |
+          set -eu
+          ! grep -Eiq 'buildtrack|nbros|sandbox_frontend|loanhub_frontend|loanhub_backend' \
+            platform/ithute-auth/Dockerfile platform/ithute-push/Dockerfile

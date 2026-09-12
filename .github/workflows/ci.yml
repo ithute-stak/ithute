@@ -1,0 +1,85 @@
+name: Ithute Web CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: apps/frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Type check
+        working-directory: apps/frontend
+        run: npm run check
+
+      - name: Build frontend
+        working-directory: apps/frontend
+        run: npm run build
+
+      - name: Build production image
+        run: docker build --target runner -t ithute-web-ci ./apps/frontend
+
+      - name: Verify production image health endpoint
+        run: |
+          set -eu
+          docker run -d --rm --name ithute-web-ci -p 127.0.0.1:3300:3000 ithute-web-ci
+          cleanup() { docker rm -f ithute-web-ci >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3300/health | grep -Fq 'ithute-web'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs ithute-web-ci
+          exit 1
+
+      - name: Validate standalone edge topology
+        env:
+          ITHUTE_WEB_IMAGE_TAG: ci
+        run: |
+          set -eu
+          docker compose -f docker-compose.ithute-edge.yml config > /tmp/ithute-edge.yml
+          grep -q 'ithute-web:' /tmp/ithute-edge.yml
+          grep -q 'edge-nginx:' /tmp/ithute-edge.yml
+
+          # Public routing may reference only Ithute-owned web/platform upstreams.
+          ! grep -Eiq 'nbros|buildtrack|tutor|ithute-pay|mailbox_gateway|sandbox_frontend|loanhub_frontend|loanhub_backend' \
+            infrastructure/ithute-edge/default.conf.template
+
+          # The edge may join only its private web network and the central Ithute
+          # platform network. It must never join an application/product network.
+          ! grep -Eq '^[[:space:]]+(loanhub|sandbox|mailbox_dns_shared):' docker-compose.ithute-edge.yml
+          grep -q 'ithute_web:' docker-compose.ithute-edge.yml
+          grep -q 'ithute_platform:' docker-compose.ithute-edge.yml
+
+      - name: Enforce single-project frontend boundary
+        run: |
+          set -eu
+          test ! -d apps/backend
+          test ! -d apps/frontend/components
+          test ! -d apps/frontend/lib
+          test ! -f product.manifest.yaml
+          ! grep -R -Eiq 'Fleet Management starts here|NBros Management Platform|The !thute portfolio|LoanHub|Ithute Tutor|Ithute Pay|Mailbox DNS' apps/frontend/app

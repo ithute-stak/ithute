@@ -2,14 +2,16 @@
 
 ## Supported code
 
-Only the current `main` release and the next candidate on `development` are supported. Historical `agent/*` branches are not production releases.
+The current `main` branch is the supported production release.
 
 ## Reporting a vulnerability
 
-Do not disclose exploitable security issues, credentials, private keys or customer data in a public issue. If GitHub private vulnerability reporting is enabled for this repository, use **Security → Report a vulnerability**. Otherwise contact the deployment owner through the existing private business/support channel and include the affected component, impact, reproduction steps and a proposed mitigation when available.
+Do not disclose exploitable security issues, credentials, private keys, tokens or customer data in a public issue. Use GitHub private vulnerability reporting when available, or the existing private Ithute support channel.
 
 ## Security expectations
 
-Production changes must preserve tenant isolation, least privilege, secure cookies, verified signup, CAPTCHA, TLS for public/system-mail paths, mail sender ownership, DNS authorization, encrypted backups and secret separation. Secrets belong in deployment secret storage or `.env` on the host and must never be committed.
+Ithute production changes must preserve least privilege, secure cookies, TLS, explicit hostname routing, secret separation, authenticated service-to-service access and durable identity data. Secrets belong in GitHub environment secrets, host secret storage or protected runtime files and must never be committed.
 
-A suspected credential exposure should be treated as compromised immediately: rotate the affected secret, invalidate sessions/API keys where relevant, review audit logs, and verify mail/DNS/provider access before restoring normal operation.
+The public edge must route `ithute.co.ls` only to the Ithute web service. Unknown hostnames must not fall through to a different application. Central Auth, Push and Realtime use dedicated upstream names and must never depend on a generic `frontend`, `backend` or `nginx` alias on a shared product network.
+
+Treat suspected credential exposure as compromised immediately: rotate the affected secret, invalidate relevant sessions or service credentials, inspect audit logs and verify production health before restoring normal operation.
