@@ -218,13 +218,14 @@ jobs:
             printf 'MAIL_TLS_MODE=selfsigned\n'
             printf 'COOKIE_SECURE=true\n'
             printf 'NEXT_PUBLIC_API_URL=/api/v1\n'
-            printf 'FRONTEND_URL=https://panel.ithute.co.ls\n'
+            printf 'PANEL_HOSTNAME=ithute.co.ls\n'
+            printf 'FRONTEND_URL=https://ithute.co.ls\n'
             printf 'ITHUTE_AUTH_ISSUER=https://auth.ithute.co.ls\n'
-            printf 'ITHUTE_AUTH_CORS_ORIGINS=https://panel.ithute.co.ls\n'
+            printf 'ITHUTE_AUTH_CORS_ORIGINS=https://ithute.co.ls\n'
 
-            # The temporary public-IP panel is retired now that the shared Caddy
+            # The temporary public-IP frontend is retired now that the shared
             # edge serves the real Ithute hostnames. Application HTTP ports are
-            # loopback-only; Caddy reaches the Ithute nginx service over Docker networking.
+            # loopback-only; the edge reaches the Ithute nginx service over Docker networking.
             printf 'FRONTEND_PORT=127.0.0.1:3006\n'
             printf 'BACKEND_PORT=127.0.0.1:8006\n'
             printf 'PROXY_PORT=127.0.0.1:8086\n'
@@ -400,7 +401,7 @@ jobs:
         run: |
           set -eu
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "cd '$VPS_APP_DIR' && grep '^MAILBOX_DNS_IMAGE_TAG=' .env | grep -F '$DEPLOY_SHA' >/dev/null && grep '^SHARED_HTTP_EDGE=true$' .env >/dev/null && grep '^PROXY_PORT=127.0.0.1:8086$' .env >/dev/null && grep '^FRONTEND_PORT=127.0.0.1:3006$' .env >/dev/null && grep '^BACKEND_PORT=127.0.0.1:8006$' .env >/dev/null && curl -fsS -H 'Host: panel.ithute.co.ls' http://127.0.0.1:8086/ >/dev/null && curl -fsS -H 'Host: auth.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null && curl -fsS -H 'Host: push.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null && curl -fsS -H 'Host: realtime.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null"
+          ssh "$remote" "cd '$VPS_APP_DIR' && grep '^MAILBOX_DNS_IMAGE_TAG=' .env | grep -F '$DEPLOY_SHA' >/dev/null && grep '^SHARED_HTTP_EDGE=true$' .env >/dev/null && grep '^PANEL_HOSTNAME=ithute.co.ls$' .env >/dev/null && grep '^FRONTEND_URL=https://ithute.co.ls$' .env >/dev/null && grep '^PROXY_PORT=127.0.0.1:8086$' .env >/dev/null && grep '^FRONTEND_PORT=127.0.0.1:3006$' .env >/dev/null && grep '^BACKEND_PORT=127.0.0.1:8006$' .env >/dev/null && curl -fsS -H 'Host: ithute.co.ls' http://127.0.0.1:8086/ >/dev/null && curl -fsS -H 'Host: auth.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null && curl -fsS -H 'Host: push.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null && curl -fsS -H 'Host: realtime.ithute.co.ls' http://127.0.0.1:8086/healthz >/dev/null"
 
           # Public HTTPS belongs to the dedicated shared edge. It is verified
           # downstream after authoritative DNS and the canonical certificate
@@ -411,4 +412,4 @@ jobs:
             exit 1
           fi
 
-          echo "Internal production panel and Ithute Auth/Push/Realtime routes verified; shared-edge public TLS recovery may proceed, and direct public IP access on port 3006 is closed."
+          echo "Internal Ithute apex and Auth/Push/Realtime routes verified; shared-edge public TLS recovery may proceed, and direct public IP access on port 3006 is closed."
