@@ -1,0 +1,33 @@
+{
+  email thekoetlisi@ithute.co.ls
+  servers {
+    protocols h1 h2 h3
+  }
+}
+
+ithute.co.ls {
+  header X-Ithute-Service "web"
+  header X-Content-Type-Options "nosniff"
+  header X-Frame-Options "DENY"
+  header Referrer-Policy "strict-origin-when-cross-origin"
+  reverse_proxy ithute-web:3000
+}
+
+www.ithute.co.ls {
+  redir https://ithute.co.ls{uri} permanent
+}
+
+auth.ithute.co.ls {
+  header X-Ithute-Service "auth"
+  reverse_proxy ithute-auth:8080
+}
+
+push.ithute.co.ls {
+  header X-Ithute-Service "push"
+  reverse_proxy ithute-push:8080
+}
+
+realtime.ithute.co.ls {
+  header X-Ithute-Service "realtime"
+  reverse_proxy ithute-realtime:8080
+}

@@ -6,8 +6,8 @@ on:
       - 'platform/ithute-realtime/**'
       - 'platform/ithute-auth/**'
       - 'platform/ithute-push/**'
-      - 'docker-compose.ithute-platform.yml'
-      - 'infrastructure/nginx/default.conf'
+      - 'compose.production.yml'
+      - 'infrastructure/caddy/**'
       - '.github/workflows/ithute-realtime.yml'
   push:
     branches: [main]
@@ -15,8 +15,8 @@ on:
       - 'platform/ithute-realtime/**'
       - 'platform/ithute-auth/**'
       - 'platform/ithute-push/**'
-      - 'docker-compose.ithute-platform.yml'
-      - 'infrastructure/nginx/default.conf'
+      - 'compose.production.yml'
+      - 'infrastructure/caddy/**'
       - '.github/workflows/ithute-realtime.yml'
   workflow_dispatch:
 

@@ -1,4 +1,4 @@
-name: Ithute Web CI
+name: Ithute Standalone CI
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -26,73 +26,82 @@ jobs:
           cache: npm
           cache-dependency-path: apps/frontend/package-lock.json
 
-      - name: Install frontend dependencies
+      - name: Validate frontend
         working-directory: apps/frontend
-        run: npm ci --no-audit --no-fund
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check
+          npm run build
 
-      - name: Type check
-        working-directory: apps/frontend
-        run: npm run check
-
-      - name: Build frontend
-        working-directory: apps/frontend
-        run: npm run build
-
-      - name: Build production image
-        run: docker build --target runner -t ithute-web-ci ./apps/frontend
-
-      - name: Verify production image health endpoint
+      - name: Validate deployment scripts
         run: |
           set -eu
-          docker run -d --rm --name ithute-web-ci -p 127.0.0.1:3300:3000 ithute-web-ci
-          cleanup() { docker rm -f ithute-web-ci >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
-          for attempt in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:3300/health | grep -Fq 'ithute-web'; then
-              exit 0
-            fi
-            sleep 1
-          done
-          docker logs ithute-web-ci
-          exit 1
+          bash -n scripts/bootstrap-vps.sh
+          bash -n scripts/deploy-production.sh
+          bash -n scripts/bootstrap-mail.sh
+          bash -n mail/renew-tls.sh
 
-      - name: Validate shared edge topology
+      - name: Render standalone application topology
         env:
-          ITHUTE_WEB_IMAGE_TAG: ci
+          ITHUTE_AUTH_DB_PASSWORD: ci-auth-db-password
+          ITHUTE_PUSH_DB_PASSWORD: ci-push-db-password
+          ITHUTE_REALTIME_DB_PASSWORD: ci-realtime-db-password
+          ITHUTE_AUTH_TOTP_ENCRYPTION_KEY: eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg=
+          ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY: eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXk=
+          ITHUTE_SERVICE_REALTIME_SECRET: ci-realtime-service-secret-0000000000000000
+          ITHUTE_SYSTEM_OWNER_PASSWORD: ci-owner-password-12345
+          ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON: '{"ithute-realtime":"ci-realtime-service-secret-0000000000000000"}'
+          ITHUTE_AUTH_REDIRECT_URIS_JSON: '{}'
         run: |
           set -eu
-          docker compose -f docker-compose.ithute-edge.yml config > /tmp/ithute-edge.yml
-          grep -q 'ithute-web:' /tmp/ithute-edge.yml
-          grep -q 'edge-nginx:' /tmp/ithute-edge.yml
+          docker compose -f compose.production.yml config > /tmp/ithute-production.yml
+          grep -q 'ithute-web:' /tmp/ithute-production.yml
+          grep -q 'ithute-auth:' /tmp/ithute-production.yml
+          grep -q 'ithute-push:' /tmp/ithute-production.yml
+          grep -q 'ithute-realtime:' /tmp/ithute-production.yml
+          grep -q 'caddy:' /tmp/ithute-production.yml
+          ! grep -Eq 'external:[[:space:]]*true' /tmp/ithute-production.yml
+          ! grep -Eiq 'loanhub|nbros|buildtrack|mailbox-dns|ithute-tutor|ithute-pay' /tmp/ithute-production.yml
 
-          # The public edge owns ingress only. LoanHub remains a separate repo and
-          # runtime, reached through the stable aliases its own compose file exports.
-          grep -Fq 'server loanhub-frontend:3000;' infrastructure/ithute-edge/default.conf.template
-          grep -Fq 'server loanhub-backend:8000;' infrastructure/ithute-edge/default.conf.template
-          grep -Fq 'server_name ${APP_DOMAIN};' infrastructure/ithute-edge/default.conf.template
-          grep -Fq 'server_name ${API_DOMAIN};' infrastructure/ithute-edge/default.conf.template
-          grep -q 'loanhub:' docker-compose.ithute-edge.yml
-          grep -q 'loanhub_sandbox:' docker-compose.ithute-edge.yml
+      - name: Validate Ithute-only ingress
+        run: |
+          set -eu
+          docker run --rm \
+            -v "$PWD/infrastructure/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile
+          grep -Fq 'ithute.co.ls' infrastructure/caddy/Caddyfile
+          grep -Fq 'auth.ithute.co.ls' infrastructure/caddy/Caddyfile
+          grep -Fq 'push.ithute.co.ls' infrastructure/caddy/Caddyfile
+          grep -Fq 'realtime.ithute.co.ls' infrastructure/caddy/Caddyfile
+          ! grep -Eiq 'loanhub|nbros|buildtrack|tutor|ithute-pay|mailbox' infrastructure/caddy/Caddyfile
 
-          # Ithute must never be the fallback host. There is exactly one TLS
-          # default server and it is the catch-all 404 block.
-          test "$(grep -c 'listen 443 ssl default_server;' infrastructure/ithute-edge/default.conf.template)" -eq 1
-          awk '
-            /listen 443 ssl default_server;/ { default_seen=1 }
-            default_seen && /server_name _;/ { catchall=1 }
-            END { exit !(default_seen && catchall) }
-          ' infrastructure/ithute-edge/default.conf.template
+      - name: Validate independent mail topology
+        run: |
+          set -eu
+          docker compose -f mail/compose.yml config > /tmp/ithute-mail.yml
+          grep -q 'ithute-mail' /tmp/ithute-mail.yml
+          ! grep -Eq 'external:[[:space:]]*true' /tmp/ithute-mail.yml
+          ! grep -Eiq 'loanhub|nbros|buildtrack|ithute-tutor|ithute-pay|mailbox-dns' /tmp/ithute-mail.yml
 
-          # Keep unrelated standalone products out of the Ithute repository edge.
-          ! grep -Eiq 'nbros|buildtrack|ithute-pay|mailbox_gateway' infrastructure/ithute-edge/default.conf.template
-          grep -q 'ithute_web:' docker-compose.ithute-edge.yml
-          grep -q 'ithute_platform:' docker-compose.ithute-edge.yml
+      - name: Build all standalone Ithute images
+        env:
+          ITHUTE_AUTH_DB_PASSWORD: ci-auth-db-password
+          ITHUTE_PUSH_DB_PASSWORD: ci-push-db-password
+          ITHUTE_REALTIME_DB_PASSWORD: ci-realtime-db-password
+          ITHUTE_AUTH_TOTP_ENCRYPTION_KEY: eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg=
+          ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY: eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXk=
+          ITHUTE_SERVICE_REALTIME_SECRET: ci-realtime-service-secret-0000000000000000
+          ITHUTE_SYSTEM_OWNER_PASSWORD: ci-owner-password-12345
+          ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON: '{"ithute-realtime":"ci-realtime-service-secret-0000000000000000"}'
+          ITHUTE_AUTH_REDIRECT_URIS_JSON: '{}'
+        run: |
+          docker compose -f compose.production.yml build ithute-web ithute-auth ithute-push ithute-realtime
 
-      - name: Enforce single-project frontend boundary
+      - name: Enforce repository boundary
         run: |
           set -eu
           test ! -d apps/backend
-          test ! -d apps/frontend/components
-          test ! -d apps/frontend/lib
           test ! -f product.manifest.yaml
-          ! grep -R -Eiq 'Fleet Management starts here|NBros Management Platform|The !thute portfolio|LoanHub|Ithute Tutor|Ithute Pay|Mailbox DNS' apps/frontend/app
+          test ! -f docker-compose.ithute-edge.yml
+          test ! -f docker-compose.ithute-platform.yml
+          test ! -d infrastructure/ithute-edge

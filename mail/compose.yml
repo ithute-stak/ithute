@@ -1,0 +1,44 @@
+name: ithute-mail
+
+services:
+  mailserver:
+    image: ghcr.io/docker-mailserver/docker-mailserver:15.1.0
+    container_name: ithute-mail
+    hostname: mail.ithute.co.ls
+    restart: unless-stopped
+    stop_grace_period: 1m
+    ports:
+      - "25:25"
+      - "465:465"
+      - "587:587"
+      - "993:993"
+    environment:
+      SSL_TYPE: letsencrypt
+      POSTMASTER_ADDRESS: postmaster@ithute.co.ls
+      ENABLE_FAIL2BAN: "1"
+      ENABLE_AMAVIS: "0"
+      ENABLE_CLAMAV: "0"
+      ENABLE_SPAMASSASSIN: "0"
+      SPOOF_PROTECTION: "1"
+      POSTFIX_INET_PROTOCOLS: all
+      DOVECOT_INET_PROTOCOLS: all
+    volumes:
+      - ./data/mail-data:/var/mail
+      - ./data/mail-state:/var/mail-state
+      - ./data/mail-logs:/var/log/mail
+      - ./config:/tmp/docker-mailserver
+      - ./letsencrypt:/etc/letsencrypt:ro
+      - /etc/localtime:/etc/localtime:ro
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD-SHELL", "ss --listening --tcp | grep -q ':25 '"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    networks: [mail]
+
+networks:
+  mail:
+    driver: bridge

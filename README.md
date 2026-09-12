@@ -1,58 +1,81 @@
 # Ithute
 
-Ithute is a **standalone platform repository**. It is no longer a monorepo of application products.
+Ithute is a **standalone deployment** for the Ithute website and Ithute-owned platform services. It does not join LoanHub, NBros, Tutor, Pay, Mailbox-DNS, or any other product Docker network, and it does not reuse their containers, databases, images, or volumes.
 
-The repository has one clear responsibility: operate the Ithute website and the shared Ithute platform services that belong to Ithute itself.
+## Runtime
 
-## Active architecture
+The production application project is `ithute`:
 
-- `apps/frontend` — the public `ithute.co.ls` website. It is a small standalone Next.js application with no embedded product routes.
-- `platform/ithute-auth` — central identity and authentication.
-- `platform/ithute-push` — central push-notification infrastructure.
-- `platform/ithute-realtime` — central realtime infrastructure.
-- `infrastructure/ithute-edge` — deterministic routing only for Ithute-owned hostnames.
-- `docker-compose.ithute-edge.yml` — production edge and public website deployment.
+- `ithute-web` — `https://ithute.co.ls`
+- `ithute-auth` — `https://auth.ithute.co.ls`
+- `ithute-push` — `https://push.ithute.co.ls`
+- `ithute-realtime` — `https://realtime.ithute.co.ls`
+- dedicated Auth, Push and Realtime PostgreSQL services
+- dedicated Realtime Redis
+- a Caddy instance that routes **only** Ithute hostnames
 
-Application systems belong in their own repositories, with their own frontend, backend, database, CI/CD and deployment lifecycle. They may authenticate against Ithute Auth, but their application code is not nested here.
+The public site and every platform service are built as separate Docker images from this repository. `compose.production.yml` declares no external Docker network and no external named volume.
 
-## Public routing contract
+## System owner
 
-| Hostname | Owner in this repository | Upstream |
-| --- | --- | --- |
-| `ithute.co.ls` | Ithute web | `ithute-web:3000` |
-| `www.ithute.co.ls` | Redirect | `https://ithute.co.ls` |
-| `auth.ithute.co.ls` | Ithute Auth | `ithute-auth:8080` |
-| `push.ithute.co.ls` | Ithute Push | `ithute-push:8080` |
-| `realtime.ithute.co.ls` | Ithute Realtime | `ithute-realtime:8080` |
+Fresh production bootstraps one authoritative Ithute system owner:
 
-Unknown HTTPS hostnames return `404`; they cannot fall through to another application.
+```text
+thekoetlisi@ithute.co.ls
+```
+
+The password is never stored in Git. `scripts/bootstrap-vps.sh` requests it interactively, writes it only to the VPS runtime `.env.production` with mode `0600`, and Auth synchronizes the account on startup. The account is active, email-verified and platform-admin.
+
+## Fresh VPS deployment
+
+Perform the one-time Docker/directory reset explicitly on the VPS, then run the clean bootstrap script. The destructive reset is deliberately not embedded in routine deployment automation.
+
+After the host is clean, run as `administrator`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ithute-stak/ithute/main/scripts/bootstrap-vps.sh -o /tmp/bootstrap-vps.sh
+chmod 700 /tmp/bootstrap-vps.sh
+/tmp/bootstrap-vps.sh
+```
+
+The bootstrap script refuses to run while the retired `ithute-edge` or `mailbox-dns` directories still exist. It prompts for the system-owner password without echoing it. Do not put that password on a command line or in shell history.
+
+After the first fresh deployment, normal GitHub deployment updates only `/home/administrator/ithute` and the `ithute` Compose project. It never performs the global wipe again.
+
+## Mail-only domains
+
+Mail is a separate Docker Compose project, `ithute-mail`, with its own network and host storage under `/home/administrator/ithute-mail`. It does not join the Ithute application networks.
+
+The fresh deployment provisions these mailboxes:
+
+```text
+info@ithute.co.ls
+info@lelefadebtcollectors.co.ls
+info@lelefachambers.co.ls
+info@tjekatjeka.co.ls
+```
+
+`ithute.co.ls` remains the Ithute website as well as a mail domain. The other requested domains are not added to Caddy and therefore are not served as Ithute websites.
+
+The mail provisioning script writes two root-readable files on the VPS:
+
+- `/home/administrator/ithute-mail/mailbox-credentials.txt`
+- `/home/administrator/ithute-mail/mail-dns-required.txt`
+
+Docker can configure the mail server and accounts, but public DNS is authoritative outside Docker. For Internet mail delivery each domain still needs its MX/SPF/DKIM/DMARC records applied at its DNS provider, and the VPS reverse-DNS/PTR should identify the mail host. The generated DNS file contains the required records and the generated DKIM material.
 
 ## Local website
 
 ```bash
 cd apps/frontend
 npm ci
+npm run check
+npm run build
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+## Production configuration
 
-Before committing frontend changes:
+Copy `.env.example` only as a reference. Production secrets live exclusively in `.env.production` on the VPS and in the untracked `secrets/` directory.
 
-```bash
-npm run check
-npm run build
-```
-
-## Production safety
-
-The production workflow builds an immutable `ghcr.io/ithute-stak/ithute-web:<commit>` image and deploys only the Ithute edge project. It does **not** recreate application databases or application containers.
-
-The deploy verification rejects a release when:
-
-- `ithute.co.ls` renders content from another system;
-- the Ithute routing marker header is missing;
-- the generated Next.js stylesheet cannot be fetched as `text/css`; or
-- the homepage does not contain the expected Ithute identity marker.
-
-Existing TLS volumes and the existing central-platform Docker network are reused during the routing transition so certificate and identity data are not destroyed.
+The fresh script generates new independent database passwords, encryption keys and JWT signing keys. Push starts without a mandatory FCM provider so the platform can become healthy on a clean server; FCM can be enabled later by installing its service-account credential and setting `ITHUTE_PUSH_REQUIRED_PROVIDERS=fcm`.
