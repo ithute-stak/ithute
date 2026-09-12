@@ -1,6 +1,10 @@
 name: Provision NBros Central Auth Login
 
 on:
+  workflow_run:
+    workflows: ["Deploy NBros Production"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -19,7 +23,11 @@ env:
 jobs:
   provision:
     name: Provision and verify NBros login
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
@@ -141,6 +149,33 @@ jobs:
               -e NBROS_ADMIN_PASSWORD \
               ithute-auth python - < "$provisioner"
 
+          # Prove the password hash saved by the provisioner can be verified by
+          # the very Auth container that serves Central Ithute Auth. This never
+          # emits the password, hash, token, or any other secret material.
+          NBROS_ADMIN_EMAIL="$NBROS_ADMIN_EMAIL" \
+          NBROS_ADMIN_PASSWORD="$NBROS_ADMIN_PASSWORD" \
+            compose exec -T \
+              -e NBROS_ADMIN_EMAIL \
+              -e NBROS_ADMIN_PASSWORD \
+              ithute-auth python - <<'PY'
+          import os
+          from sqlalchemy import select
+
+          from app.db import SessionLocal
+          from app.models import User
+          from app.security import normalize_email, verify_password
+
+          email = normalize_email(os.environ["NBROS_ADMIN_EMAIL"])
+          password = os.environ["NBROS_ADMIN_PASSWORD"]
+          with SessionLocal() as db:
+              user = db.scalar(select(User).where(User.email == email))
+              if user is None or not user.is_active:
+                  raise SystemExit("Provisioned NBros account is unavailable in deployed Ithute Auth")
+              if not verify_password(password, user.password_hash):
+                  raise SystemExit("Provisioned NBros password hash does not verify in deployed Ithute Auth")
+          print("Provisioned NBros credential verified inside deployed Ithute Auth.")
+          PY
+
           # Verify the exact central email/password flow for the NBros client
           # without printing the credential or returned bearer token.
           payload="$(NBROS_ADMIN_EMAIL="$NBROS_ADMIN_EMAIL" NBROS_ADMIN_PASSWORD="$NBROS_ADMIN_PASSWORD" python3 - <<'PY'
@@ -152,11 +187,17 @@ jobs:
           }))
           PY
           )"
-          curl --fail --silent --show-error \
+          login_code="$(curl --silent --show-error \
             --connect-timeout 8 --max-time 20 \
+            -o /tmp/nbros-auth-token.json -w '%{http_code}' \
             -H 'content-type: application/json' \
             -d "$payload" \
-            https://auth.ithute.co.ls/v1/auth/login > /tmp/nbros-auth-token.json
+            https://auth.ithute.co.ls/v1/auth/login)"
+          if [ "$login_code" != "200" ]; then
+            echo "Public Central Auth login returned HTTP $login_code after the credential verified inside its deployed container." >&2
+            echo "This indicates that public Auth routing is not reaching the provisioned Auth service/database." >&2
+            exit 1
+          fi
           token="$(python3 - <<'PY'
           import json
           data=json.load(open('/tmp/nbros-auth-token.json'))
