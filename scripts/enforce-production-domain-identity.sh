@@ -20,7 +20,9 @@ esac
 NS1="ns1.${PLATFORM_DOMAIN}"
 NS2="ns2.${PLATFORM_DOMAIN}"
 MAIL_HOST="mail.${PLATFORM_DOMAIN}"
-PANEL_HOST="panel.${PLATFORM_DOMAIN}"
+# PANEL_HOSTNAME is retained only as a compatibility setting. The public
+# frontend is the apex itself; panel.<domain> is deliberately retired.
+PANEL_HOST="$PLATFORM_DOMAIN"
 API_HOST="api.${PLATFORM_DOMAIN}"
 AUTH_HOST="auth.${PLATFORM_DOMAIN}"
 PUSH_HOST="push.${PLATFORM_DOMAIN}"
@@ -46,6 +48,8 @@ upsert_env NAMESERVER_1 "$NS1"
 upsert_env NAMESERVER_2 "$NS2"
 upsert_env MAIL_HOSTNAME "$MAIL_HOST"
 upsert_env PANEL_HOSTNAME "$PANEL_HOST"
+upsert_env FRONTEND_URL "https://${PLATFORM_DOMAIN}"
+upsert_env ITHUTE_AUTH_CORS_ORIGINS "https://${PLATFORM_DOMAIN}"
 upsert_env API_HOSTNAME "$API_HOST"
 upsert_env GROUPWARE_HOSTNAME "$GROUPWARE_HOST"
 chmod 600 .env
@@ -100,7 +104,8 @@ wait_service nginx
 
 # Reconcile the platform's already-delegated authoritative zone. This fixes the
 # PowerDNS fallback SOA MNAME and creates the complete public identity required
-# by the shared HTTPS edge and mail clients.
+# by the shared HTTPS edge and mail clients. The retired panel hostname is
+# explicitly removed so it cannot be recreated by later reconciliation runs.
 compose exec -T \
   -e PLATFORM_DOMAIN="$PLATFORM_DOMAIN" \
   -e PUBLIC_IP="$PUBLIC_IP" \
@@ -114,7 +119,7 @@ public_ip = os.environ["PUBLIC_IP"].strip()
 ns1 = f"ns1.{zone}"
 ns2 = f"ns2.{zone}"
 mail = f"mail.{zone}"
-panel = f"panel.{zone}"
+legacy_panel = f"panel.{zone}"
 api = f"api.{zone}"
 auth = f"auth.{zone}"
 push = f"push.{zone}"
@@ -131,8 +136,10 @@ except PowerDNSError as exc:
     client.create_zone_with_nameservers(zone, [ns1, ns2])
 
 client.reconcile_authority(zone, [ns1, ns2])
-for hostname in (zone, www, panel, api, auth, push, realtime, groupware, ns1, ns2, mail):
+for hostname in (zone, www, api, auth, push, realtime, groupware, ns1, ns2, mail):
     client.replace_rrset(zone, hostname, "A", 3600, [public_ip])
+for record_type in ("A", "AAAA", "CNAME"):
+    client.delete_rrset(zone, legacy_panel, record_type)
 client.replace_rrset(zone, zone, "MX", 3600, [f"10 {mail}."])
 client.replace_rrset(zone, zone, "TXT", 3600, ['"v=spf1 mx -all"'])
 client.replace_rrset(zone, f"_dmarc.{zone}", "TXT", 3600, [f'"v=DMARC1; p=quarantine; rua=mailto:dmarc@{zone}; adkim=s; aspf=s"'])
@@ -140,7 +147,7 @@ client.replace_rrset(zone, zone, "CAA", 3600, ['0 issue "letsencrypt.org"'])
 client.replace_rrset(zone, f"_submission._tcp.{zone}", "SRV", 3600, [f"0 1 587 {mail}."])
 client.replace_rrset(zone, f"_imaps._tcp.{zone}", "SRV", 3600, [f"0 1 993 {mail}."])
 client.rectify_zone(zone)
-print(f"Reconciled authoritative identity for {zone}")
+print(f"Reconciled authoritative identity for {zone}; retired {legacy_panel}")
 PY
 
 command -v dig >/dev/null 2>&1 || { echo "dig is required on the production VPS" >&2; exit 1; }
@@ -154,9 +161,16 @@ ns="$(dig +short @"$PUBLIC_IP" "$PLATFORM_DOMAIN" NS | sort)"
 printf '%s\n' "$ns" | grep -Fx "${NS1}." >/dev/null
 printf '%s\n' "$ns" | grep -Fx "${NS2}." >/dev/null
 
-for host in "$PLATFORM_DOMAIN" "$WWW_HOST" "$PANEL_HOST" "$API_HOST" "$AUTH_HOST" "$PUSH_HOST" "$REALTIME_HOST" "$GROUPWARE_HOST" "$NS1" "$NS2" "$MAIL_HOST"; do
+for host in "$PLATFORM_DOMAIN" "$WWW_HOST" "$API_HOST" "$AUTH_HOST" "$PUSH_HOST" "$REALTIME_HOST" "$GROUPWARE_HOST" "$NS1" "$NS2" "$MAIL_HOST"; do
   dig +short @"$PUBLIC_IP" "$host" A | grep -Fx "$PUBLIC_IP" >/dev/null
 done
+
+if [ -n "$(dig +short @"$PUBLIC_IP" "panel.${PLATFORM_DOMAIN}" A)" ] || \
+   [ -n "$(dig +short @"$PUBLIC_IP" "panel.${PLATFORM_DOMAIN}" AAAA)" ] || \
+   [ -n "$(dig +short @"$PUBLIC_IP" "panel.${PLATFORM_DOMAIN}" CNAME)" ]; then
+  echo "Retired panel.${PLATFORM_DOMAIN} still resolves" >&2
+  exit 1
+fi
 
 mx="$(dig +short @"$PUBLIC_IP" "$PLATFORM_DOMAIN" MX)"
 set -- $mx
@@ -227,6 +241,7 @@ PY
 
 printf '\nProduction DNS/mail identity enforced in bootstrap-safe mode.\n'
 printf 'Platform domain: %s\n' "$PLATFORM_DOMAIN"
+printf 'Frontend: https://%s\n' "$PLATFORM_DOMAIN"
 printf 'Nameservers: %s, %s\n' "$NS1" "$NS2"
 printf 'Mail hostname: %s\n' "$MAIL_HOST"
 printf 'Public IP: %s\n' "$PUBLIC_IP"

@@ -12,7 +12,7 @@ from app.services.platform_setup import (
 def test_platform_domain_normalization_and_hostnames():
     assert normalize_platform_domain(" Example.CO.LS. ") == "example.co.ls"
     names = platform_names("example.co.ls")
-    assert names.panel == "panel.example.co.ls"
+    assert names.panel == "example.co.ls"
     assert names.api == "api.example.co.ls"
     assert names.groupware == "groupware.example.co.ls"
     assert names.mail == "mail.example.co.ls"
@@ -41,11 +41,12 @@ def test_bootstrap_caddyfile_serves_panel_and_api_on_raw_ip():
     assert "Strict-Transport-Security" not in config
 
 
-def test_hardened_caddyfile_redirects_ip_and_enables_https_security():
+def test_hardened_caddyfile_redirects_ip_to_apex_and_enables_https_security():
     names = platform_names("example.co.ls")
     config = hardened_caddyfile(names, "1.1.1.1", "ops@example.co.ls")
-    assert "redir https://panel.example.co.ls{uri} permanent" in config
-    assert "panel.example.co.ls" in config
+    assert "redir https://example.co.ls{uri} permanent" in config
+    assert "example.co.ls" in config
+    assert "panel.example.co.ls" not in config
     assert "api.example.co.ls" in config
     assert "groupware.example.co.ls" in config
     assert "Strict-Transport-Security" in config
