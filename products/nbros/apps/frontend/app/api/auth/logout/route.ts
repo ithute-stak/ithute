@@ -1,9 +1,9 @@
 import { cookies } from "next/headers";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-import { authIssuer } from "@/lib/oidc";
+import { authIssuer, publicUrl } from "@/lib/oidc";
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   const store = await cookies();
   const refreshToken = store.get("nbros_refresh")?.value;
   if (refreshToken) {
@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     }).catch(() => undefined);
   }
 
-  const response = NextResponse.redirect(new URL("/", request.url), 303);
+  const response = NextResponse.redirect(new URL("/", publicUrl()), 303);
   response.cookies.delete("nbros_access");
   response.cookies.delete("nbros_refresh");
   return response;

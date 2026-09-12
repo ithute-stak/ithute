@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { NextRequest, NextResponse } from "next/server";
 
-import { authIssuer, clientId, cookieSecure, discovery, redirectUri } from "@/lib/oidc";
+import { authIssuer, clientId, cookieSecure, discovery, publicUrl, redirectUri } from "@/lib/oidc";
 
 type TokenResponse = {
   access_token: string;
@@ -10,6 +10,10 @@ type TokenResponse = {
   id_token?: string;
   expires_in: number;
 };
+
+function authError(code: string) {
+  return NextResponse.redirect(new URL(`/?auth_error=${encodeURIComponent(code)}`, publicUrl()));
+}
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
@@ -20,7 +24,7 @@ export async function GET(request: NextRequest) {
   const expectedNonce = store.get("nbros_oidc_nonce")?.value;
 
   if (!code || !returnedState || !verifier || !expectedState || !expectedNonce || returnedState !== expectedState) {
-    return NextResponse.redirect(new URL("/?auth_error=invalid_callback", request.url));
+    return authError("invalid_callback");
   }
 
   const oidc = await discovery();
@@ -38,12 +42,12 @@ export async function GET(request: NextRequest) {
     cache: "no-store",
   });
   if (!tokenResponse.ok) {
-    return NextResponse.redirect(new URL("/?auth_error=token_exchange_failed", request.url));
+    return authError("token_exchange_failed");
   }
 
   const tokens = (await tokenResponse.json()) as TokenResponse;
   if (!tokens.id_token) {
-    return NextResponse.redirect(new URL("/?auth_error=id_token_missing", request.url));
+    return authError("id_token_missing");
   }
 
   const jwks = createRemoteJWKSet(new URL(oidc.jwks_uri));
@@ -53,10 +57,10 @@ export async function GET(request: NextRequest) {
     algorithms: ["RS256"],
   });
   if (verified.payload.nonce !== expectedNonce || !verified.payload.sub) {
-    return NextResponse.redirect(new URL("/?auth_error=id_token_invalid", request.url));
+    return authError("id_token_invalid");
   }
 
-  const response = NextResponse.redirect(new URL("/", request.url));
+  const response = NextResponse.redirect(new URL("/", publicUrl()));
   const secure = cookieSecure();
   response.cookies.set("nbros_access", tokens.access_token, {
     httpOnly: true,

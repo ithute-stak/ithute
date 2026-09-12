@@ -29,6 +29,11 @@ jobs:
       - name: Verify NBros delegates credentials to Central Auth
         run: |
           set -euo pipefail
+          fail() {
+            echo "::error title=NBros Auth Contract::$*"
+            exit 1
+          }
+
           grep -Fq 'action="/api/auth/password"' products/nbros/apps/frontend/app/page.tsx
           grep -Fq 'defaultValue="justy@ithute.co.ls"' products/nbros/apps/frontend/app/page.tsx
           grep -Fq 'type="password"' products/nbros/apps/frontend/app/page.tsx
@@ -36,10 +41,19 @@ jobs:
           grep -Fq 'client_id: clientId()' products/nbros/apps/frontend/app/api/auth/password/route.ts
           grep -Fq 'httpOnly: true' products/nbros/apps/frontend/app/api/auth/password/route.ts
           grep -Fq 'The email or password is incorrect.' platform/ithute-auth/app/oauth.py
-          if grep -Eq 'defaultValue=.*password|value=.*password' products/nbros/apps/frontend/app/page.tsx; then
-            echo '::error::NBros must never prefill or embed a password.'
-            exit 1
+          grep -Fq 'export function publicUrl()' products/nbros/apps/frontend/lib/oidc.ts || fail "NBros must expose one configured public URL for browser redirects"
+          grep -Fq 'new URL("/fleet", publicUrl())' products/nbros/apps/frontend/app/api/auth/password/route.ts || fail "Password login success must redirect to the public NBros origin"
+          grep -Fq 'new URL("/", publicUrl())' products/nbros/apps/frontend/app/api/auth/logout/route.ts || fail "Logout must redirect to the public NBros origin"
+          grep -Fq 'new URL("/", publicUrl())' products/nbros/apps/frontend/app/api/auth/oidc/callback/route.ts || fail "OIDC completion must redirect to the public NBros origin"
+
+          if grep -R -nF 'request.url' products/nbros/apps/frontend/app/api/auth/; then
+            fail "NBros auth routes must not derive public redirects from the internal Next.js request URL"
           fi
+          if grep -Eq 'defaultValue=.*password|value=.*password' products/nbros/apps/frontend/app/page.tsx; then
+            fail "NBros must never prefill or embed a password"
+          fi
+
+          echo 'NBros source auth contract passed.'
 
   smoke:
     name: Production password and OIDC smoke
@@ -54,13 +68,22 @@ jobs:
         run: |
           set -euo pipefail
 
+          fail() {
+            echo "::error title=NBros Auth Smoke::$*"
+            exit 1
+          }
+
           home="$(mktemp)"
-          curl --fail --silent --show-error --retry 8 --retry-delay 3 \
+          home_code="$(curl --silent --show-error --retry 8 --retry-all-errors --retry-delay 3 \
             --connect-timeout 10 --max-time 30 \
-            https://nbro.ithute.co.ls/ -o "$home"
-          grep -Fq '/api/auth/password' "$home"
-          grep -Fq 'justy@ithute.co.ls' "$home"
+            -o "$home" -w '%{http_code}' \
+            https://nbro.ithute.co.ls/)"
+          echo "NBros homepage HTTP ${home_code}"
+          [ "$home_code" = "200" ] || fail "NBros homepage returned HTTP ${home_code}; expected 200"
+          grep -Fq '/api/auth/password' "$home" || fail "NBros homepage does not expose the local password-login form action"
+          grep -Fq 'justy@ithute.co.ls' "$home" || fail "NBros homepage does not render the expected administrator email field"
           rm -f "$home"
+          echo "NBros homepage login form contract passed"
 
           # A deliberately invalid account must reach Central Auth as the NBros
           # first-party client. 401 proves the client/endpoint contract exists;
@@ -72,13 +95,19 @@ jobs:
             -H 'content-type: application/json' \
             --data "{\"identifier\":\"nbros-auth-probe-${GITHUB_RUN_ID}@invalid.example\",\"password\":\"not-a-real-password\",\"client_id\":\"nbros\"}" \
             https://auth.ithute.co.ls/v1/auth/login)"
-          test "$direct_code" = "401" || {
-            echo "::error::Central Auth NBros password-login contract returned HTTP $direct_code"
+          echo "Central Auth direct password contract HTTP ${direct_code}"
+          if [ "$direct_code" != "401" ]; then
+            echo "Safe response body:"
             cat "$direct_body"
-            exit 1
+            fail "Central Auth NBros password-login contract returned HTTP ${direct_code}; expected 401"
+          fi
+          grep -Fqi 'invalid credentials' "$direct_body" || {
+            echo "Safe response body:"
+            cat "$direct_body"
+            fail "Central Auth 401 response did not contain the expected invalid-credentials detail"
           }
-          grep -Fqi 'invalid credentials' "$direct_body"
           rm -f "$direct_body"
+          echo "Central Auth direct password contract passed"
 
           # The product-side simple form must reject an empty submission with a
           # friendly local redirect rather than throwing or exposing Auth data.
@@ -88,9 +117,17 @@ jobs:
             -D "$headers" -o /dev/null -w '%{http_code}' \
             -X POST -H 'content-type: application/x-www-form-urlencoded' --data '' \
             https://nbro.ithute.co.ls/api/auth/password)"
-          test "$product_code" = "303"
-          grep -Eiq '^location: https://nbro\.ithute\.co\.ls/\?auth_error=missing_credentials' "$headers"
+          echo "NBros empty password form HTTP ${product_code}"
+          if [ "$product_code" != "303" ]; then
+            grep -Eia '^(location|content-type):' "$headers" || true
+            fail "NBros empty password form returned HTTP ${product_code}; expected 303"
+          fi
+          if ! grep -Eiq '^location: https://nbro\.ithute\.co\.ls/\?auth_error=missing_credentials' "$headers"; then
+            grep -Eia '^(location|content-type):' "$headers" || true
+            fail "NBros empty password form did not redirect to the public missing_credentials page"
+          fi
           rm -f "$headers"
+          echo "NBros local password form redirect contract passed"
 
           # OIDC login failures must remain on a human-readable HTML form. This
           # protects the browser flow from regressing to a raw JSON error page.
@@ -111,10 +148,17 @@ jobs:
             --data-urlencode "identifier=nbros-oidc-probe-${GITHUB_RUN_ID}@invalid.example" \
             --data-urlencode 'password=not-a-real-password' \
             https://auth.ithute.co.ls/oauth/authorize)"
-          test "$oidc_code" = "401"
-          grep -Eiq '^content-type: text/html' "$oidc_headers"
-          grep -Fq 'The email or password is incorrect.' "$oidc_body"
-          ! grep -Fq '"detail":"invalid_credentials"' "$oidc_body"
+          echo "Central Auth OIDC invalid-login contract HTTP ${oidc_code}"
+          if [ "$oidc_code" != "401" ]; then
+            grep -Eia '^(location|content-type):' "$oidc_headers" || true
+            fail "Central Auth OIDC invalid-login contract returned HTTP ${oidc_code}; expected 401"
+          fi
+          if ! grep -Eiq '^content-type: text/html' "$oidc_headers"; then
+            grep -Eia '^(location|content-type):' "$oidc_headers" || true
+            fail "Central Auth OIDC invalid-login response is not HTML"
+          fi
+          grep -Fq 'The email or password is incorrect.' "$oidc_body" || fail "Central Auth OIDC HTML did not render the human-readable invalid-credentials message"
+          ! grep -Fq '"detail":"invalid_credentials"' "$oidc_body" || fail "Central Auth OIDC browser flow leaked a raw JSON invalid_credentials response"
           rm -f "$oidc_body" "$oidc_headers"
 
           echo 'NBros simple login and Ithute Auth production contracts are healthy.'

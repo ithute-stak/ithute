@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { authIssuer, clientId, cookieSecure, discovery } from "@/lib/oidc";
+import { authIssuer, clientId, cookieSecure, discovery, publicUrl } from "@/lib/oidc";
 
 type TokenResponse = {
   access_token: string;
@@ -12,8 +12,11 @@ type ErrorPayload = {
   detail?: string;
 };
 
-function redirectWithError(request: NextRequest, code: string): NextResponse {
-  const response = NextResponse.redirect(new URL(`/?auth_error=${encodeURIComponent(code)}`, request.url), 303);
+function redirectWithError(code: string): NextResponse {
+  const response = NextResponse.redirect(
+    new URL(`/?auth_error=${encodeURIComponent(code)}`, publicUrl()),
+    303,
+  );
   response.headers.set("Cache-Control", "no-store");
   return response;
 }
@@ -53,14 +56,14 @@ export async function POST(request: NextRequest) {
   try {
     form = await request.formData();
   } catch {
-    return redirectWithError(request, "missing_credentials");
+    return redirectWithError("missing_credentials");
   }
 
   const identifier = String(form.get("identifier") ?? "").trim();
   const password = String(form.get("password") ?? "");
   const mfaCode = String(form.get("mfa_code") ?? "").trim();
   if (!identifier || !password || identifier.length > 320 || password.length > 128) {
-    return redirectWithError(request, "missing_credentials");
+    return redirectWithError("missing_credentials");
   }
 
   let authResponse: Response;
@@ -80,7 +83,7 @@ export async function POST(request: NextRequest) {
       cache: "no-store",
     });
   } catch {
-    return redirectWithError(request, "auth_unavailable");
+    return redirectWithError("auth_unavailable");
   }
 
   if (!authResponse.ok) {
@@ -90,25 +93,25 @@ export async function POST(request: NextRequest) {
     } catch {
       // Keep a generic error if Central Auth did not return JSON.
     }
-    if (authResponse.status === 429) return redirectWithError(request, "too_many_attempts");
+    if (authResponse.status === 429) return redirectWithError("too_many_attempts");
     if (authResponse.status === 401 && detail.toLowerCase().includes("mfa")) {
-      return redirectWithError(request, "mfa_required");
+      return redirectWithError("mfa_required");
     }
-    if (authResponse.status === 401) return redirectWithError(request, "invalid_credentials");
-    return redirectWithError(request, "auth_unavailable");
+    if (authResponse.status === 401) return redirectWithError("invalid_credentials");
+    return redirectWithError("auth_unavailable");
   }
 
   let tokens: TokenResponse;
   try {
     tokens = (await authResponse.json()) as TokenResponse;
   } catch {
-    return redirectWithError(request, "auth_response_invalid");
+    return redirectWithError("auth_response_invalid");
   }
   if (!tokens.access_token || !tokens.refresh_token) {
-    return redirectWithError(request, "auth_response_invalid");
+    return redirectWithError("auth_response_invalid");
   }
 
-  const response = NextResponse.redirect(new URL("/fleet", request.url), 303);
+  const response = NextResponse.redirect(new URL("/fleet", publicUrl()), 303);
   setSessionCookies(response, tokens);
   return response;
 }
