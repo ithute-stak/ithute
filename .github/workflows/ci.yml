@@ -51,6 +51,7 @@ jobs:
           runtime_targets = [
               Path('.github/workflows/fresh-cutover.yml'),
               Path('.github/workflows/deploy-production.yml'),
+              Path('.github/workflows/finalize-dns-cutover.yml'),
               Path('.github/workflows/finalize-mail.yml'),
               Path('scripts/bootstrap-vps.sh'),
               Path('scripts/deploy-production.sh'),
@@ -110,6 +111,7 @@ jobs:
 
           grep -Fq 'group: ithute-vps-production' .github/workflows/fresh-cutover.yml
           grep -Fq 'group: ithute-vps-production' .github/workflows/deploy-production.yml
+          grep -Fq 'group: ithute-vps-production' .github/workflows/finalize-dns-cutover.yml
           grep -Fq 'group: ithute-vps-production' .github/workflows/finalize-mail.yml
           grep -Fq '/home/administrator/ithute-platform' .github/workflows/fresh-cutover.yml
           grep -Fq '/home/administrator/ithute-platform' .github/workflows/deploy-production.yml
@@ -117,6 +119,10 @@ jobs:
           ! grep -Fq " sh -s\" <<'REMOTE'" .github/workflows/deploy-production.yml
           grep -Fq " bash -s\" <<'REMOTE'" .github/workflows/deploy-production.yml
           grep -Fq 'compose up -d --remove-orphans --no-build' scripts/deploy-production.sh
+          grep -Fq 'caddy reload --config /etc/caddy/Caddyfile' scripts/deploy-production.sh
+          grep -Fq 'CUTOVER_MARKER="$APP_DIR/.dns-cutover-complete"' scripts/deploy-production.sh
+          grep -Fq 'touch .dns-cutover-complete' .github/workflows/finalize-dns-cutover.yml
+          grep -Fq '# BEGIN ITHUTE TEMPORARY IP FALLBACK' infrastructure/caddy/Caddyfile
           ! grep -Fq 'compose build' scripts/deploy-production.sh
           ! grep -Fq 'docker compose build' scripts/deploy-production.sh
 
