@@ -56,7 +56,7 @@ jobs:
           docker logs ithute-web-ci
           exit 1
 
-      - name: Validate standalone edge topology
+      - name: Validate shared edge topology
         env:
           ITHUTE_WEB_IMAGE_TAG: ci
         run: |
@@ -65,13 +65,26 @@ jobs:
           grep -q 'ithute-web:' /tmp/ithute-edge.yml
           grep -q 'edge-nginx:' /tmp/ithute-edge.yml
 
-          # Public routing may reference only Ithute-owned web/platform upstreams.
-          ! grep -Eiq 'nbros|buildtrack|tutor|ithute-pay|mailbox_gateway|sandbox_frontend|loanhub_frontend|loanhub_backend' \
-            infrastructure/ithute-edge/default.conf.template
+          # The public edge owns ingress only. LoanHub remains a separate repo and
+          # runtime, reached through the stable aliases its own compose file exports.
+          grep -Fq 'server loanhub-frontend:3000;' infrastructure/ithute-edge/default.conf.template
+          grep -Fq 'server loanhub-backend:8000;' infrastructure/ithute-edge/default.conf.template
+          grep -Fq 'server_name ${APP_DOMAIN};' infrastructure/ithute-edge/default.conf.template
+          grep -Fq 'server_name ${API_DOMAIN};' infrastructure/ithute-edge/default.conf.template
+          grep -q 'loanhub:' docker-compose.ithute-edge.yml
+          grep -q 'loanhub_sandbox:' docker-compose.ithute-edge.yml
 
-          # The edge may join only its private web network and the central Ithute
-          # platform network. It must never join an application/product network.
-          ! grep -Eq '^[[:space:]]+(loanhub|sandbox|mailbox_dns_shared):' docker-compose.ithute-edge.yml
+          # Ithute must never be the fallback host. There is exactly one TLS
+          # default server and it is the catch-all 404 block.
+          test "$(grep -c 'listen 443 ssl default_server;' infrastructure/ithute-edge/default.conf.template)" -eq 1
+          awk '
+            /listen 443 ssl default_server;/ { default_seen=1 }
+            default_seen && /server_name _;/ { catchall=1 }
+            END { exit !(default_seen && catchall) }
+          ' infrastructure/ithute-edge/default.conf.template
+
+          # Keep unrelated standalone products out of the Ithute repository edge.
+          ! grep -Eiq 'nbros|buildtrack|ithute-pay|mailbox_gateway' infrastructure/ithute-edge/default.conf.template
           grep -q 'ithute_web:' docker-compose.ithute-edge.yml
           grep -q 'ithute_platform:' docker-compose.ithute-edge.yml
 
