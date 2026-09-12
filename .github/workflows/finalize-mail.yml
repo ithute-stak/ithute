@@ -6,7 +6,7 @@ on:
     - cron: "17 * * * *"
 
 concurrency:
-  group: ithute-mail-finalize
+  group: ithute-vps-production
   cancel-in-progress: false
 
 permissions:
@@ -22,7 +22,8 @@ jobs:
       VPS_USER: ${{ secrets.VPS_USER }}
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
-      VPS_APP_DIR: /home/administrator/ithute
+      VPS_APP_DIR: /home/administrator/ithute-platform
+      VPS_MAIL_DIR: /home/administrator/ithute-platform-mail
 
     steps:
       - name: Validate VPS secrets
@@ -60,7 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
+          ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' VPS_MAIL_DIR='$VPS_MAIL_DIR' bash -s" <<'REMOTE'
           set -uo pipefail
           if [ ! -f "$VPS_APP_DIR/.ithute-bootstrapped" ]; then
             echo 'Ithute fresh bootstrap is not complete yet; mail finalization will retry later.'
@@ -73,7 +74,7 @@ jobs:
           git reset --hard origin/main
 
           set +e
-          ITHUTE_APP_DIR="$VPS_APP_DIR" bash scripts/bootstrap-mail.sh
+          ITHUTE_APP_DIR="$VPS_APP_DIR" ITHUTE_MAIL_DIR="$VPS_MAIL_DIR" bash scripts/bootstrap-mail.sh
           status=$?
           set -e
           if [ "$status" -eq 3 ]; then
@@ -87,13 +88,13 @@ jobs:
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "bash -s" <<'REMOTE'
+          ssh "$remote" "VPS_MAIL_DIR='$VPS_MAIL_DIR' bash -s" <<'REMOTE'
           set -euo pipefail
-          if [ ! -f /home/administrator/ithute-mail/mailbox-credentials.txt ]; then
+          if [ ! -f "$VPS_MAIL_DIR/mailbox-credentials.txt" ]; then
             echo 'Mail is waiting for public DNS; no VPS action is required.'
             exit 0
           fi
-          test -f /home/administrator/ithute-mail/mail-dns-required.txt
-          docker compose -p ithute-mail -f /home/administrator/ithute-mail/compose.yml ps
+          test -f "$VPS_MAIL_DIR/mail-dns-required.txt"
+          docker compose -p ithute-mail -f "$VPS_MAIL_DIR/compose.yml" ps
           docker inspect --format '{{.State.Health.Status}}' ithute-mail | grep -Eq 'healthy|starting'
           REMOTE

@@ -1,12 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute}"
-MAIL_DIR="${ITHUTE_MAIL_DIR:-/home/administrator/ithute-mail}"
+APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute-platform}"
+MAIL_DIR="${ITHUTE_MAIL_DIR:-/home/administrator/ithute-platform-mail}"
 MAIL_HOST="mail.ithute.co.ls"
 EXPECTED_IPV4="${ITHUTE_VPS_IPV4:-204.12.205.224}"
 CERT_EMAIL="${ITHUTE_CERT_EMAIL:-thekoetlisi@ithute.co.ls}"
 DOMAINS=(ithute.co.ls lelefadebtcollectors.co.ls lelefachambers.co.ls tjekatjeka.co.ls)
+
+if [ "$MAIL_DIR" = "/" ] || [ "$MAIL_DIR" = "/home" ] || [ "$MAIL_DIR" = "/home/administrator" ]; then
+  echo "Unsafe Ithute mail directory: $MAIL_DIR" >&2
+  exit 2
+fi
+if [ "$APP_DIR" = "$MAIL_DIR" ]; then
+  echo "Application and mail directories must be separate." >&2
+  exit 2
+fi
+
+test -f "$APP_DIR/.env.production" || { echo "Missing $APP_DIR/.env.production" >&2; exit 2; }
+test -f "$APP_DIR/compose.production.yml" || { echo "Missing $APP_DIR/compose.production.yml" >&2; exit 2; }
 
 mkdir -p "$MAIL_DIR" "$MAIL_DIR/config" "$MAIL_DIR/data/mail-data" "$MAIL_DIR/data/mail-state" "$MAIL_DIR/data/mail-logs" "$MAIL_DIR/letsencrypt"
 cp "$APP_DIR/mail/compose.yml" "$MAIL_DIR/compose.yml"
@@ -117,7 +129,7 @@ mail_compose up -d --force-recreate mailserver
   done
 } >> "$DNS_FILE"
 
-CRON_LINE="17 3 * * 1 $MAIL_DIR/renew-tls.sh >>$MAIL_DIR/tls-renew.log 2>&1"
+CRON_LINE="17 3 * * 1 ITHUTE_APP_DIR=$APP_DIR ITHUTE_MAIL_DIR=$MAIL_DIR $MAIL_DIR/renew-tls.sh >>$MAIL_DIR/tls-renew.log 2>&1"
 (
   crontab -l 2>/dev/null | grep -vF "$MAIL_DIR/renew-tls.sh" || true
   echo "$CRON_LINE"

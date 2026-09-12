@@ -41,13 +41,55 @@ jobs:
           bash -n scripts/bootstrap-mail.sh
           bash -n mail/renew-tls.sh
 
+      - name: Enforce VPS deployment safety boundary
+        run: |
+          set -eu
+          python3 - <<'PY'
+          from pathlib import Path
+
+          targets = [
+              Path('.github/workflows/fresh-cutover.yml'),
+              Path('.github/workflows/deploy-production.yml'),
+              Path('.github/workflows/finalize-mail.yml'),
+              Path('scripts/bootstrap-vps.sh'),
+              Path('scripts/deploy-production.sh'),
+              Path('scripts/bootstrap-mail.sh'),
+              Path('mail/renew-tls.sh'),
+          ]
+          forbidden = {
+              'global container wipe': 'docker ps -aq',
+              'global image wipe': 'docker image ls -aq',
+              'global volume wipe': 'docker volume ls -q',
+              'global network prune': 'docker network prune',
+              'global builder prune': 'docker builder prune',
+              'global system prune': 'docker system prune',
+          }
+
+          failures = []
+          for path in targets:
+              text = path.read_text(encoding='utf-8')
+              for label, needle in forbidden.items():
+                  if needle in text:
+                      failures.append(f'{path}: {label} ({needle})')
+
+          if failures:
+              raise SystemExit('Unsafe VPS-wide deployment command found:\n' + '\n'.join(failures))
+          PY
+
+          grep -Fq 'group: ithute-vps-production' .github/workflows/fresh-cutover.yml
+          grep -Fq 'group: ithute-vps-production' .github/workflows/deploy-production.yml
+          grep -Fq 'group: ithute-vps-production' .github/workflows/finalize-mail.yml
+          grep -Fq '/home/administrator/ithute-platform' .github/workflows/fresh-cutover.yml
+          grep -Fq '/home/administrator/ithute-platform' .github/workflows/deploy-production.yml
+          grep -Fq '/home/administrator/ithute-platform' scripts/bootstrap-vps.sh
+
       - name: Render standalone application topology
         env:
           ITHUTE_AUTH_DB_PASSWORD: ci-auth-db-password
           ITHUTE_PUSH_DB_PASSWORD: ci-push-db-password
           ITHUTE_REALTIME_DB_PASSWORD: ci-realtime-db-password
           ITHUTE_AUTH_TOTP_ENCRYPTION_KEY: eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg=
-          ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY: eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXk=
+          ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY: eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXk=
           ITHUTE_SERVICE_REALTIME_SECRET: ci-realtime-service-secret-0000000000000000
           ITHUTE_SYSTEM_OWNER_PASSWORD: ci-owner-password-12345
           ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON: '{"ithute-realtime":"ci-realtime-service-secret-0000000000000000"}'

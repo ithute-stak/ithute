@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute}"
+APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute-platform}"
+MAIL_DIR="${ITHUTE_MAIL_DIR:-/home/administrator/ithute-platform-mail}"
 REPO_URL="${ITHUTE_REPO_URL:-https://github.com/ithute-stak/ithute.git}"
 ENV_FILE="$APP_DIR/.env.production"
 BOOTSTRAP_MARKER="$APP_DIR/.ithute-bootstrapped"
@@ -12,9 +13,19 @@ for command in docker git openssl curl; do
 done
 docker compose version >/dev/null
 
-if [ -e /home/administrator/ithute-edge ] || [ -e /home/administrator/mailbox-dns ]; then
-  echo "Old deployment directories still exist." >&2
-  echo "Complete the explicit one-time VPS cleanup before running this bootstrap." >&2
+# This bootstrap owns only APP_DIR, MAIL_DIR and Docker resources in the
+# `ithute` / `ithute-mail` Compose projects. It deliberately does not remove,
+# prune or inspect resources belonging to other repositories on the host.
+if [ "$APP_DIR" = "/" ] || [ "$APP_DIR" = "/home" ] || [ "$APP_DIR" = "/home/administrator" ]; then
+  echo "Unsafe Ithute application directory: $APP_DIR" >&2
+  exit 2
+fi
+if [ "$MAIL_DIR" = "/" ] || [ "$MAIL_DIR" = "/home" ] || [ "$MAIL_DIR" = "/home/administrator" ]; then
+  echo "Unsafe Ithute mail directory: $MAIL_DIR" >&2
+  exit 2
+fi
+if [ "$APP_DIR" = "$MAIL_DIR" ]; then
+  echo "Application and mail directories must be separate." >&2
   exit 2
 fi
 
@@ -118,10 +129,11 @@ touch "$BOOTSTRAP_MARKER"
 chmod 600 "$BOOTSTRAP_MARKER"
 
 printf '\nFresh Ithute application deployment completed.\n'
+printf 'Application directory: %s\n' "$APP_DIR"
 printf 'Owner login: %s\n' "$OWNER_EMAIL"
 printf 'Auth portal: https://auth.ithute.co.ls/account/login\n'
 printf '\nAttempting independent mail bootstrap next...\n'
-if bash "$APP_DIR/scripts/bootstrap-mail.sh"; then
+if ITHUTE_MAIL_DIR="$MAIL_DIR" bash "$APP_DIR/scripts/bootstrap-mail.sh"; then
   printf 'Mail bootstrap completed.\n'
 else
   status=$?

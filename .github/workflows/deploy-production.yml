@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ithute-production
+  group: ithute-vps-production
   cancel-in-progress: false
 
 permissions:
@@ -26,7 +26,7 @@ jobs:
       DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
       VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_USER: ${{ secrets.VPS_USER }}
-      VPS_APP_DIR: /home/administrator/ithute
+      VPS_APP_DIR: /home/administrator/ithute-platform
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
       EXPECTED_IPV4: 204.12.205.224
@@ -70,20 +70,17 @@ jobs:
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Check fresh-bootstrap state
-        id: bootstrap
+      - name: Require completed bootstrap
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          if ssh "$remote" "test -f '$VPS_APP_DIR/.ithute-bootstrapped' && test -f '$VPS_APP_DIR/.env.production'"; then
-            echo 'ready=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'ready=false' >> "$GITHUB_OUTPUT"
-            echo 'VPS is not freshly bootstrapped yet; routine deployment will be skipped cleanly.'
+          if ! ssh "$remote" "test -f '$VPS_APP_DIR/.ithute-bootstrapped' && test -f '$VPS_APP_DIR/.env.production'"; then
+            echo 'Ithute production is not bootstrapped in the isolated application directory.' >&2
+            echo 'Run Safe Ithute VPS Bootstrap before routine deployment.' >&2
+            exit 1
           fi
 
       - name: Build deployment bundle
-        if: steps.bootstrap.outputs.ready == 'true'
         run: |
           set -euo pipefail
           tar -czf "/tmp/ithute-${DEPLOY_SHA}.tgz" \
@@ -98,20 +95,19 @@ jobs:
             SECURITY.md
 
       - name: Upload and deploy only Ithute
-        if: steps.bootstrap.outputs.ready == 'true'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
           scp "/tmp/ithute-${DEPLOY_SHA}.tgz" "$remote:/tmp/ithute-${DEPLOY_SHA}.tgz"
           ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' sh -s" <<'REMOTE'
           set -euo pipefail
+          test -d "$APP_DIR"
           tar -xzf "/tmp/ithute-${DEPLOY_SHA}.tgz" -C "$APP_DIR"
           rm -f "/tmp/ithute-${DEPLOY_SHA}.tgz"
           ITHUTE_APP_DIR="$APP_DIR" bash "$APP_DIR/scripts/deploy-production.sh"
           REMOTE
 
       - name: Verify internal standalone health
-        if: steps.bootstrap.outputs.ready == 'true'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
@@ -123,10 +119,10 @@ jobs:
           compose exec -T ithute-auth curl -fsS http://127.0.0.1:8080/healthz | grep -q ithute-auth
           compose exec -T ithute-push curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
           compose exec -T ithute-realtime curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
+          compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
           REMOTE
 
       - name: Verify public Ithute endpoints when DNS is ready
-        if: steps.bootstrap.outputs.ready == 'true'
         run: |
           set -euo pipefail
           dns_ready=true
@@ -144,8 +140,3 @@ jobs:
           curl --retry 8 --retry-delay 2 --retry-all-errors -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth
           curl --retry 8 --retry-delay 2 --retry-all-errors -fsS https://push.ithute.co.ls/readyz | grep -q '"status":"ready"'
           curl --retry 8 --retry-delay 2 --retry-all-errors -fsS https://realtime.ithute.co.ls/readyz | grep -q '"status":"ready"'
-
-      - name: Fresh bootstrap required
-        if: steps.bootstrap.outputs.ready != 'true'
-        run: |
-          echo 'Routine deployment skipped because the one-time GitHub fresh cutover has not completed yet.'

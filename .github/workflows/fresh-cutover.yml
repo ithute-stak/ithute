@@ -1,38 +1,31 @@
-name: Fresh Ithute VPS Cutover
+name: Safe Ithute VPS Bootstrap
 
 on:
   workflow_dispatch:
-    inputs:
-      force_reset:
-        description: "Reset the VPS again even if Ithute is already bootstrapped"
-        required: false
-        default: false
-        type: boolean
   push:
     branches: [main]
     paths:
       - .github/workflows/fresh-cutover.yml
       - scripts/bootstrap-vps.sh
+      - scripts/bootstrap-mail.sh
 
 concurrency:
-  group: ithute-fresh-cutover
+  group: ithute-vps-production
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  cutover:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.head_commit.message, '[fresh-cutover]')
+  bootstrap:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     environment: production
     env:
       VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_USER: ${{ secrets.VPS_USER }}
-      VPS_APP_DIR: /home/administrator/ithute
+      VPS_APP_DIR: /home/administrator/ithute-platform
+      VPS_MAIL_DIR: /home/administrator/ithute-platform-mail
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
       ITHUTE_SYSTEM_OWNER_PASSWORD: ${{ secrets.ITHUTE_SYSTEM_OWNER_PASSWORD }}
@@ -58,7 +51,7 @@ jobs:
             exit 1
           }
 
-      - name: Observe public DNS without blocking VPS deployment
+      - name: Observe public DNS without blocking bootstrap
         run: |
           set -euo pipefail
           for host in ithute.co.ls auth.ithute.co.ls push.ithute.co.ls realtime.ithute.co.ls mail.ithute.co.ls; do
@@ -68,7 +61,7 @@ jobs:
             elif [ -n "$addresses" ]; then
               echo "$host currently resolves to: $addresses"
             else
-              echo "$host currently has no public IPv4 answer. Deployment will continue internally; GitHub will verify public routing later."
+              echo "$host currently has no public IPv4 answer. Internal bootstrap will continue."
             fi
           done
 
@@ -77,8 +70,8 @@ jobs:
           set -euo pipefail
           mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
-          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_cutover"
-          chmod 600 "$HOME/.ssh/ithute_cutover"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_bootstrap"
+          chmod 600 "$HOME/.ssh/ithute_bootstrap"
           eval "$(ssh-agent -s)"
           printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
           printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
@@ -88,40 +81,35 @@ jobs:
           printf '%s\n' "$VPS_SSH_PASSPHRASE"
           SH
             chmod 700 /tmp/ithute-askpass.sh
-            SSH_ASKPASS=/tmp/ithute-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh-add "$HOME/.ssh/ithute_cutover" </dev/null
+            SSH_ASKPASS=/tmp/ithute-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh-add "$HOME/.ssh/ithute_bootstrap" </dev/null
             rm -f /tmp/ithute-askpass.sh
           else
-            ssh-add "$HOME/.ssh/ithute_cutover" </dev/null
+            ssh-add "$HOME/.ssh/ithute_bootstrap" </dev/null
           fi
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Preflight VPS before destructive reset
+      - name: Preflight VPS
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "set -eu; command -v docker >/dev/null; command -v git >/dev/null; command -v openssl >/dev/null; docker info >/dev/null; docker compose version >/dev/null"
+          ssh "$remote" "set -eu; command -v docker >/dev/null; command -v git >/dev/null; command -v openssl >/dev/null; command -v curl >/dev/null; docker info >/dev/null; docker compose version >/dev/null"
 
-      - name: Determine whether reset is required
+      - name: Determine bootstrap state
         id: state
-        env:
-          FORCE_RESET: ${{ github.event_name == 'push' && 'true' || inputs.force_reset }}
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          if [ "$FORCE_RESET" = "true" ]; then
-            echo 'reset=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           if ssh "$remote" "test -f '$VPS_APP_DIR/.ithute-bootstrapped' && test -f '$VPS_APP_DIR/.env.production'"; then
-            echo 'reset=false' >> "$GITHUB_OUTPUT"
-            echo 'Ithute is already bootstrapped; destructive reset skipped.'
+            echo 'bootstrap=false' >> "$GITHUB_OUTPUT"
+            echo 'Ithute is already bootstrapped; applying a normal deployment.'
           else
-            echo 'reset=true' >> "$GITHUB_OUTPUT"
+            echo 'bootstrap=true' >> "$GITHUB_OUTPUT"
+            echo 'Fresh isolated Ithute bootstrap is required.'
           fi
 
       - name: Transfer bootstrap and protected owner secret
-        if: steps.state.outputs.reset == 'true'
+        if: steps.state.outputs.bootstrap == 'true'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
@@ -131,69 +119,34 @@ jobs:
           scp /tmp/ithute-owner-password.b64 "$remote:/tmp/ithute-owner-password.b64"
           rm -f /tmp/ithute-owner-password.b64
 
-      - name: Destroy old Docker state and perform fresh bootstrap
-        if: steps.state.outputs.reset == 'true'
+      - name: Bootstrap only Ithute-owned resources
+        if: steps.state.outputs.bootstrap == 'true'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
+          ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' VPS_MAIL_DIR='$VPS_MAIL_DIR' bash -s" <<'REMOTE'
           set -euo pipefail
-          cleanup_cutover_tmp() {
+          cleanup_bootstrap_tmp() {
             rm -f /tmp/ithute-owner-password.b64 /tmp/ithute-bootstrap-vps.sh
           }
-          trap cleanup_cutover_tmp EXIT
+          trap cleanup_bootstrap_tmp EXIT
 
           test -f /tmp/ithute-bootstrap-vps.sh
           test -s /tmp/ithute-owner-password.b64
-          command -v docker >/dev/null
-          docker compose version >/dev/null
-
-          echo 'Removing all existing Docker containers...'
-          docker ps -aq | xargs -r docker rm -f
-
-          echo 'Retiring old deployment directories from active production paths...'
-          retired_root="/home/administrator/.ithute-retired-$(date +%Y%m%d%H%M%S)"
-          mkdir -p "$retired_root"
-          for path in \
-            /home/administrator/ithute \
-            /home/administrator/ithute-edge \
-            /home/administrator/mailbox-dns \
-            /home/administrator/ithute-mail
-          do
-            if [ -e "$path" ]; then
-              mv "$path" "$retired_root/$(basename "$path")"
-            fi
-          done
-
-          test ! -e /home/administrator/ithute
-          test ! -e /home/administrator/ithute-edge
-          test ! -e /home/administrator/mailbox-dns
-          test ! -e /home/administrator/ithute-mail
-
-          echo 'Removing all existing Docker images...'
-          docker image ls -aq | sort -u | xargs -r docker image rm -f
-
-          echo 'Removing all existing Docker volumes...'
-          docker volume ls -q | xargs -r docker volume rm -f
-
-          echo 'Removing unused Docker networks and build cache...'
-          docker network prune -f
-          docker builder prune -af
-          docker system prune -af --volumes
 
           owner_password_b64="$(cat /tmp/ithute-owner-password.b64)"
-          rm -f /tmp/ithute-owner-password.b64
           chmod 700 /tmp/ithute-bootstrap-vps.sh
 
           ITHUTE_APP_DIR="$VPS_APP_DIR" \
+          ITHUTE_MAIL_DIR="$VPS_MAIL_DIR" \
           ITHUTE_SYSTEM_OWNER_PASSWORD_B64="$owner_password_b64" \
             bash /tmp/ithute-bootstrap-vps.sh
 
           unset owner_password_b64
           REMOTE
 
-      - name: Deploy latest main when reset was unnecessary
-        if: steps.state.outputs.reset != 'true'
+      - name: Deploy latest main when already bootstrapped
+        if: steps.state.outputs.bootstrap != 'true'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
@@ -207,8 +160,6 @@ jobs:
           set -euo pipefail
           test -f "$VPS_APP_DIR/.ithute-bootstrapped"
           test -f "$VPS_APP_DIR/.env.production"
-          test ! -e /home/administrator/ithute-edge
-          test ! -e /home/administrator/mailbox-dns
 
           cd "$VPS_APP_DIR"
           compose() { docker compose --env-file .env.production -p ithute -f compose.production.yml "$@"; }
@@ -218,12 +169,6 @@ jobs:
           compose exec -T ithute-push curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
           compose exec -T ithute-realtime curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
           compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
-
-          if docker network ls --format '{{.Name}}' | grep -Eiq 'loanhub|nbros|buildtrack|mailbox-dns|ithute-tutor|ithute-pay'; then
-            echo 'Unexpected product/shared Docker network remains after clean cutover.' >&2
-            docker network ls >&2
-            exit 1
-          fi
           REMOTE
 
       - name: Verify public Ithute services when DNS is ready
@@ -248,15 +193,15 @@ jobs:
           curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://realtime.ithute.co.ls/readyz | grep -q '"status":"ready"'
           curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://auth.ithute.co.ls/account/login >/dev/null
 
-      - name: Report mail status without requiring VPS access
+      - name: Report mail status
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "bash -s" <<'REMOTE'
+          ssh "$remote" "VPS_MAIL_DIR='$VPS_MAIL_DIR' bash -s" <<'REMOTE'
           set -euo pipefail
-          if [ -f /home/administrator/ithute-mail/mailbox-credentials.txt ]; then
+          if [ -f "$VPS_MAIL_DIR/mailbox-credentials.txt" ]; then
             echo 'All requested info@ mailboxes are provisioned.'
           else
-            echo 'Mail DNS is not ready yet; GitHub scheduled finalization will retry automatically.'
+            echo 'Mail DNS is not ready yet; scheduled finalization will retry automatically.'
           fi
           REMOTE
