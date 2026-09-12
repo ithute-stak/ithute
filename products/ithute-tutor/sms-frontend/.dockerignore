@@ -1,8 +1,0 @@
-.git
-.idea
-.next
-node_modules
-.env
-.env.*
-*.log
-sms-frontend.zip

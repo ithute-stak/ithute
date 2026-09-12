@@ -105,7 +105,7 @@ DEFAULT_PRODUCTS: tuple[dict[str, Any], ...] = (
         "database_engine": "postgresql",
         "metadata_json": {
             "services": ["backend", "frontend", "postgresql", "redis", "maintenance"],
-            "source_path": "products/LoanHub",
+            "repository_url": "https://github.com/ithute-stak/LoanHub",
             "data_protection": {
                 "preserve_existing_volume": True,
                 "require_pre_migration_backup": True,
@@ -123,7 +123,7 @@ DEFAULT_PRODUCTS: tuple[dict[str, Any], ...] = (
         "database_engine": "postgresql",
         "metadata_json": {
             "services": ["app", "postgresql", "redis"],
-            "source_path": "products/ithute-pay",
+            "repository_url": "https://github.com/ithute-stak/ithute-pay",
         },
     },
     {
@@ -137,7 +137,7 @@ DEFAULT_PRODUCTS: tuple[dict[str, Any], ...] = (
         "database_engine": "postgresql",
         "metadata_json": {
             "services": ["backend", "frontend", "postgresql"],
-            "source_path": "products/ithute-tutor",
+            "repository_url": "https://github.com/ithute-stak/ithute-tutor",
         },
     },
 )

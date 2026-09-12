@@ -38,5 +38,3 @@ secrets/
 **/ephemeral/
 
 # Tutor product generated artifacts and runtime media
-products/ithute-tutor/sms-frontend/sms-frontend.zip
-products/ithute-tutor/sms_back_end/media/students/
