@@ -48,8 +48,7 @@ mkdir -p \
   "$APP_DIR/secrets/ithute-push"
 test -f "$APP_DIR/compose.production.yml" || { echo "Missing runtime compose file" >&2; exit 2; }
 test -f "$APP_DIR/infrastructure/caddy/Caddyfile" || { echo "Missing runtime Caddyfile" >&2; exit 2; }
-test -f "$APP_DIR/infrastructure/dns/named.conf" || { echo "Missing authoritative DNS config" >&2; exit 2; }
-test -f "$APP_DIR/infrastructure/dns/zones/db.ithute.co.ls" || { echo "Missing Ithute authoritative zone" >&2; exit 2; }
+test -f "$APP_DIR/infrastructure/dns/zones/db.ithute.co.ls" || { echo "Missing Ithute authoritative DNS seed zone" >&2; exit 2; }
 
 if [ -f "$ENV_FILE" ]; then
   echo "$ENV_FILE already exists; refusing to overwrite production secrets." >&2

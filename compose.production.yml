@@ -139,7 +139,7 @@ services:
       TRANSACTIONAL_SMTP_HOST: mail.ithute.co.ls
       TRANSACTIONAL_SMTP_PORT: "587"
       GROUPWARE_PUBLIC_URL: ${ITHUTE_APP_GROUPWARE_PUBLIC_URL:-https://ithute.co.ls/webmail}
-      POWERDNS_API_URL: http://127.0.0.1:18081/api/v1
+      POWERDNS_API_URL: http://ithute-dns:8081/api/v1
       POWERDNS_API_KEY: ${ITHUTE_APP_POWERDNS_API_KEY}
       POWERDNS_SERVER_ID: localhost
       ITHUTE_AUTH_ENABLED: "true"
@@ -155,6 +155,8 @@ services:
       ithute-app-rspamd-redis:
         condition: service_healthy
       ithute-auth:
+        condition: service_healthy
+      ithute-dns:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health/ready"]
@@ -338,22 +340,33 @@ services:
     networks: [ithute]
 
   ithute-dns:
-    image: internetsystemsconsortium/bind9:9.20
+    image: powerdns/pdns-auth-49:4.9.17
     restart: unless-stopped
-    command: ["-g", "-c", "/etc/bind/named.conf"]
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if ! pdnsutil list-all-zones | grep -Fxq 'ithute.co.ls'; then
+          pdnsutil load-zone ithute.co.ls /seed/db.ithute.co.ls
+        fi
+        pdnsutil check-zone ithute.co.ls
+        exec /usr/bin/tini -- /usr/local/sbin/pdns_server-startup
+    environment:
+      PDNS_AUTH_API_KEY: ${ITHUTE_APP_POWERDNS_API_KEY}
     ports:
       - "${ITHUTE_PUBLIC_IPV4:-204.12.205.224}:53:53/tcp"
       - "${ITHUTE_PUBLIC_IPV4:-204.12.205.224}:53:53/udp"
     volumes:
-      - ./infrastructure/dns/named.conf:/etc/bind/named.conf:ro
-      - ./infrastructure/dns/zones:/etc/bind/zones:ro
-      - ithute_bind_cache:/var/cache/bind
+      - ithute_powerdns_data:/var/lib/powerdns
+      - ./infrastructure/dns/zones/db.ithute.co.ls:/seed/db.ithute.co.ls:ro
     healthcheck:
-      test: ["CMD-SHELL", "named-checkconf /etc/bind/named.conf && named-checkzone ithute.co.ls /etc/bind/zones/db.ithute.co.ls >/dev/null"]
-      interval: 15s
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c 'import os,urllib.request; request=urllib.request.Request("http://127.0.0.1:8081/api/v1/servers/localhost", headers={"X-API-Key": os.environ["PDNS_AUTH_API_KEY"]}); urllib.request.urlopen(request, timeout=3).read()'
+      interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 10s
+      retries: 18
+      start_period: 15s
     networks: [ithute]
 
   caddy:
@@ -394,6 +407,8 @@ volumes:
   ithute_push_postgres:
   ithute_realtime_postgres:
   ithute_realtime_redis:
+  ithute_powerdns_data:
+  # Retained so the former BIND cache volume is never removed by this migration.
   ithute_bind_cache:
   ithute_caddy_data:
   ithute_caddy_config:

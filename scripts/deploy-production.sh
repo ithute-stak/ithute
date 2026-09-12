@@ -13,8 +13,7 @@ cd "$APP_DIR"
 test -f "$ENV_FILE" || { echo "Missing $ENV_FILE. Run the safe bootstrap once first." >&2; exit 2; }
 test -f "$COMPOSE_FILE" || { echo "Missing $COMPOSE_FILE" >&2; exit 2; }
 test -f "$APP_DIR/infrastructure/caddy/Caddyfile" || { echo "Missing Caddyfile" >&2; exit 2; }
-test -f "$APP_DIR/infrastructure/dns/named.conf" || { echo "Missing authoritative DNS config" >&2; exit 2; }
-test -f "$APP_DIR/infrastructure/dns/zones/db.ithute.co.ls" || { echo "Missing Ithute DNS zone" >&2; exit 2; }
+test -f "$APP_DIR/infrastructure/dns/zones/db.ithute.co.ls" || { echo "Missing Ithute DNS seed zone" >&2; exit 2; }
 test -f "$APP_DIR/secrets/ithute-auth/jwt-private.pem" || { echo "Missing Auth private key" >&2; exit 2; }
 test -f "$APP_DIR/secrets/ithute-auth/jwt-public.pem" || { echo "Missing Auth public key" >&2; exit 2; }
 
@@ -178,15 +177,15 @@ if ! compose up -d --remove-orphans --no-build; then
   compose ps >&2 || true
   echo "Restored app API logs:" >&2
   compose logs --tail=200 ithute-app-api >&2 || true
+  echo "Authoritative DNS logs:" >&2
+  compose logs --tail=200 ithute-dns >&2 || true
   exit 1
 fi
 
-# Activate uploaded runtime configuration explicitly.
+# Activate uploaded Caddy runtime configuration explicitly. PowerDNS record
+# changes are applied through its HTTP API and require no nameserver reload.
 compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
 compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null
-if ! compose exec -T ithute-dns rndc reload >/dev/null 2>&1; then
-  compose restart ithute-dns >/dev/null
-fi
 
 check_service() {
   local name="$1"
@@ -204,12 +203,13 @@ check_service() {
   return 1
 }
 
+check_service ithute-dns "python3 -c 'import os,urllib.request; request=urllib.request.Request(\"http://127.0.0.1:8081/api/v1/servers/localhost\", headers={\"X-API-Key\": os.environ[\"PDNS_AUTH_API_KEY\"]}); urllib.request.urlopen(request, timeout=3).read()'"
 check_service ithute-web "wget -qO- http://127.0.0.1:3000/health | grep -q ithute-web"
 check_service ithute-app-api "curl -fsS http://127.0.0.1:8000/health/ready | grep -q '\"status\":\"ready\"'"
+check_service ithute-app-api "python -c 'from app.services.powerdns import PowerDNSClient; zone=PowerDNSClient().get_zone(\"ithute.co.ls\"); assert zone.get(\"name\") == \"ithute.co.ls.\"'"
 check_service ithute-auth "curl -fsS http://127.0.0.1:8080/healthz | grep -q ithute-auth"
 check_service ithute-push "curl -fsS http://127.0.0.1:8080/readyz | grep -q '\"status\":\"ready\"'"
 check_service ithute-realtime "curl -fsS http://127.0.0.1:8080/readyz | grep -q '\"status\":\"ready\"'"
-check_service ithute-dns "named-checkconf /etc/bind/named.conf && named-checkzone ithute.co.ls /etc/bind/zones/db.ithute.co.ls >/dev/null"
 
 if [ "${ITHUTE_REQUIRE_PUBLIC_HEALTH:-0}" = "1" ]; then
   html="$(curl --retry 15 --retry-delay 3 --retry-all-errors -fsS https://ithute.co.ls/)"
@@ -223,4 +223,4 @@ fi
 
 compose ps
 compose images
-printf '\nIthute restored application, central platform, and authoritative DNS are healthy.\n'
+printf '\nIthute restored application, central platform, and PowerDNS authoritative DNS are healthy.\n'

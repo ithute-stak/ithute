@@ -101,7 +101,6 @@ jobs:
           tar -czf "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" \
             compose.production.yml \
             infrastructure/caddy/Caddyfile \
-            infrastructure/dns/named.conf \
             infrastructure/dns/zones/db.ithute.co.ls
           ! tar -tzf "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" | grep -Eq '^(apps|platform)/'
 
@@ -158,11 +157,11 @@ jobs:
           ! grep -Eq '^[[:space:]]*build:' /tmp/ithute-runtime-compose.yml
           compose exec -T ithute-web wget -qO- http://127.0.0.1:3000/health | grep -q ithute-web
           compose exec -T ithute-app-api curl -fsS http://127.0.0.1:8000/health/ready | grep -q '"status":"ready"'
+          compose exec -T ithute-app-api python -c 'from app.services.powerdns import PowerDNSClient; zone=PowerDNSClient().get_zone("ithute.co.ls"); assert zone.get("name") == "ithute.co.ls."'
           compose exec -T ithute-auth curl -fsS http://127.0.0.1:8080/healthz | grep -q ithute-auth
           compose exec -T ithute-push curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
           compose exec -T ithute-realtime curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
-          compose exec -T ithute-dns named-checkconf /etc/bind/named.conf
-          compose exec -T ithute-dns named-checkzone ithute.co.ls /etc/bind/zones/db.ithute.co.ls >/dev/null
+          compose exec -T ithute-dns python3 -c 'import os,urllib.request; request=urllib.request.Request("http://127.0.0.1:8081/api/v1/servers/localhost", headers={"X-API-Key": os.environ["PDNS_AUTH_API_KEY"]}); urllib.request.urlopen(request, timeout=3).read()'
           compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
 
           verify_running_image() {
@@ -181,7 +180,7 @@ jobs:
           verify_running_image ithute-push "ithute-push:$DEPLOY_SHA"
           verify_running_image ithute-push-worker "ithute-push:$DEPLOY_SHA"
           verify_running_image ithute-realtime "ithute-realtime:$DEPLOY_SHA"
-          verify_running_image ithute-dns "internetsystemsconsortium/bind9:9.20"
+          verify_running_image ithute-dns "powerdns/pdns-auth-49:4.9.17"
           REMOTE
 
       - name: Verify authoritative DNS on public IPv4
@@ -249,4 +248,4 @@ jobs:
             fi
           fi
 
-          echo 'Restored Ithute application, dashboard entry, pricing, docs, SSO, and central services are publicly healthy.'
+          echo 'Restored Ithute application, dashboard entry, pricing, docs, SSO, DNS management, and central services are publicly healthy.'

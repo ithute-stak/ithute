@@ -102,12 +102,18 @@ jobs:
           for image in ('ithute-web:', 'ithute-app-api:', 'ithute-auth:', 'ithute-push:', 'ithute-realtime:'):
               if f'image: {image}' not in compose:
                   raise SystemExit(f'Missing immutable runtime image declaration for {image}')
-          if 'internetsystemsconsortium/bind9:9.20' not in compose:
-              raise SystemExit('Production compose must include the Ithute authoritative DNS service.')
+          if 'image: powerdns/pdns-auth-49:4.9.17' not in compose:
+              raise SystemExit('Production compose must use the managed PowerDNS authoritative service.')
+          if 'POWERDNS_API_URL: http://ithute-dns:8081/api/v1' not in compose:
+              raise SystemExit('Restored app API must use the internal PowerDNS service URL.')
+          if 'ithute_powerdns_data:/var/lib/powerdns' not in compose:
+              raise SystemExit('PowerDNS must use persistent authoritative data storage.')
 
           deploy = Path('.github/workflows/deploy-production.yml').read_text(encoding='utf-8')
           if 'ithute-app-api:$DEPLOY_SHA' not in deploy:
               raise SystemExit('Production deployment must load and verify the restored app API image.')
+          if 'PowerDNSClient().get_zone' not in deploy:
+              raise SystemExit('Production deployment must verify app-to-PowerDNS connectivity.')
           for source_dir in ('apps', 'platform'):
               if f'            {source_dir} \\' in deploy:
                   raise SystemExit(f'Production bundle still contains source directory: {source_dir}')
@@ -157,6 +163,8 @@ jobs:
           grep -q 'ithute-push:' /tmp/ithute-production.yml
           grep -q 'ithute-realtime:' /tmp/ithute-production.yml
           grep -q 'ithute-dns:' /tmp/ithute-production.yml
+          grep -Fq 'powerdns/pdns-auth-49:4.9.17' /tmp/ithute-production.yml
+          grep -Fq 'http://ithute-dns:8081/api/v1' /tmp/ithute-production.yml
           grep -q 'caddy:' /tmp/ithute-production.yml
           grep -Fq 'mailbox-dns' /tmp/ithute-production.yml
           grep -Fq '204.12.205.224' /tmp/ithute-production.yml
@@ -175,19 +183,14 @@ jobs:
           grep -Fq 'push.ithute.co.ls' infrastructure/caddy/Caddyfile
           grep -Fq 'realtime.ithute.co.ls' infrastructure/caddy/Caddyfile
 
-      - name: Validate Ithute authoritative DNS
+      - name: Validate PowerDNS authoritative seed
         run: |
           set -euo pipefail
           docker run --rm \
-            -v "$PWD/infrastructure/dns:/etc/bind:ro" \
-            --entrypoint named-checkconf \
-            internetsystemsconsortium/bind9:9.20 \
-            /etc/bind/named.conf
-          docker run --rm \
-            -v "$PWD/infrastructure/dns:/etc/bind:ro" \
-            --entrypoint named-checkzone \
-            internetsystemsconsortium/bind9:9.20 \
-            ithute.co.ls /etc/bind/zones/db.ithute.co.ls
+            -v "$PWD/infrastructure/dns/zones/db.ithute.co.ls:/seed/db.ithute.co.ls:ro" \
+            --entrypoint /bin/sh \
+            powerdns/pdns-auth-49:4.9.17 \
+            -ec 'pdnsutil load-zone ithute.co.ls /seed/db.ithute.co.ls; pdnsutil check-zone ithute.co.ls; pdnsutil list-zone ithute.co.ls | grep -q "ns1.ithute.co.ls"'
           grep -Eq '^@ +IN +NS +ns1\.ithute\.co\.ls\.$' infrastructure/dns/zones/db.ithute.co.ls
           grep -Eq '^@ +IN +NS +ns2\.ithute\.co\.ls\.$' infrastructure/dns/zones/db.ithute.co.ls
           grep -Eq '^ns1 +IN +A +204\.12\.205\.224$' infrastructure/dns/zones/db.ithute.co.ls
