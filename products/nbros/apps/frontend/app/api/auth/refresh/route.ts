@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-import { clientId, cookieSecure, discovery } from "@/lib/oidc";
+import { clientId, cookieSecure, discovery, publicUrl } from "@/lib/oidc";
 
 type RefreshTokenResponse = {
   access_token: string;
@@ -98,12 +98,12 @@ export async function POST() {
 export async function GET(request: NextRequest) {
   const result = await rotateSession();
   if (!result.ok) {
-    const response = NextResponse.redirect(new URL("/api/auth/login", request.url));
+    const response = NextResponse.redirect(new URL("/api/auth/login", publicUrl()));
     clearSessionCookies(response);
     return response;
   }
 
-  const response = NextResponse.redirect(new URL(safeReturnPath(request), request.url));
+  const response = NextResponse.redirect(new URL(safeReturnPath(request), publicUrl()));
   setSessionCookies(response, result.tokens);
   return response;
 }
