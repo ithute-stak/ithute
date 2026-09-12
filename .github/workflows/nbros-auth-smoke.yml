@@ -7,10 +7,6 @@ on:
       - "products/nbros/apps/frontend/**"
       - "platform/ithute-auth/**"
       - ".github/workflows/nbros-auth-smoke.yml"
-  push:
-    branches: ["hotfix/nbros-auth-smoke-diagnostics"]
-    paths:
-      - ".github/workflows/nbros-auth-smoke.yml"
   workflow_run:
     workflows: ["Deploy NBros Production"]
     types: [completed]
@@ -33,6 +29,11 @@ jobs:
       - name: Verify NBros delegates credentials to Central Auth
         run: |
           set -euo pipefail
+          fail() {
+            echo "::error title=NBros Auth Contract::$*"
+            exit 1
+          }
+
           grep -Fq 'action="/api/auth/password"' products/nbros/apps/frontend/app/page.tsx
           grep -Fq 'defaultValue="justy@ithute.co.ls"' products/nbros/apps/frontend/app/page.tsx
           grep -Fq 'type="password"' products/nbros/apps/frontend/app/page.tsx
@@ -40,17 +41,25 @@ jobs:
           grep -Fq 'client_id: clientId()' products/nbros/apps/frontend/app/api/auth/password/route.ts
           grep -Fq 'httpOnly: true' products/nbros/apps/frontend/app/api/auth/password/route.ts
           grep -Fq 'The email or password is incorrect.' platform/ithute-auth/app/oauth.py
-          if grep -Eq 'defaultValue=.*password|value=.*password' products/nbros/apps/frontend/app/page.tsx; then
-            echo '::error::NBros must never prefill or embed a password.'
-            exit 1
+          grep -Fq 'export function publicUrl()' products/nbros/apps/frontend/lib/oidc.ts || fail "NBros must expose one configured public URL for browser redirects"
+          grep -Fq 'new URL("/fleet", publicUrl())' products/nbros/apps/frontend/app/api/auth/password/route.ts || fail "Password login success must redirect to the public NBros origin"
+          grep -Fq 'new URL("/", publicUrl())' products/nbros/apps/frontend/app/api/auth/logout/route.ts || fail "Logout must redirect to the public NBros origin"
+          grep -Fq 'new URL("/", publicUrl())' products/nbros/apps/frontend/app/api/auth/oidc/callback/route.ts || fail "OIDC completion must redirect to the public NBros origin"
+
+          if grep -R -nF 'request.url' products/nbros/apps/frontend/app/api/auth/; then
+            fail "NBros auth routes must not derive public redirects from the internal Next.js request URL"
           fi
+          if grep -Eq 'defaultValue=.*password|value=.*password' products/nbros/apps/frontend/app/page.tsx; then
+            fail "NBros must never prefill or embed a password"
+          fi
+
+          echo 'NBros source auth contract passed.'
 
   smoke:
     name: Production password and OIDC smoke
     if: >-
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/hotfix/nbros-auth-smoke-diagnostics')
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -115,7 +124,7 @@ jobs:
           fi
           if ! grep -Eiq '^location: https://nbro\.ithute\.co\.ls/\?auth_error=missing_credentials' "$headers"; then
             grep -Eia '^(location|content-type):' "$headers" || true
-            fail "NBros empty password form did not redirect to the missing_credentials page"
+            fail "NBros empty password form did not redirect to the public missing_credentials page"
           fi
           rm -f "$headers"
           echo "NBros local password form redirect contract passed"
