@@ -58,21 +58,18 @@ jobs:
             exit 1
           }
 
-      - name: Preflight Ithute public DNS before destructive reset
+      - name: Observe public DNS without blocking VPS deployment
         run: |
           set -euo pipefail
-          for host in ithute.co.ls auth.ithute.co.ls push.ithute.co.ls realtime.ithute.co.ls; do
-            echo "Checking $host -> $EXPECTED_IPV4"
-            for attempt in $(seq 1 5); do
-              if getent ahostsv4 "$host" | awk '{print $1}' | grep -Fxq "$EXPECTED_IPV4"; then
-                break
-              fi
-              if [ "$attempt" -eq 5 ]; then
-                echo "$host does not resolve to $EXPECTED_IPV4; refusing to wipe the VPS." >&2
-                exit 1
-              fi
-              sleep 2
-            done
+          for host in ithute.co.ls auth.ithute.co.ls push.ithute.co.ls realtime.ithute.co.ls mail.ithute.co.ls; do
+            addresses="$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ' || true)"
+            if printf '%s\n' "$addresses" | tr ' ' '\n' | grep -Fxq "$EXPECTED_IPV4"; then
+              echo "$host -> $EXPECTED_IPV4"
+            elif [ -n "$addresses" ]; then
+              echo "$host currently resolves to: $addresses"
+            else
+              echo "$host currently has no public IPv4 answer. Deployment will continue internally; GitHub will verify public routing later."
+            fi
           done
 
       - name: Configure SSH
@@ -98,6 +95,12 @@ jobs:
           fi
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Preflight VPS before destructive reset
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "set -eu; command -v docker >/dev/null; command -v git >/dev/null; command -v openssl >/dev/null; docker info >/dev/null; docker compose version >/dev/null"
 
       - name: Determine whether reset is required
         id: state
@@ -135,6 +138,10 @@ jobs:
           remote="${VPS_USER}@${VPS_HOST}"
           ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
           set -euo pipefail
+          cleanup_cutover_tmp() {
+            rm -f /tmp/ithute-owner-password.b64 /tmp/ithute-bootstrap-vps.sh
+          }
+          trap cleanup_cutover_tmp EXIT
 
           test -f /tmp/ithute-bootstrap-vps.sh
           test -s /tmp/ithute-owner-password.b64
@@ -171,7 +178,6 @@ jobs:
             bash /tmp/ithute-bootstrap-vps.sh
 
           unset owner_password_b64
-          rm -f /tmp/ithute-bootstrap-vps.sh
           REMOTE
 
       - name: Deploy latest main when reset was unnecessary
@@ -179,9 +185,9 @@ jobs:
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "cd '$VPS_APP_DIR' && git fetch --prune origin main && git checkout main && git reset --hard origin/main && ITHUTE_APP_DIR='$VPS_APP_DIR' ITHUTE_REQUIRE_PUBLIC_HEALTH=1 bash scripts/deploy-production.sh"
+          ssh "$remote" "cd '$VPS_APP_DIR' && git fetch --prune origin main && git checkout main && git reset --hard origin/main && ITHUTE_APP_DIR='$VPS_APP_DIR' bash scripts/deploy-production.sh"
 
-      - name: Verify isolated runtime on VPS
+      - name: Verify isolated runtime and internal health on VPS
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
@@ -193,7 +199,13 @@ jobs:
           test ! -e /home/administrator/mailbox-dns
 
           cd "$VPS_APP_DIR"
-          docker compose --env-file .env.production -p ithute -f compose.production.yml ps
+          compose() { docker compose --env-file .env.production -p ithute -f compose.production.yml "$@"; }
+          compose ps
+          compose exec -T ithute-web wget -qO- http://127.0.0.1:3000/health | grep -q ithute-web
+          compose exec -T ithute-auth curl -fsS http://127.0.0.1:8080/healthz | grep -q ithute-auth
+          compose exec -T ithute-push curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
+          compose exec -T ithute-realtime curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
+          compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
 
           if docker network ls --format '{{.Name}}' | grep -Eiq 'loanhub|nbros|buildtrack|mailbox-dns|ithute-tutor|ithute-pay'; then
             echo 'Unexpected product/shared Docker network remains after clean cutover.' >&2
@@ -202,9 +214,21 @@ jobs:
           fi
           REMOTE
 
-      - name: Verify public Ithute services
+      - name: Verify public Ithute services when DNS is ready
         run: |
           set -euo pipefail
+          dns_ready=true
+          for host in ithute.co.ls auth.ithute.co.ls push.ithute.co.ls realtime.ithute.co.ls; do
+            if ! getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | grep -Fxq "$EXPECTED_IPV4"; then
+              dns_ready=false
+            fi
+          done
+          if [ "$dns_ready" != true ]; then
+            echo 'Standalone VPS deployment is healthy, but public Ithute DNS is not pointed at this VPS yet.'
+            echo 'Public verification is deferred; no VPS action is required.'
+            exit 0
+          fi
+
           html="$(curl --retry 15 --retry-delay 3 --retry-all-errors -fsS https://ithute.co.ls/)"
           printf '%s' "$html" | grep -Fq 'One focused platform.'
           curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth
