@@ -5,14 +5,14 @@ on:
     paths:
       - "platform/ithute-auth/**"
       - "platform/ithute-push/**"
-      - "docker-compose.ithute-platform.yml"
+      - "compose.production.yml"
       - ".github/workflows/ithute-auth-push-integration.yml"
   push:
     branches: [main]
     paths:
       - "platform/ithute-auth/**"
       - "platform/ithute-push/**"
-      - "docker-compose.ithute-platform.yml"
+      - "compose.production.yml"
       - ".github/workflows/ithute-auth-push-integration.yml"
   workflow_dispatch:
 
@@ -39,18 +39,17 @@ jobs:
       - name: Validate Auth to Push delivery contract
         run: |
           set -eu
-          compose=docker-compose.ithute-platform.yml
+          compose=compose.production.yml
           grep -Fq 'AUTH_PUSH_EVENTS_URL:' "$compose"
           grep -Fq 'AUTH_PUSH_EVENT_WORKER_POLL_SECONDS:' "$compose"
           grep -Fq 'command: ["push-event-worker"]' "$compose"
           grep -Fq 'PUSH_AUTH_ISSUER:' "$compose"
           grep -Fq 'PUSH_AUTH_JWKS_URL:' "$compose"
           grep -Fq 'ithute-push-worker:' "$compose"
-          grep -Fq 'ithute-auth:' "$compose"
-          grep -Fq 'ithute-push:' "$compose"
+          grep -Fq 'ithute-auth-push-event-worker:' "$compose"
 
-      - name: Reject product application coupling
+      - name: Reject deployment coupling
         run: |
           set -eu
-          ! grep -Eiq 'buildtrack|nbros|sandbox_frontend|loanhub_frontend|loanhub_backend' \
-            platform/ithute-auth/Dockerfile platform/ithute-push/Dockerfile
+          ! grep -Eiq 'mailbox-dns|loanhub|nbros|buildtrack|ithute-tutor|ithute-pay' compose.production.yml infrastructure/caddy/Caddyfile
+          ! grep -Eq 'external:[[:space:]]*true' compose.production.yml
