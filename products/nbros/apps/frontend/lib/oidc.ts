@@ -6,6 +6,10 @@ export type OidcDiscovery = {
   password_login_endpoint?: string;
 };
 
+export function publicUrl(): string {
+  return (process.env.NBROS_PUBLIC_URL ?? "https://nbro.ithute.co.ls").replace(/\/$/, "");
+}
+
 export function authIssuer(): string {
   return (process.env.NBROS_AUTH_ISSUER ?? "https://auth.ithute.co.ls").replace(/\/$/, "");
 }
