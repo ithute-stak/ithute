@@ -150,7 +150,7 @@ jobs:
             echo 'Offline Ithute Nginx configuration validation failed.' >&2
             exit 1
           fi
-          for required in 'auth.ithute.co.ls' 'panel.ithute.co.ls' 'portal.pay.ithute.co.ls' 'listen 443 ssl'; do
+          for required in 'auth.ithute.co.ls' 'ithute.co.ls' 'portal.pay.ithute.co.ls' 'listen 443 ssl'; do
             grep -Fq "$required" "$rendered" || {
               cat "$rendered" >&2 || true
               echo "Offline Nginx configuration is missing: $required" >&2
@@ -195,7 +195,7 @@ jobs:
         run: |
           set -eu
           for url in \
-            https://panel.ithute.co.ls/ \
+            https://ithute.co.ls/ \
             https://pay.ithute.co.ls/ \
             https://portal.pay.ithute.co.ls/portal \
             https://auth.ithute.co.ls/healthz; do
