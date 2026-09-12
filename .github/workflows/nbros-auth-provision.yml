@@ -203,13 +203,17 @@ jobs:
           gateway_id="$(compose ps -q nginx 2>/dev/null || true)"
           if [ -n "$gateway_id" ]; then
             compose exec -T nginx nginx -t
-            compose exec -T nginx nginx -s reload
+            if ! compose exec -T nginx nginx -s reload; then
+              echo "Central Nginx reload returned a non-zero status after signalling; continuing to the public Auth verification." >&2
+            fi
           fi
 
           edge_compose="/home/administrator/ithute-edge/docker-compose.ithute-edge.yml"
           [ -s "$edge_compose" ] || { echo "Shared Ithute edge compose file is missing." >&2; exit 1; }
           docker compose -p ithute-edge -f "$edge_compose" exec -T edge-nginx nginx -t
-          docker compose -p ithute-edge -f "$edge_compose" exec -T edge-nginx nginx -s reload
+          if ! docker compose -p ithute-edge -f "$edge_compose" exec -T edge-nginx nginx -s reload; then
+            echo "Shared edge Nginx reload returned a non-zero status after signalling; continuing to the public Auth verification." >&2
+          fi
           sleep 3
 
           # Verify the exact central email/password flow for the NBros client
