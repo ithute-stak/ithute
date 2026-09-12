@@ -7,7 +7,7 @@ set -eu
 
 staged_template="${TUTOR_EDGE_TEMPLATE:-/tmp/ithute-edge-tutor-${DEPLOY_SHA}.conf}"
 live_template="$EDGE_DIR/infrastructure/ithute-edge/default.conf.template"
-health_host="${EDGE_HEALTH_HOST:-panel.ithute.co.ls}"
+health_host="${EDGE_HEALTH_HOST:-ithute.co.ls}"
 
 mkdir -p "$EDGE_DIR/infrastructure/ithute-edge"
 if [ -s "$staged_template" ]; then
@@ -61,11 +61,11 @@ trap cleanup EXIT HUP INT TERM
 # The ithute-edge certificate is shared by every HTTPS virtual host. Never
 # derive the next certificate only from the currently served SAN set because a
 # damaged or product-only certificate would then become the new source of
-# truth. Start from the complete Ithute edge identity instead.
+# truth. Start from the complete Ithute edge identity instead. The retired
+# panel.ithute.co.ls hostname is intentionally not part of this identity.
 cat > "$required_sans" <<EOF
 ithute.co.ls
 www.ithute.co.ls
-panel.ithute.co.ls
 api.ithute.co.ls
 auth.ithute.co.ls
 push.ithute.co.ls
@@ -181,8 +181,8 @@ edge_compose up -d --no-build --no-deps --force-recreate edge-nginx certbot
 edge_compose exec -T edge-nginx nginx -t
 
 # Shared TLS recovery must not depend on a single product being healthy. Verify
-# the panel through the new local edge certificate; product-specific workflows
-# keep their own application health gates.
+# the canonical Ithute apex through the new local edge certificate; product-
+# specific workflows keep their own application health gates.
 attempt=1
 while [ "$attempt" -le 30 ]; do
   if curl -fsS \
