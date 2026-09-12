@@ -151,6 +151,25 @@ jobs:
           echo 'Removing all existing Docker containers...'
           docker ps -aq | xargs -r docker rm -f
 
+          echo 'Retiring old deployment directories from active production paths...'
+          retired_root="/home/administrator/.ithute-retired-$(date +%Y%m%d%H%M%S)"
+          mkdir -p "$retired_root"
+          for path in \
+            /home/administrator/ithute \
+            /home/administrator/ithute-edge \
+            /home/administrator/mailbox-dns \
+            /home/administrator/ithute-mail
+          do
+            if [ -e "$path" ]; then
+              mv "$path" "$retired_root/$(basename "$path")"
+            fi
+          done
+
+          test ! -e /home/administrator/ithute
+          test ! -e /home/administrator/ithute-edge
+          test ! -e /home/administrator/mailbox-dns
+          test ! -e /home/administrator/ithute-mail
+
           echo 'Removing all existing Docker images...'
           docker image ls -aq | sort -u | xargs -r docker image rm -f
 
@@ -161,13 +180,6 @@ jobs:
           docker network prune -f
           docker builder prune -af
           docker system prune -af --volumes
-
-          echo 'Removing retired deployment directories...'
-          rm -rf \
-            /home/administrator/ithute \
-            /home/administrator/ithute-edge \
-            /home/administrator/mailbox-dns \
-            /home/administrator/ithute-mail
 
           owner_password_b64="$(cat /tmp/ithute-owner-password.b64)"
           rm -f /tmp/ithute-owner-password.b64
