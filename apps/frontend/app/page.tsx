@@ -21,6 +21,7 @@ export const metadata: Metadata = {
   description:
     "!thute is a Lesotho technology hub building multi-tenant platforms for finance, collections, commerce, construction, education, email, DNS and cloud operations.",
   applicationName: "!thute",
+  alternates: { canonical: "https://ithute.co.ls/" },
   keywords: [
     "Ithute",
     "Lesotho software",
@@ -157,12 +158,12 @@ export default function Home() {
               <Link href="/docs" className="hidden text-xs font-bold text-white/65 transition hover:text-white lg:inline">
                 Mail & DNS docs
               </Link>
-              <a
-                href="https://panel.ithute.co.ls/login"
+              <Link
+                href="/login"
                 className="rounded-full border border-white/15 bg-white/10 px-4 py-2 text-xs font-extrabold transition hover:bg-white/15"
               >
                 Client portal
-              </a>
+              </Link>
             </nav>
           </header>
 
@@ -397,9 +398,9 @@ export default function Home() {
               <a href="#solutions" className="inline-flex items-center gap-2 rounded-xl bg-[#f1de8b] px-5 py-3 text-sm font-black text-[#123a38]">
                 View solutions <ArrowRight size={16} />
               </a>
-              <a href="https://panel.ithute.co.ls/login" className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/[.06] px-5 py-3 text-sm font-black">
+              <Link href="/login" className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/[.06] px-5 py-3 text-sm font-black">
                 Open client portal
-              </a>
+              </Link>
             </div>
           </div>
         </div>
@@ -424,7 +425,7 @@ export default function Home() {
             <Link href="/docs">Documentation</Link>
             <Link href="/service-status">Service status</Link>
             <Link href="/legal">Policies</Link>
-            <a href="https://panel.ithute.co.ls/login">Client portal</a>
+            <Link href="/login">Client portal</Link>
           </div>
         </div>
       </footer>
