@@ -5,6 +5,18 @@
   }
 }
 
+# Temporary propagation bridge. This serves only the Ithute web frontend over
+# plain HTTP on the production IPv4 while the registrar/recursive DNS and ACME
+# certificate state settle. Remove this block after public HTTPS is verified.
+http://204.12.205.224 {
+  header X-Ithute-Temporary-IP "true"
+  header X-Ithute-Service "web"
+  header X-Content-Type-Options "nosniff"
+  header X-Frame-Options "DENY"
+  header Referrer-Policy "strict-origin-when-cross-origin"
+  reverse_proxy ithute-web:3000
+}
+
 ithute.co.ls {
   header X-Ithute-Service "web"
   header X-Content-Type-Options "nosniff"
