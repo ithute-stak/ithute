@@ -67,12 +67,20 @@ jobs:
 
           # The public edge owns ingress only. LoanHub remains a separate repo and
           # runtime, reached through the stable aliases its own compose file exports.
-          grep -Fq 'server loanhub-frontend:3000;' infrastructure/ithute-edge/default.conf.template
-          grep -Fq 'server loanhub-backend:8000;' infrastructure/ithute-edge/default.conf.template
+          grep -Fq 'set $loanhub_frontend_upstream http://loanhub-frontend:3000;' infrastructure/ithute-edge/default.conf.template
+          grep -Fq 'set $loanhub_backend_upstream http://loanhub-backend:8000;' infrastructure/ithute-edge/default.conf.template
           grep -Fq 'server_name ${APP_DOMAIN};' infrastructure/ithute-edge/default.conf.template
           grep -Fq 'server_name ${API_DOMAIN};' infrastructure/ithute-edge/default.conf.template
           grep -q 'loanhub:' docker-compose.ithute-edge.yml
           grep -q 'loanhub_sandbox:' docker-compose.ithute-edge.yml
+
+          # External upstreams must use Docker DNS at request time. A stopped auth,
+          # push, realtime, product or sandbox service must not stop Nginx itself.
+          grep -Fq 'resolver 127.0.0.11' infrastructure/ithute-edge/default.conf.template
+          grep -Fq 'set $ithute_auth_upstream http://ithute-auth:8080;' infrastructure/ithute-edge/default.conf.template
+          grep -Fq 'set $ithute_push_upstream http://ithute-push:8080;' infrastructure/ithute-edge/default.conf.template
+          grep -Fq 'set $ithute_realtime_upstream http://ithute-realtime:8080;' infrastructure/ithute-edge/default.conf.template
+          ! grep -Eq '^[[:space:]]*upstream[[:space:]]+(ithute_auth|ithute_push|ithute_realtime|loanhub_frontend|loanhub_backend)[[:space:]]*\{' infrastructure/ithute-edge/default.conf.template
 
           # Ithute must never be the fallback host. There is exactly one TLS
           # default server and it is the catch-all 404 block.
