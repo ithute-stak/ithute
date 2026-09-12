@@ -35,6 +35,7 @@ required = (
     "ITHUTE_APP_BILLING_WEBHOOK_SECRET",
     "ITHUTE_APP_BOOTSTRAP_ADMIN_PASSWORD",
     "ITHUTE_APP_MAIL_OPS_TOKEN",
+    "ITHUTE_APP_MAIL_NODE_TOKEN",
     "ITHUTE_APP_RECOVERY_OPS_TOKEN",
     "ITHUTE_APP_POWERDNS_API_KEY",
 )
@@ -172,7 +173,13 @@ compose pull \
   ithute-dns \
   caddy
 
-compose up -d --remove-orphans --no-build
+if ! compose up -d --remove-orphans --no-build; then
+  echo "Ithute containers did not reach their Compose startup conditions." >&2
+  compose ps >&2 || true
+  echo "Restored app API logs:" >&2
+  compose logs --tail=200 ithute-app-api >&2 || true
+  exit 1
+fi
 
 # Activate uploaded runtime configuration explicitly.
 compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
@@ -210,8 +217,8 @@ if [ "${ITHUTE_REQUIRE_PUBLIC_HEALTH:-0}" = "1" ]; then
   curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://ithute.co.ls/pricing | grep -Fq 'Choose capacity'
   curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://ithute.co.ls/docs | grep -Fq 'Packages'
   curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth
-  curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://push.ithute.co.ls/readyz | grep -q '"status":"ready"'
-  curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://realtime.ithute.co.ls/readyz | grep -q '"status":"ready"'
+  curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://push.ithute.co.ls/readyz | grep -q '\"status\":\"ready\"'
+  curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://realtime.ithute.co.ls/readyz | grep -q '\"status\":\"ready\"'
 fi
 
 compose ps
