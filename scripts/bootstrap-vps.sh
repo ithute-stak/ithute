@@ -3,19 +3,19 @@ set -euo pipefail
 
 APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute-platform}"
 MAIL_DIR="${ITHUTE_MAIL_DIR:-/home/administrator/ithute-platform-mail}"
-REPO_URL="${ITHUTE_REPO_URL:-https://github.com/ithute-stak/ithute.git}"
 ENV_FILE="$APP_DIR/.env.production"
 BOOTSTRAP_MARKER="$APP_DIR/.ithute-bootstrapped"
+DEPLOY_SCRIPT="${ITHUTE_DEPLOY_SCRIPT:-/tmp/ithute-deploy-production.sh}"
+IMAGE_TAG="${ITHUTE_IMAGE_TAG:-}"
 OWNER_EMAIL="thekoetlisi@ithute.co.ls"
 
-for command in docker git openssl curl; do
+for command in docker openssl curl; do
   command -v "$command" >/dev/null 2>&1 || { echo "Required command not found: $command" >&2; exit 2; }
 done
 docker compose version >/dev/null
 
-# This bootstrap owns only APP_DIR, MAIL_DIR and Docker resources in the
-# `ithute` / `ithute-mail` Compose projects. It deliberately does not remove,
-# prune or inspect resources belonging to other repositories on the host.
+# The VPS stores runtime configuration, secrets and persistent Docker data only.
+# Application source is built into immutable images by GitHub Actions.
 if [ "$APP_DIR" = "/" ] || [ "$APP_DIR" = "/home" ] || [ "$APP_DIR" = "/home/administrator" ]; then
   echo "Unsafe Ithute application directory: $APP_DIR" >&2
   exit 2
@@ -28,25 +28,22 @@ if [ "$APP_DIR" = "$MAIL_DIR" ]; then
   echo "Application and mail directories must be separate." >&2
   exit 2
 fi
-
-if [ ! -d "$APP_DIR/.git" ]; then
-  if [ -e "$APP_DIR" ] && [ -n "$(ls -A "$APP_DIR" 2>/dev/null || true)" ]; then
-    echo "$APP_DIR exists but is not a clean Git checkout; refusing to overwrite it." >&2
-    exit 2
-  fi
-  rmdir "$APP_DIR" 2>/dev/null || true
-  git clone --branch main --single-branch "$REPO_URL" "$APP_DIR"
-else
-  git -C "$APP_DIR" fetch --prune origin main
-  git -C "$APP_DIR" checkout main
-  git -C "$APP_DIR" reset --hard origin/main
+case "$IMAGE_TAG" in
+  *[!0-9a-f]*|'') echo "ITHUTE_IMAGE_TAG must be a lowercase Git commit SHA." >&2; exit 2 ;;
+esac
+if [ "${#IMAGE_TAG}" -ne 40 ]; then
+  echo "ITHUTE_IMAGE_TAG must be a full 40-character Git commit SHA." >&2
+  exit 2
 fi
 
-cd "$APP_DIR"
+test -x "$DEPLOY_SCRIPT" || { echo "Missing executable deployment script: $DEPLOY_SCRIPT" >&2; exit 2; }
+mkdir -p "$APP_DIR/infrastructure/caddy" "$APP_DIR/secrets/ithute-auth" "$APP_DIR/secrets/ithute-push"
+test -f "$APP_DIR/compose.production.yml" || { echo "Missing runtime compose file" >&2; exit 2; }
+test -f "$APP_DIR/infrastructure/caddy/Caddyfile" || { echo "Missing runtime Caddyfile" >&2; exit 2; }
 
 if [ -f "$ENV_FILE" ]; then
   echo "$ENV_FILE already exists; refusing to overwrite production secrets." >&2
-  echo "Use scripts/deploy-production.sh for normal updates." >&2
+  echo "Use the normal image deployment workflow for updates." >&2
   exit 2
 fi
 
@@ -77,7 +74,6 @@ PUSH_ENDPOINT_KEY="$(fernet_key)"
 REALTIME_SECRET="$(random_hex 32)"
 
 umask 077
-mkdir -p "$APP_DIR/secrets/ithute-auth" "$APP_DIR/secrets/ithute-push"
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$APP_DIR/secrets/ithute-auth/jwt-private.pem"
 openssl pkey -in "$APP_DIR/secrets/ithute-auth/jwt-private.pem" -pubout -out "$APP_DIR/secrets/ithute-auth/jwt-public.pem"
 chmod 600 "$APP_DIR/secrets/ithute-auth/jwt-private.pem" "$APP_DIR/secrets/ithute-auth/jwt-public.pem"
@@ -124,22 +120,13 @@ EOF
 chmod 600 "$ENV_FILE"
 unset OWNER_PASSWORD ITHUTE_SYSTEM_OWNER_PASSWORD ITHUTE_SYSTEM_OWNER_PASSWORD_B64
 
-bash "$APP_DIR/scripts/deploy-production.sh"
+ITHUTE_APP_DIR="$APP_DIR" ITHUTE_IMAGE_TAG="$IMAGE_TAG" bash "$DEPLOY_SCRIPT"
 touch "$BOOTSTRAP_MARKER"
 chmod 600 "$BOOTSTRAP_MARKER"
 
-printf '\nFresh Ithute application deployment completed.\n'
-printf 'Application directory: %s\n' "$APP_DIR"
+printf '\nFresh Ithute runtime bootstrap completed.\n'
+printf 'Application runtime directory: %s\n' "$APP_DIR"
+printf 'Image tag: %s\n' "$IMAGE_TAG"
 printf 'Owner login: %s\n' "$OWNER_EMAIL"
 printf 'Auth portal: https://auth.ithute.co.ls/account/login\n'
-printf '\nAttempting independent mail bootstrap next...\n'
-if ITHUTE_MAIL_DIR="$MAIL_DIR" bash "$APP_DIR/scripts/bootstrap-mail.sh"; then
-  printf 'Mail bootstrap completed.\n'
-else
-  status=$?
-  if [ "$status" -eq 3 ]; then
-    printf '\nMail is staged but public DNS is not ready yet. GitHub will retry automatically.\n'
-  else
-    exit "$status"
-  fi
-fi
+printf 'Application source code was not cloned to the VPS.\n'
