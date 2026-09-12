@@ -99,7 +99,12 @@ check_service ithute-auth "curl -fsS http://127.0.0.1:8080/healthz | grep -q ith
 check_service ithute-push "curl -fsS http://127.0.0.1:8080/readyz | grep -q '\"status\":\"ready\"'"
 check_service ithute-realtime "curl -fsS http://127.0.0.1:8080/readyz | grep -q '\"status\":\"ready\"'"
 check_service ithute-dns "named-checkconf /etc/bind/named.conf && named-checkzone ithute.co.ls /etc/bind/zones/db.ithute.co.ls >/dev/null"
+
+# The Caddyfile is bind-mounted from the runtime bundle. `compose up` does not
+# recreate an already-running Caddy container when only that file changes, so
+# explicitly validate and reload the mounted configuration on every deployment.
 compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
+compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null
 
 if [ "${ITHUTE_REQUIRE_PUBLIC_HEALTH:-0}" = "1" ]; then
   html="$(curl --retry 15 --retry-delay 3 --retry-all-errors -fsS https://ithute.co.ls/)"
