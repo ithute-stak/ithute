@@ -1,0 +1,96 @@
+name: Finalize Ithute DNS Cutover
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 * * * *'
+
+concurrency:
+  group: ithute-vps-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      EXPECTED_IPV4: 204.12.205.224
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_APP_DIR: /home/administrator/ithute-platform
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+
+    steps:
+      - name: Wait for recursive DNS and public HTTPS
+        id: readiness
+        run: |
+          set -euo pipefail
+          ready=true
+          for host in ithute.co.ls auth.ithute.co.ls push.ithute.co.ls realtime.ithute.co.ls; do
+            if ! getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | grep -Fxq "$EXPECTED_IPV4"; then
+              ready=false
+            fi
+          done
+
+          if [ "$ready" = true ]; then
+            curl --connect-timeout 10 -fsS https://ithute.co.ls/ | grep -Fq 'One focused platform.' || ready=false
+            curl --connect-timeout 10 -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth || ready=false
+            curl --connect-timeout 10 -fsS https://push.ithute.co.ls/readyz | grep -q '"status":"ready"' || ready=false
+            curl --connect-timeout 10 -fsS https://realtime.ithute.co.ls/readyz | grep -q '"status":"ready"' || ready=false
+          fi
+
+          printf 'ready=%s\n' "$ready" >> "$GITHUB_OUTPUT"
+          if [ "$ready" = true ]; then
+            echo 'Recursive DNS and all public Ithute HTTPS endpoints are healthy; final cutover can proceed.'
+          else
+            echo 'Propagation or ACME is still settling. Leaving temporary direct-IP access in place and exiting successfully.'
+          fi
+
+      - name: Configure SSH for final cutover
+        if: steps.readiness.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_KEY"
+          test "$VPS_HOST" = "$EXPECTED_IPV4"
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_cutover"
+          chmod 600 "$HOME/.ssh/ithute_cutover"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/ithute-cutover-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/ithute-cutover-askpass.sh
+            SSH_ASKPASS=/tmp/ithute-cutover-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh-add "$HOME/.ssh/ithute_cutover" </dev/null
+            rm -f /tmp/ithute-cutover-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/ithute_cutover" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Disable temporary direct-IP access
+        if: steps.readiness.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "set -euo pipefail; cd '$VPS_APP_DIR'; if grep -Fq '# BEGIN ITHUTE TEMPORARY IP FALLBACK' infrastructure/caddy/Caddyfile; then sed -i '/^# BEGIN ITHUTE TEMPORARY IP FALLBACK$/,/^# END ITHUTE TEMPORARY IP FALLBACK$/d' infrastructure/caddy/Caddyfile; docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null; docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile; fi"
+
+          if curl --connect-timeout 5 -sS -D /tmp/ithute-ip-cutover-headers "http://${EXPECTED_IPV4}/" -o /tmp/ithute-ip-cutover-body && grep -Fiq 'X-Ithute-Temporary-IP: true' /tmp/ithute-ip-cutover-headers; then
+            echo 'Temporary direct-IP route is still active after final cutover.' >&2
+            exit 1
+          fi
+
+          curl --connect-timeout 10 -fsS https://ithute.co.ls/ | grep -Fq 'One focused platform.'
+          echo 'DNS/TLS cutover is complete. Public Ithute uses its domain and direct-IP fallback is disabled.'
