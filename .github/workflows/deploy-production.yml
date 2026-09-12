@@ -203,38 +203,16 @@ jobs:
             exit 0
           fi
 
+          remote="${VPS_USER}@${VPS_HOST}"
           if ! curl --connect-timeout 10 -fsS https://ithute.co.ls/ >/tmp/ithute-home-initial.html; then
             echo 'Public DNS reaches this VPS, but TLS is not ready. Restarting Caddy once to clear ACME retry backoff after DNS changes.'
-            remote="${VPS_USER}@${VPS_HOST}"
-            ssh "$remote" "APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
-            set -euo pipefail
-            cd "$APP_DIR"
-            compose() {
-              docker compose \
-                --env-file .env.production \
-                --env-file .image.env \
-                -p ithute \
-                -f compose.production.yml \
-                "$@"
-            }
-            compose restart caddy
-            REMOTE
+            ssh "$remote" "cd '$VPS_APP_DIR' && docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml restart caddy"
             sleep 10
           fi
 
           if ! html="$(curl --retry 20 --retry-delay 3 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/)"; then
             echo 'TLS is still unavailable after the controlled Caddy restart. Caddy logs follow.' >&2
-            remote="${VPS_USER}@${VPS_HOST}"
-            ssh "$remote" "APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE' >&2 || true
-            set -u
-            cd "$APP_DIR"
-            docker compose \
-              --env-file .env.production \
-              --env-file .image.env \
-              -p ithute \
-              -f compose.production.yml \
-              logs --tail=200 caddy
-            REMOTE
+            ssh "$remote" "cd '$VPS_APP_DIR' && docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml logs --tail=200 caddy" >&2 || true
             exit 1
           fi
 
