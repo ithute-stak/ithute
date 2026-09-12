@@ -39,9 +39,16 @@ if [ -f "$ENV_FILE" ]; then
   exit 2
 fi
 
-printf 'System owner: %s\n' "$OWNER_EMAIL"
-read -r -s -p 'Enter the system-owner password: ' OWNER_PASSWORD
-printf '\n'
+if [ -n "${ITHUTE_SYSTEM_OWNER_PASSWORD_B64:-}" ]; then
+  OWNER_PASSWORD="$(printf '%s' "$ITHUTE_SYSTEM_OWNER_PASSWORD_B64" | base64 -d)"
+elif [ -n "${ITHUTE_SYSTEM_OWNER_PASSWORD:-}" ]; then
+  OWNER_PASSWORD="$ITHUTE_SYSTEM_OWNER_PASSWORD"
+else
+  printf 'System owner: %s\n' "$OWNER_EMAIL"
+  read -r -s -p 'Enter the system-owner password: ' OWNER_PASSWORD
+  printf '\n'
+fi
+
 [ ${#OWNER_PASSWORD} -ge 12 ] || { echo "Owner password must contain at least 12 characters." >&2; exit 2; }
 case "$OWNER_PASSWORD" in
   *$'\n'*|*$'\r'*) echo "Owner password cannot contain a newline." >&2; exit 2 ;;
@@ -104,7 +111,7 @@ ITHUTE_AUTH_SMTP_FROM=
 ITHUTE_AUTH_SMTP_STARTTLS=true
 EOF
 chmod 600 "$ENV_FILE"
-unset OWNER_PASSWORD
+unset OWNER_PASSWORD ITHUTE_SYSTEM_OWNER_PASSWORD ITHUTE_SYSTEM_OWNER_PASSWORD_B64
 
 bash "$APP_DIR/scripts/deploy-production.sh"
 touch "$BOOTSTRAP_MARKER"
@@ -119,8 +126,7 @@ if bash "$APP_DIR/scripts/bootstrap-mail.sh"; then
 else
   status=$?
   if [ "$status" -eq 3 ]; then
-    printf '\nMail is staged but public DNS is not ready yet.\n'
-    printf 'Apply the records shown by the mail bootstrap, then rerun: bash scripts/bootstrap-mail.sh\n'
+    printf '\nMail is staged but public DNS is not ready yet. GitHub will retry automatically.\n'
   else
     exit "$status"
   fi

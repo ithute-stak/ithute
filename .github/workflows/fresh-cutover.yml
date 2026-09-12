@@ -1,0 +1,226 @@
+name: Fresh Ithute VPS Cutover
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_reset:
+        description: "Reset the VPS again even if Ithute is already bootstrapped"
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/fresh-cutover.yml
+      - scripts/bootstrap-vps.sh
+
+concurrency:
+  group: ithute-fresh-cutover
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  cutover:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[fresh-cutover]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_APP_DIR: /home/administrator/ithute
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+      ITHUTE_SYSTEM_OWNER_PASSWORD: ${{ secrets.ITHUTE_SYSTEM_OWNER_PASSWORD }}
+      EXPECTED_IPV4: 204.12.205.224
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Validate protected deployment inputs
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_KEY"
+          test -n "$ITHUTE_SYSTEM_OWNER_PASSWORD"
+          test "${#ITHUTE_SYSTEM_OWNER_PASSWORD}" -ge 12
+          test "$VPS_HOST" = "$EXPECTED_IPV4" || {
+            echo "VPS_HOST does not match the approved production host $EXPECTED_IPV4" >&2
+            exit 1
+          }
+
+      - name: Preflight Ithute public DNS before destructive reset
+        run: |
+          set -euo pipefail
+          for host in ithute.co.ls auth.ithute.co.ls push.ithute.co.ls realtime.ithute.co.ls; do
+            echo "Checking $host -> $EXPECTED_IPV4"
+            for attempt in $(seq 1 5); do
+              if getent ahostsv4 "$host" | awk '{print $1}' | grep -Fxq "$EXPECTED_IPV4"; then
+                break
+              fi
+              if [ "$attempt" -eq 5 ]; then
+                echo "$host does not resolve to $EXPECTED_IPV4; refusing to wipe the VPS." >&2
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_cutover"
+          chmod 600 "$HOME/.ssh/ithute_cutover"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/ithute-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/ithute-askpass.sh
+            SSH_ASKPASS=/tmp/ithute-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh-add "$HOME/.ssh/ithute_cutover" </dev/null
+            rm -f /tmp/ithute-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/ithute_cutover" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Determine whether reset is required
+        id: state
+        env:
+          FORCE_RESET: ${{ github.event_name == 'push' && 'true' || inputs.force_reset }}
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          if [ "$FORCE_RESET" = "true" ]; then
+            echo 'reset=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ssh "$remote" "test -f '$VPS_APP_DIR/.ithute-bootstrapped' && test -f '$VPS_APP_DIR/.env.production'"; then
+            echo 'reset=false' >> "$GITHUB_OUTPUT"
+            echo 'Ithute is already bootstrapped; destructive reset skipped.'
+          else
+            echo 'reset=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Transfer bootstrap and protected owner secret
+        if: steps.state.outputs.reset == 'true'
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          scp scripts/bootstrap-vps.sh "$remote:/tmp/ithute-bootstrap-vps.sh"
+          printf '%s' "$ITHUTE_SYSTEM_OWNER_PASSWORD" | base64 -w0 > /tmp/ithute-owner-password.b64
+          chmod 600 /tmp/ithute-owner-password.b64
+          scp /tmp/ithute-owner-password.b64 "$remote:/tmp/ithute-owner-password.b64"
+          rm -f /tmp/ithute-owner-password.b64
+
+      - name: Destroy old Docker state and perform fresh bootstrap
+        if: steps.state.outputs.reset == 'true'
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          test -f /tmp/ithute-bootstrap-vps.sh
+          test -s /tmp/ithute-owner-password.b64
+          command -v docker >/dev/null
+          docker compose version >/dev/null
+
+          echo 'Removing all existing Docker containers...'
+          docker ps -aq | xargs -r docker rm -f
+
+          echo 'Removing all existing Docker images...'
+          docker image ls -aq | sort -u | xargs -r docker image rm -f
+
+          echo 'Removing all existing Docker volumes...'
+          docker volume ls -q | xargs -r docker volume rm -f
+
+          echo 'Removing unused Docker networks and build cache...'
+          docker network prune -f
+          docker builder prune -af
+          docker system prune -af --volumes
+
+          echo 'Removing retired deployment directories...'
+          rm -rf \
+            /home/administrator/ithute \
+            /home/administrator/ithute-edge \
+            /home/administrator/mailbox-dns \
+            /home/administrator/ithute-mail
+
+          owner_password_b64="$(cat /tmp/ithute-owner-password.b64)"
+          rm -f /tmp/ithute-owner-password.b64
+          chmod 700 /tmp/ithute-bootstrap-vps.sh
+
+          ITHUTE_APP_DIR="$VPS_APP_DIR" \
+          ITHUTE_SYSTEM_OWNER_PASSWORD_B64="$owner_password_b64" \
+            bash /tmp/ithute-bootstrap-vps.sh
+
+          unset owner_password_b64
+          rm -f /tmp/ithute-bootstrap-vps.sh
+          REMOTE
+
+      - name: Deploy latest main when reset was unnecessary
+        if: steps.state.outputs.reset != 'true'
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "cd '$VPS_APP_DIR' && git fetch --prune origin main && git checkout main && git reset --hard origin/main && ITHUTE_APP_DIR='$VPS_APP_DIR' ITHUTE_REQUIRE_PUBLIC_HEALTH=1 bash scripts/deploy-production.sh"
+
+      - name: Verify isolated runtime on VPS
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
+          set -euo pipefail
+          test -f "$VPS_APP_DIR/.ithute-bootstrapped"
+          test -f "$VPS_APP_DIR/.env.production"
+          test ! -e /home/administrator/ithute-edge
+          test ! -e /home/administrator/mailbox-dns
+
+          cd "$VPS_APP_DIR"
+          docker compose --env-file .env.production -p ithute -f compose.production.yml ps
+
+          if docker network ls --format '{{.Name}}' | grep -Eiq 'loanhub|nbros|buildtrack|mailbox-dns|ithute-tutor|ithute-pay'; then
+            echo 'Unexpected product/shared Docker network remains after clean cutover.' >&2
+            docker network ls >&2
+            exit 1
+          fi
+          REMOTE
+
+      - name: Verify public Ithute services
+        run: |
+          set -euo pipefail
+          html="$(curl --retry 15 --retry-delay 3 --retry-all-errors -fsS https://ithute.co.ls/)"
+          printf '%s' "$html" | grep -Fq 'One focused platform.'
+          curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth
+          curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://push.ithute.co.ls/readyz | grep -q '"status":"ready"'
+          curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://realtime.ithute.co.ls/readyz | grep -q '"status":"ready"'
+          curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://auth.ithute.co.ls/account/login >/dev/null
+
+      - name: Report mail status without requiring VPS access
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "bash -s" <<'REMOTE'
+          set -euo pipefail
+          if [ -f /home/administrator/ithute-mail/mailbox-credentials.txt ]; then
+            echo 'All requested info@ mailboxes are provisioned.'
+          else
+            echo 'Mail DNS is not ready yet; GitHub scheduled finalization will retry automatically.'
+          fi
+          REMOTE
