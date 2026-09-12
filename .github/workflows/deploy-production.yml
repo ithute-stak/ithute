@@ -14,11 +14,6 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  VPS_HOST: 204.12.205.224
-  VPS_USER: administrator
-  VPS_APP_DIR: /home/administrator/ithute
-
 jobs:
   deploy:
     if: >-
@@ -29,8 +24,12 @@ jobs:
     environment: production
     env:
       DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_APP_DIR: /home/administrator/ithute
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+      EXPECTED_IPV4: 204.12.205.224
 
     steps:
       - name: Checkout validated commit
@@ -39,10 +38,17 @@ jobs:
           ref: ${{ env.DEPLOY_SHA }}
           persist-credentials: false
 
+      - name: Validate VPS inputs
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_KEY"
+          test "$VPS_HOST" = "$EXPECTED_IPV4"
+
       - name: Configure SSH
         run: |
-          set -eu
-          test -n "$VPS_SSH_KEY"
+          set -euo pipefail
           mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
           printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_deploy"
@@ -67,19 +73,19 @@ jobs:
       - name: Check fresh-bootstrap state
         id: bootstrap
         run: |
-          set -eu
+          set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
           if ssh "$remote" "test -f '$VPS_APP_DIR/.ithute-bootstrapped' && test -f '$VPS_APP_DIR/.env.production'"; then
             echo 'ready=true' >> "$GITHUB_OUTPUT"
           else
             echo 'ready=false' >> "$GITHUB_OUTPUT"
-            echo 'VPS is not freshly bootstrapped yet; automatic deployment will be skipped cleanly.'
+            echo 'VPS is not freshly bootstrapped yet; routine deployment will be skipped cleanly.'
           fi
 
       - name: Build deployment bundle
         if: steps.bootstrap.outputs.ready == 'true'
         run: |
-          set -eu
+          set -euo pipefail
           tar -czf "/tmp/ithute-${DEPLOY_SHA}.tgz" \
             apps \
             platform \
@@ -94,20 +100,45 @@ jobs:
       - name: Upload and deploy only Ithute
         if: steps.bootstrap.outputs.ready == 'true'
         run: |
-          set -eu
+          set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
           scp "/tmp/ithute-${DEPLOY_SHA}.tgz" "$remote:/tmp/ithute-${DEPLOY_SHA}.tgz"
           ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' sh -s" <<'REMOTE'
-          set -eu
+          set -euo pipefail
           tar -xzf "/tmp/ithute-${DEPLOY_SHA}.tgz" -C "$APP_DIR"
           rm -f "/tmp/ithute-${DEPLOY_SHA}.tgz"
-          ITHUTE_APP_DIR="$APP_DIR" ITHUTE_REQUIRE_PUBLIC_HEALTH=1 bash "$APP_DIR/scripts/deploy-production.sh"
+          ITHUTE_APP_DIR="$APP_DIR" bash "$APP_DIR/scripts/deploy-production.sh"
           REMOTE
 
-      - name: Verify public Ithute endpoints
+      - name: Verify internal standalone health
         if: steps.bootstrap.outputs.ready == 'true'
         run: |
-          set -eu
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$APP_DIR"
+          compose() { docker compose --env-file .env.production -p ithute -f compose.production.yml "$@"; }
+          compose exec -T ithute-web wget -qO- http://127.0.0.1:3000/health | grep -q ithute-web
+          compose exec -T ithute-auth curl -fsS http://127.0.0.1:8080/healthz | grep -q ithute-auth
+          compose exec -T ithute-push curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
+          compose exec -T ithute-realtime curl -fsS http://127.0.0.1:8080/readyz | grep -q '"status":"ready"'
+          REMOTE
+
+      - name: Verify public Ithute endpoints when DNS is ready
+        if: steps.bootstrap.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          dns_ready=true
+          for host in ithute.co.ls auth.ithute.co.ls push.ithute.co.ls realtime.ithute.co.ls; do
+            if ! getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | grep -Fxq "$EXPECTED_IPV4"; then
+              dns_ready=false
+            fi
+          done
+          if [ "$dns_ready" != true ]; then
+            echo 'Deployment is internally healthy; public DNS is not pointed at the VPS yet, so public verification is deferred.'
+            exit 0
+          fi
           html="$(curl --retry 12 --retry-delay 3 --retry-all-errors -fsS https://ithute.co.ls/)"
           printf '%s' "$html" | grep -Fq 'One focused platform.'
           curl --retry 8 --retry-delay 2 --retry-all-errors -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth
@@ -117,5 +148,4 @@ jobs:
       - name: Fresh bootstrap required
         if: steps.bootstrap.outputs.ready != 'true'
         run: |
-          echo 'Automatic deployment skipped: run the one-time fresh VPS bootstrap first.'
-          echo 'After bootstrap creates .ithute-bootstrapped, future successful main CI runs deploy automatically.'
+          echo 'Routine deployment skipped because the one-time GitHub fresh cutover has not completed yet.'
