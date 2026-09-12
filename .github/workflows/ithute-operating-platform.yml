@@ -14,16 +14,14 @@ on:
       - 'apps/frontend/app/ithute-platform/**'
       - 'apps/frontend/app/ithute-account/**'
       - 'apps/frontend/app/mail-intelligence/**'
-      - '**/product.manifest.yaml'
+      - 'product.manifest.yaml'
       - 'scripts/validate-ithute-operating-platform.sh'
-      - '.github/workflows/loanhub-product-production.yml'
       - '.github/workflows/ithute-operating-platform.yml'
   push:
     branches: [main]
     paths:
-      - '**/product.manifest.yaml'
+      - 'product.manifest.yaml'
       - 'scripts/validate-ithute-operating-platform.sh'
-      - '.github/workflows/loanhub-product-production.yml'
       - '.github/workflows/ithute-operating-platform.yml'
   workflow_dispatch:
 
@@ -37,9 +35,3 @@ jobs:
       - uses: actions/checkout@v6
       - name: Validate operating-platform contracts
         run: sh scripts/validate-ithute-operating-platform.sh
-      - name: Validate LoanHub production Compose
-        working-directory: products/LoanHub
-        run: |
-          cp .env.example .env
-          docker compose config -q
-          docker compose --profile production config -q
