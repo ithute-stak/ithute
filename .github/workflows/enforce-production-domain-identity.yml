@@ -12,6 +12,7 @@ on:
       - 'scripts/ithute-tutor-edge-finalize.sh'
       - '.github/workflows/enforce-production-domain-identity.yml'
       - 'infrastructure/caddy/Caddyfile'
+      - 'infrastructure/ithute-edge/default.conf.template'
   workflow_dispatch:
 
 concurrency:
@@ -134,7 +135,6 @@ jobs:
           for host in \
             "$PLATFORM_DOMAIN" \
             "www.${PLATFORM_DOMAIN}" \
-            "panel.${PLATFORM_DOMAIN}" \
             "api.${PLATFORM_DOMAIN}" \
             "auth.${PLATFORM_DOMAIN}" \
             "push.${PLATFORM_DOMAIN}" \
@@ -149,6 +149,13 @@ jobs:
             }
           done
 
+          for type in A AAAA CNAME; do
+            if [ -n "$(dig +short @"$VPS_HOST" "panel.${PLATFORM_DOMAIN}" "$type")" ]; then
+              echo "::error::Retired panel.${PLATFORM_DOMAIN} still has a $type record"
+              exit 1
+            fi
+          done
+
           mx="$(dig +short @"$VPS_HOST" "$PLATFORM_DOMAIN" MX)"
           set -- $mx
           [ "${1:-}" = "10" ] && [ "${2:-}" = "$mail" ] || { echo "::error::Unexpected public MX: $mx"; exit 1; }
@@ -157,7 +164,7 @@ jobs:
           set -- $tcp_soa
           [ "${1:-}" = "$ns1" ] || { echo "::error::TCP authoritative DNS failed"; exit 1; }
 
-          echo "Public authoritative DNS identity verified, including Push and Realtime."
+          echo "Public authoritative DNS identity verified with ithute.co.ls as the frontend and no panel subdomain."
 
       - name: Report PTR readiness
         run: |
