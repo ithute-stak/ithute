@@ -46,13 +46,14 @@ class Settings(BaseSettings):
     first_party_clients: str = (
         "loanhub:LoanHub,rsl-pos:RSL POS,mailbox-dns:Mailbox DNS,"
         "ithute-account:Ithute Account,ithute-tutor:Ithute Tutor,ithute-pay:Ithute Pay,"
-        "nbros:NBros,ithute-realtime:!thute Realtime"
+        "nbros:NBros,tjekatjeka:Tjekatjeka Holdings,ithute-realtime:!thute Realtime"
     )
     redirect_uris_json: str = (
-        '{"nbros":["https://nbro.ithute.co.ls/api/auth/oidc/callback"]}'
+        '{"nbros":["https://nbro.ithute.co.ls/api/auth/oidc/callback"],'
+        '"tjekatjeka":["https://tjekane.ithute.co.ls/api/auth/oidc/callback"]}'
     )
     service_client_secrets_json: str = "{}"
-    cors_origins: str = "https://panel.ithute.co.ls,https://nbro.ithute.co.ls"
+    cors_origins: str = "https://panel.ithute.co.ls,https://nbro.ithute.co.ls,https://tjekane.ithute.co.ls"
     push_events_url: str = "http://ithute-push:8080/v1/internal/auth-events"
     push_event_worker_poll_seconds: float = 2.0
     push_event_request_timeout_seconds: float = 5.0
@@ -92,9 +93,10 @@ class Settings(BaseSettings):
             client_id = client_id.strip()
             if client_id:
                 result[client_id] = (name.strip() or client_id)
-        # NBros is a repository-owned first-party product. Keep it registered
-        # even when an older deployment environment overrides the client list.
+        # Repository-owned first-party products must remain registered even
+        # when an older production environment overrides the client list.
         result.setdefault("nbros", "NBros")
+        result.setdefault("tjekatjeka", "Tjekatjeka Holdings")
         return result
 
     @property
@@ -124,6 +126,7 @@ class Settings(BaseSettings):
             if uris:
                 result[client_id] = tuple(dict.fromkeys(uris))
         result.setdefault("nbros", ("https://nbro.ithute.co.ls/api/auth/oidc/callback",))
+        result.setdefault("tjekatjeka", ("https://tjekane.ithute.co.ls/api/auth/oidc/callback",))
         return result
 
     @property
@@ -167,8 +170,9 @@ class Settings(BaseSettings):
     @property
     def allowed_origins(self) -> list[str]:
         origins = [value.strip() for value in self.cors_origins.split(",") if value.strip()]
-        if "https://nbro.ithute.co.ls" not in origins:
-            origins.append("https://nbro.ithute.co.ls")
+        for required_origin in ("https://nbro.ithute.co.ls", "https://tjekane.ithute.co.ls"):
+            if required_origin not in origins:
+                origins.append(required_origin)
         return origins
 
 
