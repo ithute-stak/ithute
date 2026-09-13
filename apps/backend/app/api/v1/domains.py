@@ -13,6 +13,7 @@ from app.db.session import get_db
 from app.models import (
     AuditLog,
     ConnectedMailAccount,
+    EdgeApplication,
     GroupwareCredential,
     MailMigrationJob,
     MailboxDelegate,
@@ -74,16 +75,16 @@ def _audit(db: Session, tenant_id: UUID, actor: User, action: str, domain: Domai
 
 
 def _move_domain_operational_resources(db: Session, domain: Domain, source_tenant_id: UUID, target_tenant_id: UUID) -> None:
-    """Move current domain/mail configuration without rewriting historical audit data.
+    """Move current domain-owned configuration without rewriting historical audit data.
 
-    Mailbox-adjacent settings carry a tenant_id of their own, so changing only
+    Domain and mailbox resources carry tenant IDs of their own, so changing only
     domains.tenant_id would leave an internally inconsistent cross-tenant graph.
-    Historical domain events, verification attempts and audit rows intentionally
-    retain the organization that owned the domain when those records were made.
+    Historical domain events, verification attempts, analytics and audit rows
+    intentionally retain the organization that owned the domain when they were made.
     """
     mailbox_ids = select(Mailbox.id).where(Mailbox.domain_id == domain.id)
 
-    for model in (Mailbox, MailAlias, DistributionGroup, DkimKey):
+    for model in (Mailbox, MailAlias, DistributionGroup, DkimKey, EdgeApplication):
         db.execute(
             update(model)
             .where(model.tenant_id == source_tenant_id, model.domain_id == domain.id)
@@ -302,7 +303,13 @@ def transfer_domain(
     # DNS edit. Require tenant-admin authority on both sides; platform owners
     # retain the normal permission bypass in require_tenant_permission().
     require_tenant_permission(tenant_id, "identity.manage", db, current)
-    domain = _domain_or_404(db, tenant_id, domain_id)
+    domain = db.scalar(
+        select(Domain)
+        .where(Domain.id == domain_id, Domain.tenant_id == tenant_id)
+        .with_for_update()
+    )
+    if domain is None:
+        raise HTTPException(status_code=404, detail="Domain not found")
 
     if payload.target_tenant_id == tenant_id:
         raise HTTPException(status_code=409, detail="Domain already belongs to this organization")
@@ -337,7 +344,7 @@ def transfer_domain(
     db.flush()
 
     # Capture a corresponding destination event. The same domain id, DNS state,
-    # verification state and mail resources are preserved; only ownership moves.
+    # verification state and operational resources are preserved; only ownership moves.
     add_domain_event(db, domain, current.id, "domain.transfer_in", metadata)
     _audit(db, payload.target_tenant_id, current, "domain.transfer_in", domain, metadata)
     db.commit()
