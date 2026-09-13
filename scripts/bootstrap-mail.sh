@@ -7,6 +7,8 @@ SOURCE_DIR="${ITHUTE_SOURCE_DIR:-$APP_DIR}"
 MAIL_HOST="mail.ithute.co.ls"
 EXPECTED_IPV4="${ITHUTE_VPS_IPV4:-204.12.205.224}"
 CERT_EMAIL="${ITHUTE_CERT_EMAIL:-thekoetlisi@ithute.co.ls}"
+MAILSERVER_IMAGE="ghcr.io/docker-mailserver/docker-mailserver:15.1.0"
+CERTBOT_IMAGE="certbot/certbot:v5.8.0"
 DOMAINS=(ithute.co.ls lelefadebtcollectors.co.ls lelefachambers.co.ls tjekatjeka.co.ls)
 
 if [ "$MAIL_DIR" = "/" ] || [ "$MAIL_DIR" = "/home" ] || [ "$MAIL_DIR" = "/home/administrator" ]; then
@@ -23,6 +25,18 @@ test -f "$APP_DIR/.image.env" || { echo "Missing $APP_DIR/.image.env" >&2; exit 
 test -f "$APP_DIR/compose.production.yml" || { echo "Missing $APP_DIR/compose.production.yml" >&2; exit 2; }
 test -f "$SOURCE_DIR/mail/compose.yml" || { echo "Missing mail compose template in $SOURCE_DIR" >&2; exit 2; }
 test -f "$SOURCE_DIR/mail/renew-tls.sh" || { echo "Missing mail TLS script in $SOURCE_DIR" >&2; exit 2; }
+
+# Production is image-only. Registry access belongs on the GitHub runner; the
+# VPS must already have the exact mail and Certbot images loaded before this
+# bootstrap is allowed to change runtime state.
+docker image inspect "$MAILSERVER_IMAGE" >/dev/null 2>&1 || {
+  echo "Missing preloaded mail image: $MAILSERVER_IMAGE" >&2
+  exit 4
+}
+docker image inspect "$CERTBOT_IMAGE" >/dev/null 2>&1 || {
+  echo "Missing preloaded Certbot image: $CERTBOT_IMAGE" >&2
+  exit 4
+}
 
 mkdir -p "$MAIL_DIR" "$MAIL_DIR/config" "$MAIL_DIR/data/mail-data" "$MAIL_DIR/data/mail-state" "$MAIL_DIR/data/mail-logs" "$MAIL_DIR/letsencrypt"
 cp "$SOURCE_DIR/mail/compose.yml" "$MAIL_DIR/compose.yml"
@@ -62,25 +76,32 @@ mail_compose() {
   docker compose -p ithute-mail -f "$MAIL_DIR/compose.yml" "$@"
 }
 
-if [ ! -f "$MAIL_DIR/letsencrypt/live/$MAIL_HOST/fullchain.pem" ]; then
+CERT_FILE="$MAIL_DIR/letsencrypt/live/$MAIL_HOST/fullchain.pem"
+if [ ! -s "$CERT_FILE" ]; then
   restart_caddy() { app_compose start caddy >/dev/null 2>&1 || true; }
   trap restart_caddy EXIT
   app_compose stop caddy >/dev/null
-  docker run --rm -p 80:80 \
+  docker run --rm --pull=never -p 80:80 \
     -v "$MAIL_DIR/letsencrypt:/etc/letsencrypt" \
-    certbot/certbot:latest certonly \
+    "$CERTBOT_IMAGE" certonly \
       --standalone \
       --non-interactive \
       --agree-tos \
       --no-eff-email \
+      --keep-until-expiring \
+      --cert-name "$MAIL_HOST" \
       --email "$CERT_EMAIL" \
       -d "$MAIL_HOST"
   restart_caddy
   trap - EXIT
+  test -s "$CERT_FILE" || {
+    echo "Certbot completed but the expected certificate was not created at $CERT_FILE" >&2
+    exit 1
+  }
 fi
 
-mail_compose pull
-mail_compose up -d
+# Never pull on the VPS. The GitHub workflow loads these images first.
+mail_compose up -d --pull never
 
 for attempt in $(seq 1 30); do
   if docker exec ithute-mail setup help >/dev/null 2>&1; then
@@ -123,7 +144,7 @@ if [ ! -d "$MAIL_DIR/config/opendkim/keys/ithute.co.ls" ]; then
   docker exec ithute-mail setup config dkim domain "$(IFS=,; echo "${DOMAINS[*]}")"
 fi
 
-mail_compose up -d --force-recreate mailserver
+mail_compose up -d --pull never --force-recreate mailserver
 
 {
   echo
@@ -145,6 +166,8 @@ CRON_LINE="17 3 * * 1 ITHUTE_APP_DIR=$APP_DIR ITHUTE_MAIL_DIR=$MAIL_DIR $MAIL_DI
 ) | crontab -
 
 mail_compose ps
+touch "$MAIL_DIR/.ithute-mail-finalized"
 printf '\nMail accounts are provisioned. Credentials: %s\n' "$CREDENTIALS_FILE"
 printf 'DNS records: %s\n' "$DNS_FILE"
+printf 'Mail finalization marker: %s\n' "$MAIL_DIR/.ithute-mail-finalized"
 printf 'Do not consider Internet mail complete until MX/SPF/DKIM/DMARC and PTR are applied and verified.\n'
