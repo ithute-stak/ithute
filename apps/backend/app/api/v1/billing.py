@@ -46,6 +46,11 @@ def _plan_out(plan: BillingPlan) -> dict:
         "included_domains": plan.included_domains,
         "included_storage_mb": plan.included_storage_mb,
         "max_api_keys": plan.max_api_keys,
+        "included_hosted_projects": plan.included_hosted_projects,
+        "hosting_storage_mb": plan.hosting_storage_mb,
+        "hosting_memory_mb_per_project": plan.hosting_memory_mb_per_project,
+        "hosting_cpu_millicores_per_project": plan.hosting_cpu_millicores_per_project,
+        "hosting_pids_per_project": plan.hosting_pids_per_project,
         "is_active": plan.is_active,
     }
 
