@@ -7,6 +7,7 @@ IMAGE_ENV_FILE="${ITHUTE_IMAGE_ENV_FILE:-$APP_DIR/.image.env}"
 COMPOSE_FILE="$APP_DIR/compose.production.yml"
 PROJECT_NAME="ithute"
 CUTOVER_MARKER="$APP_DIR/.dns-cutover-complete"
+EDGE_NETWORK="${ITHUTE_EDGE_NETWORK:-ithute-edge}"
 
 cd "$APP_DIR"
 
@@ -180,6 +181,16 @@ if ! compose up -d --remove-orphans --no-build; then
   echo "Authoritative DNS logs:" >&2
   compose logs --tail=200 ithute-dns >&2 || true
   exit 1
+fi
+
+# Product applications remain in their own Compose projects. Only the edge
+# Caddy joins this dedicated ingress network so it can route public product
+# hostnames without joining product database/cache networks.
+docker network inspect "$EDGE_NETWORK" >/dev/null 2>&1 || docker network create "$EDGE_NETWORK" >/dev/null
+CADDY_ID="$(compose ps -q caddy)"
+test -n "$CADDY_ID" || { echo "Unable to locate the Ithute Caddy container." >&2; exit 1; }
+if ! docker inspect -f '{{json .NetworkSettings.Networks}}' "$CADDY_ID" | grep -q "\"$EDGE_NETWORK\""; then
+  docker network connect "$EDGE_NETWORK" "$CADDY_ID"
 fi
 
 # Activate uploaded Caddy runtime configuration explicitly. PowerDNS record
