@@ -2,7 +2,7 @@ name: ithute-mail
 
 services:
   mailserver:
-    image: ghcr.io/docker-mailserver/docker-mailserver:15.1.0
+    image: mailserver/docker-mailserver:15.1.0
     container_name: ithute-mail
     hostname: mail.ithute.co.ls
     restart: unless-stopped
