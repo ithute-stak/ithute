@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Archive,
+  ArrowRightLeft,
   CheckCircle2,
   Copy,
   Database,
@@ -27,6 +28,7 @@ type Me = { email: string; is_platform_owner: boolean };
 type Membership = { tenant_id: string; tenant_name: string; role: string; status: string };
 type Domain = {
   id: string;
+  tenant_id: string;
   ascii_name: string;
   unicode_name: string;
   status: "pending_verification" | "verified" | "suspended" | "archived";
@@ -79,6 +81,9 @@ export default function DomainsPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [challengeToken, setChallengeToken] = useState("");
+  const [transferTarget, setTransferTarget] = useState<Domain | null>(null);
+  const [transferTenantId, setTransferTenantId] = useState("");
+  const [transferring, setTransferring] = useState(false);
   const [releaseTarget, setReleaseTarget] = useState<Domain | null>(null);
   const [releaseText, setReleaseText] = useState("");
   const [releasing, setReleasing] = useState(false);
@@ -87,6 +92,11 @@ export default function DomainsPage() {
 
   const selected = useMemo(() => contexts.find((row) => row.tenant_id === tenantId), [contexts, tenantId]);
   const canManage = Boolean(me?.is_platform_owner || selected?.role === "tenant_admin" || selected?.role === "dns_admin");
+  const canTransfer = Boolean(me?.is_platform_owner || selected?.role === "tenant_admin");
+  const transferOrganizations = useMemo(
+    () => contexts.filter((row) => row.tenant_id !== tenantId && (me?.is_platform_owner || row.role === "tenant_admin")),
+    [contexts, me?.is_platform_owner, tenantId],
+  );
 
   useEffect(() => {
     async function bootstrap() {
@@ -294,6 +304,41 @@ export default function DomainsPage() {
     await loadDomains();
   }
 
+  function openTransfer(domain: Domain) {
+    setTransferTarget(domain);
+    setTransferTenantId(transferOrganizations[0]?.tenant_id || "");
+    setError("");
+    setMessage("");
+  }
+
+  async function transferDomain(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!transferTarget || !transferTenantId || transferring) return;
+    const destination = contexts.find((row) => row.tenant_id === transferTenantId);
+    setTransferring(true);
+    setError("");
+    try {
+      const sourceTenantId = tenantId;
+      const response = await api(`/tenants/${sourceTenantId}/domains/${transferTarget.id}/transfer`, {
+        method: "POST",
+        body: JSON.stringify({ target_tenant_id: transferTenantId }),
+      });
+      if (!response.ok) throw new Error(await detail(response, "Unable to transfer domain"));
+      const movedName = transferTarget.ascii_name;
+      const movedTo = destination?.tenant_name || "the destination organization";
+      const destinationId = transferTenantId;
+      setTransferTarget(null);
+      setTransferTenantId("");
+      setQuery("");
+      setMessage(`${movedName} moved to ${movedTo}. DNS, verification state and domain mail resources were preserved.`);
+      setTenantId(destinationId);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to transfer domain");
+    } finally {
+      setTransferring(false);
+    }
+  }
+
   function openRelease(domain: Domain) {
     setReleaseTarget(domain);
     setReleaseText("");
@@ -410,6 +455,7 @@ export default function DomainsPage() {
                       {canManage && domain.status !== "archived" && domain.dns_mode === "platform" ? <a href="/dns" className="btn-secondary !min-h-0 px-2.5 py-1.5 text-[10px]"><Database size={12}/>{domain.ownership_verified_at ? "Manage DNS" : "Prepare DNS"}</a> : null}
                       {canManage && domain.status !== "archived" && !domain.ownership_verified_at && domain.verification_method === "txt" ? <button type="button" onClick={() => void regenerate(domain)} className="btn-secondary !min-h-0 px-2.5 py-1.5 text-[10px]">New token</button> : null}
                       {canManage && domain.status !== "archived" && !domain.ownership_verified_at ? <button type="button" onClick={() => void verify(domain)} className="btn-primary !min-h-0 px-2.5 py-1.5 text-[10px]">Verify</button> : null}
+                      {canTransfer && domain.status !== "archived" && transferOrganizations.length ? <button type="button" onClick={() => openTransfer(domain)} className="btn-secondary !min-h-0 px-2.5 py-1.5 text-[10px]" title="Move domain to another organization"><ArrowRightLeft size={12}/>Move</button> : null}
                       {canManage && domain.status !== "archived" ? <button type="button" onClick={() => void archive(domain)} className="btn-danger !min-h-0 px-2.5 py-1.5 text-[10px]" title="Archive domain"><Archive size={12}/>Archive</button> : null}
                       {me?.is_platform_owner && domain.status === "archived" ? <button type="button" onClick={() => openRelease(domain)} className="btn-danger !min-h-0 px-2.5 py-1.5 text-[10px]" title="Permanently delete domain claim"><Trash2 size={12}/>Delete permanently</button> : null}
                     </div>
@@ -434,6 +480,31 @@ export default function DomainsPage() {
           <div className="form-actions">
             <button type="button" onClick={() => setShowAdd(false)} disabled={adding} className="btn-secondary">Cancel</button>
             <button type="submit" disabled={adding} className="btn-primary">{adding ? <><Loader2 size={14} className="animate-spin"/>Adding domain…</> : <><Plus size={14}/>Add domain</>}</button>
+          </div>
+        </form>
+      </div> : null}
+
+      {transferTarget ? <div className="fixed inset-0 z-[65] grid place-items-center bg-black/50 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !transferring) setTransferTarget(null); }}>
+        <form onSubmit={transferDomain} className="form-modal w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="transfer-domain-title" aria-describedby="transfer-domain-description">
+          <div className="flex items-start gap-3">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#edf7f2] text-[#123a38]"><ArrowRightLeft size={19}/></div>
+            <div className="min-w-0 flex-1">
+              <p id="transfer-domain-title" className="text-lg font-black text-[#21342a]">Move domain to another organization</p>
+              <p id="transfer-domain-description" className="mt-1 text-[11px] leading-5 text-[#718078]">Move <b>{transferTarget.ascii_name}</b> without deleting or recreating it. Its domain ID, DNS state, verification state, mailboxes, aliases, groups, DKIM keys and mailbox settings stay intact.</p>
+            </div>
+          </div>
+          <div className="mt-5 rounded-xl border border-[#dce8e1] bg-[#f5faf7] p-3 text-[11px] leading-5 text-[#42564b]"><b>No DNS cutover is performed.</b> Public records and nameserver delegation remain unchanged. The destination organization must be active and have package capacity for another domain.</div>
+          <div className="mt-5 form-field">
+            <label className="form-label" htmlFor="transfer-organization"><span>Destination organization</span><span className="form-required">Required</span></label>
+            <select id="transfer-organization" value={transferTenantId} onChange={(event) => setTransferTenantId(event.target.value)} className="input" required autoFocus>
+              <option value="">Select destination organization</option>
+              {transferOrganizations.map((row) => <option key={row.tenant_id} value={row.tenant_id}>{row.tenant_name}</option>)}
+            </select>
+            <p className="form-helper">You must be a tenant admin in both organizations, unless you are the platform owner.</p>
+          </div>
+          <div className="form-actions">
+            <button type="button" className="btn-secondary" disabled={transferring} onClick={() => { setTransferTarget(null); setTransferTenantId(""); }}>Cancel</button>
+            <button type="submit" className="btn-primary" disabled={transferring || !transferTenantId}>{transferring ? <><Loader2 size={14} className="animate-spin"/>Moving…</> : <><ArrowRightLeft size={14}/>Move domain</>}</button>
           </div>
         </form>
       </div> : null}

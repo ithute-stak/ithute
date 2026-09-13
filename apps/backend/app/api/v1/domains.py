@@ -3,14 +3,26 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_platform_owner, require_tenant_permission
 from app.core.config import settings
 from app.db.session import get_db
-from app.models import AuditLog, User
+from app.models import (
+    AuditLog,
+    ConnectedMailAccount,
+    EdgeApplication,
+    GroupwareCredential,
+    MailMigrationJob,
+    MailboxDelegate,
+    MailboxPolicy,
+    MailboxRecoveryJob,
+    Tenant,
+    TenantStatus,
+    User,
+)
 from app.models.deliverability import DkimKey
 from app.models.domains import Domain, DomainDnsMode, DomainEvent, DomainStatus, DomainVerificationAttempt, DomainVerificationMethod
 from app.models.mail import DistributionGroup, MailAlias, Mailbox
@@ -23,6 +35,7 @@ from app.schemas.domains import (
     DomainRead,
     DomainReadiness,
     DomainStatusUpdate,
+    DomainTransferRequest,
     DomainUpdate,
     DomainVerificationAttemptRead,
     DomainVerifyRequest,
@@ -59,6 +72,38 @@ def _audit(db: Session, tenant_id: UUID, actor: User, action: str, domain: Domai
         resource_id=str(domain.id),
         metadata_json=json.dumps(metadata or {}, sort_keys=True),
     ))
+
+
+def _move_domain_operational_resources(db: Session, domain: Domain, source_tenant_id: UUID, target_tenant_id: UUID) -> None:
+    """Move current domain-owned configuration without rewriting historical audit data.
+
+    Domain and mailbox resources carry tenant IDs of their own, so changing only
+    domains.tenant_id would leave an internally inconsistent cross-tenant graph.
+    Historical domain events, verification attempts, analytics and audit rows
+    intentionally retain the organization that owned the domain when they were made.
+    """
+    mailbox_ids = select(Mailbox.id).where(Mailbox.domain_id == domain.id)
+
+    for model in (Mailbox, MailAlias, DistributionGroup, DkimKey, EdgeApplication):
+        db.execute(
+            update(model)
+            .where(model.tenant_id == source_tenant_id, model.domain_id == domain.id)
+            .values(tenant_id=target_tenant_id)
+        )
+
+    for model in (
+        ConnectedMailAccount,
+        GroupwareCredential,
+        MailMigrationJob,
+        MailboxDelegate,
+        MailboxPolicy,
+        MailboxRecoveryJob,
+    ):
+        db.execute(
+            update(model)
+            .where(model.tenant_id == source_tenant_id, model.mailbox_id.in_(mailbox_ids))
+            .values(tenant_id=target_tenant_id)
+        )
 
 
 def _enforce_verification_throttle(db: Session, domain: Domain) -> None:
@@ -241,6 +286,67 @@ def update_domain(tenant_id: UUID, domain_id: UUID, payload: DomainUpdate, db: S
             domain.verification_token_hint = "not-needed"
     add_domain_event(db, domain, current.id, "domain.updated", changes)
     _audit(db, tenant_id, current, "domain.update", domain, changes)
+    db.commit()
+    db.refresh(domain)
+    return domain
+
+
+@router.post("/{domain_id}/transfer", response_model=DomainRead)
+def transfer_domain(
+    tenant_id: UUID,
+    domain_id: UUID,
+    payload: DomainTransferRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    # Changing ownership is an organization-administration action, not a normal
+    # DNS edit. Require tenant-admin authority on both sides; platform owners
+    # retain the normal permission bypass in require_tenant_permission().
+    require_tenant_permission(tenant_id, "identity.manage", db, current)
+    domain = db.scalar(
+        select(Domain)
+        .where(Domain.id == domain_id, Domain.tenant_id == tenant_id)
+        .with_for_update()
+    )
+    if domain is None:
+        raise HTTPException(status_code=404, detail="Domain not found")
+
+    if payload.target_tenant_id == tenant_id:
+        raise HTTPException(status_code=409, detail="Domain already belongs to this organization")
+    if domain.status == DomainStatus.archived:
+        raise HTTPException(status_code=409, detail="Archived domains cannot be transferred")
+
+    target = db.get(Tenant, payload.target_tenant_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Target organization not found")
+    if target.status != TenantStatus.active:
+        raise HTTPException(status_code=409, detail="Target organization must be active")
+    require_tenant_permission(payload.target_tenant_id, "identity.manage", db, current)
+
+    try:
+        require_entitlement(db, payload.target_tenant_id, "domain")
+    except ValueError as exc:
+        raise HTTPException(status_code=402, detail=f"Target organization billing entitlement denied: {exc}") from exc
+
+    source_tenant_id = domain.tenant_id
+    metadata = {
+        "ascii_name": domain.ascii_name,
+        "from_tenant_id": str(source_tenant_id),
+        "to_tenant_id": str(payload.target_tenant_id),
+    }
+
+    # Capture the transfer-out side while the domain still belongs to source.
+    add_domain_event(db, domain, current.id, "domain.transfer_out", metadata)
+    _audit(db, source_tenant_id, current, "domain.transfer_out", domain, metadata)
+
+    _move_domain_operational_resources(db, domain, source_tenant_id, payload.target_tenant_id)
+    domain.tenant_id = payload.target_tenant_id
+    db.flush()
+
+    # Capture a corresponding destination event. The same domain id, DNS state,
+    # verification state and operational resources are preserved; only ownership moves.
+    add_domain_event(db, domain, current.id, "domain.transfer_in", metadata)
+    _audit(db, payload.target_tenant_id, current, "domain.transfer_in", domain, metadata)
     db.commit()
     db.refresh(domain)
     return domain

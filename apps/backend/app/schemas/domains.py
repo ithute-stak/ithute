@@ -30,6 +30,10 @@ class DomainStatusUpdate(BaseModel):
         return value
 
 
+class DomainTransferRequest(BaseModel):
+    target_tenant_id: UUID
+
+
 class DomainVerifyRequest(BaseModel):
     # Required only for TXT-verification domains. Nameserver-verification domains
     # prove ownership by delegating to both configured Ithute nameservers.
