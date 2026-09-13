@@ -1,12 +1,12 @@
 """use registrar nameserver delegation for all managed DNS ownership proof
 
-Revision ID: 0019_managed_dns_nameserver_verification
+Revision ID: 0019_managed_dns_ns
 Revises: 0018_domain_verification_method
 """
 
 from alembic import op
 
-revision = "0019_managed_dns_nameserver_verification"
+revision = "0019_managed_dns_ns"
 down_revision = "0018_domain_verification_method"
 branch_labels = None
 depends_on = None
