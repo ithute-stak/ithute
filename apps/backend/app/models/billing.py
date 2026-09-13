@@ -36,6 +36,16 @@ class BillingPlan(Base):
     included_domains: Mapped[int] = mapped_column(Integer, nullable=False)
     included_storage_mb: Mapped[int] = mapped_column(Integer, nullable=False)
     max_api_keys: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Shared application-hosting entitlements. Hosting storage is deliberately
+    # separate from mailbox storage: a website filling its disk allocation must
+    # never consume or redefine the organization's mail quota.
+    included_hosted_projects: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    hosting_storage_mb: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    hosting_memory_mb_per_project: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    hosting_cpu_millicores_per_project: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    hosting_pids_per_project: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

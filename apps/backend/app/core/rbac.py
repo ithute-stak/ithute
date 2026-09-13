@@ -5,13 +5,14 @@ ROLE_PERMISSIONS: dict[MembershipRole, frozenset[str]] = {
         "identity.manage",
         "dns.read", "dns.manage",
         "mail.read", "mail.manage",
+        "hosting.read", "hosting.manage",
         "audit.read",
         "api_keys.manage",
         "billing.read", "billing.manage",
     }),
     MembershipRole.dns_admin: frozenset({"dns.read", "dns.manage", "audit.read"}),
     MembershipRole.mail_admin: frozenset({"mail.read", "mail.manage", "audit.read"}),
-    MembershipRole.auditor: frozenset({"dns.read", "mail.read", "audit.read", "billing.read"}),
+    MembershipRole.auditor: frozenset({"dns.read", "mail.read", "hosting.read", "audit.read", "billing.read"}),
     MembershipRole.member: frozenset({"profile.read"}),
 }
 

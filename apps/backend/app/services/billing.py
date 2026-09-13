@@ -15,6 +15,7 @@ from app.models import (
     BillingPlan,
     Domain,
     DomainStatus,
+    HostingProject,
     InvoiceStatus,
     Mailbox,
     MailboxStatus,
@@ -33,6 +34,11 @@ DEFAULT_PLANS = (
         "included_domains": 2,
         "included_storage_mb": 50_000,
         "max_api_keys": 3,
+        "included_hosted_projects": 1,
+        "hosting_storage_mb": 1024,
+        "hosting_memory_mb_per_project": 512,
+        "hosting_cpu_millicores_per_project": 500,
+        "hosting_pids_per_project": 128,
     },
     {
         "code": "business",
@@ -43,6 +49,11 @@ DEFAULT_PLANS = (
         "included_domains": 10,
         "included_storage_mb": 250_000,
         "max_api_keys": 10,
+        "included_hosted_projects": 3,
+        "hosting_storage_mb": 5120,
+        "hosting_memory_mb_per_project": 1024,
+        "hosting_cpu_millicores_per_project": 1000,
+        "hosting_pids_per_project": 256,
     },
     {
         "code": "enterprise",
@@ -53,6 +64,11 @@ DEFAULT_PLANS = (
         "included_domains": 50,
         "included_storage_mb": 1_000_000,
         "max_api_keys": 50,
+        "included_hosted_projects": 10,
+        "hosting_storage_mb": 10240,
+        "hosting_memory_mb_per_project": 2048,
+        "hosting_cpu_millicores_per_project": 2000,
+        "hosting_pids_per_project": 512,
     },
 )
 
@@ -94,11 +110,17 @@ def tenant_usage(db: Session, tenant_id: UUID) -> dict:
             ApiKey.revoked_at.is_(None),
         )
     ) or 0
+    hosted_projects = db.scalar(select(func.count(HostingProject.id)).where(HostingProject.tenant_id == tenant_id)) or 0
+    hosting_storage_mb = db.scalar(
+        select(func.coalesce(func.sum(HostingProject.storage_mb), 0)).where(HostingProject.tenant_id == tenant_id)
+    ) or 0
     return {
         "mailboxes": int(mailboxes),
         "domains": int(domains),
         "allocated_storage_bytes": int(allocated_storage_bytes),
         "api_keys": int(api_keys),
+        "hosted_projects": int(hosted_projects),
+        "hosting_storage_bytes": int(hosting_storage_mb) * 1024 * 1024,
     }
 
 
@@ -160,6 +182,11 @@ def _limits(plan: BillingPlan) -> dict:
         "domains": plan.included_domains,
         "storage_bytes": plan.included_storage_mb * 1024 * 1024,
         "api_keys": plan.max_api_keys,
+        "hosted_projects": plan.included_hosted_projects,
+        "hosting_storage_bytes": plan.hosting_storage_mb * 1024 * 1024,
+        "hosting_memory_mb_per_project": plan.hosting_memory_mb_per_project,
+        "hosting_cpu_millicores_per_project": plan.hosting_cpu_millicores_per_project,
+        "hosting_pids_per_project": plan.hosting_pids_per_project,
     }
 
 
@@ -192,6 +219,12 @@ def entitlement_decision(
         "mailbox": usage["mailboxes"] + 1 <= limits["mailboxes"] and usage["allocated_storage_bytes"] + requested_storage_bytes <= limits["storage_bytes"],
         "storage": usage["allocated_storage_bytes"] + requested_storage_bytes <= limits["storage_bytes"],
         "api_key": usage["api_keys"] + 1 <= limits["api_keys"],
+        "hosting_project": (
+            limits["hosted_projects"] > 0
+            and usage["hosted_projects"] + 1 <= limits["hosted_projects"]
+            and usage["hosting_storage_bytes"] + requested_storage_bytes <= limits["hosting_storage_bytes"]
+        ),
+        "hosting_storage": usage["hosting_storage_bytes"] + requested_storage_bytes <= limits["hosting_storage_bytes"],
     }
     if resource not in checks:
         raise ValueError(f"Unknown entitlement resource: {resource}")
@@ -421,6 +454,8 @@ def billing_summary(db: Session, tenant_id: UUID) -> dict:
         and usage["domains"] <= limits["domains"]
         and usage["allocated_storage_bytes"] <= limits["storage_bytes"]
         and usage["api_keys"] <= limits["api_keys"]
+        and usage["hosted_projects"] <= limits["hosted_projects"]
+        and usage["hosting_storage_bytes"] <= limits["hosting_storage_bytes"]
     )
     return {
         "subscription": {
