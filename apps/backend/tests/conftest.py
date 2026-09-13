@@ -30,14 +30,15 @@ def client():
 def deterministic_domain_create_dns(monkeypatch):
     """Avoid public DNS calls from unrelated API tests.
 
-    Historical domain tests expect the TXT migration path. Individual tests for
-    the new registrar-domain path can override these two API-level probes.
+    Domain onboarding owns the live nameserver/record discovery probes. Individual
+    discovery tests can override these API-level imports with their own results.
     """
     monkeypatch.setattr(
-        "app.api.v1.domains.inspect_nameservers",
+        "app.api.v1.domain_onboarding.inspect_nameservers",
         lambda name, platform: {
             "lookup_status": "found",
             "lookup_detail": None,
+            "delegation_source": "recursive",
             "current_nameservers": ["ns1.external.test", "ns2.external.test"],
             "current_provider": "External DNS provider",
             "platform_nameservers": ["ns1.ithute.co.ls", "ns2.ithute.co.ls"],
@@ -46,7 +47,7 @@ def deterministic_domain_create_dns(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "app.api.v1.domains.inspect_existing_records",
+        "app.api.v1.domain_onboarding.inspect_existing_records",
         lambda name: {
             "has_existing_dns_records": True,
             "existing_record_types": ["A"],
