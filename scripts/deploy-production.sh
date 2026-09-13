@@ -7,7 +7,7 @@ IMAGE_ENV_FILE="${ITHUTE_IMAGE_ENV_FILE:-$APP_DIR/.image.env}"
 COMPOSE_FILE="$APP_DIR/compose.production.yml"
 PROJECT_NAME="ithute"
 CUTOVER_MARKER="$APP_DIR/.dns-cutover-complete"
-EDGE_NETWORK="${ITHUTE_EDGE_NETWORK:-ithute-edge}"
+PUBLIC_EDGE_NETWORK="${PUBLIC_EDGE_NETWORK:-public-edge}"
 
 cd "$APP_DIR"
 
@@ -183,15 +183,19 @@ if ! compose up -d --remove-orphans --no-build; then
   exit 1
 fi
 
-# Product applications remain in their own Compose projects. Only the edge
-# Caddy joins this dedicated ingress network so it can route public product
-# hostnames without joining product database/cache networks.
-docker network inspect "$EDGE_NETWORK" >/dev/null 2>&1 || docker network create "$EDGE_NETWORK" >/dev/null
+# The public edge is a transport boundary only. Product repositories own their
+# routes and application containers; this stack only keeps the public proxy on
+# the generic edge network and never joins product database/cache networks.
+docker network inspect "$PUBLIC_EDGE_NETWORK" >/dev/null 2>&1 || docker network create "$PUBLIC_EDGE_NETWORK" >/dev/null
 CADDY_ID="$(compose ps -q caddy)"
-test -n "$CADDY_ID" || { echo "Unable to locate the Ithute Caddy container." >&2; exit 1; }
-if ! docker inspect -f '{{json .NetworkSettings.Networks}}' "$CADDY_ID" | grep -q "\"$EDGE_NETWORK\""; then
-  docker network connect "$EDGE_NETWORK" "$CADDY_ID"
+test -n "$CADDY_ID" || { echo "Unable to locate the public Caddy container." >&2; exit 1; }
+if ! docker inspect -f '{{json .NetworkSettings.Networks}}' "$CADDY_ID" | grep -q "\"$PUBLIC_EDGE_NETWORK\""; then
+  docker network connect "$PUBLIC_EDGE_NETWORK" "$CADDY_ID"
 fi
+
+# Product route fragments live in Caddy's persistent data volume and are
+# installed by product repositories, not by Ithute deployments.
+compose exec -T caddy mkdir -p /data/product-routes
 
 # Activate uploaded Caddy runtime configuration explicitly. PowerDNS record
 # changes are applied through its HTTP API and require no nameserver reload.
