@@ -56,22 +56,6 @@ realtime.ithute.co.ls {
   reverse_proxy ithute-realtime:8080
 }
 
-loanhub.co.ls {
-  header X-Ithute-Service "loanhub-web"
-  header X-Content-Type-Options "nosniff"
-  header X-Frame-Options "DENY"
-  header Referrer-Policy "strict-origin-when-cross-origin"
-  reverse_proxy loanhub-web:3000
-}
-
-www.loanhub.co.ls {
-  redir https://loanhub.co.ls{uri} permanent
-}
-
-api.loanhub.co.ls {
-  header X-Ithute-Service "loanhub-api"
-  header X-Content-Type-Options "nosniff"
-  header X-Frame-Options "DENY"
-  header Referrer-Policy "strict-origin-when-cross-origin"
-  reverse_proxy loanhub-api:8000
-}
+# Public product routes are owned and deployed by their product repositories.
+# They persist in Caddy's data volume and are intentionally not defined here.
+import /data/product-routes/*.caddy
