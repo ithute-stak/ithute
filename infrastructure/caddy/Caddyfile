@@ -55,3 +55,23 @@ realtime.ithute.co.ls {
   header X-Ithute-Service "realtime"
   reverse_proxy ithute-realtime:8080
 }
+
+loanhub.co.ls {
+  header X-Ithute-Service "loanhub-web"
+  header X-Content-Type-Options "nosniff"
+  header X-Frame-Options "DENY"
+  header Referrer-Policy "strict-origin-when-cross-origin"
+  reverse_proxy loanhub-web:3000
+}
+
+www.loanhub.co.ls {
+  redir https://loanhub.co.ls{uri} permanent
+}
+
+api.loanhub.co.ls {
+  header X-Ithute-Service "loanhub-api"
+  header X-Content-Type-Options "nosniff"
+  header X-Frame-Options "DENY"
+  header Referrer-Policy "strict-origin-when-cross-origin"
+  reverse_proxy loanhub-api:8000
+}
