@@ -49,6 +49,12 @@ def _autodiscover_hostname() -> str | None:
 def desired_package_records(domain: Domain, plan: BillingPlan) -> list[dict]:
     """Build conservative DNS defaults from the current hosting entitlement.
 
+    Web A/AAAA/CNAME records are intentionally never synthesized here. Ithute
+    DNS is authoritative DNS, not the customer's web origin. Pointing every new
+    domain at the Ithute control-plane IP can take an existing website offline
+    as soon as registrar delegation changes. Web records must therefore be
+    imported from the previous provider or created explicitly by the customer.
+
     Mail-enabled packages publish RFC 6186 service discovery in addition to
     routing/authentication records. The SRV targets use canonical Ithute hosts,
     so clients validate the platform TLS certificates rather than unsafe
@@ -56,23 +62,6 @@ def desired_package_records(domain: Domain, plan: BillingPlan) -> list[dict]:
     existing mail reconciliation lifecycle after ownership is proven.
     """
     records: list[dict] = []
-    if settings.bootstrap_public_ip:
-        records.extend(
-            [
-                {
-                    "name": domain.ascii_name,
-                    "type": "A",
-                    "values": [settings.bootstrap_public_ip],
-                    "purpose": "platform-web",
-                },
-                {
-                    "name": f"www.{domain.ascii_name}",
-                    "type": "CNAME",
-                    "values": [f"{domain.ascii_name}."],
-                    "purpose": "www-alias",
-                },
-            ]
-        )
 
     if domain.mail_enabled and plan.included_mailboxes > 0:
         records.extend(
