@@ -3,6 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 
 import dns.exception
+import dns.flags
+import dns.message
+import dns.query
+import dns.rdatatype
 import dns.resolver
 
 
@@ -57,6 +61,54 @@ def _system_resolve(name: str) -> list[str]:
     return [str(answer.target) for answer in answers]
 
 
+def _system_resolve_parent_delegation(name: str) -> list[str]:
+    """Read the registrar/registry NS delegation even when the child zone is lame.
+
+    Recursive NS lookups can raise NoNameservers for a newly registered domain
+    whose registrar has already published nameservers but whose child DNS is not
+    answering yet. Cloud-style onboarding still needs to show that delegation,
+    so ask the parent zone directly and read its NS referral.
+    """
+    target = name.strip().rstrip(".").lower()
+    if "." not in target:
+        return []
+    parent = target.split(".", 1)[1]
+
+    resolver = dns.resolver.Resolver(configure=True)
+    resolver.timeout = 3.0
+    resolver.lifetime = 5.0
+    parent_ns = [str(answer.target).rstrip(".") for answer in resolver.resolve(parent, "NS", search=False)]
+
+    query = dns.message.make_query(target, dns.rdatatype.NS)
+    observed: set[str] = set()
+    for host in parent_ns:
+        addresses: list[str] = []
+        for rtype in ("A", "AAAA"):
+            try:
+                addresses.extend(str(answer) for answer in resolver.resolve(host, rtype, search=False))
+            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers, dns.exception.Timeout):
+                continue
+        for address in addresses:
+            try:
+                response = dns.query.udp(query, address, timeout=3.0)
+                if response.flags & dns.flags.TC:
+                    response = dns.query.tcp(query, address, timeout=3.0)
+            except (OSError, dns.exception.DNSException):
+                continue
+            for rrset in [*response.answer, *response.authority]:
+                if rrset.rdtype != dns.rdatatype.NS:
+                    continue
+                if rrset.name.to_text().rstrip(".").lower() != target:
+                    continue
+                for item in rrset:
+                    destination = getattr(item, "target", None)
+                    if destination is not None:
+                        observed.add(str(destination).rstrip(".").lower())
+            if observed:
+                return sorted(observed)
+    return sorted(observed)
+
+
 def _system_resolve_record(name: str, record_type: str) -> list[str]:
     resolver = dns.resolver.Resolver(configure=True)
     resolver.timeout = 3.0
@@ -70,7 +122,8 @@ def inspect_existing_records(name: str, resolve_fn: RecordResolverFn | None = No
 
     NS and SOA do not count because registrars commonly create those for a newly
     registered/parked domain. A/AAAA/CNAME/MX/TXT records indicate an existing
-    DNS lifecycle that should be preserved and verified before nameserver cutover.
+    DNS lifecycle that should be copied into a staged PowerDNS zone before a
+    nameserver cutover. They no longer force TXT ownership proof for managed DNS.
     """
     resolver = resolve_fn or _system_resolve_record
     found: list[str] = []
@@ -99,20 +152,26 @@ def inspect_nameservers(
     name: str,
     platform_nameservers: Iterable[str],
     resolve_fn: ResolverFn | None = None,
+    parent_resolve_fn: ResolverFn | None = None,
 ) -> dict:
-    """Inspect currently published authoritative NS records for a domain.
+    """Inspect currently published nameservers for a domain.
 
-    The result deliberately distinguishes a missing delegation from a temporary
-    resolver failure so the onboarding UI does not tell an operator to change
-    registrar settings based on an unreliable lookup.
+    Prefer a normal recursive lookup, then fall back to the parent-zone referral
+    when a newly registered or lame child zone cannot answer. The parent referral
+    is the registrar/registry delegation and is therefore the most useful signal
+    for Cloudflare-style onboarding and ownership verification.
     """
     resolver = resolve_fn or _system_resolve
+    parent_resolver = parent_resolve_fn or _system_resolve_parent_delegation
     platform = _normalize_nameservers(platform_nameservers)
     platform_ready = platform_nameservers_ready(platform)
+    source: str | None = None
+
     try:
         current = _normalize_nameservers(resolver(name))
         status = "found" if current else "no_nameservers"
         detail = None if current else "No authoritative nameservers were returned for this domain."
+        source = "recursive" if current else None
     except dns.resolver.NXDOMAIN:
         current = []
         status = "nxdomain"
@@ -128,15 +187,29 @@ def inspect_nameservers(
     except dns.exception.Timeout:
         current = []
         status = "timeout"
-        detail = "The public nameserver lookup timed out. Retry before changing registrar settings."
+        detail = "The public nameserver lookup timed out."
     except Exception as exc:  # keep onboarding available if the host resolver has a transient problem
         current = []
         status = "resolver_error"
         detail = f"Nameserver lookup failed: {str(exc)[:180]}"
 
+    # A broken/empty child zone must not hide registrar nameservers. This is
+    # particularly common immediately after buying a domain from a registrar.
+    if not current and status != "nxdomain":
+        try:
+            delegated = _normalize_nameservers(parent_resolver(name))
+        except Exception:
+            delegated = []
+        if delegated:
+            current = delegated
+            status = "found"
+            source = "parent"
+            detail = "Nameservers were discovered from the parent-zone registrar delegation; the child DNS is not answering normally yet."
+
     return {
         "lookup_status": status,
         "lookup_detail": detail,
+        "delegation_source": source,
         "current_nameservers": current,
         "current_provider": infer_nameserver_provider(current, platform),
         "platform_nameservers": platform if platform_ready else [],
