@@ -10,13 +10,13 @@ import "./platform-ux.css";
 import "./control-polish.css";
 
 export const metadata: Metadata = {
-  title: { default: "Mailbox DNS · Lelefa Infrastructure", template: "%s · Mailbox DNS" },
-  description: "Multi-tenant mail and authoritative DNS infrastructure control plane.",
-  applicationName: "Mailbox DNS",
-  keywords: ["DNS hosting", "mail hosting", "PowerDNS", "infrastructure control plane"],
+  title: { default: "Ithute Hosting · Applications, Email & DNS", template: "%s · Ithute Hosting" },
+  description: "Multi-tenant managed application hosting, professional email and authoritative DNS control plane.",
+  applicationName: "Ithute Hosting",
+  keywords: ["application hosting", "website hosting", "DNS hosting", "mail hosting", "PowerDNS", "Ithute"],
   robots: { index: false, follow: false },
   icons: {
-    icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23123a38'/%3E%3Ctext x='32' y='41' font-size='25' text-anchor='middle' fill='%23d8c56a' font-family='Arial' font-weight='700'%3EMD%3C/text%3E%3C/svg%3E",
+    icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23123a38'/%3E%3Ctext x='32' y='41' font-size='25' text-anchor='middle' fill='%23d8c56a' font-family='Arial' font-weight='700'%3E!I%3C/text%3E%3C/svg%3E",
   },
 };
 
