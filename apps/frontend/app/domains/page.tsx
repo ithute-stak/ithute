@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ControlShell } from "@/components/control-shell";
+import { CreateOrganizationDialog } from "@/components/create-organization-dialog";
 import { DomainOnboardingFields } from "@/components/domain-onboarding-fields";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
@@ -351,12 +352,13 @@ export default function DomainsPage() {
                 <option value="">Select organization</option>
                 {contexts.map((row) => <option key={row.tenant_id} value={row.tenant_id}>{row.tenant_name} · {row.role.replaceAll("_", " ")}</option>)}
               </select>
+              <CreateOrganizationDialog isPlatformOwner={Boolean(me?.is_platform_owner)} />
               {canManage && tenantId ? <button type="button" onClick={() => setShowAdd(true)} className="btn-primary"><Plus size={15}/>Add domain</button> : null}
             </div>
           </div>
         </section>
 
-        {!contexts.length && !loading ? <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-800">No active organization is available. Create or activate an organization before adding a domain.</div> : null}
+        {!contexts.length && !loading ? <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-800">No active organization is available. Platform owners can use <b>New organization</b> above, then add the domain under it.</div> : null}
         {error ? <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] font-semibold text-red-700"><AlertTriangle size={15} className="mt-0.5 shrink-0"/><span>{error}</span><button type="button" className="ml-auto" onClick={() => setError("")} aria-label="Dismiss error"><X size={15}/></button></div> : null}
         {message ? <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[12px] font-semibold text-emerald-700"><CheckCircle2 size={15} className="mt-0.5 shrink-0"/><span>{message}</span><button type="button" className="ml-auto" onClick={() => setMessage("")} aria-label="Dismiss message"><X size={15}/></button></div> : null}
 
