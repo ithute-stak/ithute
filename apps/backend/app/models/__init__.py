@@ -25,6 +25,12 @@ from app.models.billing import (
     UsageSnapshot,
 )
 from app.models.hosting import HOSTING_RULES_VERSION, HostingNode, HostingProject
+from app.models.hosting_operations import (
+    HOSTING_RUNTIME_MANIFEST_VERSION,
+    HostingDeployment,
+    HostingEnvironmentVariable,
+    HostingNodeAgent,
+)
 from app.models.business import (
     CustomerProfile,
     Notification,
@@ -91,6 +97,7 @@ __all__ = [
     "MailboxStatus", "MailAlias", "DistributionGroup", "DistributionGroupMember", "DkimKey",
     "BillingPlan", "TenantSubscription", "UsageSnapshot", "BillingInvoice", "BillingPaymentEvent",
     "SubscriptionStatus", "InvoiceStatus", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject",
+    "HOSTING_RUNTIME_MANIFEST_VERSION", "HostingDeployment", "HostingEnvironmentVariable", "HostingNodeAgent",
     "CustomerProfile", "Notification", "ServiceIncident", "ServiceIncidentImpact", "ServiceIncidentStatus",
     "SupportTicket", "SupportTicketMessage", "SupportTicketPriority", "SupportTicketStatus", "DomainOrder",
     "EmailVerificationToken", "GroupwareCredential", "MailMigrationJob", "MailNode", "MailboxDelegate",
