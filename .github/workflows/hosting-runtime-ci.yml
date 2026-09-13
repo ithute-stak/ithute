@@ -1,0 +1,82 @@
+name: Hosting Runtime CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/backend/app/api/v1/application_hosting.py"
+      - "apps/backend/app/api/v1/hosting_deployments.py"
+      - "apps/backend/app/api/v1/router.py"
+      - "apps/backend/app/models/hosting.py"
+      - "apps/backend/app/models/hosting_deployment.py"
+      - "apps/backend/app/models/__init__.py"
+      - "apps/backend/alembic/versions/*hosting*.py"
+      - "apps/backend/tests/test_application_hosting.py"
+      - "apps/backend/tests/test_hosting_deployments.py"
+      - "infrastructure/hosting-agent/**"
+      - ".github/workflows/hosting-runtime-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hosting-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ithute_hosting_test
+          POSTGRES_USER: ithute
+          POSTGRES_PASSWORD: ithute-hosting-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ithute -d ithute_hosting_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+psycopg://ithute:ithute-hosting-test-password@127.0.0.1:5432/ithute_hosting_test
+      SECRET_KEY: ci-hosting-secret-key-0000000000000000000000000000
+      ENVIRONMENT: test
+      PLATFORM_MODE: bootstrap
+      HOSTING_IMAGE_PREFIX: ghcr.io/ithute-stak/hosted-
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/backend/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: apps/backend
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Migrate hosting test database
+        working-directory: apps/backend
+        run: alembic upgrade head
+
+      - name: Run hosting control-plane and runtime regressions
+        working-directory: apps/backend
+        run: pytest -q tests/test_application_hosting.py tests/test_hosting_deployments.py
+
+      - name: Validate hosting node agent
+        run: |
+          set -euo pipefail
+          python3 -m py_compile infrastructure/hosting-agent/agent.py
+          grep -Fq 'no-new-privileges:true' infrastructure/hosting-agent/agent.py
+          grep -Fq '"--cap-drop"' infrastructure/hosting-agent/agent.py
+          grep -Fq '"--read-only"' infrastructure/hosting-agent/agent.py
+          grep -Fq 'docker("image", "inspect"' infrastructure/hosting-agent/agent.py
+          ! grep -Fq 'docker("pull"' infrastructure/hosting-agent/agent.py
+          ! grep -Fq 'git clone' infrastructure/hosting-agent/agent.py
