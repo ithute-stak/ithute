@@ -25,28 +25,8 @@ def cleanup_domain(db, domain_id):
 def test_new_registrar_domain_is_created_without_txt_challenge(client, db, tenant_admin, monkeypatch):
     user, tenant, _ = tenant_admin
     headers = login(client, user.email)
-
-    monkeypatch.setattr(
-        "app.api.v1.domains.inspect_nameservers",
-        lambda name, platform: {
-            "lookup_status": "no_nameservers",
-            "lookup_detail": None,
-            "current_nameservers": [],
-            "current_provider": None,
-            "platform_nameservers": ["ns1.ithute.co.ls", "ns2.ithute.co.ls"],
-            "platform_nameservers_configured": True,
-            "already_on_platform_nameservers": False,
-        },
-    )
-    monkeypatch.setattr(
-        "app.api.v1.domains.inspect_existing_records",
-        lambda name: {
-            "has_existing_dns_records": False,
-            "existing_record_types": [],
-            "record_lookup_status": "none",
-            "record_lookup_errors": [],
-        },
-    )
+    monkeypatch.setattr("app.api.v1.domains.settings.nameserver_1", "ns1.ithute.co.ls")
+    monkeypatch.setattr("app.api.v1.domains.settings.nameserver_2", "ns2.ithute.co.ls")
 
     name = f"new-registration-{uuid.uuid4().hex[:10]}.co.ls"
     response = client.post(
@@ -69,32 +49,15 @@ def test_new_registrar_domain_is_created_without_txt_challenge(client, db, tenan
     cleanup_domain(db, uuid.UUID(body["id"]))
 
 
-def test_existing_dns_records_keep_txt_challenge(client, db, tenant_admin, monkeypatch):
+def test_existing_dns_migration_is_created_without_txt_challenge(client, db, tenant_admin, monkeypatch):
     user, tenant, _ = tenant_admin
     headers = login(client, user.email)
+    monkeypatch.setattr("app.api.v1.domains.settings.nameserver_1", "ns1.ithute.co.ls")
+    monkeypatch.setattr("app.api.v1.domains.settings.nameserver_2", "ns2.ithute.co.ls")
 
-    monkeypatch.setattr(
-        "app.api.v1.domains.inspect_nameservers",
-        lambda name, platform: {
-            "lookup_status": "found",
-            "lookup_detail": None,
-            "current_nameservers": ["ns1.zeecom.co.ls", "ns2.zeecom.co.ls"],
-            "current_provider": "Zeecom Technologies",
-            "platform_nameservers": ["ns1.ithute.co.ls", "ns2.ithute.co.ls"],
-            "platform_nameservers_configured": True,
-            "already_on_platform_nameservers": False,
-        },
-    )
-    monkeypatch.setattr(
-        "app.api.v1.domains.inspect_existing_records",
-        lambda name: {
-            "has_existing_dns_records": True,
-            "existing_record_types": ["A", "MX", "TXT"],
-            "record_lookup_status": "found",
-            "record_lookup_errors": [],
-        },
-    )
-
+    # Creation intentionally does not depend on the old provider being reachable.
+    # Existing DNS records must be staged/copied before cutover, while registrar
+    # nameserver delegation is the ownership proof for managed authoritative DNS.
     name = f"existing-migration-{uuid.uuid4().hex[:10]}.co.ls"
     response = client.post(
         f"/api/v1/tenants/{tenant.id}/domains",
@@ -103,7 +66,40 @@ def test_existing_dns_records_keep_txt_challenge(client, db, tenant_admin, monke
     )
     assert response.status_code == 201, response.text
     body = response.json()
+    assert body["verification_method"] == "nameserver"
+    assert body["verification_value"] is None
+    assert body["verification_token_hint"] == "not-needed"
+    cleanup_domain(db, uuid.UUID(body["id"]))
+
+
+def test_external_dns_still_uses_txt_challenge(client, db, tenant_admin):
+    user, tenant, _ = tenant_admin
+    headers = login(client, user.email)
+
+    name = f"external-dns-{uuid.uuid4().hex[:10]}.co.ls"
+    response = client.post(
+        f"/api/v1/tenants/{tenant.id}/domains",
+        headers=headers,
+        json={"name": name, "dns_mode": "external"},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
     assert body["verification_method"] == "txt"
     assert body["verification_value"].startswith("mailbox-dns-verification=")
     assert body["verification_token_hint"] != "not-needed"
     cleanup_domain(db, uuid.UUID(body["id"]))
+
+
+def test_managed_dns_creation_fails_closed_if_public_platform_nameservers_are_not_configured(client, tenant_admin, monkeypatch):
+    user, tenant, _ = tenant_admin
+    headers = login(client, user.email)
+    monkeypatch.setattr("app.api.v1.domains.settings.nameserver_1", "ns1.example.co.ls")
+    monkeypatch.setattr("app.api.v1.domains.settings.nameserver_2", "ns2.example.co.ls")
+
+    response = client.post(
+        f"/api/v1/tenants/{tenant.id}/domains",
+        headers=headers,
+        json={"name": f"blocked-{uuid.uuid4().hex[:10]}.co.ls", "dns_mode": "platform"},
+    )
+    assert response.status_code == 503
+    assert "No TXT fallback" in response.json()["detail"]

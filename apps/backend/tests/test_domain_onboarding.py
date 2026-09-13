@@ -25,6 +25,7 @@ def test_nameserver_discovery_normalizes_and_identifies_provider():
     assert result["lookup_status"] == "found"
     assert result["current_nameservers"] == ["ada.ns.cloudflare.com", "bob.ns.cloudflare.com"]
     assert result["current_provider"] == "Cloudflare"
+    assert result["delegation_source"] == "recursive"
     assert result["platform_nameservers_configured"] is True
     assert result["already_on_platform_nameservers"] is False
 
@@ -52,6 +53,7 @@ def test_existing_record_discovery_ignores_missing_types_and_finds_live_service_
 
 def test_nameserver_discovery_recognizes_zeecom_and_nxdomain():
     assert infer_nameserver_provider(["ns1.zeecom.co.ls", "ns2.zeecom.co.ls"]) == "Zeecom Technologies"
+    assert infer_nameserver_provider(["ns1.zeecom.org", "ns2.zeecom.org"]) == "Zeecom Technologies"
 
     def missing(_):
         raise dns.resolver.NXDOMAIN()
@@ -60,6 +62,23 @@ def test_nameserver_discovery_recognizes_zeecom_and_nxdomain():
     assert result["lookup_status"] == "nxdomain"
     assert result["current_nameservers"] == []
     assert "registered" in result["lookup_detail"]
+
+
+def test_parent_delegation_recovers_zeecom_when_child_dns_is_lame():
+    def child_dns_fails(_):
+        raise dns.resolver.NoNameservers()
+
+    result = inspect_nameservers(
+        "new-domain.co.ls",
+        ["ns1.ithute.co.ls", "ns2.ithute.co.ls"],
+        resolve_fn=child_dns_fails,
+        parent_resolve_fn=lambda _: ["NS2.ZEECOM.ORG.", "ns1.zeecom.org."],
+    )
+    assert result["lookup_status"] == "found"
+    assert result["delegation_source"] == "parent"
+    assert result["current_nameservers"] == ["ns1.zeecom.org", "ns2.zeecom.org"]
+    assert result["current_provider"] == "Zeecom Technologies"
+    assert "parent-zone" in result["lookup_detail"]
 
 
 def test_placeholder_platform_nameservers_are_never_offered_for_delegation():
@@ -75,7 +94,7 @@ def test_placeholder_platform_nameservers_are_never_offered_for_delegation():
     assert result["already_on_platform_nameservers"] is False
 
 
-def test_domain_inspection_existing_dns_requires_txt_and_returns_capacity(client, tenant_admin, platform_owner, monkeypatch):
+def test_domain_inspection_existing_dns_uses_nameserver_proof_and_returns_capacity(client, tenant_admin, platform_owner, monkeypatch):
     _, tenant, _ = tenant_admin
     owner_headers = login(client, platform_owner.email)
 
@@ -91,6 +110,7 @@ def test_domain_inspection_existing_dns_requires_txt_and_returns_capacity(client
         lambda name, platform: {
             "lookup_status": "found",
             "lookup_detail": None,
+            "delegation_source": "recursive",
             "current_nameservers": ["ns1.zeecom.co.ls", "ns2.zeecom.co.ls"],
             "current_provider": "Zeecom Technologies",
             "platform_nameservers": ["ns1.mailbox.co.ls", "ns2.mailbox.co.ls"],
@@ -122,8 +142,9 @@ def test_domain_inspection_existing_dns_requires_txt_and_returns_capacity(client
     assert body["platform_nameservers_configured"] is True
     assert body["has_existing_dns_records"] is True
     assert body["has_existing_external_dns"] is True
-    assert body["verification_method"] == "txt"
-    assert body["txt_required"] is True
+    assert body["verification_method"] == "nameserver"
+    assert body["txt_required"] is False
+    assert "No TXT ownership record is required" in body["next_step"]
     assert body["package"]["plan_code"] == "starter"
     assert body["domain_capacity"]["limit"] == 2
     assert body["domain_capacity"]["remaining"] == 2
@@ -145,6 +166,7 @@ def test_new_reseller_domain_without_existing_records_uses_nameserver_verificati
         lambda name, platform: {
             "lookup_status": "no_nameservers",
             "lookup_detail": "No authoritative nameservers were returned for this domain.",
+            "delegation_source": None,
             "current_nameservers": [],
             "current_provider": None,
             "platform_nameservers": ["ns1.ithute.co.ls", "ns2.ithute.co.ls"],
@@ -172,10 +194,10 @@ def test_new_reseller_domain_without_existing_records_uses_nameserver_verificati
     assert body["has_existing_dns_records"] is False
     assert body["verification_method"] == "nameserver"
     assert body["txt_required"] is False
-    assert "No TXT record is required" in body["next_step"]
+    assert "no TXT record is required" in body["next_step"].lower()
 
 
-def test_platform_onboarding_with_placeholder_targets_never_requests_nameserver_change(client, tenant_admin, platform_owner, monkeypatch):
+def test_platform_onboarding_with_placeholder_targets_does_not_fall_back_to_txt(client, tenant_admin, platform_owner, monkeypatch):
     _, tenant, _ = tenant_admin
     owner_headers = login(client, platform_owner.email)
     assert client.put(
@@ -189,6 +211,7 @@ def test_platform_onboarding_with_placeholder_targets_never_requests_nameserver_
         lambda name, platform: {
             "lookup_status": "found",
             "lookup_detail": None,
+            "delegation_source": "recursive",
             "current_nameservers": ["ns1.zeecom.co.ls", "ns2.zeecom.co.ls"],
             "current_provider": "Zeecom Technologies",
             "platform_nameservers": [],
@@ -214,9 +237,9 @@ def test_platform_onboarding_with_placeholder_targets_never_requests_nameserver_
     body = response.json()
     assert body["nameserver_change_required"] is False
     assert body["platform_nameservers"] == []
-    assert body["verification_method"] == "txt"
-    assert body["txt_required"] is True
-    assert "not configured yet" in body["next_step"]
+    assert body["verification_method"] == "nameserver"
+    assert body["txt_required"] is False
+    assert "temporarily unavailable" in body["next_step"]
     assert "unchanged" in body["next_step"]
 
 
@@ -234,6 +257,7 @@ def test_external_dns_inspection_never_requires_registrar_nameserver_change(clie
         lambda name, platform: {
             "lookup_status": "found",
             "lookup_detail": None,
+            "delegation_source": "recursive",
             "current_nameservers": ["ns1.external.test", "ns2.external.test"],
             "current_provider": "External DNS provider",
             "platform_nameservers": ["ns1.mailbox.co.ls", "ns2.mailbox.co.ls"],

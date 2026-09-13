@@ -30,6 +30,7 @@ type Inspection = {
   requested_dns_mode: "platform" | "external";
   lookup_status: "found" | "no_nameservers" | "nxdomain" | "timeout" | "resolver_error";
   lookup_detail?: string | null;
+  delegation_source?: "recursive" | "parent" | null;
   current_nameservers: string[];
   current_provider?: string | null;
   platform_nameservers: string[];
@@ -210,7 +211,7 @@ export function DomainOnboardingFields({ tenantId, isPlatformOwner }: Props) {
             {inspecting ? <Loader2 size={14} className="animate-spin"/> : <RefreshCw size={14}/>}Check domain
           </button>
         </div>
-        <p id="domain-name-help" className="form-helper">Enter only the registered domain. We inspect its live public nameservers before onboarding it.</p>
+        <p id="domain-name-help" className="form-helper">Enter only the registered domain. We inspect live DNS and the parent-zone registrar delegation before onboarding it.</p>
       </div>
 
       <div className="form-field">
@@ -236,11 +237,11 @@ export function DomainOnboardingFields({ tenantId, isPlatformOwner }: Props) {
         <div id="dns-mode-help" className="mt-2 grid gap-2 sm:grid-cols-2">
           <div className={`rounded-xl border p-3 text-[10px] leading-4 ${dnsMode === "platform" ? "border-[#87a69d] bg-[#f2f8f6]" : "border-[#e1e7e3] bg-[#fafcfb]"}`}>
             <div className="flex items-center gap-2 font-black text-[#294a40]"><Server size={13}/>Mailbox DNS / PowerDNS</div>
-            <p className="mt-1 text-[#687970]">We become authoritative DNS. Prepare the zone and records before registrar cutover. New domains verify by Ithute nameserver delegation; existing DNS migrations verify by TXT before cutover.</p>
+            <p className="mt-1 text-[#687970]">We become authoritative DNS. Stage/import the zone first, then verify ownership automatically when the registrar delegates to both Ithute nameservers. No TXT verification string is required for managed DNS.</p>
           </div>
           <div className={`rounded-xl border p-3 text-[10px] leading-4 ${dnsMode === "external" ? "border-[#87a69d] bg-[#f2f8f6]" : "border-[#e1e7e3] bg-[#fafcfb]"}`}>
             <div className="flex items-center gap-2 font-black text-[#294a40]"><Globe2 size={13}/>External DNS</div>
-            <p className="mt-1 text-[#687970]">Keep Zeecom, Cloudflare or another provider authoritative. TXT ownership proof is required, and later MX/SPF/DKIM/DMARC changes must be published at that provider.</p>
+            <p className="mt-1 text-[#687970]">Keep Zeecom, Cloudflare or another provider authoritative. TXT ownership proof is required only in this mode, and later MX/SPF/DKIM/DMARC changes must be published at that provider.</p>
           </div>
         </div>
       </div>
@@ -251,7 +252,7 @@ export function DomainOnboardingFields({ tenantId, isPlatformOwner }: Props) {
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2 text-[11px] font-black text-[#263a31]"><ShieldCheck size={14}/>Current DNS delegation</div>
-            <p className="mt-1 text-[10px] text-[#718078]">Live public lookup for <b>{inspection.ascii_name}</b></p>
+            <p className="mt-1 text-[10px] text-[#718078]">Live public lookup for <b>{inspection.ascii_name}</b>{inspection.delegation_source === "parent" ? " · registrar delegation recovered from parent zone" : ""}</p>
           </div>
           {inspection.lookup_status === "found" ? <span className="status-badge status-verified">Detected</span> : <span className="status-badge status-pending">No active DNS detected</span>}
         </div>
@@ -268,8 +269,10 @@ export function DomainOnboardingFields({ tenantId, isPlatformOwner }: Props) {
           <span>
             <b>{inspection.txt_required ? "TXT ownership verification required." : "No TXT ownership token required."}</b>{" "}
             {inspection.txt_required
-              ? (inspection.has_existing_external_dns ? "Existing external DNS was detected, so ownership is proved at the DNS provider currently serving the domain." : "This domain will remain on external DNS, so ownership is proved there.")
-              : "This is a new/undelegated Platform DNS domain. Ownership will be proved by delegating the registrar to both Ithute nameservers after the staged zone is ready."}
+              ? "This domain will remain on external DNS, so ownership is proved at the provider that stays authoritative."
+              : inspection.has_existing_external_dns
+                ? "Existing DNS was detected. Copy/import those records into the staged PowerDNS zone first; ownership will then be proved automatically by the registrar nameserver delegation."
+                : "Ownership will be proved automatically by delegating the registrar to both Ithute nameservers after the staged zone is ready."}
           </span>
         </div>
 
@@ -281,12 +284,12 @@ export function DomainOnboardingFields({ tenantId, isPlatformOwner }: Props) {
             </div>
             <p className={`mt-2 text-[10px] font-bold ${inspection.nameserver_change_required ? "text-amber-700" : "text-emerald-700"}`}>
               {inspection.nameserver_change_required
-                ? (inspection.txt_required ? "Prepare/import records and complete TXT verification first; then change the registrar nameservers." : "Prepare the staged zone and records first; then change the registrar nameservers to complete ownership verification.")
+                ? (inspection.has_existing_external_dns ? "Import/copy all existing records into the staged zone first; then change the registrar nameservers to complete ownership verification." : "Prepare the staged zone and records first; then change the registrar nameservers to complete ownership verification.")
                 : "This domain already uses the platform nameservers."}
             </p>
           </div> : <div className="mt-3 flex gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-[10px] leading-4 text-amber-900">
             <AlertTriangle size={14} className="mt-0.5 shrink-0"/>
-            <span><b>Do not change the registrar nameservers yet.</b> Real public Mailbox DNS nameserver hostnames are not configured on this production installation. Keep Zeecom/current DNS active while ownership is verified.</span>
+            <span><b>Do not change the registrar nameservers yet.</b> Real public Mailbox DNS nameserver hostnames are not configured on this production installation. Managed DNS onboarding is unavailable until they are configured; Ithute will not fall back to a TXT verification string.</span>
           </div>
         ) : <div className="mt-3 flex gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[10px] leading-4 text-emerald-800"><CheckCircle2 size={13} className="mt-0.5 shrink-0"/><span>No registrar nameserver change is required in External DNS mode.</span></div>}
 
