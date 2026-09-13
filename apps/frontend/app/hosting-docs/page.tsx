@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, BookOpen, CheckCircle2, Cpu, Database, Globe2, HardDrive, Mail, Server, ShieldCheck, TerminalSquare, TriangleAlert } from "lucide-react";
+import { ArrowRight, BookOpen, CheckCircle2, Cpu, Database, DatabaseBackup, Globe2, HardDrive, Mail, Server, ShieldCheck, TerminalSquare, TriangleAlert } from "lucide-react";
 
 const rules = [
   ["No root or host access", "Ithute application hosting is managed shared hosting, not a customer root VPS. Customers do not receive host SSH, sudo/root access, the Docker socket, privileged containers or access to another tenant's runtime."],
