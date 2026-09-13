@@ -155,7 +155,10 @@ export default function Home() {
               <a href="#schools" className="hidden text-xs font-bold text-white/65 transition hover:text-white md:inline">
                 Schools
               </a>
-              <Link href="/docs" className="hidden text-xs font-bold text-white/65 transition hover:text-white lg:inline">
+              <Link href="/pricing" className="hidden text-xs font-black text-[#f1de8b] transition hover:text-white md:inline">
+                Hosting packages
+              </Link>
+              <Link href="/docs" className="hidden text-xs font-bold text-white/65 transition hover:text-white xl:inline">
                 Mail & DNS docs
               </Link>
               <Link
@@ -192,7 +195,7 @@ export default function Home() {
                   href="/pricing"
                   className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/[.06] px-5 py-3 text-sm font-black text-white"
                 >
-                  <Cloud size={16} /> Mail & DNS
+                  <Cloud size={16} /> Hosting packages
                 </Link>
               </div>
 
@@ -398,6 +401,9 @@ export default function Home() {
               <a href="#solutions" className="inline-flex items-center gap-2 rounded-xl bg-[#f1de8b] px-5 py-3 text-sm font-black text-[#123a38]">
                 View solutions <ArrowRight size={16} />
               </a>
+              <Link href="/pricing" className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/[.06] px-5 py-3 text-sm font-black">
+                View hosting packages
+              </Link>
               <Link href="/login" className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/[.06] px-5 py-3 text-sm font-black">
                 Open client portal
               </Link>
@@ -421,7 +427,7 @@ export default function Home() {
             </p>
           </div>
           <div className="flex flex-wrap gap-x-5 gap-y-3 text-[10px] font-bold text-[#718078] md:justify-end">
-            <Link href="/pricing">Mail & DNS pricing</Link>
+            <Link href="/pricing">Hosting packages</Link>
             <Link href="/docs">Documentation</Link>
             <Link href="/service-status">Service status</Link>
             <Link href="/legal">Policies</Link>

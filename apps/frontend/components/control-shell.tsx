@@ -72,9 +72,13 @@ const navigation: NavGroup[] = [
     ],
   },
   {
-    label: "Hosting company",
-    icon: Building2,
-    children: [{ label: "Reseller & white-label", href: "/hosting-company", icon: Building2 }],
+    label: "Application hosting",
+    icon: Server,
+    children: [
+      { label: "Hosted projects", href: "/hosting", icon: Server },
+      { label: "Deployments & environment", href: "/hosting-operations", icon: Activity },
+      { label: "Reseller & white-label", href: "/hosting-company", icon: Building2 },
+    ],
   },
   {
     label: "Business",
@@ -414,6 +418,7 @@ export function ControlShell({
                   <p className="px-3 pb-1.5 pt-1 text-[9px] font-black uppercase tracking-[0.12em] text-[#87948e]">Create resource</p>
                   <Link role="menuitem" href="/domains" className="ithute-dropdown-item" onClick={() => quickMenu.close()}>Add or verify domain</Link>
                   <Link role="menuitem" href="/mailboxes" className="ithute-dropdown-item" onClick={() => quickMenu.close()}>Create mailbox</Link>
+                  <Link role="menuitem" href="/hosting" className="ithute-dropdown-item" onClick={() => quickMenu.close()}>Create hosted project</Link>
                   <Link role="menuitem" href="/transactional-email" className="ithute-dropdown-item" onClick={() => quickMenu.close()}>Create SMTP credential</Link>
                   <Link role="menuitem" href="/support" className="ithute-dropdown-item" onClick={() => quickMenu.close()}>Open support ticket</Link>
                 </div>
