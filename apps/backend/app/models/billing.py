@@ -46,6 +46,24 @@ class BillingPlan(Base):
     hosting_cpu_millicores_per_project: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     hosting_pids_per_project: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
+    # Commercial deliverables are stored on the package as first-class data so
+    # the public catalogue and contracts describe exactly what the customer buys.
+    product_category: Mapped[str] = mapped_column(String(80), default="Website & Hosting", server_default="Website & Hosting", nullable=False)
+    description: Mapped[str] = mapped_column(String(500), default="", server_default="", nullable=False)
+    website_pages: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    includes_website_design: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    includes_logo_design: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    includes_brand_guide: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    includes_company_profile: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    includes_letterhead: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    includes_page_headers_footers: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    includes_business_templates: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    included_revisions: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    content_updates_per_month: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    support_level: Mapped[str] = mapped_column(String(40), default="standard", server_default="standard", nullable=False)
+    minimum_term_months: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+    price_from: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

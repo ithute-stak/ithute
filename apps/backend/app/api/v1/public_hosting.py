@@ -11,7 +11,7 @@ router = APIRouter(tags=["public-hosting"])
 
 @router.get("/public/hosting-pricing")
 def public_hosting_pricing(db: Session = Depends(get_db)):
-    """Public commercial catalog including app-hosting resource limits."""
+    """Public commercial catalog including creative services and enforced hosting limits."""
     ensure_default_plans(db)
     plans = db.scalars(
         select(BillingPlan)
@@ -34,6 +34,21 @@ def public_hosting_pricing(db: Session = Depends(get_db)):
                 "hosting_memory_mb_per_project": plan.hosting_memory_mb_per_project,
                 "hosting_cpu_millicores_per_project": plan.hosting_cpu_millicores_per_project,
                 "hosting_pids_per_project": plan.hosting_pids_per_project,
+                "product_category": plan.product_category,
+                "description": plan.description,
+                "website_pages": plan.website_pages,
+                "includes_website_design": plan.includes_website_design,
+                "includes_logo_design": plan.includes_logo_design,
+                "includes_brand_guide": plan.includes_brand_guide,
+                "includes_company_profile": plan.includes_company_profile,
+                "includes_letterhead": plan.includes_letterhead,
+                "includes_page_headers_footers": plan.includes_page_headers_footers,
+                "includes_business_templates": plan.includes_business_templates,
+                "included_revisions": plan.included_revisions,
+                "content_updates_per_month": plan.content_updates_per_month,
+                "support_level": plan.support_level,
+                "minimum_term_months": plan.minimum_term_months,
+                "price_from": plan.price_from,
             }
             for plan in plans
         ]

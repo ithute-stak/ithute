@@ -13,6 +13,7 @@ from app.services.billing import ensure_default_plans
 
 router = APIRouter(tags=["plan-admin"])
 _CODE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,49}$")
+_SUPPORT_LEVELS = {"standard", "priority", "dedicated"}
 
 
 def _validate_hosting_bundle(*, projects: int, storage_mb: int, memory_mb: int, cpu_millicores: int, pids: int) -> None:
@@ -30,7 +31,38 @@ def _validate_hosting_bundle(*, projects: int, storage_mb: int, memory_mb: int, 
         raise ValueError("Application process limit per project must be between 32 and 2048")
 
 
-class PlanCreate(BaseModel):
+class CommercialFields(BaseModel):
+    product_category: str = Field(default="Website & Hosting", min_length=2, max_length=80)
+    description: str = Field(default="", max_length=500)
+    website_pages: int = Field(default=0, ge=0, le=100)
+    includes_website_design: bool = False
+    includes_logo_design: bool = False
+    includes_brand_guide: bool = False
+    includes_company_profile: bool = False
+    includes_letterhead: bool = False
+    includes_page_headers_footers: bool = False
+    includes_business_templates: bool = False
+    included_revisions: int = Field(default=0, ge=0, le=100)
+    content_updates_per_month: int = Field(default=0, ge=0, le=100)
+    support_level: str = Field(default="standard", min_length=2, max_length=40)
+    minimum_term_months: int = Field(default=1, ge=0, le=36)
+    price_from: bool = False
+
+    @field_validator("product_category", "description", "support_level")
+    @classmethod
+    def normalize_commercial_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("support_level")
+    @classmethod
+    def validate_support_level(cls, value: str) -> str:
+        normalized = value.lower()
+        if normalized not in _SUPPORT_LEVELS:
+            raise ValueError("support_level must be standard, priority or dedicated")
+        return normalized
+
+
+class PlanCreate(CommercialFields):
     code: str = Field(min_length=2, max_length=50)
     name: str = Field(min_length=2, max_length=120)
     currency: str = Field(default="LSL", min_length=3, max_length=3)
@@ -91,12 +123,37 @@ class PlanUpdate(BaseModel):
     hosting_memory_mb_per_project: int | None = Field(default=None, ge=0, le=8192)
     hosting_cpu_millicores_per_project: int | None = Field(default=None, ge=0, le=4000)
     hosting_pids_per_project: int | None = Field(default=None, ge=0, le=2048)
+    product_category: str | None = Field(default=None, min_length=2, max_length=80)
+    description: str | None = Field(default=None, max_length=500)
+    website_pages: int | None = Field(default=None, ge=0, le=100)
+    includes_website_design: bool | None = None
+    includes_logo_design: bool | None = None
+    includes_brand_guide: bool | None = None
+    includes_company_profile: bool | None = None
+    includes_letterhead: bool | None = None
+    includes_page_headers_footers: bool | None = None
+    includes_business_templates: bool | None = None
+    included_revisions: int | None = Field(default=None, ge=0, le=100)
+    content_updates_per_month: int | None = Field(default=None, ge=0, le=100)
+    support_level: str | None = Field(default=None, min_length=2, max_length=40)
+    minimum_term_months: int | None = Field(default=None, ge=0, le=36)
+    price_from: bool | None = None
     is_active: bool | None = None
 
-    @field_validator("name")
+    @field_validator("name", "product_category", "description")
     @classmethod
-    def normalize_name(cls, value: str | None) -> str | None:
+    def normalize_text(cls, value: str | None) -> str | None:
         return value.strip() if value is not None else None
+
+    @field_validator("support_level")
+    @classmethod
+    def validate_support_level(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized not in _SUPPORT_LEVELS:
+            raise ValueError("support_level must be standard, priority or dedicated")
+        return normalized
 
 
 def _plan_out(plan: BillingPlan) -> dict:
@@ -115,6 +172,21 @@ def _plan_out(plan: BillingPlan) -> dict:
         "hosting_memory_mb_per_project": plan.hosting_memory_mb_per_project,
         "hosting_cpu_millicores_per_project": plan.hosting_cpu_millicores_per_project,
         "hosting_pids_per_project": plan.hosting_pids_per_project,
+        "product_category": plan.product_category,
+        "description": plan.description,
+        "website_pages": plan.website_pages,
+        "includes_website_design": plan.includes_website_design,
+        "includes_logo_design": plan.includes_logo_design,
+        "includes_brand_guide": plan.includes_brand_guide,
+        "includes_company_profile": plan.includes_company_profile,
+        "includes_letterhead": plan.includes_letterhead,
+        "includes_page_headers_footers": plan.includes_page_headers_footers,
+        "includes_business_templates": plan.includes_business_templates,
+        "included_revisions": plan.included_revisions,
+        "content_updates_per_month": plan.content_updates_per_month,
+        "support_level": plan.support_level,
+        "minimum_term_months": plan.minimum_term_months,
+        "price_from": plan.price_from,
         "is_active": plan.is_active,
         "created_at": plan.created_at.isoformat() if plan.created_at else None,
         "updated_at": plan.updated_at.isoformat() if plan.updated_at else None,
@@ -167,6 +239,7 @@ def create_platform_plan(
             "price_minor": plan.monthly_price_minor,
             "hosted_projects": plan.included_hosted_projects,
             "hosting_storage_mb": plan.hosting_storage_mb,
+            "minimum_term_months": plan.minimum_term_months,
         },
     )
     db.commit()

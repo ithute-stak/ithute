@@ -1,11 +1,23 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Archive, BadgeDollarSign, Boxes, CheckCircle2, Cpu, HardDrive, Pencil, Plus, RefreshCw, Server } from "lucide-react";
+import { Archive, BadgeDollarSign, Boxes, CheckCircle2, Cpu, HardDrive, Palette, Pencil, Plus, RefreshCw, Server } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
 import { PageHeader } from "@/components/ui-kit";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
+
+const PRODUCT_CATEGORIES = [
+  "Website & Hosting",
+  "Professional Email",
+  "Application/System Hosting",
+  "Logo Design",
+  "Branding & Corporate Identity",
+  "Company Profiles",
+  "Business Documents & Templates",
+  "Domains & DNS",
+  "Custom Digital Services",
+];
 
 type Plan = {
   id: string;
@@ -22,6 +34,21 @@ type Plan = {
   hosting_memory_mb_per_project: number;
   hosting_cpu_millicores_per_project: number;
   hosting_pids_per_project: number;
+  product_category: string;
+  description: string;
+  website_pages: number;
+  includes_website_design: boolean;
+  includes_logo_design: boolean;
+  includes_brand_guide: boolean;
+  includes_company_profile: boolean;
+  includes_letterhead: boolean;
+  includes_page_headers_footers: boolean;
+  includes_business_templates: boolean;
+  included_revisions: number;
+  content_updates_per_month: number;
+  support_level: string;
+  minimum_term_months: number;
+  price_from: boolean;
   is_active: boolean;
 };
 
@@ -38,6 +65,21 @@ type Draft = {
   memoryMb: string;
   cpuMillicores: string;
   pids: string;
+  productCategory: string;
+  description: string;
+  websitePages: string;
+  includesWebsiteDesign: boolean;
+  includesLogoDesign: boolean;
+  includesBrandGuide: boolean;
+  includesCompanyProfile: boolean;
+  includesLetterhead: boolean;
+  includesPageHeadersFooters: boolean;
+  includesBusinessTemplates: boolean;
+  includedRevisions: string;
+  contentUpdatesPerMonth: string;
+  supportLevel: string;
+  minimumTermMonths: string;
+  priceFrom: boolean;
 };
 
 type Node = {
@@ -65,6 +107,21 @@ const blankDraft: Draft = {
   memoryMb: "512",
   cpuMillicores: "500",
   pids: "128",
+  productCategory: "Website & Hosting",
+  description: "",
+  websitePages: "1",
+  includesWebsiteDesign: true,
+  includesLogoDesign: false,
+  includesBrandGuide: false,
+  includesCompanyProfile: false,
+  includesLetterhead: false,
+  includesPageHeadersFooters: true,
+  includesBusinessTemplates: false,
+  includedRevisions: "1",
+  contentUpdatesPerMonth: "0",
+  supportLevel: "standard",
+  minimumTermMonths: "12",
+  priceFrom: false,
 };
 
 function draftFrom(plan: Plan): Draft {
@@ -81,11 +138,38 @@ function draftFrom(plan: Plan): Draft {
     memoryMb: plan.hosting_memory_mb_per_project.toString(),
     cpuMillicores: plan.hosting_cpu_millicores_per_project.toString(),
     pids: plan.hosting_pids_per_project.toString(),
+    productCategory: plan.product_category,
+    description: plan.description,
+    websitePages: plan.website_pages.toString(),
+    includesWebsiteDesign: plan.includes_website_design,
+    includesLogoDesign: plan.includes_logo_design,
+    includesBrandGuide: plan.includes_brand_guide,
+    includesCompanyProfile: plan.includes_company_profile,
+    includesLetterhead: plan.includes_letterhead,
+    includesPageHeadersFooters: plan.includes_page_headers_footers,
+    includesBusinessTemplates: plan.includes_business_templates,
+    includedRevisions: plan.included_revisions.toString(),
+    contentUpdatesPerMonth: plan.content_updates_per_month.toString(),
+    supportLevel: plan.support_level,
+    minimumTermMonths: plan.minimum_term_months.toString(),
+    priceFrom: plan.price_from,
   };
 }
 
 function formatPrice(plan: Plan) {
-  return `M ${(plan.monthly_price_minor / 100).toLocaleString()}`;
+  return `${plan.price_from ? "From " : ""}M ${(plan.monthly_price_minor / 100).toLocaleString()}`;
+}
+
+function packageHighlights(plan: Plan) {
+  const rows: string[] = [];
+  if (plan.includes_website_design) rows.push(`${plan.website_pages || "Custom"} website page${plan.website_pages === 1 ? "" : "s"}`);
+  if (plan.includes_logo_design) rows.push("Logo");
+  if (plan.includes_brand_guide) rows.push("Brand guide");
+  if (plan.includes_company_profile) rows.push("Company profile");
+  if (plan.includes_letterhead) rows.push("Letterhead");
+  if (plan.includes_page_headers_footers) rows.push("Headers & footers");
+  if (plan.includes_business_templates) rows.push("Business templates");
+  return rows;
 }
 
 export default function PackagesPage() {
@@ -154,6 +238,21 @@ export default function PackagesPage() {
       hosting_memory_mb_per_project: hostedProjects > 0 ? Number(draft.memoryMb) : 0,
       hosting_cpu_millicores_per_project: hostedProjects > 0 ? Number(draft.cpuMillicores) : 0,
       hosting_pids_per_project: hostedProjects > 0 ? Number(draft.pids) : 0,
+      product_category: draft.productCategory,
+      description: draft.description.trim(),
+      website_pages: Number(draft.websitePages),
+      includes_website_design: draft.includesWebsiteDesign,
+      includes_logo_design: draft.includesLogoDesign,
+      includes_brand_guide: draft.includesBrandGuide,
+      includes_company_profile: draft.includesCompanyProfile,
+      includes_letterhead: draft.includesLetterhead,
+      includes_page_headers_footers: draft.includesPageHeadersFooters,
+      includes_business_templates: draft.includesBusinessTemplates,
+      included_revisions: Number(draft.includedRevisions),
+      content_updates_per_month: Number(draft.contentUpdatesPerMonth),
+      support_level: draft.supportLevel,
+      minimum_term_months: Number(draft.minimumTermMonths),
+      price_from: draft.priceFrom,
     };
     try {
       const response = await fetch(editingId ? `${API}/platform/billing/plans/${editingId}` : `${API}/platform/billing/plans`, {
@@ -164,7 +263,7 @@ export default function PackagesPage() {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : "Unable to save package.");
-      setMessage(editingId ? "Package updated. Hosting, email and DNS entitlements now use the new values." : "Hosting package created and published to the pricing catalog.");
+      setMessage(editingId ? "Package updated. Commercial deliverables and resource entitlements now use the new values." : "Package created and published to the pricing catalog.");
       await load();
       if (!editingId) createNew();
     } catch (err) {
@@ -218,12 +317,12 @@ export default function PackagesPage() {
       return;
     }
     form.reset();
-    setMessage("Hosting node capacity registered. New projects can now be allocated without consuming the reserved platform headroom.");
+    setMessage("Hosting node capacity registered. New projects can now be allocated without consuming reserved platform headroom.");
     await load();
   }
 
-  const fields: { key: keyof Draft; label: string; helper: string; type?: string }[] = [
-    { key: "name", label: "Package name", helper: "Customer-facing name, e.g. Business Hosting" },
+  const resourceFields: { key: keyof Pick<Draft, "name" | "code" | "monthlyPrice" | "hostedProjects" | "hostingStorageGb" | "memoryMb" | "cpuMillicores" | "pids" | "domains" | "mailboxes" | "mailStorageGb" | "apiKeys">; label: string; helper: string; type?: string }[] = [
+    { key: "name", label: "Package name", helper: "Customer-facing name, e.g. Ithute Business" },
     { key: "code", label: "Package code", helper: editing ? "Code is permanent after creation." : "Lowercase identifier, e.g. business-hosting" },
     { key: "monthlyPrice", label: "Monthly price (M)", helper: "Maloti charged per month", type: "number" },
     { key: "hostedProjects", label: "Hosted projects", helper: "Websites or simple systems this organization may host", type: "number" },
@@ -232,39 +331,72 @@ export default function PackagesPage() {
     { key: "cpuMillicores", label: "CPU per project (millicores)", helper: "1000 millicores = 1 CPU core", type: "number" },
     { key: "pids", label: "Processes per project", helper: "Maximum process/PID count for each workload", type: "number" },
     { key: "domains", label: "Hosted domains", helper: "Maximum customer domains under this subscription", type: "number" },
-    { key: "mailboxes", label: "Included mailboxes", helper: "Optional professional email accounts; 0 makes a hosting-only package", type: "number" },
-    { key: "mailStorageGb", label: "Mail storage (GB)", helper: "Separate mailbox quota pool; it never shares the app-storage quota", type: "number" },
+    { key: "mailboxes", label: "Included mailboxes", helper: "Professional email accounts included in the subscription", type: "number" },
+    { key: "mailStorageGb", label: "Mail storage (GB)", helper: "Separate mailbox quota pool; never shared with app storage", type: "number" },
     { key: "apiKeys", label: "API keys", helper: "Maximum active integration credentials", type: "number" },
   ];
 
-  return <ControlShell title="Packages & pricing" subtitle="Create complete website, system, email and DNS hosting packages">
-    <div className="space-y-5">
-      <PageHeader eyebrow="Ithute hosting catalog" title="Hosting package control centre" description="The system owner decides exactly what is sold: hosted projects, 1–10 GB application storage, RAM, CPU, process limits, domains, email and API capacity. These values are enforced by the control plane." />
+  const creativeToggles: { key: keyof Pick<Draft, "includesWebsiteDesign" | "includesLogoDesign" | "includesBrandGuide" | "includesCompanyProfile" | "includesLetterhead" | "includesPageHeadersFooters" | "includesBusinessTemplates">; label: string }[] = [
+    { key: "includesWebsiteDesign", label: "Website design" },
+    { key: "includesLogoDesign", label: "Logo design / setup" },
+    { key: "includesBrandGuide", label: "Brand identity guide" },
+    { key: "includesCompanyProfile", label: "Company profile" },
+    { key: "includesLetterhead", label: "Letterhead" },
+    { key: "includesPageHeadersFooters", label: "Page headers & footers" },
+    { key: "includesBusinessTemplates", label: "Invoice / quotation / document templates" },
+  ];
 
-      <section className="grid gap-4 xl:grid-cols-[1.15fr_.85fr]">
+  return <ControlShell title="Packages & pricing" subtitle="Create website, branding, document, hosting, email and DNS packages">
+    <div className="space-y-5">
+      <PageHeader eyebrow="Ithute commercial catalog" title="Product & package control centre" description="Define the monthly price, creative deliverables and hard hosting entitlements in one product. The public pricing page reads directly from this catalogue." />
+
+      <section className="grid gap-4 xl:grid-cols-[1.2fr_.8fr]">
         <div className="surface-card p-4 sm:p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div><p className="text-xs font-black text-[var(--admin-ink)]">{editing ? `Edit ${editing.name}` : "Create a hosting package"}</p><p className="mt-1 text-[10px] text-[var(--admin-muted)]">A package can include application hosting, email and authoritative DNS in one subscription.</p></div>
+            <div><p className="text-xs font-black text-[var(--admin-ink)]">{editing ? `Edit ${editing.name}` : "Create a commercial package"}</p><p className="mt-1 text-[10px] text-[var(--admin-muted)]">Creative services and technical capacity are sold together but tracked separately.</p></div>
             <button className="btn-secondary" onClick={createNew}><Plus size={14}/>New package</button>
           </div>
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            {fields.map((field) => <label key={field.key} className="block"><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">{field.label}</span><input disabled={field.key === "code" && Boolean(editing)} type={field.type || "text"} min={field.type === "number" ? 0 : undefined} max={field.key === "hostingStorageGb" ? 10 : undefined} step={field.key === "monthlyPrice" || field.key === "hostingStorageGb" || field.key === "mailStorageGb" ? "0.01" : "1"} value={draft[field.key]} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} className="mt-1.5 w-full rounded-xl border border-[#dce4df] bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#2b605a] disabled:bg-[#f2f4f3]"/><span className="mt-1 block text-[9px] leading-4 text-[#8a9790]">{field.helper}</span></label>)}
+
+          <div className="mt-5 rounded-2xl border border-[#e0e6e2] bg-[#fafbfa] p-4">
+            <div className="flex items-center gap-2"><BadgeDollarSign size={16} className="text-[#285b55]"/><h2 className="text-xs font-black">Commercial identity</h2></div>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <label className="block"><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">Product category</span><select className="input mt-1.5 w-full" value={draft.productCategory} onChange={(event) => setDraft((current) => ({ ...current, productCategory: event.target.value }))}>{PRODUCT_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
+              <label className="block"><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">Support level</span><select className="input mt-1.5 w-full" value={draft.supportLevel} onChange={(event) => setDraft((current) => ({ ...current, supportLevel: event.target.value }))}><option value="standard">Standard</option><option value="priority">Priority</option><option value="dedicated">Dedicated</option></select></label>
+              <label className="block sm:col-span-2"><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">Customer-facing description</span><textarea className="input mt-1.5 min-h-24 w-full resize-y" maxLength={500} value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} placeholder="What the customer receives and who this package is for"/></label>
+              <label className="block"><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">Minimum term (months)</span><input className="input mt-1.5 w-full" type="number" min="0" max="36" value={draft.minimumTermMonths} onChange={(event) => setDraft((current) => ({ ...current, minimumTermMonths: event.target.value }))}/><span className="mt-1 block text-[9px] text-[#8a9790]">Use 12 months when the package includes initial creative build work.</span></label>
+              <label className="flex items-center gap-3 rounded-xl border border-[#dce4df] bg-white px-3 py-3 text-xs font-bold"><input type="checkbox" checked={draft.priceFrom} onChange={(event) => setDraft((current) => ({ ...current, priceFrom: event.target.checked }))}/>Display price as “From”</label>
+            </div>
           </div>
+
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            {resourceFields.map((field) => <label key={field.key} className="block"><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">{field.label}</span><input disabled={field.key === "code" && Boolean(editing)} type={field.type || "text"} min={field.type === "number" ? 0 : undefined} max={field.key === "hostingStorageGb" ? 10 : undefined} step={field.key === "monthlyPrice" || field.key === "hostingStorageGb" || field.key === "mailStorageGb" ? "0.01" : "1"} value={draft[field.key]} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} className="mt-1.5 w-full rounded-xl border border-[#dce4df] bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#2b605a] disabled:bg-[#f2f4f3]"/><span className="mt-1 block text-[9px] leading-4 text-[#8a9790]">{field.helper}</span></label>)}
+          </div>
+
+          <div className="mt-5 rounded-2xl border border-[#e0e6e2] bg-[#fafbfa] p-4">
+            <div className="flex items-center gap-2"><Palette size={16} className="text-[#285b55]"/><h2 className="text-xs font-black">Creative & document deliverables</h2></div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{creativeToggles.map((item) => <label key={item.key} className="flex items-center gap-3 rounded-xl border border-[#dce4df] bg-white px-3 py-3 text-[11px] font-bold"><input type="checkbox" checked={draft[item.key]} onChange={(event) => setDraft((current) => ({ ...current, [item.key]: event.target.checked }))}/>{item.label}</label>)}</div>
+            <div className="mt-4 grid gap-4 sm:grid-cols-4">
+              <label><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">Website pages</span><input className="input mt-1.5 w-full" type="number" min="0" max="100" value={draft.websitePages} onChange={(event) => setDraft((current) => ({ ...current, websitePages: event.target.value }))}/></label>
+              <label><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">Initial revisions</span><input className="input mt-1.5 w-full" type="number" min="0" max="100" value={draft.includedRevisions} onChange={(event) => setDraft((current) => ({ ...current, includedRevisions: event.target.value }))}/></label>
+              <label><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">Content updates / month</span><input className="input mt-1.5 w-full" type="number" min="0" max="100" value={draft.contentUpdatesPerMonth} onChange={(event) => setDraft((current) => ({ ...current, contentUpdatesPerMonth: event.target.value }))}/></label>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[9px] leading-4 text-amber-900"><b>Keep scope bounded.</b><br/>Revisions and monthly updates prevent “unlimited design” from being implied by a low monthly price.</div>
+            </div>
+          </div>
+
           {message ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">{message}</div> : null}
           {error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700">{error}</div> : null}
-          <button onClick={() => void save()} disabled={saving || !draft.name || (!editing && !draft.code)} className="btn-primary mt-5 disabled:opacity-50"><CheckCircle2 size={14}/>{saving ? "Saving…" : editing ? "Save package changes" : "Create hosting package"}</button>
+          <button onClick={() => void save()} disabled={saving || !draft.name || (!editing && !draft.code)} className="btn-primary mt-5 disabled:opacity-50"><CheckCircle2 size={14}/>{saving ? "Saving…" : editing ? "Save package changes" : "Create & publish package"}</button>
         </div>
 
-        <div className="surface-card p-4 sm:p-5">
-          <div className="flex items-start gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-[#eef4f1] text-[#285b55]"><BadgeDollarSign size={18}/></div><div><h2 className="text-sm font-black text-[var(--admin-ink)]">Shared VPS protection</h2><p className="mt-1 text-[10px] leading-5 text-[var(--admin-muted)]">Selling disk space alone is unsafe. Every hosted project is also constrained by RAM, CPU and process limits and is assigned only from capacity the system owner marks as sellable.</p></div></div>
-          <div className="mt-4 space-y-3 text-[10px] leading-5 text-[#617168]"><p><b className="text-[#263a31]">Application storage</b> — a separate 1–10 GB pool; websites cannot consume mailbox storage.</p><p><b className="text-[#263a31]">RAM + CPU</b> — per-project ceilings so one customer cannot starve the VPS.</p><p><b className="text-[#263a31]">Processes</b> — limits fork/process storms inside a workload.</p><p><b className="text-[#263a31]">No root VPS access</b> — customers receive managed app hosting, never SSH or the Docker socket of the shared server.</p></div>
-          <a href="/docs#hosting" className="mt-5 inline-flex text-xs font-black text-[#285b55]">Read mandatory hosting rules →</a>
+        <div className="space-y-4">
+          <div className="surface-card p-4 sm:p-5"><div className="flex items-start gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-[#eef4f1] text-[#285b55]"><BadgeDollarSign size={18}/></div><div><h2 className="text-sm font-black text-[var(--admin-ink)]">Monthly commercial model</h2><p className="mt-1 text-[10px] leading-5 text-[var(--admin-muted)]">The starter package is positioned at M185/month. When creative build work is included, use a defined minimum term and revision allowance so the recurring price remains sustainable.</p></div></div><div className="mt-4 rounded-xl border border-[#e2e6e3] p-3 text-[10px] leading-5"><b>Recommended ladder</b><br/>Start M185 · Grow M295 · Business M495 · Professional M795 · Enterprise from M1,500.</div></div>
+          <div className="surface-card p-4 sm:p-5"><div className="flex items-start gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-[#eef4f1] text-[#285b55]"><Server size={18}/></div><div><h2 className="text-sm font-black text-[var(--admin-ink)]">Shared VPS protection</h2><p className="mt-1 text-[10px] leading-5 text-[var(--admin-muted)]">Creative services do not change runtime isolation. Every hosted project is constrained by storage, RAM, CPU and process limits and is allocated only from capacity marked as sellable.</p></div></div><div className="mt-4 space-y-3 text-[10px] leading-5 text-[#617168]"><p><b className="text-[#263a31]">Application storage</b> — separate from mailbox storage.</p><p><b className="text-[#263a31]">RAM + CPU</b> — per-project ceilings protect other customers.</p><p><b className="text-[#263a31]">No root VPS access</b> — managed hosting never exposes host SSH or Docker socket access.</p></div><a href="/hosting-docs" className="mt-5 inline-flex text-xs font-black text-[#285b55]">Read mandatory hosting rules →</a></div>
         </div>
       </section>
 
       <section className="surface-card p-4 sm:p-5">
-        <div className="flex items-center justify-between gap-3"><div><h2 className="text-sm font-black text-[var(--admin-ink)]">Published package catalog</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">Inactive packages disappear from new signups. Existing subscriptions must be moved before a package can be deactivated.</p></div><button className="icon-button" onClick={() => void load()} aria-label="Refresh packages"><RefreshCw size={15}/></button></div>
-        {loading ? <p className="mt-6 text-xs text-[var(--admin-muted)]">Loading packages…</p> : <div className="mt-5 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">{plans.map((plan) => <article key={plan.id} className={`rounded-2xl border p-4 ${plan.is_active ? "border-[#dce5e0] bg-white" : "border-[#e4e5e4] bg-[#f5f6f5] opacity-75"}`}><div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-2"><Boxes size={16} className="text-[#285b55]"/><h3 className="text-sm font-black text-[#21342a]">{plan.name}</h3></div><p className="mt-1 text-[9px] font-bold uppercase tracking-[.08em] text-[#8a9790]">{plan.code} · {plan.is_active ? "Active" : "Inactive"}</p></div><p className="text-lg font-black text-[#123a38]">{formatPrice(plan)}<span className="text-[9px] text-[#819087]">/mo</span></p></div><div className="mt-4 grid grid-cols-2 gap-2 text-[10px]"><div className="rounded-xl bg-[#f4f7f5] p-2.5"><b>{plan.included_hosted_projects}</b><br/>projects</div><div className="rounded-xl bg-[#f4f7f5] p-2.5"><b>{(plan.hosting_storage_mb / 1024).toFixed(plan.hosting_storage_mb % 1024 ? 1 : 0)} GB</b><br/>app storage</div><div className="rounded-xl bg-[#f4f7f5] p-2.5"><b>{plan.hosting_memory_mb_per_project} MB</b><br/>RAM / project</div><div className="rounded-xl bg-[#f4f7f5] p-2.5"><b>{(plan.hosting_cpu_millicores_per_project / 1000).toFixed(2)} CPU</b><br/>per project</div><div className="rounded-xl bg-[#f4f7f5] p-2.5"><b>{plan.included_domains}</b><br/>domains</div><div className="rounded-xl bg-[#f4f7f5] p-2.5"><b>{plan.included_mailboxes}</b><br/>mailboxes</div></div><div className="mt-4 flex flex-wrap gap-2"><button className="btn-secondary" onClick={() => edit(plan)}><Pencil size={13}/>Edit</button><button className="btn-secondary" onClick={() => void toggle(plan)}><Archive size={13}/>{plan.is_active ? "Deactivate" : "Activate"}</button></div></article>)}</div>}
+        <div className="flex items-center justify-between gap-3"><div><h2 className="text-sm font-black text-[var(--admin-ink)]">Published product catalogue</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">These cards feed the public monthly pricing page. Existing subscriptions must be moved before a package can be deactivated.</p></div><button className="icon-button" onClick={() => void load()} aria-label="Refresh packages"><RefreshCw size={15}/></button></div>
+        {loading ? <p className="mt-6 text-xs text-[var(--admin-muted)]">Loading packages…</p> : <div className="mt-5 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">{plans.map((plan) => <article key={plan.id} className={`rounded-2xl border p-4 ${plan.is_active ? "border-[#dce5e0] bg-white" : "border-[#e4e5e4] bg-[#f5f6f5] opacity-75"}`}><div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-2"><Boxes size={16} className="text-[#285b55]"/><h3 className="text-sm font-black text-[#21342a]">{plan.name}</h3></div><p className="mt-1 text-[9px] font-bold uppercase tracking-[.08em] text-[#8a9790]">{plan.code} · {plan.product_category} · {plan.is_active ? "Active" : "Inactive"}</p></div><p className="text-right text-lg font-black text-[#123a38]">{formatPrice(plan)}<span className="block text-[9px] text-[#819087]">/ month</span></p></div><p className="mt-3 text-[10px] leading-5 text-[#718078]">{plan.description}</p><div className="mt-3 flex flex-wrap gap-1.5">{packageHighlights(plan).map((item) => <span key={item} className="rounded-full bg-[#edf4f1] px-2 py-1 text-[8px] font-bold text-[#285b55]">{item}</span>)}</div><div className="mt-4 grid grid-cols-2 gap-2 text-[10px]"><div className="rounded-xl bg-[#f4f7f5] p-2.5"><b>{plan.included_hosted_projects}</b><br/>projects</div><div className="rounded-xl bg-[#f4f7f5] p-2.5"><b>{(plan.hosting_storage_mb / 1024).toFixed(plan.hosting_storage_mb % 1024 ? 1 : 0)} GB</b><br/>app storage</div><div className="rounded-xl bg-[#f4f7f5] p-2.5"><b>{plan.included_domains}</b><br/>domains</div><div className="rounded-xl bg-[#f4f7f5] p-2.5"><b>{plan.included_mailboxes}</b><br/>mailboxes</div></div><div className="mt-3 text-[9px] text-[#718078]">{plan.minimum_term_months ? `${plan.minimum_term_months}-month minimum term` : "No minimum term"} · <span className="capitalize">{plan.support_level}</span> support · {plan.included_revisions} initial revisions</div><div className="mt-4 flex flex-wrap gap-2"><button className="btn-secondary" onClick={() => edit(plan)}><Pencil size={13}/>Edit</button><button className="btn-secondary" onClick={() => void toggle(plan)}><Archive size={13}/>{plan.is_active ? "Deactivate" : "Activate"}</button></div></article>)}</div>}
       </section>
 
       <section className="surface-card p-4 sm:p-5">

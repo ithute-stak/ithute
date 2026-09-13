@@ -101,7 +101,7 @@ export default function HostingCompany() {
           <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
             <div>
               <h1 className="text-2xl font-black">Hosting company control plane</h1>
-              <p className="mt-1 max-w-3xl text-xs leading-5 text-[var(--admin-muted)]">Operate managed website and simple-system hosting alongside domains, DNS, professional email, reseller customers and white-label services.</p>
+              <p className="mt-1 max-w-3xl text-xs leading-5 text-[var(--admin-muted)]">Operate managed websites and systems alongside branding packages, domains, DNS, professional email, reseller customers and white-label services.</p>
             </div>
             <select className="input max-w-sm" value={tenant} onChange={(event) => setTenant(event.target.value)}>
               {tenants.map((row) => <option key={row.tenant_id} value={row.tenant_id}>{row.tenant_name}</option>)}
@@ -124,8 +124,8 @@ export default function HostingCompany() {
           </Link>
           <Link href="/packages" className="surface-card group p-5 transition hover:-translate-y-0.5 hover:border-[#9dbbb0]">
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#edf4f1] text-[#285b55]"><PackageOpen size={18} /></span>
-            <h2 className="mt-4 text-sm font-black">Packages & capacity</h2>
-            <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">System owner: create hosting packages and declare only the safe part of each VPS as sellable capacity.</p>
+            <h2 className="mt-4 text-sm font-black">Products, packages & capacity</h2>
+            <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">System owner: manage monthly website, branding and hosting packages and declare safe sellable VPS capacity.</p>
             <p className="mt-3 text-xs font-black text-[#285b55]">Manage packages →</p>
           </Link>
           <Link href="/hosting-docs" className="surface-card group p-5 transition hover:-translate-y-0.5 hover:border-[#9dbbb0]">
@@ -170,7 +170,7 @@ export default function HostingCompany() {
                 <input className="input" name="admin" placeholder="Administrator name" required />
                 <input className="input" type="email" name="email" placeholder="Administrator email" required />
                 <input className="input" type="password" name="password" minLength={12} placeholder="Temporary strong password" required />
-                <select className="input" name="plan"><option value="starter">Starter</option><option value="business">Business</option><option value="enterprise">Enterprise</option></select>
+                <select className="input" name="plan"><option value="starter">Ithute Start — M185</option><option value="grow">Ithute Grow — M295</option><option value="business">Ithute Business — M495</option><option value="professional">Ithute Professional — M795</option><option value="enterprise">Ithute Enterprise — from M1,500</option></select>
                 <button className="btn-primary">Provision customer</button>
               </div>
             </form>
