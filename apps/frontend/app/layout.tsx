@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { BackgroundRefresh } from "@/components/background-refresh";
 import { CommandPalette } from "@/components/command-palette";
 import { FormEnhancer } from "@/components/form-enhancer";
+import { HostingDocsRedirect } from "@/components/hosting-docs-redirect";
 import { NavigationMemory } from "@/components/navigation-memory";
 import { ToastProvider } from "@/components/toast-provider";
 import "./globals.css";
@@ -26,6 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ToastProvider>
           <FormEnhancer />
+          <HostingDocsRedirect />
           <NavigationMemory />
           <CommandPalette />
           <BackgroundRefresh />
