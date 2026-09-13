@@ -211,7 +211,7 @@ jobs:
           }
 
           require_page 'Ithute home' 'https://ithute.co.ls/' 'One home for the systems that move organisations forward.'
-          require_page 'Pricing' 'https://ithute.co.ls/pricing' 'One package for the services your organization actually runs.'
+          require_page 'Pricing' 'https://ithute.co.ls/pricing' 'Your business online from'
           require_page 'Hosting rules' 'https://ithute.co.ls/hosting-docs' 'Rules for every system hosted on Ithute.'
           require_page 'Documentation' 'https://ithute.co.ls/docs' 'Public configuration manual'
           require_page 'Login' 'https://ithute.co.ls/login' 'Sign in with Ithute'
