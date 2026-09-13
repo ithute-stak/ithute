@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
-import { Boxes, BookOpen, PackageOpen, Server } from "lucide-react";
+import { Boxes, BookOpen, PackageOpen, Rocket, Server } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
@@ -94,7 +94,7 @@ export default function HostingCompany() {
   }
 
   return (
-    <ControlShell title="Hosting company" subtitle="Application hosting, packages, resellers and white-label services" userEmail={email}>
+    <ControlShell title="Hosting company" subtitle="Application hosting, packages, deployments, resellers and white-label services" userEmail={email}>
       <div className="space-y-4">
         <section className="surface-card p-5">
           <p className="eyebrow-label">Ithute hosting business</p>
@@ -109,12 +109,18 @@ export default function HostingCompany() {
           </div>
         </section>
 
-        <section className="grid gap-3 md:grid-cols-3">
+        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <Link href="/hosting" className="surface-card group p-5 transition hover:-translate-y-0.5 hover:border-[#9dbbb0]">
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#edf4f1] text-[#285b55]"><Server size={18} /></span>
             <h2 className="mt-4 text-sm font-black">Application hosting</h2>
             <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">Allocate websites and simple systems under package-enforced storage, RAM, CPU and PID limits.</p>
             <p className="mt-3 text-xs font-black text-[#285b55]">Open hosted projects →</p>
+          </Link>
+          <Link href="/hosting-operations" className="surface-card group p-5 transition hover:-translate-y-0.5 hover:border-[#9dbbb0]">
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#edf4f1] text-[#285b55]"><Rocket size={18} /></span>
+            <h2 className="mt-4 text-sm font-black">Deployments & environment</h2>
+            <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">Queue immutable releases, protect project environment values, inspect health and roll back to a healthy release.</p>
+            <p className="mt-3 text-xs font-black text-[#285b55]">Open operations →</p>
           </Link>
           <Link href="/packages" className="surface-card group p-5 transition hover:-translate-y-0.5 hover:border-[#9dbbb0]">
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#edf4f1] text-[#285b55]"><PackageOpen size={18} /></span>
