@@ -7,6 +7,7 @@ import {
   Copy,
   Database,
   Download,
+  Pencil,
   Plus,
   RefreshCw,
   Server,
@@ -105,6 +106,7 @@ export default function DnsPage() {
   const [packageUnavailable, setPackageUnavailable] = useState("");
   const [busy, setBusy] = useState(false);
   const [showRecord, setShowRecord] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<Rrset | null>(null);
   const [type, setType] = useState<RecordType>("A");
   const [name, setName] = useState("@");
   const [ttl, setTtl] = useState(3600);
@@ -188,6 +190,8 @@ export default function DnsPage() {
     setNameservers([]);
     setPackageContext(null);
     setPackageUnavailable("");
+    setEditingRecord(null);
+    setShowRecord(false);
     if (tenantId && domainId) {
       void loadZone();
       void loadPackage();
@@ -279,6 +283,33 @@ export default function DnsPage() {
     }
   }
 
+  function beginAddRecord() {
+    setEditingRecord(null);
+    setType("A");
+    setName("@");
+    setTtl(3600);
+    setValue("");
+    setShowRecord(true);
+  }
+
+  function beginEditRecord(rrset: Rrset) {
+    if (["SOA", "NS"].includes(rrset.type)) return;
+    const fqdn = rrset.name.replace(/\.$/, "");
+    const apex = selectedDomain?.ascii_name.replace(/\.$/, "") || "";
+    setEditingRecord(rrset);
+    setType(rrset.type as RecordType);
+    setName(fqdn === apex ? "@" : fqdn);
+    setTtl(rrset.ttl);
+    setValue(rrset.records.map((record) => record.content).join("\n"));
+    setShowRecord(true);
+  }
+
+  function closeRecordEditor() {
+    if (busy) return;
+    setShowRecord(false);
+    setEditingRecord(null);
+  }
+
   const owner = selectedDomain?.ascii_name || "";
   const ownerFqdn = name === "@" ? owner : name.endsWith(owner) ? name : `${name}.${owner}`;
   const conflicts = useMemo(() => {
@@ -307,12 +338,15 @@ export default function DnsPage() {
         body: JSON.stringify({ name, type, ttl, contents }),
       });
       if (!response.ok) throw new Error(await detail(response, "Unable to save DNS record"));
-      setToast(verified ? "DNS record set saved." : "DNS record staged. It will become public only after registrar delegation.");
+      const action = editingRecord ? "updated" : (verified ? "saved" : "staged");
+      setToast(editingRecord ? `DNS record set ${editingRecord.type} ${editingRecord.name} updated.` : verified ? "DNS record set saved." : "DNS record staged. It will become public only after registrar delegation.");
       setShowRecord(false);
+      setEditingRecord(null);
       setName("@");
       setType("A");
       setTtl(3600);
       setValue("");
+      void action;
       await loadZone();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to save DNS record");
@@ -492,14 +526,14 @@ export default function DnsPage() {
           <div className="space-y-4">
             <section className="surface-card p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div><p className="text-sm font-black">DNS record sets</p><p className="text-[10px] text-[var(--admin-muted)]">SOA and NS are protected. Pending-domain records are staged until registrar delegation.</p></div>
+                <div><p className="text-sm font-black">DNS record sets</p><p className="text-[10px] text-[var(--admin-muted)]">SOA and NS are protected. Other record sets can be edited or deleted.</p></div>
                 <div className="flex flex-wrap gap-2">
                   {zone && canManage && packageInfo ? <button className="btn-secondary" disabled={busy} onClick={() => void autoGenerateRecords()}><Database size={14}/>Auto-generate records</button> : null}
-                  {zone && canManage ? <button className="btn-primary" onClick={() => setShowRecord(true)}><Plus size={14}/>Add record</button> : null}
+                  {zone && canManage ? <button className="btn-primary" onClick={beginAddRecord}><Plus size={14}/>Add record</button> : null}
                 </div>
               </div>
-              {!zone ? <div className="mt-4 rounded-xl border border-dashed border-[var(--admin-line)] bg-[var(--admin-soft)] p-5 text-center text-[11px] text-[var(--admin-muted)]">Click <b>Prepare zone</b> first. After that you can auto-generate, add or import records before verification.</div> : <div className="table-wrap mt-4"><table><thead><tr><th>Name</th><th>Type</th><th>TTL</th><th>Values</th><th/></tr></thead><tbody>
-                {rrsets.map((rrset) => <tr key={`${rrset.name}-${rrset.type}`}><td><code className="text-[10px]">{rrset.name}</code></td><td><StatusBadge state="neutral">{rrset.type}</StatusBadge></td><td className="text-[10px]">{rrset.ttl}</td><td>{rrset.records.map((record, index) => <code key={index} className="block max-w-[460px] overflow-x-auto text-[10px]">{record.content}</code>)}</td><td>{canManage && !["SOA", "NS"].includes(rrset.type) ? <button className="icon-button text-red-700" onClick={() => { setPendingDelete(rrset); setConfirmText(""); }} aria-label={`Delete ${rrset.type} ${rrset.name}`}><Trash2 size={13}/></button> : null}</td></tr>)}
+              {!zone ? <div className="mt-4 rounded-xl border border-dashed border-[var(--admin-line)] bg-[var(--admin-soft)] p-5 text-center text-[11px] text-[var(--admin-muted)]">Click <b>Prepare zone</b> first. After that you can auto-generate, add or import records before verification.</div> : <div className="table-wrap mt-4"><table><thead><tr><th>Name</th><th>Type</th><th>TTL</th><th>Values</th><th>Actions</th></tr></thead><tbody>
+                {rrsets.map((rrset) => <tr key={`${rrset.name}-${rrset.type}`}><td><code className="text-[10px]">{rrset.name}</code></td><td><StatusBadge state="neutral">{rrset.type}</StatusBadge></td><td className="text-[10px]">{rrset.ttl}</td><td>{rrset.records.map((record, index) => <code key={index} className="block max-w-[460px] overflow-x-auto text-[10px]">{record.content}</code>)}</td><td>{canManage && !["SOA", "NS"].includes(rrset.type) ? <div className="flex items-center gap-1"><button className="icon-button" type="button" onClick={() => beginEditRecord(rrset)} aria-label={`Edit ${rrset.type} ${rrset.name}`} title="Edit record"><Pencil size={13}/></button><button className="icon-button text-red-700" type="button" onClick={() => { setPendingDelete(rrset); setConfirmText(""); }} aria-label={`Delete ${rrset.type} ${rrset.name}`} title="Delete record"><Trash2 size={13}/></button></div> : null}</td></tr>)}
                 {!rrsets.length ? <tr><td colSpan={5} className="py-8 text-center text-[var(--admin-muted)]">No records yet. Auto-generate package defaults or add the first record set before registrar cutover.</td></tr> : null}
               </tbody></table></div>}
             </section>
@@ -514,17 +548,17 @@ export default function DnsPage() {
         </section> : null}
       </div>
 
-      {showRecord ? <div className="fixed inset-0 z-[70] grid place-items-center bg-black/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setShowRecord(false); }}>
+      {showRecord ? <div className="fixed inset-0 z-[70] grid place-items-center bg-black/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closeRecordEditor(); }}>
         <form onSubmit={saveRecord} className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="record-title">
-          <div className="flex items-start justify-between gap-4"><div><p id="record-title" className="text-lg font-black">Add DNS record set</p><p className="mt-1 text-[11px] text-[var(--admin-muted)]">{verified ? "This record will be written to the authoritative zone." : "This record is staged and will become public only after registrar delegation."}</p></div><button className="icon-button" type="button" onClick={() => setShowRecord(false)} aria-label="Close"><X size={15}/></button></div>
+          <div className="flex items-start justify-between gap-4"><div><p id="record-title" className="text-lg font-black">{editingRecord ? "Edit DNS record set" : "Add DNS record set"}</p><p className="mt-1 text-[11px] text-[var(--admin-muted)]">{editingRecord ? "Update the TTL or values for this record set. Name and type stay fixed so editing cannot accidentally create a second record." : verified ? "This record will be written to the authoritative zone." : "This record is staged and will become public only after registrar delegation."}</p></div><button className="icon-button" type="button" onClick={closeRecordEditor} aria-label="Close"><X size={15}/></button></div>
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            <label><span className="label">Record type</span><select className="input" value={type} onChange={(event) => setType(event.target.value as RecordType)}>{(["A", "AAAA", "CNAME", "MX", "TXT", "CAA", "SRV"] as RecordType[]).map((recordType) => <option key={recordType}>{recordType}</option>)}</select></label>
-            <label><span className="label">Name</span><input className="input font-mono" value={name} onChange={(event) => setName(event.target.value)} placeholder="@"/></label>
+            <label><span className="label">Record type</span><select className="input" value={type} disabled={Boolean(editingRecord)} onChange={(event) => setType(event.target.value as RecordType)}>{(["A", "AAAA", "CNAME", "MX", "TXT", "CAA", "SRV"] as RecordType[]).map((recordType) => <option key={recordType}>{recordType}</option>)}</select></label>
+            <label><span className="label">Name</span><input className="input font-mono" value={name} disabled={Boolean(editingRecord)} onChange={(event) => setName(event.target.value)} placeholder="@"/></label>
             <label><span className="label">TTL</span><input className="input" type="number" min={60} max={86400} value={ttl} onChange={(event) => setTtl(Number(event.target.value))}/></label>
             <div className="sm:col-span-2"><span className="label">Value{type === "TXT" ? " / text" : ""}</span><textarea className="input min-h-28 font-mono text-[11px]" value={value} onChange={(event) => setValue(event.target.value)} placeholder={help(type)}/><p className="helper">{help(type)} One value per line when the record set contains multiple values.</p></div>
           </div>
           {conflicts.length ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[10px] font-semibold text-amber-900">{conflicts.map((problem) => <div key={problem}>• {problem}</div>)}</div> : null}
-          <div className="mt-5 flex justify-end gap-2"><button type="button" className="btn-secondary" disabled={busy} onClick={() => setShowRecord(false)}>Cancel</button><button type="submit" className="btn-primary" disabled={busy || !value.trim() || conflicts.length > 0}><Plus size={14}/>{verified ? "Save record" : "Stage record"}</button></div>
+          <div className="mt-5 flex justify-end gap-2"><button type="button" className="btn-secondary" disabled={busy} onClick={closeRecordEditor}>Cancel</button><button type="submit" className="btn-primary" disabled={busy || !value.trim() || conflicts.length > 0}>{editingRecord ? <Pencil size={14}/> : <Plus size={14}/>} {editingRecord ? "Save changes" : verified ? "Save record" : "Stage record"}</button></div>
         </form>
       </div> : null}
 
