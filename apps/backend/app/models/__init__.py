@@ -24,6 +24,7 @@ from app.models.billing import (
     TenantSubscription,
     UsageSnapshot,
 )
+from app.models.hosting import HOSTING_RULES_VERSION, HostingNode, HostingProject
 from app.models.business import (
     CustomerProfile,
     Notification,
@@ -89,11 +90,11 @@ __all__ = [
     "DomainDnsMode", "DomainEvent", "DomainStatus", "DomainVerificationAttempt", "Mailbox",
     "MailboxStatus", "MailAlias", "DistributionGroup", "DistributionGroupMember", "DkimKey",
     "BillingPlan", "TenantSubscription", "UsageSnapshot", "BillingInvoice", "BillingPaymentEvent",
-    "SubscriptionStatus", "InvoiceStatus", "CustomerProfile", "Notification", "ServiceIncident",
-    "ServiceIncidentImpact", "ServiceIncidentStatus", "SupportTicket", "SupportTicketMessage",
-    "SupportTicketPriority", "SupportTicketStatus", "DomainOrder", "EmailVerificationToken",
-    "GroupwareCredential", "MailMigrationJob", "MailNode", "MailboxDelegate", "MailboxPolicy",
-    "MailboxRecoveryJob", "ReputationSnapshot", "ResellerAccount", "ResellerCustomer",
+    "SubscriptionStatus", "InvoiceStatus", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject",
+    "CustomerProfile", "Notification", "ServiceIncident", "ServiceIncidentImpact", "ServiceIncidentStatus",
+    "SupportTicket", "SupportTicketMessage", "SupportTicketPriority", "SupportTicketStatus", "DomainOrder",
+    "EmailVerificationToken", "GroupwareCredential", "MailMigrationJob", "MailNode", "MailboxDelegate",
+    "MailboxPolicy", "MailboxRecoveryJob", "ReputationSnapshot", "ResellerAccount", "ResellerCustomer",
     "SmtpCredential", "TransactionalMessage", "WhiteLabelBrand", "PlatformConfiguration",
     "EdgeApplication", "EdgeOrigin", "EdgeRule", "EdgeInspection", "DnsZoneAnalyticsSnapshot",
     "IthuteProduct", "IthuteProductHeartbeat", "IthutePlatformEvent", "IthutePlatformNotification",
