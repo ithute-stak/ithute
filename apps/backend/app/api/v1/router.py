@@ -35,6 +35,7 @@ from app.api.v1 import (
     plan_admin,
     platform_setup,
     professional_email,
+    public_hosting,
     tenants,
     transactional,
     webmail,
@@ -74,6 +75,7 @@ api_router.include_router(payments.router)
 api_router.include_router(business.router)
 api_router.include_router(hosting.router)
 api_router.include_router(application_hosting.router)
+api_router.include_router(public_hosting.router)
 api_router.include_router(platform_setup.router)
 api_router.include_router(transactional.router)
 api_router.include_router(webmail.router)
