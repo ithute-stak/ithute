@@ -29,7 +29,7 @@ from app.schemas.domains import (
     DomainVerifyResponse,
 )
 from app.services.billing import require_entitlement
-from app.services.domain_discovery import inspect_existing_records, inspect_nameservers
+from app.services.domain_discovery import platform_nameservers_ready
 from app.services.domains import (
     add_domain_event,
     new_verification_token,
@@ -127,31 +127,19 @@ def _verification_method_for_new_domain(ascii_name: str, dns_mode: DomainDnsMode
     if dns_mode == DomainDnsMode.external:
         return DomainVerificationMethod.txt
 
+    # Managed authoritative DNS follows the Cloudflare-style full-zone model:
+    # stage the zone first, then prove control by changing the registrar/registry
+    # delegation to BOTH Ithute nameservers. Existing DNS records change the
+    # migration plan, not the ownership mechanism, so no TXT challenge is needed.
     platform_nameservers = [settings.nameserver_1, settings.nameserver_2]
-    discovery = inspect_nameservers(ascii_name, platform_nameservers)
-    if not discovery["platform_nameservers_configured"]:
-        return DomainVerificationMethod.txt
-
-    if discovery["lookup_status"] in {"timeout", "resolver_error"}:
+    if not platform_nameservers_ready(platform_nameservers):
         raise HTTPException(
             status_code=503,
-            detail="Unable to classify the domain's current DNS delegation reliably. Retry the domain check before adding it.",
+            detail=(
+                "Managed DNS onboarding is unavailable because the public Ithute nameservers are not configured. "
+                "No TXT fallback is used for managed DNS."
+            ),
         )
-
-    if discovery["already_on_platform_nameservers"]:
-        return DomainVerificationMethod.nameserver
-
-    has_external_nameservers = bool(
-        discovery["lookup_status"] == "found" and discovery["current_nameservers"]
-    )
-    records = inspect_existing_records(ascii_name)
-    if has_external_nameservers and records["record_lookup_status"] == "resolver_error":
-        raise HTTPException(
-            status_code=503,
-            detail="Unable to inspect the domain's existing DNS records reliably. Retry before onboarding so a live DNS migration is not mistaken for a new registration.",
-        )
-    if has_external_nameservers and records["has_existing_dns_records"]:
-        return DomainVerificationMethod.txt
     return DomainVerificationMethod.nameserver
 
 
@@ -173,9 +161,9 @@ def create_domain(tenant_id: UUID, payload: DomainCreate, db: Session = Depends(
             raise HTTPException(status_code=409, detail="Domain already exists in this organization")
         raise HTTPException(status_code=409, detail="Domain is already claimed by another organization")
 
-    # Re-run live classification on the server at creation time. The browser's
-    # inspection result is advisory UI only and cannot downgrade an existing DNS
-    # migration from TXT proof to nameserver proof.
+    # Recompute the ownership policy on the server at creation time. Browser
+    # inspection is advisory only. Managed PowerDNS always uses NS delegation;
+    # External DNS keeps TXT because Ithute will not become authoritative there.
     verification_method = _verification_method_for_new_domain(ascii_name, payload.dns_mode)
 
     token = new_verification_token()
@@ -243,8 +231,14 @@ def update_domain(tenant_id: UUID, domain_id: UUID, payload: DomainUpdate, db: S
     changes = payload.model_dump(exclude_unset=True)
     for field, value in changes.items():
         setattr(domain, field, value)
-    if domain.ownership_verified_at is None and domain.dns_mode == DomainDnsMode.external:
-        domain.verification_method = DomainVerificationMethod.txt.value
+    if domain.ownership_verified_at is None:
+        if domain.dns_mode == DomainDnsMode.external:
+            domain.verification_method = DomainVerificationMethod.txt.value
+        elif domain.dns_mode == DomainDnsMode.platform:
+            if not platform_nameservers_ready([settings.nameserver_1, settings.nameserver_2]):
+                raise HTTPException(status_code=503, detail="Managed DNS onboarding is unavailable because the public Ithute nameservers are not configured")
+            domain.verification_method = DomainVerificationMethod.nameserver.value
+            domain.verification_token_hint = "not-needed"
     add_domain_event(db, domain, current.id, "domain.updated", changes)
     _audit(db, tenant_id, current, "domain.update", domain, changes)
     db.commit()
