@@ -29,6 +29,7 @@ router = APIRouter(tags=["hosting-operations"])
 _ENV_KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]{0,127}$")
 _DIGEST_REF_RE = re.compile(r"^.+@sha256:([0-9a-f]{64})$")
 _COMMIT_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
+_APPROVED_IMAGE_PREFIX = "ghcr.io/ithute-stak/hosted-"
 ACTIVE_DEPLOYMENT_STATUSES = {"queued", "claimed", "running"}
 
 
@@ -116,6 +117,11 @@ def _validate_image_ref(value: str) -> tuple[str, str]:
         raise HTTPException(
             status_code=422,
             detail="Deployments require an immutable image reference ending in @sha256:<64 hex characters>",
+        )
+    if not image_ref.lower().startswith(_APPROVED_IMAGE_PREFIX):
+        raise HTTPException(
+            status_code=422,
+            detail="Deployments require an image from the approved Ithute hosting namespace",
         )
     return image_ref, f"sha256:{match.group(1)}"
 
@@ -548,10 +554,21 @@ def report_deployment_status(
     )
     if deployment is None:
         raise HTTPException(status_code=404, detail="Deployment not found for this hosting node")
-    project = db.get(HostingProject, deployment.project_id)
+    project = db.scalar(select(HostingProject).where(HostingProject.id == deployment.project_id).with_for_update())
     if project is None:
         raise HTTPException(status_code=404, detail="Hosted project not found")
     now = _now()
+
+    if project.status == "suspended":
+        if deployment.status in {"claimed", "running"}:
+            deployment.status = "failed"
+            deployment.completed_at = now
+            deployment.failure_message = "Project was suspended before deployment completed"
+            db.commit()
+            db.refresh(deployment)
+        if payload.status == "failed":
+            return _deployment_out(deployment)
+        raise HTTPException(status_code=409, detail="Suspended project cannot accept deployment promotion")
 
     if payload.status == "running":
         if deployment.status not in {"claimed", "running"}:

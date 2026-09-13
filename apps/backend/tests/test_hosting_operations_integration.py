@@ -1,7 +1,9 @@
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import delete
 
+from app.core.security import hash_token
 from app.models import (
     BillingPlan,
     HostingDeployment,
@@ -126,6 +128,13 @@ def test_release_environment_agent_and_safe_rollback(client, db, tenant_admin, p
     )
     assert mutable.status_code == 422
 
+    foreign = client.post(
+        f"/api/v1/tenants/{tenant.id}/hosting/projects/{project_id}/deployments",
+        headers=tenant_headers,
+        json={"image_ref": "ghcr.io/example/runtime@sha256:" + "b" * 64},
+    )
+    assert foreign.status_code == 422
+
     image_ref = "ghcr.io/ithute-stak/hosted-runtime@sha256:" + "a" * 64
     queued = client.post(
         f"/api/v1/tenants/{tenant.id}/hosting/projects/{project_id}/deployments",
@@ -231,4 +240,98 @@ def test_release_environment_agent_and_safe_rollback(client, db, tenant_admin, p
     db.execute(delete(HostingNode).where(HostingNode.id == node_id))
     db.execute(delete(TenantSubscription).where(TenantSubscription.tenant_id == tenant.id))
     db.execute(delete(BillingPlan).where(BillingPlan.id == plan.id))
+    db.commit()
+
+
+def test_suspended_project_rejects_late_promotion(client, db, tenant_admin, platform_owner):
+    user, tenant, _ = tenant_admin
+    now = datetime.now(timezone.utc)
+    token = "ith_host_" + uuid.uuid4().hex
+
+    node = HostingNode(
+        name=f"suspend-node-{uuid.uuid4().hex[:8]}",
+        hostname=f"suspend-{uuid.uuid4().hex[:8]}.example.com",
+        allocatable_storage_mb=4096,
+        allocatable_memory_mb=2048,
+        allocatable_cpu_millicores=2000,
+        created_by_user_id=platform_owner.id,
+    )
+    db.add(node)
+    db.flush()
+
+    project = HostingProject(
+        tenant_id=tenant.id,
+        node_id=node.id,
+        name="Suspended Runtime",
+        slug=f"suspended-{uuid.uuid4().hex[:10]}",
+        runtime="python",
+        source_branch="main",
+        container_port=8080,
+        health_path="/health",
+        storage_mb=1024,
+        memory_mb=512,
+        cpu_millicores=500,
+        pid_limit=128,
+        status="suspended",
+        rules_accepted_at=now,
+        rules_accepted_by_user_id=user.id,
+        created_by_user_id=user.id,
+    )
+    db.add(project)
+    db.flush()
+
+    db.add(
+        HostingNodeAgent(
+            node_id=node.id,
+            token_hash=hash_token(token),
+            token_hint=token[:18],
+            rotated_at=now,
+            rotated_by_user_id=platform_owner.id,
+        )
+    )
+    image_ref = "ghcr.io/ithute-stak/hosted-suspended@sha256:" + "d" * 64
+    deployment = HostingDeployment(
+        tenant_id=tenant.id,
+        project_id=project.id,
+        node_id=node.id,
+        release_number=1,
+        image_ref=image_ref,
+        image_digest="sha256:" + "d" * 64,
+        status="running",
+        requested_by_user_id=user.id,
+        claimed_at=now,
+        started_at=now,
+    )
+    db.add(deployment)
+    db.commit()
+    db.refresh(deployment)
+
+    agent_headers = {"X-Ithute-Hosting-Agent": token}
+    late_healthy = client.post(
+        f"/api/v1/hosting/agent/deployments/{deployment.id}/status",
+        headers=agent_headers,
+        json={"status": "healthy", "message": "late health response"},
+    )
+    assert late_healthy.status_code == 409, late_healthy.text
+
+    db.refresh(project)
+    db.refresh(deployment)
+    assert project.status == "suspended"
+    assert project.image_ref is None
+    assert deployment.status == "failed"
+    assert deployment.failure_message == "Project was suspended before deployment completed"
+
+    restored_failure = client.post(
+        f"/api/v1/hosting/agent/deployments/{deployment.id}/status",
+        headers=agent_headers,
+        json={"status": "failed", "message": "previous runtime restored"},
+    )
+    assert restored_failure.status_code == 200, restored_failure.text
+    db.refresh(project)
+    assert project.status == "suspended"
+
+    db.execute(delete(HostingDeployment).where(HostingDeployment.project_id == project.id))
+    db.execute(delete(HostingProject).where(HostingProject.id == project.id))
+    db.execute(delete(HostingNodeAgent).where(HostingNodeAgent.node_id == node.id))
+    db.execute(delete(HostingNode).where(HostingNode.id == node.id))
     db.commit()
