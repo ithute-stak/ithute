@@ -68,15 +68,13 @@ def test_desired_records_follow_package_mail_entitlement(monkeypatch):
     purposes = {row["purpose"] for row in records}
 
     assert purposes == {
-        "platform-web",
-        "www-alias",
         "mail-routing",
         "spf",
         "dmarc",
         "imap-discovery",
         "smtp-discovery",
     }
-    assert next(row for row in records if row["purpose"] == "platform-web")["values"] == ["204.12.205.224"]
+    assert all(row["type"] not in {"A", "AAAA", "CNAME"} for row in records)
     assert next(row for row in records if row["purpose"] == "mail-routing")["values"] == ["10 mail.ithute.co.ls."]
     assert next(row for row in records if row["purpose"] == "imap-discovery")["values"] == ["0 1 993 mail.ithute.co.ls."]
     assert next(row for row in records if row["purpose"] == "smtp-discovery")["values"] == ["0 1 587 mail.ithute.co.ls."]
@@ -96,19 +94,19 @@ def test_outlook_autodiscover_uses_configured_api_hostname(monkeypatch):
     assert autodiscover["values"] == ["0 0 443 api.ithute.co.ls."]
 
 
-def test_package_without_mailboxes_omits_mail_defaults(monkeypatch):
+def test_package_without_mailboxes_does_not_synthesize_web_records(monkeypatch):
     monkeypatch.setenv("API_HOSTNAME", "api.ithute.co.ls")
     monkeypatch.setattr(dns_defaults.settings, "bootstrap_public_ip", "204.12.205.224")
     plan = SimpleNamespace(included_mailboxes=0)
 
     records = dns_defaults.desired_package_records(domain(mail_enabled=True), plan)
 
-    assert {row["purpose"] for row in records} == {"platform-web", "www-alias"}
+    assert records == []
 
 
 def test_auto_generate_is_missing_only_and_preserves_txt(monkeypatch):
     wanted = [
-        {"name": "example.co.ls", "type": "A", "values": ["204.12.205.224"], "purpose": "platform-web"},
+        {"name": "example.co.ls", "type": "A", "values": ["204.12.205.224"], "purpose": "explicit-web"},
         {"name": "example.co.ls", "type": "TXT", "values": ["v=spf1 mx -all"], "purpose": "spf"},
         {"name": "_dmarc.example.co.ls", "type": "TXT", "values": ["v=DMARC1; p=quarantine"], "purpose": "dmarc"},
     ]
@@ -122,7 +120,7 @@ def test_auto_generate_is_missing_only_and_preserves_txt(monkeypatch):
 
     result = dns_defaults.apply_package_dns_defaults(SimpleNamespace(), domain(), client=client)
 
-    assert any(row["purpose"] == "platform-web" and row["reason"] == "existing_rrset" for row in result["skipped"])
+    assert any(row["purpose"] == "explicit-web" and row["reason"] == "existing_rrset" for row in result["skipped"])
     spf_write = next(row for row in client.replaced if row[2] == "TXT" and row[1] == "example.co.ls")
     assert '"google-site-verification=abc"' in spf_write[4]
     assert '"v=spf1 mx -all"' in spf_write[4]
@@ -153,7 +151,7 @@ def test_auto_generate_second_run_is_idempotent(monkeypatch):
 
 def test_auto_generate_leaves_cname_conflict_untouched(monkeypatch):
     wanted = [
-        {"name": "www.example.co.ls", "type": "CNAME", "values": ["example.co.ls."], "purpose": "www-alias"},
+        {"name": "www.example.co.ls", "type": "CNAME", "values": ["example.co.ls."], "purpose": "explicit-www"},
     ]
     monkeypatch.setattr(dns_defaults, "package_dns_profile", lambda _db, _domain: profile(wanted))
     client = FakePowerDNS(
