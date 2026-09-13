@@ -15,7 +15,7 @@ permissions:
 jobs:
   finalize:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     environment: production
     env:
       VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -24,6 +24,8 @@ jobs:
       VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
       VPS_APP_DIR: /home/administrator/ithute-platform
       VPS_MAIL_DIR: /home/administrator/ithute-platform-mail
+      MAILSERVER_IMAGE: ghcr.io/docker-mailserver/docker-mailserver:15.1.0
+      CERTBOT_IMAGE: certbot/certbot:v5.8.0
 
     steps:
       - name: Checkout mail configuration on GitHub runner
@@ -63,16 +65,41 @@ jobs:
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
+      - name: Check whether mail is already finalized
+        id: mail_state
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          if ssh "$remote" "test -f '$VPS_MAIL_DIR/.ithute-mail-finalized' && test \"\$(docker inspect --format '{{.State.Health.Status}}' ithute-mail 2>/dev/null)\" = healthy"; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+            echo 'Mail is already finalized and healthy; image transfer and provisioning are skipped.'
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare immutable mail images on GitHub runner
+        if: steps.mail_state.outputs.ready != 'true'
+        run: |
+          set -euo pipefail
+          docker pull "$MAILSERVER_IMAGE"
+          docker pull "$CERTBOT_IMAGE"
+          docker image inspect "$MAILSERVER_IMAGE" >/dev/null
+          docker image inspect "$CERTBOT_IMAGE" >/dev/null
+          docker save "$MAILSERVER_IMAGE" "$CERTBOT_IMAGE" | gzip -1 > /tmp/ithute-mail-images.tar.gz
+          sha256sum /tmp/ithute-mail-images.tar.gz > /tmp/ithute-mail-images.sha256
+
       - name: Package mail runtime files
+        if: steps.mail_state.outputs.ready != 'true'
         run: |
           set -euo pipefail
           tar -czf /tmp/ithute-mail-runtime.tgz mail scripts/bootstrap-mail.sh
 
       - name: Finalize mail automatically when DNS is ready
+        if: steps.mail_state.outputs.ready != 'true'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          scp /tmp/ithute-mail-runtime.tgz "$remote:/tmp/ithute-mail-runtime.tgz"
+          scp /tmp/ithute-mail-runtime.tgz /tmp/ithute-mail-images.tar.gz /tmp/ithute-mail-images.sha256 "$remote:/tmp/"
           ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' VPS_MAIL_DIR='$VPS_MAIL_DIR' bash -s" <<'REMOTE'
           set -uo pipefail
           if [ ! -f "$VPS_APP_DIR/.ithute-bootstrapped" ]; then
@@ -82,11 +109,15 @@ jobs:
 
           tmpdir="$(mktemp -d /tmp/ithute-mail-runtime.XXXXXX)"
           cleanup() {
-            rm -f /tmp/ithute-mail-runtime.tgz
+            rm -f /tmp/ithute-mail-runtime.tgz /tmp/ithute-mail-images.tar.gz /tmp/ithute-mail-images.sha256
             rm -rf "$tmpdir"
           }
           trap cleanup EXIT
-          tar -xzf /tmp/ithute-mail-runtime.tgz -C "$tmpdir"
+
+          cd /tmp
+          sha256sum -c ithute-mail-images.sha256
+          gzip -dc ithute-mail-images.tar.gz | docker load
+          tar -xzf ithute-mail-runtime.tgz -C "$tmpdir"
 
           set +e
           ITHUTE_APP_DIR="$VPS_APP_DIR" \
@@ -108,11 +139,23 @@ jobs:
           remote="${VPS_USER}@${VPS_HOST}"
           ssh "$remote" "VPS_MAIL_DIR='$VPS_MAIL_DIR' bash -s" <<'REMOTE'
           set -euo pipefail
-          if [ ! -f "$VPS_MAIL_DIR/mailbox-credentials.txt" ]; then
-            echo 'Mail is waiting for public DNS; no VPS action is required.'
+          if [ ! -f "$VPS_MAIL_DIR/.ithute-mail-finalized" ]; then
+            echo 'Mail is waiting for public DNS or first-time provisioning; scheduled finalization will retry.'
             exit 0
           fi
+          test -f "$VPS_MAIL_DIR/mailbox-credentials.txt"
           test -f "$VPS_MAIL_DIR/mail-dns-required.txt"
           docker compose -p ithute-mail -f "$VPS_MAIL_DIR/compose.yml" ps
-          docker inspect --format '{{.State.Health.Status}}' ithute-mail | grep -Eq 'healthy|starting'
+          for attempt in $(seq 1 30); do
+            health="$(docker inspect --format '{{.State.Health.Status}}' ithute-mail 2>/dev/null || true)"
+            if [ "$health" = healthy ]; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker compose -p ithute-mail -f "$VPS_MAIL_DIR/compose.yml" logs --tail=150 >&2 || true
+              echo "Mail container did not become healthy; last health state: ${health:-missing}" >&2
+              exit 1
+            fi
+            sleep 2
+          done
           REMOTE
