@@ -1,0 +1,18 @@
+/* IDS visual identity bridge for legacy public brand slots. */
+a[aria-label="!thute home"] > div:first-child,
+footer a[href="/"] > div:first-child {
+  background-color: #ffffff !important;
+  background-image: url('/brand/ids-mark.svg') !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  background-size: 92% 92% !important;
+  color: transparent !important;
+  overflow: hidden;
+}
+
+/* Keep the IDS mark crisp in compact navigation and high-DPI browsers. */
+.ids-brand-mark {
+  background: #ffffff;
+  border-radius: 0.75rem;
+  box-shadow: 0 6px 18px rgba(6, 47, 104, 0.14);
+}
