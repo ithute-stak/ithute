@@ -9,15 +9,18 @@ import "./globals.css";
 import "./forms.css";
 import "./platform-ux.css";
 import "./control-polish.css";
+import "./brand.css";
 
 export const metadata: Metadata = {
-  title: { default: "Ithute Hosting · Applications, Email & DNS", template: "%s · Ithute Hosting" },
-  description: "Multi-tenant managed application hosting, professional email and authoritative DNS control plane.",
-  applicationName: "Ithute Hosting",
-  keywords: ["application hosting", "website hosting", "DNS hosting", "mail hosting", "PowerDNS", "Ithute"],
+  title: { default: "Ithute Digital Solutions · Applications, Email & DNS", template: "%s · Ithute Digital Solutions" },
+  description: "Ithute Digital Solutions platform for managed applications, professional email, authoritative DNS and connected business systems.",
+  applicationName: "Ithute Digital Solutions",
+  keywords: ["Ithute Digital Solutions", "IDS", "application hosting", "website hosting", "DNS hosting", "mail hosting", "PowerDNS", "Ithute"],
   robots: { index: false, follow: false },
   icons: {
-    icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23123a38'/%3E%3Ctext x='32' y='41' font-size='25' text-anchor='middle' fill='%23d8c56a' font-family='Arial' font-weight='700'%3E!I%3C/text%3E%3C/svg%3E",
+    icon: [{ url: "/brand/ids-mark.svg", type: "image/svg+xml" }],
+    shortcut: "/brand/ids-mark.svg",
+    apple: "/brand/ids-mark.svg",
   },
 };
 
