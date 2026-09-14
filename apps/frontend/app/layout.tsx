@@ -9,6 +9,7 @@ import "./globals.css";
 import "./forms.css";
 import "./platform-ux.css";
 import "./control-polish.css";
+import "./brand.css";
 
 export const metadata: Metadata = {
   title: { default: "Ithute Digital Solutions · Applications, Email & DNS", template: "%s · Ithute Digital Solutions" },
