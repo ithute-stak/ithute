@@ -4,6 +4,7 @@ import { CommandPalette } from "@/components/command-palette";
 import { FormEnhancer } from "@/components/form-enhancer";
 import { HostingDocsRedirect } from "@/components/hosting-docs-redirect";
 import { NavigationMemory } from "@/components/navigation-memory";
+import { PublicOwnerNavigation } from "@/components/public-owner-navigation";
 import { ToastProvider } from "@/components/toast-provider";
 import "./globals.css";
 import "./forms.css";
@@ -34,6 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <NavigationMemory />
           <CommandPalette />
           <BackgroundRefresh />
+          <PublicOwnerNavigation />
           {children}
         </ToastProvider>
       </body>
