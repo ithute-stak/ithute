@@ -31,6 +31,7 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { apiJson, PLATFORM_API_URL } from "@/lib/platform-api";
 import { useStablePopover } from "@/components/stable-popover";
+import { IdsMark } from "@/components/ids-brand";
 
 const SIDEBAR_KEY = "ithute:sidebar:collapsed";
 
@@ -94,7 +95,7 @@ const navigation: NavGroup[] = [
     label: "Governance & control",
     icon: ShieldCheck,
     children: [
-      { label: "!thute Auth & Push", href: "/ithute-platform", icon: ShieldCheck },
+      { label: "IDS Auth & Push", href: "/ithute-platform", icon: ShieldCheck },
       { label: "Security", href: "/security", icon: ShieldCheck },
       { label: "API access", href: "/api-access", icon: KeyRound },
       { label: "Audit & activity", href: "/audit", icon: Activity },
@@ -290,12 +291,12 @@ export function ControlShell({
 
   const initials = useMemo(
     () =>
-      (resolvedEmail || "MD")
+      (resolvedEmail || "IDS")
         .split("@")[0]
         .split(/[._-]/)
         .slice(0, 2)
         .map((part) => part[0]?.toUpperCase())
-        .join("") || "MD",
+        .join("") || "ID",
     [resolvedEmail],
   );
 
@@ -308,12 +309,12 @@ export function ControlShell({
   const side = (
     <div className="control-shell-sidebar flex h-full flex-col bg-[linear-gradient(180deg,#123a38_0%,#103532_58%,#0c2d2b_100%)] text-white">
       <div className={`border-b border-white/[.09] py-4 ${collapsed ? "px-3" : "px-4"}`}>
-        <Link href="/dashboard" className={`flex items-center rounded-xl ${collapsed ? "justify-center" : "gap-3"}`} title="Mailbox DNS">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#d8c56a] text-sm font-black text-[#173c36] shadow-[0_6px_18px_rgba(0,0,0,.12)]">MD</div>
+        <Link href="/dashboard" className={`flex items-center rounded-xl ${collapsed ? "justify-center" : "gap-3"}`} title="Ithute Control Centre">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white p-1 shadow-[0_6px_18px_rgba(0,0,0,.16)]"><IdsMark className="h-10 w-10" /></span>
           {collapsed ? null : (
             <div>
-              <p className="text-[14px] font-black tracking-[-0.01em]">Mailbox DNS</p>
-              <p className="text-[9px] font-bold uppercase tracking-[.14em] text-[#8fa9a1]">!THUTE · Email · DNS · Hosting</p>
+              <p className="text-[14px] font-black tracking-[-0.01em]">Ithute Control Centre</p>
+              <p className="text-[9px] font-bold uppercase tracking-[.14em] text-[#8fa9a1]">IDS · Email · DNS · Hosting</p>
             </div>
           )}
         </Link>
@@ -385,7 +386,7 @@ export function ControlShell({
             </button>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className="hidden rounded-full border border-[#d9e7df] bg-[#f2f8f4] px-2 py-1 text-[8px] font-black uppercase tracking-[.13em] text-[#397164] sm:inline">!THUTE workspace</span>
+                <span className="hidden rounded-full border border-[#d9e7df] bg-[#f2f8f4] px-2 py-1 text-[8px] font-black uppercase tracking-[.13em] text-[#397164] sm:inline">IDS workspace</span>
                 <p className="truncate text-[13px] font-black tracking-[-0.01em] text-[#21342a]">{title}</p>
               </div>
               {subtitle ? <p className="mt-0.5 truncate text-[10px] text-[#819087]">{subtitle}</p> : null}
@@ -394,7 +395,7 @@ export function ControlShell({
             <button
               onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true }))}
               className="hidden min-h-9 items-center gap-2 rounded-xl border border-[#dce6e0] bg-[#f7faf8] px-3 text-[10px] font-bold text-[#718078] shadow-[0_1px_2px_rgba(23,50,38,.03)] transition hover:bg-white hover:text-[#285b55] md:flex"
-              title="Search Mailbox DNS"
+              title="Search Ithute Control Centre"
             >
               <Search size={14} />
               <span className="hidden xl:inline">Search</span>
@@ -449,9 +450,9 @@ export function ControlShell({
                 <div role="menu" className="ithute-dropdown-panel absolute right-0 top-12 z-[70] w-[min(88vw,290px)] p-2">
                   <div className="rounded-xl bg-[linear-gradient(135deg,#123a38,#285b55)] p-3 text-white">
                     <div className="flex items-center gap-3">
-                      <div className="grid h-10 w-10 place-items-center rounded-xl bg-[#d8c56a] text-[11px] font-black text-[#173c36]">{initials}</div>
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white p-1"><IdsMark className="h-9 w-9" /></span>
                       <div className="min-w-0">
-                        <p className="text-[11px] font-black">Platform account</p>
+                        <p className="text-[11px] font-black">Ithute Digital Solutions</p>
                         <p className="mt-0.5 truncate text-[9px] text-white/70">{resolvedEmail || "Authenticated user"}</p>
                       </div>
                     </div>
