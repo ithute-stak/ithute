@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { BackgroundRefresh } from "@/components/background-refresh";
+import { BrowserBrandSync } from "@/components/browser-brand-sync";
 import { CommandPalette } from "@/components/command-palette";
 import { FormEnhancer } from "@/components/form-enhancer";
 import { HostingDocsRedirect } from "@/components/hosting-docs-redirect";
@@ -19,9 +20,9 @@ export const metadata: Metadata = {
   keywords: ["Ithute Digital Solutions", "IDS", "application hosting", "website hosting", "DNS hosting", "mail hosting", "PowerDNS", "Ithute"],
   robots: { index: false, follow: false },
   icons: {
-    icon: [{ url: "/brand/ids-mark.svg", type: "image/svg+xml" }],
-    shortcut: "/brand/ids-mark.svg",
-    apple: "/brand/ids-mark.svg",
+    icon: [{ url: "/brand/ids-mark.svg?v=ids-20260914", type: "image/svg+xml" }],
+    shortcut: "/brand/ids-mark.svg?v=ids-20260914",
+    apple: "/brand/ids-mark.svg?v=ids-20260914",
   },
 };
 
@@ -30,6 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <ToastProvider>
+          <BrowserBrandSync />
           <FormEnhancer />
           <HostingDocsRedirect />
           <NavigationMemory />
