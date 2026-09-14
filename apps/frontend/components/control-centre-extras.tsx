@@ -24,7 +24,10 @@ export function ControlCentreExtras({ audit, loading }: { audit: ControlCentreAu
     <>
       <section className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]">
         <article className="rounded-[24px] border border-[#e1e8e4] bg-white p-5 shadow-sm sm:p-6">
-          <p className="text-[10px] font-black uppercase tracking-[.14em] text-[#718078]">IDS product access</p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[10px] font-black uppercase tracking-[.14em] text-[#718078]">IDS product access</p>
+            <Link href="/system-owner" className="inline-flex items-center gap-1.5 rounded-lg border border-[#d7e2dd] bg-[#f7faf8] px-2.5 py-1.5 text-[9px] font-black text-[#285b55]">System owner <ShieldCheck size={11} /></Link>
+          </div>
           <h2 className="mt-2 text-xl font-black tracking-[-.035em] text-[#20342a]">Standalone products remain independent.</h2>
           <p className="mt-2 max-w-2xl text-[11px] leading-5 text-[#718078]">Ithute provides the control and identity layer without moving LoanHub, Tutor, Pay or BuildTrack data into this platform. Product launch and SSO can be connected progressively without breaking repository or database boundaries.</p>
           <div className="mt-5 grid gap-3 sm:grid-cols-2">

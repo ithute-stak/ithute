@@ -1,12 +1,22 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Bell, ExternalLink, KeyRound, RefreshCw, ShieldCheck } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
 import { apiJson, apiMutation } from "@/lib/platform-api";
 
 type Me = { email?: string; full_name?: string; is_platform_owner?: boolean; mfa_enabled?: boolean };
-type App = { id: string; name: string; category: string; public_url?: string | null; status: string; license?: { plan: string; status: string; features: Record<string, unknown> } };
+type App = {
+  id: string;
+  name: string;
+  category: string;
+  public_url?: string | null;
+  launch_url?: string | null;
+  sso_mode?: string;
+  status: string;
+  license?: { plan: string; status: string; features: Record<string, unknown>; source?: string };
+};
 type Notice = { id: string; product_id: string; title: string; body: string; category: string; action_url?: string | null; read_at?: string | null; created_at: string };
 
 export default function IthuteAccountPage() {
@@ -21,7 +31,7 @@ export default function IthuteAccountPage() {
     try {
       const [account, applicationRows, notificationRows] = await Promise.all([
         apiJson<Me>("/auth/me", { ttlMs: 0, force: true }),
-        apiJson<App[]>("/platform/ithute/me/apps", { ttlMs: 0, force: true }),
+        apiJson<App[]>("/platform/ithute/access/my-apps", { ttlMs: 0, force: true }),
         apiJson<Notice[]>("/platform/ithute/me/notifications?limit=50", { ttlMs: 0, force: true }),
       ]);
       setMe(account); setApps(applicationRows); setNotices(notificationRows);
@@ -41,19 +51,24 @@ export default function IthuteAccountPage() {
   const unread = notices.filter(item => !item.read_at).length;
 
   return (
-    <ControlShell title="Ithute Account" subtitle="One identity, permitted applications and persistent notifications" userEmail={me?.email}>
+    <ControlShell title="Ithute Account" subtitle="One identity, organisation product access and persistent notifications" userEmail={me?.email}>
       <div className="space-y-5">
         <section className="surface-card p-5 sm:p-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div><p className="text-[9px] font-black uppercase tracking-[.14em] text-[var(--admin-muted)]">Central identity</p><h1 className="mt-2 text-2xl font-black">{me?.full_name || me?.email || "Ithute Account"}</h1><p className="mt-2 text-[11px] text-[var(--admin-muted)]">Applications are licensed centrally; each application still owns its own roles and business data.</p></div>
-            <div className="flex flex-wrap gap-2"><a href="https://auth.ithute.co.ls/account" target="_blank" rel="noreferrer" className="btn-primary"><KeyRound size={14} />Manage password, MFA & devices</a><button className="btn-secondary" disabled={loading} onClick={() => void load()}><RefreshCw size={14} className={loading ? "animate-spin" : ""} />Refresh</button></div>
+            <div><p className="text-[9px] font-black uppercase tracking-[.14em] text-[var(--admin-muted)]">Central identity</p><h1 className="mt-2 text-2xl font-black">{me?.full_name || me?.email || "Ithute Account"}</h1><p className="mt-2 text-[11px] text-[var(--admin-muted)]">Applications are licensed centrally to you or your organisation. Each application still owns its own roles, database and business records.</p></div>
+            <div className="flex flex-wrap gap-2">{me?.is_platform_owner ? <Link href="/system-owner" className="btn-secondary"><ShieldCheck size={14} />System owner</Link> : null}<a href="https://auth.ithute.co.ls/account" target="_blank" rel="noreferrer" className="btn-primary"><KeyRound size={14} />Manage password, MFA & devices</a><button className="btn-secondary" disabled={loading} onClick={() => void load()}><RefreshCw size={14} className={loading ? "animate-spin" : ""} />Refresh</button></div>
           </div>
           {error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-[10px] font-bold text-red-700">{error}</div> : null}
         </section>
 
         <section className="surface-card p-5">
           <div className="flex items-center gap-2"><ShieldCheck size={16} /><h2 className="text-sm font-black">App Launcher</h2></div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{apps.map(app => <a key={app.id} href={app.public_url || "#"} target={app.public_url ? "_blank" : undefined} rel="noreferrer" className="rounded-2xl border border-[var(--admin-line)] p-4 transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-black">{app.name}</p><p className="mt-1 text-[9px] text-[var(--admin-muted)]">{app.category} · {app.status}</p></div>{app.public_url ? <ExternalLink size={14} /> : null}</div><div className="mt-4 rounded-xl bg-[#f7faf8] p-3 text-[9px]"><span className="font-black">License:</span> {app.license?.plan || (me?.is_platform_owner ? "platform owner" : "default")} · {app.license?.status || "active"}</div></a>)}</div>
+          <p className="mt-1 text-[10px] text-[var(--admin-muted)]">Open the IDS products assigned to your account or organisation. Central Ithute identity handles sign-in; no product password is placed in the URL.</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{apps.map(app => {
+            const launch = app.launch_url || app.public_url;
+            return <a key={app.id} href={launch || "#"} target={launch ? "_blank" : undefined} rel="noreferrer" className="rounded-2xl border border-[var(--admin-line)] p-4 transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-black">{app.name}</p><p className="mt-1 text-[9px] text-[var(--admin-muted)]">{app.category} · {app.status}</p></div>{launch ? <ExternalLink size={14} /> : null}</div><div className="mt-4 rounded-xl bg-[#f7faf8] p-3 text-[9px]"><p><span className="font-black">Access:</span> {app.license?.plan || (me?.is_platform_owner ? "platform owner" : "default")} · {app.license?.status || "active"}</p><p className="mt-1 text-[var(--admin-muted)]">Source: {app.license?.source || "account"} · {app.sso_mode === "central_oidc" ? "Central Ithute SSO" : app.sso_mode || "product sign-in"}</p></div></a>;
+          })}</div>
+          {!apps.length && !loading ? <p className="py-8 text-center text-[11px] text-[var(--admin-muted)]">No applications are assigned to this account yet.</p> : null}
         </section>
 
         <section className="surface-card p-5">
