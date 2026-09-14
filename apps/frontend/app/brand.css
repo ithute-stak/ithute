@@ -10,6 +10,28 @@ footer a[href="/"] > div:first-child {
   overflow: hidden;
 }
 
+/* Login card: replace the former letter tile with the IDS emblem. */
+main[class*="bg-[#071b2f]"] section[class*="max-w-[500px]"] > div > div:first-child > div:first-child > div:first-child {
+  background-color: #ffffff !important;
+  background-image: url('/brand/ids-mark.svg') !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  background-size: 92% 92% !important;
+  color: transparent !important;
+  overflow: hidden;
+}
+
+main[class*="bg-[#071b2f]"] section[class*="max-w-[500px]"] > div > div:first-child > div:first-child > div:nth-child(2) > p:first-child {
+  font-size: 0 !important;
+}
+
+main[class*="bg-[#071b2f]"] section[class*="max-w-[500px]"] > div > div:first-child > div:first-child > div:nth-child(2) > p:first-child::after {
+  content: "Ithute Digital Solutions";
+  font-size: 0.875rem;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+}
+
 /* Keep the IDS mark crisp in compact navigation and high-DPI browsers. */
 .ids-brand-mark {
   background: #ffffff;
