@@ -64,14 +64,13 @@ export function PublicOwnerNavigation() {
 
       {founderActionsHost
         ? createPortal(
-            <a
-              href="/documents/Koetlisi-Theko-CV?mode=print"
+            <Link
+              href="/founder/cv"
               target="_blank"
-              rel="noreferrer"
               className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/[.06] px-5 py-3 text-sm font-black text-white transition hover:bg-white/[.1]"
             >
               <Printer size={16} /> Print CV
-            </a>,
+            </Link>,
             founderActionsHost,
           )
         : null}
