@@ -76,34 +76,6 @@ mail_compose() {
   docker compose -p ithute-mail -f "$MAIL_DIR/compose.yml" "$@"
 }
 
-# Keep mailbox credentials in a narrow shared directory instead of exposing the
-# full Docker Mailserver config (including DKIM private keys) to the application
-# API. Migrate existing accounts without overwriting newer application-managed
-# hashes: entries already present in the isolated account file win, while legacy
-# external-domain accounts are retained.
-docker run --rm --pull=never \
-  -v "$MAIL_DIR/config:/legacy-config" \
-  -v "$MAIL_DIR/accounts:/mail-accounts" \
-  --entrypoint /bin/sh \
-  "$MAILSERVER_IMAGE" -c '
-    set -eu
-    accounts=/mail-accounts/postfix-accounts.cf
-    legacy=/legacy-config/postfix-accounts.cf
-    touch "$accounts"
-    chmod 600 "$accounts"
-    if [ -f "$legacy" ] && [ ! -L "$legacy" ]; then
-      tmp=/mail-accounts/.postfix-accounts.migrate
-      awk -F"|" '\''
-        index($0, "|") { key=tolower($1); if (!seen[key]++) print; next }
-        { print }
-      '\'' "$accounts" "$legacy" > "$tmp"
-      chmod 600 "$tmp"
-      mv "$tmp" "$accounts"
-    fi
-    rm -f "$legacy"
-    ln -s /mail-accounts/postfix-accounts.cf "$legacy"
-  '
-
 # Certbot writes archive material as root-owned files. The SSH deployment user
 # may not be able to stat those symlink targets on the host even though the
 # certificate is valid and readable by the mail container. Validate from a
@@ -149,6 +121,8 @@ if ! cert_files_ready; then
 fi
 
 # Never pull on the VPS. The GitHub workflow loads these images first.
+# The first start deliberately uses the legacy account file so Docker
+# Mailserver's setup helper can safely provision any missing bootstrap accounts.
 mail_compose up -d --pull never
 
 for attempt in $(seq 1 30); do
@@ -190,6 +164,35 @@ for domain in "${DOMAINS[@]}"; do
     docker exec ithute-mail setup alias add "$postmaster" "$address" || true
   fi
 done
+
+# Keep mailbox credentials in a narrow shared directory instead of exposing the
+# full Docker Mailserver config (including DKIM private keys) to the application
+# API. Migrate existing accounts without overwriting newer application-managed
+# hashes: entries already present in the isolated account file win, while legacy
+# external-domain accounts are retained. Run this as container root so it also
+# works if an earlier application deployment created the shared file as root.
+docker run --rm --pull=never \
+  -v "$MAIL_DIR/config:/legacy-config" \
+  -v "$MAIL_DIR/accounts:/mail-accounts" \
+  --entrypoint /bin/sh \
+  "$MAILSERVER_IMAGE" -c '
+    set -eu
+    accounts=/mail-accounts/postfix-accounts.cf
+    legacy=/legacy-config/postfix-accounts.cf
+    touch "$accounts"
+    chmod 600 "$accounts"
+    if [ -f "$legacy" ] && [ ! -L "$legacy" ]; then
+      tmp=/mail-accounts/.postfix-accounts.migrate
+      awk -F"|" '\''
+        index($0, "|") { key=tolower($1); if (!seen[key]++) print; next }
+        { print }
+      '\'' "$accounts" "$legacy" > "$tmp"
+      chmod 600 "$tmp"
+      mv "$tmp" "$accounts"
+    fi
+    rm -f "$legacy"
+    ln -s /mail-accounts/postfix-accounts.cf "$legacy"
+  '
 
 # Docker Mailserver owns the OpenDKIM key files. Do not loosen host filesystem
 # permissions just so the deployment account can read them. Inspect and export
