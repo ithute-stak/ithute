@@ -8,7 +8,6 @@ from pathlib import Path
 from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.models.mail import Mailbox, MailboxStatus
 
 
@@ -20,10 +19,13 @@ _listener_installed = False
 
 
 def _accounts_path() -> Path | None:
-    raw = settings.mail_accounts_file
+    raw = os.getenv("MAIL_ACCOUNTS_FILE", "").strip()
     if not raw:
         return None
-    return Path(raw)
+    path = Path(raw)
+    if not path.is_absolute():
+        raise MailAccountSyncError("MAIL_ACCOUNTS_FILE must be an absolute path")
+    return path
 
 
 def _validate_account(address: str, password_hash: str) -> tuple[str, str]:
