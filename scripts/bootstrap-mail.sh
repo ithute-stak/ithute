@@ -38,7 +38,7 @@ docker image inspect "$CERTBOT_IMAGE" >/dev/null 2>&1 || {
   exit 4
 }
 
-mkdir -p "$MAIL_DIR" "$MAIL_DIR/config" "$MAIL_DIR/data/mail-data" "$MAIL_DIR/data/mail-state" "$MAIL_DIR/data/mail-logs" "$MAIL_DIR/letsencrypt"
+mkdir -p "$MAIL_DIR" "$MAIL_DIR/config" "$MAIL_DIR/accounts" "$MAIL_DIR/data/mail-data" "$MAIL_DIR/data/mail-state" "$MAIL_DIR/data/mail-logs" "$MAIL_DIR/letsencrypt"
 cp "$SOURCE_DIR/mail/compose.yml" "$MAIL_DIR/compose.yml"
 cp "$SOURCE_DIR/mail/renew-tls.sh" "$MAIL_DIR/renew-tls.sh"
 chmod 700 "$MAIL_DIR/renew-tls.sh"
@@ -75,6 +75,34 @@ app_compose() {
 mail_compose() {
   docker compose -p ithute-mail -f "$MAIL_DIR/compose.yml" "$@"
 }
+
+# Keep mailbox credentials in a narrow shared directory instead of exposing the
+# full Docker Mailserver config (including DKIM private keys) to the application
+# API. Migrate existing accounts without overwriting newer application-managed
+# hashes: entries already present in the isolated account file win, while legacy
+# external-domain accounts are retained.
+docker run --rm --pull=never \
+  -v "$MAIL_DIR/config:/legacy-config" \
+  -v "$MAIL_DIR/accounts:/mail-accounts" \
+  --entrypoint /bin/sh \
+  "$MAILSERVER_IMAGE" -c '
+    set -eu
+    accounts=/mail-accounts/postfix-accounts.cf
+    legacy=/legacy-config/postfix-accounts.cf
+    touch "$accounts"
+    chmod 600 "$accounts"
+    if [ -f "$legacy" ] && [ ! -L "$legacy" ]; then
+      tmp=/mail-accounts/.postfix-accounts.migrate
+      awk -F"|" '\''
+        index($0, "|") { key=tolower($1); if (!seen[key]++) print; next }
+        { print }
+      '\'' "$accounts" "$legacy" > "$tmp"
+      chmod 600 "$tmp"
+      mv "$tmp" "$accounts"
+    fi
+    rm -f "$legacy"
+    ln -s /mail-accounts/postfix-accounts.cf "$legacy"
+  '
 
 # Certbot writes archive material as root-owned files. The SSH deployment user
 # may not be able to stat those symlink targets on the host even though the
@@ -195,7 +223,7 @@ CRON_LINE="17 3 * * 1 ITHUTE_APP_DIR=$APP_DIR ITHUTE_MAIL_DIR=$MAIL_DIR $MAIL_DI
 ) | crontab -
 
 mail_compose ps
-touch "$MAIL_DIR/.ithute-mail-finalized"
+touch "$MAIL_DIR/.ithute-mail-finalized" "$MAIL_DIR/.account-sync-v1"
 printf '\nMail accounts are provisioned. Credentials: %s\n' "$CREDENTIALS_FILE"
 printf 'DNS records: %s\n' "$DNS_FILE"
 printf 'Mail finalization marker: %s\n' "$MAIL_DIR/.ithute-mail-finalized"
