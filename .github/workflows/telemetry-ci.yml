@@ -1,0 +1,63 @@
+name: Infrastructure Telemetry CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "compose.telemetry.yml"
+      - "infrastructure/prometheus/**"
+      - "apps/backend/app/services/infrastructure_telemetry.py"
+      - "apps/backend/app/api/v1/system_owner_telemetry.py"
+      - "apps/backend/app/api/v1/router.py"
+      - "apps/frontend/app/system-owner/page.tsx"
+      - ".github/workflows/telemetry-ci.yml"
+      - ".github/workflows/deploy-telemetry.yml"
+  push:
+    branches: [main]
+    paths:
+      - "compose.telemetry.yml"
+      - "infrastructure/prometheus/**"
+      - "apps/backend/app/services/infrastructure_telemetry.py"
+      - "apps/backend/app/api/v1/system_owner_telemetry.py"
+      - "apps/backend/app/api/v1/router.py"
+      - "apps/frontend/app/system-owner/page.tsx"
+      - ".github/workflows/telemetry-ci.yml"
+      - ".github/workflows/deploy-telemetry.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate telemetry compose overlay
+        run: |
+          set -euo pipefail
+          docker compose -f compose.production.yml -f compose.telemetry.yml config > /tmp/ithute-telemetry-compose.yml
+          services="$(docker compose -f compose.production.yml -f compose.telemetry.yml config --services)"
+          printf '%s\n' "$services" | grep -Fxq prometheus
+          printf '%s\n' "$services" | grep -Fxq ithute-node-exporter
+          printf '%s\n' "$services" | grep -Fxq ithute-cadvisor
+          ! grep -Eq '^[[:space:]]+ports:' compose.telemetry.yml
+
+      - name: Validate Prometheus configuration
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --entrypoint /bin/promtool \
+            -v "$PWD/infrastructure/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:v2.55.1 \
+            check config /etc/prometheus/prometheus.yml
+
+      - name: Validate telemetry backend source
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            apps/backend/app/services/infrastructure_telemetry.py \
+            apps/backend/app/api/v1/system_owner_telemetry.py
+          grep -Fq 'Depends(require_platform_owner)' apps/backend/app/api/v1/system_owner_telemetry.py
