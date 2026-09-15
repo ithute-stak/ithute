@@ -196,12 +196,42 @@ jobs:
           grep -Eq '^ns1 +IN +A +204\.12\.205\.224$' infrastructure/dns/zones/db.ithute.co.ls
           grep -Eq '^ns2 +IN +A +204\.12\.205\.224$' infrastructure/dns/zones/db.ithute.co.ls
 
-      - name: Validate independent mail topology
+      - name: Validate private mail topology
         run: |
           set -euo pipefail
           docker compose -f mail/compose.yml config > /tmp/ithute-mail.yml
-          grep -q 'ithute-mail' /tmp/ithute-mail.yml
-          ! grep -Eq 'external:[[:space:]]*true' /tmp/ithute-mail.yml
+          python3 - <<'PY'
+          import yaml
+
+          with open('/tmp/ithute-mail.yml', encoding='utf-8') as handle:
+              config = yaml.safe_load(handle)
+
+          services = config.get('services') or {}
+          mailserver = services.get('mailserver') or {}
+          if mailserver.get('container_name') != 'ithute-mail':
+              raise SystemExit('Mail topology must keep the dedicated ithute-mail container.')
+
+          ports = {str(item.get('published')) for item in mailserver.get('ports', []) if isinstance(item, dict)}
+          expected_ports = {'25', '465', '587', '993'}
+          if ports != expected_ports:
+              raise SystemExit(f'Mail topology must publish exactly {sorted(expected_ports)}; got {sorted(ports)}')
+
+          networks = config.get('networks') or {}
+          external = {key: value for key, value in networks.items() if isinstance(value, dict) and value.get('external') is True}
+          if set(external) != {'ithute-platform'}:
+              raise SystemExit(f'Only the controlled Ithute platform bridge may be external; got {sorted(external)}')
+          if external['ithute-platform'].get('name') != 'ithute_ithute':
+              raise SystemExit('Mail must attach to the exact production Ithute network ithute_ithute.')
+          if (networks.get('mail') or {}).get('external') is True:
+              raise SystemExit('The dedicated mail network must remain private and Compose-managed.')
+
+          service_networks = mailserver.get('networks') or {}
+          if set(service_networks) != {'mail', 'ithute-platform'}:
+              raise SystemExit('Mailserver must attach only to its private mail network and the Ithute application network.')
+          aliases = (service_networks.get('ithute-platform') or {}).get('aliases') or []
+          if aliases != ['mail.ithute.co.ls']:
+              raise SystemExit('The Ithute application network must expose only the TLS-valid mail.ithute.co.ls alias.')
+          PY
 
       - name: Build immutable Ithute images on GitHub runner
         run: |

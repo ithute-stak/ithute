@@ -39,8 +39,15 @@ services:
       timeout: 5s
       retries: 6
       start_period: 30s
-    networks: [mail]
+    networks:
+      mail:
+      ithute-platform:
+        aliases:
+          - mail.ithute.co.ls
 
 networks:
   mail:
     driver: bridge
+  ithute-platform:
+    external: true
+    name: ithute_ithute
