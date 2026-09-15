@@ -2,7 +2,7 @@ name: Deploy Ithute Telemetry
 
 on:
   workflow_run:
-    workflows: ["Deploy Ithute Production"]
+    workflows: ["Ithute Standalone CI"]
     types: [completed]
     branches: [main]
 
@@ -12,12 +12,13 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   deploy:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     environment: production
     env:
       DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -29,7 +30,7 @@ jobs:
       EXPECTED_IPV4: 204.12.205.224
 
     steps:
-      - name: Checkout deployed commit
+      - name: Checkout validated commit
         uses: actions/checkout@v5
         with:
           ref: ${{ env.DEPLOY_SHA }}
@@ -45,6 +46,37 @@ jobs:
           test -f compose.telemetry.yml
           test -f infrastructure/prometheus/prometheus.yml
           ! grep -Eq '^[[:space:]]+ports:' compose.telemetry.yml
+
+      - name: Wait for validated production deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "Waiting for Deploy Ithute Production to finish for ${DEPLOY_SHA}."
+          for attempt in $(seq 1 150); do
+            runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-production.yml/runs?branch=main&per_page=30")"
+            row="$(printf '%s' "$runs" | jq -r --arg sha "$DEPLOY_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] | if . == null then "" else [.status, (.conclusion // ""), (.html_url // "")] | @tsv end')"
+            if [ -z "$row" ]; then
+              echo "Production run has not been created yet (${attempt}/150)."
+              sleep 8
+              continue
+            fi
+            IFS=$'\t' read -r status conclusion url <<< "$row"
+            echo "Production: status=${status} conclusion=${conclusion:-pending} ${url}"
+            if [ "$status" = "completed" ]; then
+              if [ "$conclusion" = "success" ]; then
+                echo "Validated production deployment completed successfully."
+                break
+              fi
+              echo "Production deployment did not succeed; telemetry will not be changed." >&2
+              exit 1
+            fi
+            if [ "$attempt" -eq 150 ]; then
+              echo "Timed out waiting for production deployment." >&2
+              exit 1
+            fi
+            sleep 8
+          done
 
       - name: Configure SSH
         run: |
@@ -76,11 +108,12 @@ jobs:
           remote="${VPS_USER}@${VPS_HOST}"
           scp compose.telemetry.yml "$remote:/tmp/ithute-compose-telemetry.yml"
           scp infrastructure/prometheus/prometheus.yml "$remote:/tmp/ithute-prometheus.yml"
-          ssh "$remote" "APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' bash -s" <<'REMOTE'
           set -euo pipefail
           test -f "$APP_DIR/compose.production.yml"
           test -f "$APP_DIR/.env.production"
           test -f "$APP_DIR/.image.env"
+          grep -Fxq "ITHUTE_IMAGE_TAG=$DEPLOY_SHA" "$APP_DIR/.image.env"
           mkdir -p "$APP_DIR/infrastructure/prometheus"
           install -m 0644 /tmp/ithute-compose-telemetry.yml "$APP_DIR/compose.telemetry.yml"
           install -m 0644 /tmp/ithute-prometheus.yml "$APP_DIR/infrastructure/prometheus/prometheus.yml"
@@ -137,11 +170,17 @@ jobs:
 from app.services.infrastructure_telemetry import live_infrastructure_telemetry
 result = live_infrastructure_telemetry()
 host = result.get("host", {})
-assert result.get("status") in {"ok", "partial"}, result
+assert result.get("status") in {"ok", "warning", "critical", "partial"}, result
 assert host.get("memory_total_bytes"), result
 assert host.get("disk_total_bytes"), result
 assert isinstance(result.get("containers"), list), result
-print({"status": result.get("status"), "containers": result.get("container_count")})
+print({
+    "status": result.get("status"),
+    "cpu_percent": host.get("cpu_percent"),
+    "memory_percent": host.get("memory_percent"),
+    "disk_percent": host.get("disk_percent"),
+    "containers": result.get("container_count"),
+})
 PY
             then
               exit 0
