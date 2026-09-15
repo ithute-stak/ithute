@@ -22,11 +22,13 @@ services:
       SPOOF_PROTECTION: "1"
       POSTFIX_INET_PROTOCOLS: all
       DOVECOT_INET_PROTOCOLS: all
+      DMS_CONFIG_POLL: "2"
     volumes:
       - ./data/mail-data:/var/mail
       - ./data/mail-state:/var/mail-state
       - ./data/mail-logs:/var/log/mail
       - ./config:/tmp/docker-mailserver
+      - ./accounts:/mail-accounts
       - ./letsencrypt:/etc/letsencrypt:ro
       - /etc/localtime:/etc/localtime:ro
     cap_add:

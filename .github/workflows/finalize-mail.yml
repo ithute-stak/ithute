@@ -1,13 +1,15 @@
 name: Finalize Ithute Mail
 
 on:
-  # Mail is finalized in production. Keep explicit recovery triggers only so
-  # routine VPS workflows cannot supersede a queued scheduled mail run.
+  # Mail is finalized in production. Keep explicit recovery triggers and rerun
+  # only when the mail runtime itself changes.
   workflow_dispatch:
   push:
     branches: [main]
     paths:
       - ".github/workflows/finalize-mail.yml"
+      - "mail/**"
+      - "scripts/bootstrap-mail.sh"
 
 concurrency:
   group: ithute-vps-production
@@ -74,9 +76,9 @@ jobs:
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          if ssh "$remote" "test -f '$VPS_MAIL_DIR/.ithute-mail-finalized' && test \"\$(docker inspect --format '{{.State.Health.Status}}' ithute-mail 2>/dev/null)\" = healthy"; then
+          if ssh "$remote" "test -f '$VPS_MAIL_DIR/.ithute-mail-finalized' && test -f '$VPS_MAIL_DIR/.account-sync-v1' && test \"\$(docker inspect --format '{{.State.Health.Status}}' ithute-mail 2>/dev/null)\" = healthy"; then
             echo 'ready=true' >> "$GITHUB_OUTPUT"
-            echo 'Mail is already finalized and healthy; image transfer and provisioning are skipped.'
+            echo 'Mail runtime and synchronized account storage are already finalized and healthy.'
           else
             echo 'ready=false' >> "$GITHUB_OUTPUT"
           fi
@@ -149,10 +151,13 @@ jobs:
           fi
           test -f "$VPS_MAIL_DIR/mailbox-credentials.txt"
           test -f "$VPS_MAIL_DIR/mail-dns-required.txt"
+          test -f "$VPS_MAIL_DIR/.account-sync-v1"
           docker compose -p ithute-mail -f "$VPS_MAIL_DIR/compose.yml" ps
           for attempt in $(seq 1 30); do
             health="$(docker inspect --format '{{.State.Health.Status}}' ithute-mail 2>/dev/null || true)"
             if [ "$health" = healthy ]; then
+              docker exec ithute-mail test -f /tmp/docker-mailserver/postfix-accounts.cf
+              docker exec ithute-mail sh -c 'test "$(readlink /tmp/docker-mailserver/postfix-accounts.cf)" = /mail-accounts/postfix-accounts.cf'
               exit 0
             fi
             if [ "$attempt" -eq 30 ]; then
