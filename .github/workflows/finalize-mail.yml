@@ -32,6 +32,7 @@ jobs:
       VPS_MAIL_DIR: /home/administrator/ithute-platform-mail
       MAILSERVER_IMAGE: ghcr.io/docker-mailserver/docker-mailserver:15.1.0
       CERTBOT_IMAGE: certbot/certbot:v5.8.0
+      MAIL_RUNTIME_SHA: ${{ github.sha }}
 
     steps:
       - name: Checkout mail configuration on GitHub runner
@@ -76,9 +77,9 @@ jobs:
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          if ssh "$remote" "test -f '$VPS_MAIL_DIR/.ithute-mail-finalized' && test -f '$VPS_MAIL_DIR/.account-sync-v1' && test \"\$(docker inspect --format '{{.State.Health.Status}}' ithute-mail 2>/dev/null)\" = healthy"; then
+          if ssh "$remote" "test -f '$VPS_MAIL_DIR/.ithute-mail-finalized' && test -f '$VPS_MAIL_DIR/.account-sync-v1' && test \"\$(cat '$VPS_MAIL_DIR/.runtime-sha' 2>/dev/null || true)\" = '$MAIL_RUNTIME_SHA' && test \"\$(docker inspect --format '{{.State.Health.Status}}' ithute-mail 2>/dev/null)\" = healthy"; then
             echo 'ready=true' >> "$GITHUB_OUTPUT"
-            echo 'Mail runtime and synchronized account storage are already finalized and healthy.'
+            echo 'Mail runtime, routing, and synchronized account storage already match this revision.'
           else
             echo 'ready=false' >> "$GITHUB_OUTPUT"
           fi
@@ -106,7 +107,7 @@ jobs:
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
           scp /tmp/ithute-mail-runtime.tgz /tmp/ithute-mail-images.tar.gz /tmp/ithute-mail-images.sha256 "$remote:/tmp/"
-          ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' VPS_MAIL_DIR='$VPS_MAIL_DIR' bash -s" <<'REMOTE'
+          ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' VPS_MAIL_DIR='$VPS_MAIL_DIR' MAIL_RUNTIME_SHA='$MAIL_RUNTIME_SHA' bash -s" <<'REMOTE'
           set -uo pipefail
           if [ ! -f "$VPS_APP_DIR/.ithute-bootstrapped" ]; then
             echo 'Ithute bootstrap is not complete yet; rerun Finalize Ithute Mail after bootstrap completes.'
@@ -136,6 +137,9 @@ jobs:
             echo 'Mail DNS is not ready yet; rerun Finalize Ithute Mail after DNS is ready.'
             exit 0
           fi
+          if [ "$status" -eq 0 ] && [ -f "$VPS_MAIL_DIR/.ithute-mail-finalized" ]; then
+            printf '%s\n' "$MAIL_RUNTIME_SHA" > "$VPS_MAIL_DIR/.runtime-sha"
+          fi
           exit "$status"
           REMOTE
 
@@ -143,7 +147,7 @@ jobs:
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "VPS_MAIL_DIR='$VPS_MAIL_DIR' bash -s" <<'REMOTE'
+          ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' VPS_MAIL_DIR='$VPS_MAIL_DIR' MAIL_RUNTIME_SHA='$MAIL_RUNTIME_SHA' bash -s" <<'REMOTE'
           set -euo pipefail
           if [ ! -f "$VPS_MAIL_DIR/.ithute-mail-finalized" ]; then
             echo 'Mail is waiting for public DNS or first-time provisioning; rerun Finalize Ithute Mail after prerequisites are ready.'
@@ -152,12 +156,25 @@ jobs:
           test -f "$VPS_MAIL_DIR/mailbox-credentials.txt"
           test -f "$VPS_MAIL_DIR/mail-dns-required.txt"
           test -f "$VPS_MAIL_DIR/.account-sync-v1"
+          test "$(cat "$VPS_MAIL_DIR/.runtime-sha" 2>/dev/null || true)" = "$MAIL_RUNTIME_SHA"
+
+          app_compose() {
+            docker compose \
+              --env-file "$VPS_APP_DIR/.env.production" \
+              --env-file "$VPS_APP_DIR/.image.env" \
+              -p ithute \
+              -f "$VPS_APP_DIR/compose.production.yml" \
+              "$@"
+          }
+
           docker compose -p ithute-mail -f "$VPS_MAIL_DIR/compose.yml" ps
           for attempt in $(seq 1 30); do
             health="$(docker inspect --format '{{.State.Health.Status}}' ithute-mail 2>/dev/null || true)"
             if [ "$health" = healthy ]; then
               docker exec ithute-mail test -f /tmp/docker-mailserver/postfix-accounts.cf
               docker exec ithute-mail sh -c 'test "$(readlink /tmp/docker-mailserver/postfix-accounts.cf)" = /mail-accounts/postfix-accounts.cf'
+              app_compose exec -T ithute-app-api python -c 'import imaplib, ssl; client=imaplib.IMAP4_SSL("mail.ithute.co.ls", 993, ssl_context=ssl.create_default_context(), timeout=10); client.logout()'
+              app_compose exec -T ithute-app-api python -c 'import smtplib, ssl; client=smtplib.SMTP("mail.ithute.co.ls", 587, timeout=10); client.ehlo(); client.starttls(context=ssl.create_default_context()); client.ehlo(); client.quit()'
               exit 0
             fi
             if [ "$attempt" -eq 30 ]; then
