@@ -145,14 +145,17 @@ new_password() {
 
 for domain in "${DOMAINS[@]}"; do
   address="info@$domain"
-  if docker exec ithute-mail setup email list 2>/dev/null | grep -Fq "$address"; then
+  password="$(new_password)"
+  if add_output="$(docker exec ithute-mail setup email add "$address" "$password" 2>&1)"; then
+    printf '%s %s\n' "$address" "$password" >> "$CREDENTIALS_FILE"
+    echo "Mailbox created: $address"
+  elif printf '%s\n' "$add_output" | grep -Fq "'$address' already exists"; then
     echo "Mailbox already exists: $address"
   else
-    password="$(new_password)"
-    docker exec ithute-mail setup email add "$address" "$password"
-    printf '%s %s\n' "$address" "$password" >> "$CREDENTIALS_FILE"
-    unset password
+    printf '%s\n' "$add_output" >&2
+    exit 1
   fi
+  unset password add_output
 
   postmaster="postmaster@$domain"
   if ! docker exec ithute-mail setup alias list 2>/dev/null | grep -Fq "$postmaster"; then
