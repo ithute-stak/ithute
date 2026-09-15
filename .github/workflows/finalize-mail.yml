@@ -1,6 +1,7 @@
 name: Finalize Ithute Mail
 
 on:
+  # Manual runs are kept available for recovery after account or runner interruptions.
   workflow_dispatch:
   push:
     branches: [main]
