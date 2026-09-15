@@ -76,20 +76,27 @@ mail_compose() {
   docker compose -p ithute-mail -f "$MAIL_DIR/compose.yml" "$@"
 }
 
-CERT_FILE="$MAIL_DIR/letsencrypt/live/$MAIL_HOST/fullchain.pem"
-CERT_KEY="$MAIL_DIR/letsencrypt/live/$MAIL_HOST/privkey.pem"
-if [ ! -s "$CERT_FILE" ] || [ ! -s "$CERT_KEY" ]; then
+# Certbot writes archive material as root-owned files. The SSH deployment user
+# may not be able to stat those symlink targets on the host even though the
+# certificate is valid and readable by the mail container. Validate from a
+# root process inside the same bind mount instead of using host-side `test -s`.
+cert_files_ready() {
+  docker run --rm --pull=never \
+    -v "$MAIL_DIR/letsencrypt:/etc/letsencrypt:ro" \
+    --entrypoint /bin/sh \
+    "$CERTBOT_IMAGE" -c \
+      "test -s '/etc/letsencrypt/live/$MAIL_HOST/fullchain.pem' && test -s '/etc/letsencrypt/live/$MAIL_HOST/privkey.pem'"
+}
+
+if ! cert_files_ready; then
   restart_caddy() { app_compose start caddy >/dev/null 2>&1 || true; }
   trap restart_caddy EXIT
   app_compose stop caddy >/dev/null
 
   # A previous interrupted Certbot run can leave renewal metadata claiming the
-  # certificate is still valid while the live/ symlinks are missing. In that
-  # state --keep-until-expiring exits successfully without recreating the files,
-  # which made the hourly mail-finalization workflow fail forever. When the
-  # expected live certificate/key are absent, explicitly repair the named
-  # lineage with a forced issuance. This only runs while the files are missing;
-  # once repaired, subsequent scheduled finalizers skip certificate issuance.
+  # certificate is still valid while the live lineage is incomplete. Force a
+  # repair only when the certificate/key are genuinely unavailable inside the
+  # bind mount. Once repaired, scheduled finalizers skip certificate issuance.
   docker run --rm --pull=never -p 80:80 \
     -v "$MAIL_DIR/letsencrypt:/etc/letsencrypt" \
     "$CERTBOT_IMAGE" certonly \
@@ -104,10 +111,8 @@ if [ ! -s "$CERT_FILE" ] || [ ! -s "$CERT_KEY" ]; then
 
   restart_caddy
   trap - EXIT
-  if [ ! -s "$CERT_FILE" ] || [ ! -s "$CERT_KEY" ]; then
+  if ! cert_files_ready; then
     echo "Certbot completed but the expected mail certificate lineage is still incomplete." >&2
-    echo "Expected certificate: $CERT_FILE" >&2
-    echo "Expected private key: $CERT_KEY" >&2
     docker run --rm --pull=never \
       -v "$MAIL_DIR/letsencrypt:/etc/letsencrypt" \
       "$CERTBOT_IMAGE" certificates >&2 || true
