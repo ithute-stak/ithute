@@ -38,6 +38,7 @@ from app.api.v1 import (
     professional_email,
     public_hosting,
     system_owner,
+    system_owner_telemetry,
     tenants,
     transactional,
     webmail,
@@ -56,6 +57,7 @@ api_router.include_router(ithute_auth.router)
 api_router.include_router(ithute_platform.router)
 api_router.include_router(ithute_operating.router)
 api_router.include_router(system_owner.router)
+api_router.include_router(system_owner_telemetry.router)
 api_router.include_router(account_verification.router)
 api_router.include_router(identity.router)
 api_router.include_router(audit.router)

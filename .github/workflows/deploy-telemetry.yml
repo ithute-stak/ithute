@@ -1,0 +1,154 @@
+name: Deploy Ithute Telemetry
+
+on:
+  workflow_run:
+    workflows: ["Deploy Ithute Production"]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: ithute-vps-telemetry
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_APP_DIR: /home/administrator/ithute-platform
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+      EXPECTED_IPV4: 204.12.205.224
+
+    steps:
+      - name: Checkout deployed commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          persist-credentials: false
+
+      - name: Validate telemetry inputs
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_KEY"
+          test "$VPS_HOST" = "$EXPECTED_IPV4"
+          test -f compose.telemetry.yml
+          test -f infrastructure/prometheus/prometheus.yml
+          ! grep -Eq '^[[:space:]]+ports:' compose.telemetry.yml
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_deploy"
+          chmod 600 "$HOME/.ssh/ithute_deploy"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/ithute-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/ithute-askpass.sh
+            SSH_ASKPASS=/tmp/ithute-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh-add "$HOME/.ssh/ithute_deploy" </dev/null
+            rm -f /tmp/ithute-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/ithute_deploy" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Install telemetry runtime configuration
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          scp compose.telemetry.yml "$remote:/tmp/ithute-compose-telemetry.yml"
+          scp infrastructure/prometheus/prometheus.yml "$remote:/tmp/ithute-prometheus.yml"
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
+          set -euo pipefail
+          test -f "$APP_DIR/compose.production.yml"
+          test -f "$APP_DIR/.env.production"
+          test -f "$APP_DIR/.image.env"
+          mkdir -p "$APP_DIR/infrastructure/prometheus"
+          install -m 0644 /tmp/ithute-compose-telemetry.yml "$APP_DIR/compose.telemetry.yml"
+          install -m 0644 /tmp/ithute-prometheus.yml "$APP_DIR/infrastructure/prometheus/prometheus.yml"
+          rm -f /tmp/ithute-compose-telemetry.yml /tmp/ithute-prometheus.yml
+          REMOTE
+
+      - name: Start private telemetry collectors
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$APP_DIR"
+          compose() {
+            docker compose \
+              --env-file .env.production \
+              --env-file .image.env \
+              -p ithute \
+              -f compose.production.yml \
+              -f compose.telemetry.yml \
+              "$@"
+          }
+          compose config >/tmp/ithute-telemetry-rendered.yml
+          compose pull prometheus ithute-node-exporter ithute-cadvisor
+          compose up -d --no-build prometheus ithute-node-exporter ithute-cadvisor
+          REMOTE
+
+      - name: Verify live host and container metrics
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$APP_DIR"
+          compose() {
+            docker compose \
+              --env-file .env.production \
+              --env-file .image.env \
+              -p ithute \
+              -f compose.production.yml \
+              -f compose.telemetry.yml \
+              "$@"
+          }
+
+          for service in prometheus ithute-node-exporter ithute-cadvisor; do
+            id="$(compose ps -q "$service")"
+            test -n "$id"
+            ports="$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$id")"
+            test "$ports" = "{}" || test "$ports" = "null"
+          done
+
+          for attempt in $(seq 1 30); do
+            if compose exec -T ithute-app-api python - <<'PY'
+from app.services.infrastructure_telemetry import live_infrastructure_telemetry
+result = live_infrastructure_telemetry()
+host = result.get("host", {})
+assert result.get("status") in {"ok", "partial"}, result
+assert host.get("memory_total_bytes"), result
+assert host.get("disk_total_bytes"), result
+assert isinstance(result.get("containers"), list), result
+print({"status": result.get("status"), "containers": result.get("container_count")})
+PY
+            then
+              exit 0
+            fi
+            sleep 4
+          done
+
+          compose logs --tail=120 prometheus ithute-node-exporter ithute-cadvisor >&2 || true
+          exit 1
+          REMOTE
