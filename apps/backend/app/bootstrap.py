@@ -7,6 +7,7 @@ from app.core.security import hash_password
 from app.db.session import SessionLocal
 from app.models import User
 from app.services.billing import ensure_default_plans
+from app.services.mail_account_sync import reconcile_mail_accounts
 from app.services.system_mailboxes import ensure_system_mailboxes
 
 
@@ -41,6 +42,7 @@ def main():
             db.refresh(owner)
 
         result = ensure_system_mailboxes(db, owner)
+        live_accounts = reconcile_mail_accounts(db)
         owner_action = "created" if created_owner else "synchronized"
         print(f"Bootstrap platform owner {owner_action}: {email}")
         print(
@@ -48,6 +50,8 @@ def main():
             + ", ".join(result.addresses)
             + (f"; created={len(result.created_addresses)}" if result.created_addresses else "; created=0")
         )
+        if live_accounts:
+            print(f"Docker Mailserver accounts reconciled from application mailboxes: {live_accounts}")
 
 
 if __name__ == "__main__":
