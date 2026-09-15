@@ -64,17 +64,10 @@ jobs:
             IFS=$'\t' read -r status conclusion url <<< "$row"
             echo "Production: status=${status} conclusion=${conclusion:-pending} ${url}"
             if [ "$status" = "completed" ]; then
-              if [ "$conclusion" = "success" ]; then
-                echo "Validated production deployment completed successfully."
-                break
-              fi
-              echo "Production deployment did not succeed; telemetry will not be changed." >&2
-              exit 1
+              test "$conclusion" = "success" || { echo "Production deployment failed; telemetry unchanged." >&2; exit 1; }
+              break
             fi
-            if [ "$attempt" -eq 150 ]; then
-              echo "Timed out waiting for production deployment." >&2
-              exit 1
-            fi
+            test "$attempt" -lt 150 || { echo "Timed out waiting for production deployment." >&2; exit 1; }
             sleep 8
           done
 
@@ -127,18 +120,9 @@ jobs:
           ssh "$remote" "APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
           set -euo pipefail
           cd "$APP_DIR"
-          compose() {
-            docker compose \
-              --env-file .env.production \
-              --env-file .image.env \
-              -p ithute \
-              -f compose.production.yml \
-              -f compose.telemetry.yml \
-              "$@"
-          }
-          compose config >/tmp/ithute-telemetry-rendered.yml
-          compose pull prometheus ithute-node-exporter ithute-cadvisor
-          compose up -d --no-build prometheus ithute-node-exporter ithute-cadvisor
+          docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml -f compose.telemetry.yml config >/tmp/ithute-telemetry-rendered.yml
+          docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml -f compose.telemetry.yml pull prometheus ithute-node-exporter ithute-cadvisor
+          docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml -f compose.telemetry.yml up -d --no-build prometheus ithute-node-exporter ithute-cadvisor
           REMOTE
 
       - name: Verify live host and container metrics
@@ -149,45 +133,20 @@ jobs:
           set -euo pipefail
           cd "$APP_DIR"
           compose() {
-            docker compose \
-              --env-file .env.production \
-              --env-file .image.env \
-              -p ithute \
-              -f compose.production.yml \
-              -f compose.telemetry.yml \
-              "$@"
+            docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml -f compose.telemetry.yml "$@"
           }
-
           for service in prometheus ithute-node-exporter ithute-cadvisor; do
             id="$(compose ps -q "$service")"
             test -n "$id"
             ports="$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$id")"
             test "$ports" = "{}" || test "$ports" = "null"
           done
-
           for attempt in $(seq 1 30); do
-            if compose exec -T ithute-app-api python - <<'PY'
-from app.services.infrastructure_telemetry import live_infrastructure_telemetry
-result = live_infrastructure_telemetry()
-host = result.get("host", {})
-assert result.get("status") in {"ok", "warning", "critical", "partial"}, result
-assert host.get("memory_total_bytes"), result
-assert host.get("disk_total_bytes"), result
-assert isinstance(result.get("containers"), list), result
-print({
-    "status": result.get("status"),
-    "cpu_percent": host.get("cpu_percent"),
-    "memory_percent": host.get("memory_percent"),
-    "disk_percent": host.get("disk_percent"),
-    "containers": result.get("container_count"),
-})
-PY
-            then
+            if compose exec -T ithute-app-api python -c 'from app.services.infrastructure_telemetry import live_infrastructure_telemetry as f; r=f(); h=r.get("host", {}); assert r.get("status") in {"ok","warning","critical","partial"}, r; assert h.get("memory_total_bytes"), r; assert h.get("disk_total_bytes"), r; assert isinstance(r.get("containers"), list), r; print({"status": r.get("status"), "cpu_percent": h.get("cpu_percent"), "memory_percent": h.get("memory_percent"), "disk_percent": h.get("disk_percent"), "containers": r.get("container_count")})'; then
               exit 0
             fi
             sleep 4
           done
-
           compose logs --tail=120 prometheus ithute-node-exporter ithute-cadvisor >&2 || true
           exit 1
           REMOTE
