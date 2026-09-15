@@ -32,7 +32,7 @@ services:
     cap_add:
       - NET_ADMIN
     healthcheck:
-      test: ["CMD-SHELL", "ss --listening --tcp | grep -q ':25 '"]
+      test: ["CMD-SHELL", "ss --listening --tcp --numeric | grep -Eq ':25[[:space:]]'"]
       interval: 30s
       timeout: 5s
       retries: 6
