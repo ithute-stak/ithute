@@ -127,6 +127,7 @@ services:
       MAIL_HOSTNAME: mail.ithute.co.ls
       MAIL_PUBLIC_IP: ${ITHUTE_PUBLIC_IPV4:-204.12.205.224}
       MAIL_TLS_MODE: external
+      MAIL_ACCOUNTS_FILE: /mail-accounts/postfix-accounts.cf
       MAIL_OPS_URL: https://mail.ithute.co.ls
       MAIL_OPS_TOKEN: ${ITHUTE_APP_MAIL_OPS_TOKEN}
       MAIL_NODE_TOKEN: ${ITHUTE_APP_MAIL_NODE_TOKEN}
@@ -147,6 +148,8 @@ services:
       ITHUTE_AUTH_AUDIENCE: mailbox-dns
       ITHUTE_AUTH_JWKS_URL: http://ithute-auth:8080/.well-known/jwks.json
       ITHUTE_AUTH_INTERNAL_URL: http://ithute-auth:8080
+    volumes:
+      - ${ITHUTE_MAIL_ACCOUNTS_DIR:-/home/administrator/ithute-platform-mail/accounts}:/mail-accounts
     depends_on:
       ithute-app-db:
         condition: service_healthy
