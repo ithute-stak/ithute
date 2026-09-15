@@ -48,6 +48,14 @@ def _scalar(expression: str) -> float | None:
         return None
 
 
+def _first_scalar(*expressions: str) -> float | None:
+    for expression in expressions:
+        value = _scalar(expression)
+        if value is not None:
+            return value
+    return None
+
+
 def _vector(expression: str) -> list[tuple[dict[str, str], float]]:
     output: list[tuple[dict[str, str], float]] = []
     for row in _prometheus(expression):
@@ -72,10 +80,26 @@ def _rounded(value: float | None, digits: int = 2) -> float | None:
     return round(value, digits) if value is not None else None
 
 
+def _container_key(labels: dict[str, str]) -> str:
+    for key in ("name", "container", "container_label_com_docker_compose_service"):
+        value = labels.get(key, "").strip().lstrip("/")
+        if value:
+            return value
+    container_id = labels.get("id", "").strip().strip("/")
+    if not container_id:
+        return ""
+    leaf = container_id.rsplit("/", 1)[-1]
+    if leaf.startswith("docker-") and leaf.endswith(".scope"):
+        leaf = leaf[7:-6]
+    if leaf.startswith("cri-containerd-") and leaf.endswith(".scope"):
+        leaf = leaf[15:-6]
+    return leaf[-64:]
+
+
 def _container_map(expression: str) -> dict[str, tuple[dict[str, str], float]]:
     rows: dict[str, tuple[dict[str, str], float]] = {}
     for labels, value in _vector(expression):
-        name = labels.get("name", "").lstrip("/")
+        name = _container_key(labels)
         if not name:
             continue
         previous = rows.get(name)
@@ -96,7 +120,10 @@ def _runtime_alert(label: str, value: float | None) -> dict[str, str] | None:
 
 
 def live_infrastructure_telemetry() -> dict[str, Any]:
-    cpu_percent = _scalar('100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[2m])))')
+    cpu_percent = _first_scalar(
+        '100 * (1 - avg(irate(node_cpu_seconds_total{mode="idle"}[1m])))',
+        '100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[2m])))',
+    )
     memory_total = _scalar("node_memory_MemTotal_bytes")
     memory_available = _scalar("node_memory_MemAvailable_bytes")
     memory_used = None if memory_total is None or memory_available is None else max(0.0, memory_total - memory_available)
@@ -110,11 +137,14 @@ def live_infrastructure_telemetry() -> dict[str, Any]:
     containers_up = _scalar('up{job="ithute-containers"}')
     now = datetime.now(timezone.utc)
 
-    cpu_by_name = _container_map('sum by (name, image) (rate(container_cpu_usage_seconds_total{name=~".+"}[2m])) * 100')
-    memory_by_name = _container_map('sum by (name, image) (container_memory_working_set_bytes{name=~".+"})')
-    limit_by_name = _container_map('sum by (name, image) (container_spec_memory_limit_bytes{name=~".+"})')
-    rx_by_name = _container_map('sum by (name, image) (rate(container_network_receive_bytes_total{name=~".+"}[2m]))')
-    tx_by_name = _container_map('sum by (name, image) (rate(container_network_transmit_bytes_total{name=~".+"}[2m]))')
+    selector = '{id!="/",id!=""}'
+    cpu_by_name = _container_map(f"sum by (name, image, id) (irate(container_cpu_usage_seconds_total{selector}[1m])) * 100")
+    if not cpu_by_name:
+        cpu_by_name = _container_map(f"sum by (name, image, id) (rate(container_cpu_usage_seconds_total{selector}[2m])) * 100")
+    memory_by_name = _container_map(f"sum by (name, image, id) (container_memory_working_set_bytes{selector})")
+    limit_by_name = _container_map(f"sum by (name, image, id) (container_spec_memory_limit_bytes{selector})")
+    rx_by_name = _container_map(f"sum by (name, image, id) (irate(container_network_receive_bytes_total{selector}[1m]))")
+    tx_by_name = _container_map(f"sum by (name, image, id) (irate(container_network_transmit_bytes_total{selector}[1m]))")
 
     container_names = set(cpu_by_name) | set(memory_by_name) | set(rx_by_name) | set(tx_by_name)
     containers: list[dict[str, Any]] = []
@@ -147,6 +177,8 @@ def live_infrastructure_telemetry() -> dict[str, Any]:
         alerts.append({"severity": "critical", "title": "Node exporter is down", "detail": "Physical host metrics cannot be trusted until the collector recovers."})
     if containers_up is not None and containers_up < 1:
         alerts.append({"severity": "warning", "title": "Container collector is down", "detail": "Docker resource metrics are temporarily unavailable."})
+    if containers_up is not None and containers_up >= 1 and not containers:
+        alerts.append({"severity": "warning", "title": "Container collector has no workload samples", "detail": "cAdvisor is reachable, but container CPU/memory samples have not populated yet."})
 
     if not available_count:
         status = "unavailable"
@@ -178,10 +210,10 @@ def live_infrastructure_telemetry() -> dict[str, Any]:
             "disk_total_bytes": int(disk_total) if disk_total is not None else None,
             "disk_used_bytes": int(disk_used) if disk_used is not None else None,
             "disk_percent": disk_percent,
-            "disk_read_bytes_per_second": _rounded(_scalar('sum(rate(node_disk_read_bytes_total{device!~"loop.*|ram.*"}[2m]))'), 1),
-            "disk_write_bytes_per_second": _rounded(_scalar('sum(rate(node_disk_written_bytes_total{device!~"loop.*|ram.*"}[2m]))'), 1),
-            "network_receive_bytes_per_second": _rounded(_scalar('sum(rate(node_network_receive_bytes_total{device!~"lo|veth.*|docker.*|br-.*"}[2m]))'), 1),
-            "network_transmit_bytes_per_second": _rounded(_scalar('sum(rate(node_network_transmit_bytes_total{device!~"lo|veth.*|docker.*|br-.*"}[2m]))'), 1),
+            "disk_read_bytes_per_second": _rounded(_first_scalar('sum(irate(node_disk_read_bytes_total{device!~"loop.*|ram.*"}[1m]))', 'sum(rate(node_disk_read_bytes_total{device!~"loop.*|ram.*"}[2m]))'), 1),
+            "disk_write_bytes_per_second": _rounded(_first_scalar('sum(irate(node_disk_written_bytes_total{device!~"loop.*|ram.*"}[1m]))', 'sum(rate(node_disk_written_bytes_total{device!~"loop.*|ram.*"}[2m]))'), 1),
+            "network_receive_bytes_per_second": _rounded(_first_scalar('sum(irate(node_network_receive_bytes_total{device!~"lo|veth.*|docker.*|br-.*"}[1m]))', 'sum(rate(node_network_receive_bytes_total{device!~"lo|veth.*|docker.*|br-.*"}[2m]))'), 1),
+            "network_transmit_bytes_per_second": _rounded(_first_scalar('sum(irate(node_network_transmit_bytes_total{device!~"lo|veth.*|docker.*|br-.*"}[1m]))', 'sum(rate(node_network_transmit_bytes_total{device!~"lo|veth.*|docker.*|br-.*"}[2m]))'), 1),
             "uptime_seconds": int(max(0.0, now.timestamp() - boot_time)) if boot_time is not None else None,
         },
         "containers": containers[:40],
