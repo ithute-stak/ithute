@@ -2,10 +2,11 @@ name: Finalize Ithute Mail
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/finalize-mail.yml"
   schedule:
-    # One-time recovery trigger for 2026-09-15 after GitHub account email verification.
-    # Remove this line after the recovery run completes successfully.
-    - cron: "25 10 15 9 *"
     # Keep this away from the DNS finalizer's :17 schedule. All VPS-mutating
     # workflows intentionally share ithute-vps-production, and GitHub replaces
     # an older pending run when another run enters the same concurrency group.
