@@ -1,6 +1,5 @@
 from pathlib import Path
 
-from app.core.config import settings
 from app.models.mail import Mailbox, MailboxStatus
 from app.services.mail_account_sync import MailAccountSyncError, sync_mailbox
 
@@ -23,7 +22,7 @@ def test_sync_replaces_only_matching_account_and_preserves_external_accounts(tmp
         "info@external.example|{SHA512-CRYPT}$6$external$hash\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(settings, "mail_accounts_file", str(account_file))
+    monkeypatch.setenv("MAIL_ACCOUNTS_FILE", str(account_file))
 
     mailbox = _mailbox("info@ithute.co.ls", "{SHA512-CRYPT}$6$new$hash")
     assert sync_mailbox(mailbox) is True
@@ -42,7 +41,7 @@ def test_sync_removes_suspended_account(tmp_path: Path, monkeypatch):
         "other@example.com|{SHA512-CRYPT}$6$other$hash\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(settings, "mail_accounts_file", str(account_file))
+    monkeypatch.setenv("MAIL_ACCOUNTS_FILE", str(account_file))
 
     mailbox = _mailbox(
         "info@ithute.co.ls",
@@ -57,7 +56,7 @@ def test_sync_removes_suspended_account(tmp_path: Path, monkeypatch):
 
 
 def test_sync_rejects_unsupported_hash(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(settings, "mail_accounts_file", str(tmp_path / "postfix-accounts.cf"))
+    monkeypatch.setenv("MAIL_ACCOUNTS_FILE", str(tmp_path / "postfix-accounts.cf"))
     mailbox = _mailbox("info@ithute.co.ls", "not-a-mail-hash")
 
     try:
@@ -66,3 +65,9 @@ def test_sync_rejects_unsupported_hash(tmp_path: Path, monkeypatch):
         assert "SHA512-CRYPT" in str(exc)
     else:
         raise AssertionError("unsupported hash was accepted")
+
+
+def test_sync_is_disabled_without_runtime_account_file(monkeypatch):
+    monkeypatch.delenv("MAIL_ACCOUNTS_FILE", raising=False)
+    mailbox = _mailbox("info@ithute.co.ls", "{SHA512-CRYPT}$6$current$hash")
+    assert sync_mailbox(mailbox) is False
