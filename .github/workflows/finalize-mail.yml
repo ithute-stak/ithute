@@ -1,17 +1,13 @@
 name: Finalize Ithute Mail
 
 on:
-  # Manual runs are kept available for recovery after account or runner interruptions.
+  # Mail is finalized in production. Keep explicit recovery triggers only so
+  # routine VPS workflows cannot supersede a queued scheduled mail run.
   workflow_dispatch:
   push:
     branches: [main]
     paths:
       - ".github/workflows/finalize-mail.yml"
-  schedule:
-    # Keep this away from the DNS finalizer's :17 schedule. All VPS-mutating
-    # workflows intentionally share ithute-vps-production, and GitHub replaces
-    # an older pending run when another run enters the same concurrency group.
-    - cron: "47 * * * *"
 
 concurrency:
   group: ithute-vps-production
@@ -111,7 +107,7 @@ jobs:
           ssh "$remote" "VPS_APP_DIR='$VPS_APP_DIR' VPS_MAIL_DIR='$VPS_MAIL_DIR' bash -s" <<'REMOTE'
           set -uo pipefail
           if [ ! -f "$VPS_APP_DIR/.ithute-bootstrapped" ]; then
-            echo 'Ithute bootstrap is not complete yet; mail finalization will retry later.'
+            echo 'Ithute bootstrap is not complete yet; rerun Finalize Ithute Mail after bootstrap completes.'
             exit 0
           fi
 
@@ -135,7 +131,7 @@ jobs:
           status=$?
           set -e
           if [ "$status" -eq 3 ]; then
-            echo 'Mail DNS is not ready yet; scheduled GitHub Actions will retry automatically.'
+            echo 'Mail DNS is not ready yet; rerun Finalize Ithute Mail after DNS is ready.'
             exit 0
           fi
           exit "$status"
@@ -148,7 +144,7 @@ jobs:
           ssh "$remote" "VPS_MAIL_DIR='$VPS_MAIL_DIR' bash -s" <<'REMOTE'
           set -euo pipefail
           if [ ! -f "$VPS_MAIL_DIR/.ithute-mail-finalized" ]; then
-            echo 'Mail is waiting for public DNS or first-time provisioning; scheduled finalization will retry.'
+            echo 'Mail is waiting for public DNS or first-time provisioning; rerun Finalize Ithute Mail after prerequisites are ready.'
             exit 0
           fi
           test -f "$VPS_MAIL_DIR/mailbox-credentials.txt"
