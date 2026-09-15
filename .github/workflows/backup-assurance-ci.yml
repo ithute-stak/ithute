@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      ITHUTE_IMAGE_TAG: 0000000000000000000000000000000000000000
+      ITHUTE_IMAGE_TAG: "0000000000000000000000000000000000000000"
       ITHUTE_PUBLIC_IPV4: 204.12.205.224
       ITHUTE_APP_DB_PASSWORD: ci-app-db-password-000000000000
       ITHUTE_APP_SECRET_KEY: ci-app-secret-000000000000000000000000000000000000
@@ -66,7 +66,9 @@ jobs:
           printf '%s\n' "$services" | grep -Fxq ithute-restore-drill-db
           printf '%s\n' "$services" | grep -Fxq ithute-restore-drill
           ! grep -Eq '^[[:space:]]+ports:' compose.backup.yml
-          grep -Fq 'ithute_backup_status:/backup-status/status:ro' /tmp/ithute-backup-compose.yml
+          grep -Fq 'source: ithute_backup_status' /tmp/ithute-backup-compose.yml
+          grep -Fq 'target: /backup-status/status' /tmp/ithute-backup-compose.yml
+          grep -Fq 'read_only: true' /tmp/ithute-backup-compose.yml
 
       - name: Run a real backup and isolated restore drill
         run: |
