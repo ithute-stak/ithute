@@ -1,5 +1,6 @@
-const CACHE = "ithute-imail-shell-v1";
-const SHELL = ["/webmail", "/webmail/unified", "/webmail/accounts", "/webmail/productivity", "/webmail/migrate"];
+const CACHE = "ithute-imail-shell-v2";
+const IMAIL_MARK = "/brand/imail-mark.webp";
+const SHELL = ["/webmail", "/webmail/unified", "/webmail/accounts", "/webmail/productivity", "/webmail/migrate", IMAIL_MARK];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)).catch(() => undefined));
@@ -31,7 +32,14 @@ self.addEventListener("message", (event) => {
   if (!event.data || event.data.type !== "IMAIL_NOTIFICATION") return;
   const title = String(event.data.title || "New iMail activity").slice(0, 120);
   const body = String(event.data.body || "Your mailbox has new activity.").slice(0, 240);
-  event.waitUntil(self.registration.showNotification(title, { body, tag: "ithute-imail", renotify: true, data: { url: "/webmail/unified" } }));
+  event.waitUntil(self.registration.showNotification(title, {
+    body,
+    icon: IMAIL_MARK,
+    badge: IMAIL_MARK,
+    tag: "ithute-imail",
+    renotify: true,
+    data: { url: "/webmail/unified" },
+  }));
 });
 
 self.addEventListener("notificationclick", (event) => {
