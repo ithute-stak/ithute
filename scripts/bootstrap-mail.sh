@@ -77,10 +77,19 @@ mail_compose() {
 }
 
 CERT_FILE="$MAIL_DIR/letsencrypt/live/$MAIL_HOST/fullchain.pem"
-if [ ! -s "$CERT_FILE" ]; then
+CERT_KEY="$MAIL_DIR/letsencrypt/live/$MAIL_HOST/privkey.pem"
+if [ ! -s "$CERT_FILE" ] || [ ! -s "$CERT_KEY" ]; then
   restart_caddy() { app_compose start caddy >/dev/null 2>&1 || true; }
   trap restart_caddy EXIT
   app_compose stop caddy >/dev/null
+
+  # A previous interrupted Certbot run can leave renewal metadata claiming the
+  # certificate is still valid while the live/ symlinks are missing. In that
+  # state --keep-until-expiring exits successfully without recreating the files,
+  # which made the hourly mail-finalization workflow fail forever. When the
+  # expected live certificate/key are absent, explicitly repair the named
+  # lineage with a forced issuance. This only runs while the files are missing;
+  # once repaired, subsequent scheduled finalizers skip certificate issuance.
   docker run --rm --pull=never -p 80:80 \
     -v "$MAIL_DIR/letsencrypt:/etc/letsencrypt" \
     "$CERTBOT_IMAGE" certonly \
@@ -88,16 +97,22 @@ if [ ! -s "$CERT_FILE" ]; then
       --non-interactive \
       --agree-tos \
       --no-eff-email \
-      --keep-until-expiring \
+      --force-renewal \
       --cert-name "$MAIL_HOST" \
       --email "$CERT_EMAIL" \
       -d "$MAIL_HOST"
+
   restart_caddy
   trap - EXIT
-  test -s "$CERT_FILE" || {
-    echo "Certbot completed but the expected certificate was not created at $CERT_FILE" >&2
+  if [ ! -s "$CERT_FILE" ] || [ ! -s "$CERT_KEY" ]; then
+    echo "Certbot completed but the expected mail certificate lineage is still incomplete." >&2
+    echo "Expected certificate: $CERT_FILE" >&2
+    echo "Expected private key: $CERT_KEY" >&2
+    docker run --rm --pull=never \
+      -v "$MAIL_DIR/letsencrypt:/etc/letsencrypt" \
+      "$CERTBOT_IMAGE" certificates >&2 || true
     exit 1
-  }
+  fi
 fi
 
 # Never pull on the VPS. The GitHub workflow loads these images first.
