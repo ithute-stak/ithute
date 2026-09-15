@@ -32,26 +32,65 @@ def _session_key(token: str) -> str:
 
 
 def _tls_context() -> ssl.SSLContext:
-    # Mail services are reached over the private Docker network. Public clients
-    # still receive the production ACME/external certificate on SMTP/IMAP.
+    """Build the TLS policy used by hosted webmail transports.
+
+    Production connects to the public mail hostname and must verify its
+    certificate. Development keeps the historical relaxed mode so local
+    self-signed mail containers remain usable.
+    """
     context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
+    if settings.environment.lower() != "production":
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
     return context
 
 
-def _imap(address: str, password: str) -> imaplib.IMAP4:
+def _close_imap(client: imaplib.IMAP4) -> None:
     try:
+        client.logout()
+    except Exception:
+        pass
+
+
+def _connect_imap() -> imaplib.IMAP4:
+    """Open IMAP with the transport expected by the configured port.
+
+    Port 993 is implicit TLS (IMAPS). Other configured IMAP ports use
+    STARTTLS, including the standard submission-style port 143 setup used by
+    local development. Treat handshake/greeting failures as transport errors,
+    not bad passwords.
+    """
+    try:
+        if settings.webmail_imap_port == 993:
+            return imaplib.IMAP4_SSL(
+                settings.webmail_imap_host,
+                settings.webmail_imap_port,
+                ssl_context=_tls_context(),
+                timeout=settings.webmail_transport_timeout_seconds,
+            )
+
         client = imaplib.IMAP4(
             settings.webmail_imap_host,
             settings.webmail_imap_port,
             timeout=settings.webmail_transport_timeout_seconds,
         )
         client.starttls(ssl_context=_tls_context())
-        client.login(address, password)
         return client
     except (imaplib.IMAP4.error, OSError, ssl.SSLError) as exc:
-        raise WebmailError("Mailbox authentication or IMAP connection failed") from exc
+        raise WebmailError("Mail server connection failed") from exc
+
+
+def _imap(address: str, password: str) -> imaplib.IMAP4:
+    client = _connect_imap()
+    try:
+        client.login(address, password)
+        return client
+    except imaplib.IMAP4.error as exc:
+        _close_imap(client)
+        raise WebmailError("Mailbox address or password was not accepted") from exc
+    except (OSError, ssl.SSLError) as exc:
+        _close_imap(client)
+        raise WebmailError("Mail server connection failed") from exc
 
 
 def authenticate(address: str, password: str) -> None:
@@ -59,10 +98,7 @@ def authenticate(address: str, password: str) -> None:
     try:
         client.noop()
     finally:
-        try:
-            client.logout()
-        except Exception:
-            pass
+        _close_imap(client)
 
 
 def create_session(address: str, password: str) -> str:
@@ -256,10 +292,7 @@ def folders(address: str, password: str) -> list[dict]:
         rows.sort(key=lambda x: (preferred.get(x["name"], 10), x["name"].lower()))
         return rows
     finally:
-        try:
-            client.logout()
-        except Exception:
-            pass
+        _close_imap(client)
 
 
 def messages(address: str, password: str, folder: str = "INBOX", limit: int = 50, offset: int = 0, query: str = "") -> dict:
@@ -285,10 +318,7 @@ def messages(address: str, password: str, folder: str = "INBOX", limit: int = 50
             rows.append(_message_json(uid, raw, meta))
         return {"items": rows, "total": len(uids), "folder": folder, "limit": limit, "offset": offset, "query": query.strip()}
     finally:
-        try:
-            client.logout()
-        except Exception:
-            pass
+        _close_imap(client)
 
 
 def message(address: str, password: str, uid: str, folder: str = "INBOX") -> dict:
@@ -298,10 +328,7 @@ def message(address: str, password: str, uid: str, folder: str = "INBOX") -> dic
         raw, meta = _fetch_raw(client, uid, mark_seen=True)
         return _message_json(uid, raw, meta, include_body=True)
     finally:
-        try:
-            client.logout()
-        except Exception:
-            pass
+        _close_imap(client)
 
 
 def set_flags(address: str, password: str, uid: str, folder: str, seen: bool | None = None, flagged: bool | None = None, answered: bool | None = None) -> dict:
@@ -319,10 +346,7 @@ def set_flags(address: str, password: str, uid: str, folder: str, seen: bool | N
         raw, meta = _fetch_raw(client, uid, mark_seen=False)
         return _message_json(uid, raw, meta)
     finally:
-        try:
-            client.logout()
-        except Exception:
-            pass
+        _close_imap(client)
 
 
 def move_message(address: str, password: str, uid: str, folder: str, destination: str) -> dict:
@@ -341,10 +365,7 @@ def move_message(address: str, password: str, uid: str, folder: str, destination
         client.expunge()
         return {"moved": True, "uid": uid, "from": folder, "to": destination}
     finally:
-        try:
-            client.logout()
-        except Exception:
-            pass
+        _close_imap(client)
 
 
 def delete_message(address: str, password: str, uid: str, folder: str) -> dict:
@@ -359,10 +380,7 @@ def delete_message(address: str, password: str, uid: str, folder: str) -> dict:
         client.expunge()
         return {"deleted": True, "uid": uid, "folder": folder}
     finally:
-        try:
-            client.logout()
-        except Exception:
-            pass
+        _close_imap(client)
 
 
 def save_draft(address: str, password: str, to: list[str], cc: list[str], subject: str, body_text: str) -> dict:
@@ -384,10 +402,7 @@ def save_draft(address: str, password: str, to: list[str], cc: list[str], subjec
             raise WebmailError("Unable to save draft")
         return {"saved": True, "message_id": msg["Message-ID"], "folder": "Drafts"}
     finally:
-        try:
-            client.logout()
-        except Exception:
-            pass
+        _close_imap(client)
 
 
 def attachment(address: str, password: str, uid: str, folder: str, index: int) -> tuple[str, str, bytes]:
@@ -406,10 +421,7 @@ def attachment(address: str, password: str, uid: str, folder: str, index: int) -
         filename = part.get_filename() or f"attachment-{index + 1}"
         return filename, part.get_content_type(), part.get_payload(decode=True) or b""
     finally:
-        try:
-            client.logout()
-        except Exception:
-            pass
+        _close_imap(client)
 
 
 def send_message(
@@ -471,7 +483,7 @@ def send_message(
             _ensure_folder(client, "Sent")
             client.append("Sent", "\\Seen", imaplib.Time2Internaldate(datetime.now().timestamp()), msg.as_bytes())
         finally:
-            client.logout()
+            _close_imap(client)
     except Exception:
         pass
     return {"sent": True, "message_id": msg["Message-ID"], "recipients": len(recipients), "attachments": len(attachments or [])}

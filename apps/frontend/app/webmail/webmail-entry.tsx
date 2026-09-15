@@ -5,7 +5,7 @@ import {
   ArrowRight,
   Eye,
   EyeOff,
-  KeyRound,
+  Fingerprint,
   Loader2,
   LockKeyhole,
   Mail,
@@ -94,10 +94,6 @@ export function WebmailEntry() {
   const [showPassword, setShowPassword] = useState(false);
   const [mailboxAddress, setMailboxAddress] = useState("");
   const [mailboxPassword, setMailboxPassword] = useState("");
-  const [systemEmail, setSystemEmail] = useState("");
-  const [systemPassword, setSystemPassword] = useState("");
-  const [systemMfaCode, setSystemMfaCode] = useState("");
-  const [systemMfaRequired, setSystemMfaRequired] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -119,10 +115,6 @@ export function WebmailEntry() {
     setMode(nextMode);
     setError("");
     setShowPassword(false);
-    if (nextMode === "mailbox") {
-      setSystemMfaRequired(false);
-      setSystemMfaCode("");
-    }
   }
 
   async function mailboxLogin(event: FormEvent<HTMLFormElement>) {
@@ -142,50 +134,6 @@ export function WebmailEntry() {
       setSessionState("mailbox");
     } catch {
       setError("The mail service could not be reached. Please try again shortly.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function systemLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoading(true);
-    setError("");
-    try {
-      const response = await fetch(`${API}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          email: systemEmail.trim(),
-          password: systemPassword,
-          ...(systemMfaCode.trim() ? { mfa_code: systemMfaCode.replace(/\s/g, "").trim() } : {}),
-        }),
-      });
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        const detail = String(body.detail || "We could not sign you in with those credentials.");
-        const normalized = detail.toLowerCase();
-        if (normalized.includes("mfa code required")) {
-          setSystemMfaRequired(true);
-          setError("");
-        } else if (normalized.includes("invalid mfa")) {
-          setSystemMfaRequired(true);
-          setError("That authentication code was not accepted. Check your authenticator app and try again.");
-        } else if (response.status === 401) {
-          setError("The email address or password is incorrect.");
-        } else if (response.status === 429) {
-          setError("Too many sign-in attempts. Please wait a moment before trying again.");
-        } else {
-          setError(detail);
-        }
-        return;
-      }
-
-      window.location.assign("/dashboard");
-    } catch {
-      setError("The secure control plane could not be reached. Please try again shortly.");
     } finally {
       setLoading(false);
     }
@@ -232,27 +180,25 @@ export function WebmailEntry() {
             <div className="imail-login-mobile-brand"><Brand /></div>
 
             <p className="imail-login-eyebrow">Ithute Mail • Webmail</p>
-            <h2 className="imail-login-title">{systemMfaRequired ? "Verify your account" : "Sign in"}</h2>
+            <h2 className="imail-login-title">Sign in</h2>
             <p className="imail-login-subtitle">
-              {systemMfaRequired
-                ? "Enter the current code from your authenticator app to finish signing in."
-                : "Use your mailbox address and password to access your business inbox."}
+              {mode === "mailbox"
+                ? "Use your mailbox address and password to access your business inbox."
+                : "Continue through centralized Ithute Auth for administration and system access."}
             </p>
 
-            {!systemMfaRequired ? (
-              <div className="imail-login-mode" role="tablist" aria-label="Sign-in method">
-                <button type="button" data-active={mode === "mailbox"} onClick={() => selectMode("mailbox")}>
-                  <Mail size={15} className="mr-1 inline" /> Mailbox
-                </button>
-                <button type="button" data-active={mode === "system"} onClick={() => selectMode("system")}>
-                  <UserRound size={15} className="mr-1 inline" /> System account
-                </button>
-              </div>
-            ) : null}
+            <div className="imail-login-mode" role="tablist" aria-label="Sign-in method">
+              <button type="button" data-active={mode === "mailbox"} onClick={() => selectMode("mailbox")}>
+                <Mail size={15} className="mr-1 inline" /> Mailbox
+              </button>
+              <button type="button" data-active={mode === "system"} onClick={() => selectMode("system")}>
+                <UserRound size={15} className="mr-1 inline" /> System account
+              </button>
+            </div>
 
             {error ? <div role="alert" className="imail-login-error">{error}</div> : null}
 
-            {mode === "mailbox" && !systemMfaRequired ? (
+            {mode === "mailbox" ? (
               <form onSubmit={mailboxLogin} className="imail-login-form">
                 <div className="imail-field">
                   <label htmlFor="mailbox-address">Email address</label>
@@ -301,97 +247,38 @@ export function WebmailEntry() {
                 </button>
               </form>
             ) : (
-              <form onSubmit={systemLogin} className="imail-login-form">
-                <div className="imail-field">
-                  <label htmlFor="system-email">System account email</label>
-                  <div className="imail-input-wrap">
-                    <UserRound size={18} />
-                    <input
-                      id="system-email"
-                      type="email"
-                      required
-                      autoComplete="email"
-                      readOnly={systemMfaRequired}
-                      value={systemEmail}
-                      onChange={(event) => setSystemEmail(event.target.value)}
-                      placeholder="name@company.co.ls"
-                    />
+              <div className="imail-login-form">
+                <div className="imail-security-note">
+                  <Fingerprint size={19} className="mt-0.5 shrink-0" />
+                  <div>
+                    <strong>Centralized Ithute Auth</strong>
+                    <span>Your system password is handled only by Ithute Auth. Webmail no longer submits system credentials to the legacy Mailbox DNS login endpoint.</span>
                   </div>
                 </div>
 
-                <div className="imail-field">
-                  <label htmlFor="system-password">System password</label>
-                  <div className="imail-input-wrap">
-                    <LockKeyhole size={18} />
-                    <input
-                      id="system-password"
-                      type={showPassword ? "text" : "password"}
-                      required
-                      autoComplete="current-password"
-                      readOnly={systemMfaRequired}
-                      value={systemPassword}
-                      onChange={(event) => setSystemPassword(event.target.value)}
-                      placeholder="Your password"
-                    />
-                    <button type="button" className="imail-input-action" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Hide password" : "Show password"}>
-                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                    </button>
-                  </div>
-                </div>
-
-                {systemMfaRequired ? (
-                  <div className="imail-field">
-                    <label htmlFor="system-mfa"><KeyRound size={14} className="mr-1 inline" />Authenticator code</label>
-                    <div className="imail-input-wrap">
-                      <KeyRound size={18} />
-                      <input
-                        id="system-mfa"
-                        required
-                        autoFocus
-                        inputMode="numeric"
-                        autoComplete="one-time-code"
-                        maxLength={6}
-                        value={systemMfaCode}
-                        onChange={(event) => setSystemMfaCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                        placeholder="000000"
-                      />
-                    </div>
-                  </div>
-                ) : null}
+                <a href={`${API}/auth/ithute/login`} className="imail-login-primary">
+                  <Fingerprint size={18} />
+                  Continue with Ithute Auth
+                  <ArrowRight size={17} />
+                </a>
 
                 <div className="imail-login-meta">
-                  <span>Protected administration access</span>
-                  {!systemMfaRequired ? <Link href="/forgot-password">Forgot password?</Link> : null}
+                  <span>Single sign-on for administration</span>
+                  <span>MFA is handled by Ithute Auth when enabled</span>
                 </div>
-
-                <button disabled={loading} className="imail-login-primary">
-                  {loading ? <Loader2 size={18} className="animate-spin" /> : <LockKeyhole size={18} />}
-                  {loading ? "Signing in…" : systemMfaRequired ? "Verify and continue" : "Sign in to system"}
-                  {!loading ? <ArrowRight size={17} /> : null}
-                </button>
-
-                {systemMfaRequired ? (
-                  <button type="button" onClick={() => { setSystemMfaRequired(false); setSystemMfaCode(""); setError(""); }} className="mt-4 w-full text-center text-xs font-bold text-[#62776e] hover:text-[#0a654d]">
-                    Use a different system account
-                  </button>
-                ) : null}
-              </form>
+              </div>
             )}
 
-            {!systemMfaRequired ? (
-              <>
-                <div className="imail-login-divider">or</div>
-                <Link href="/webmail/external" className="imail-login-secondary">
-                  <Mail size={18} /> Other email account <ArrowRight size={16} />
-                </Link>
-              </>
-            ) : null}
+            <div className="imail-login-divider">or</div>
+            <Link href="/webmail/external" className="imail-login-secondary">
+              <Mail size={18} /> Other email account <ArrowRight size={16} />
+            </Link>
 
             <div className="imail-security-note">
               <ShieldCheck size={19} className="mt-0.5 shrink-0" />
               <div>
                 <strong>Secure and private</strong>
-                <span>Your mailbox credentials remain protected by the existing encrypted server-side session and verified mail-server connections.</span>
+                <span>Hosted mailbox credentials stay inside the encrypted server-side webmail session and connect to the verified production mail server.</span>
               </div>
             </div>
 
