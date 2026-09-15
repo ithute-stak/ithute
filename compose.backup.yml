@@ -1,0 +1,92 @@
+services:
+  ithute-app-api:
+    environment:
+      BACKUP_STATUS_DIR: /backup-status/status
+      BACKUP_MAX_AGE_SECONDS: ${ITHUTE_BACKUP_MAX_AGE_SECONDS:-93600}
+    volumes:
+      - ithute_backup_status:/backup-status/status:ro
+
+  ithute-backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    command: ["sh", "/opt/ithute-backup/backup-loop.sh"]
+    environment:
+      ITHUTE_APP_DB_NAME: ${ITHUTE_APP_DB_NAME:-ithute_app}
+      ITHUTE_APP_DB_USER: ${ITHUTE_APP_DB_USER:-ithute_app}
+      ITHUTE_APP_DB_PASSWORD: ${ITHUTE_APP_DB_PASSWORD}
+      ITHUTE_AUTH_DB_NAME: ${ITHUTE_AUTH_DB_NAME:-ithute_auth}
+      ITHUTE_AUTH_DB_USER: ${ITHUTE_AUTH_DB_USER:-ithute_auth}
+      ITHUTE_AUTH_DB_PASSWORD: ${ITHUTE_AUTH_DB_PASSWORD}
+      ITHUTE_PUSH_DB_NAME: ${ITHUTE_PUSH_DB_NAME:-ithute_push}
+      ITHUTE_PUSH_DB_USER: ${ITHUTE_PUSH_DB_USER:-ithute_push}
+      ITHUTE_PUSH_DB_PASSWORD: ${ITHUTE_PUSH_DB_PASSWORD}
+      ITHUTE_REALTIME_DB_NAME: ${ITHUTE_REALTIME_DB_NAME:-ithute_realtime}
+      ITHUTE_REALTIME_DB_USER: ${ITHUTE_REALTIME_DB_USER:-ithute_realtime}
+      ITHUTE_REALTIME_DB_PASSWORD: ${ITHUTE_REALTIME_DB_PASSWORD}
+      BACKUP_ROOT: /backups
+      BACKUP_STATUS_DIR: /backup-status/status
+      BACKUP_INTERVAL_SECONDS: ${ITHUTE_BACKUP_INTERVAL_SECONDS:-21600}
+      BACKUP_RETENTION_DAYS: ${ITHUTE_BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - ./infrastructure/backup:/opt/ithute-backup:ro
+      - ithute_backup_data:/backups
+      - ithute_backup_status:/backup-status/status
+    depends_on:
+      ithute-app-db:
+        condition: service_healthy
+      ithute-auth-db:
+        condition: service_healthy
+      ithute-push-db:
+        condition: service_healthy
+      ithute-realtime-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /backup-status/status/last-run.json && grep -q '\"status\": \"success\"' /backup-status/status/last-run.json"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [ithute]
+
+  ithute-restore-drill-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: ${ITHUTE_RESTORE_DRILL_DB_USER:-ithute_restore}
+      POSTGRES_PASSWORD: ${ITHUTE_RESTORE_DRILL_DB_PASSWORD}
+    tmpfs:
+      - /var/lib/postgresql/data:size=2g,mode=0700
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ITHUTE_RESTORE_DRILL_DB_USER:-ithute_restore} -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [ithute]
+
+  ithute-restore-drill:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    command: ["sh", "/opt/ithute-backup/restore-drill-loop.sh"]
+    environment:
+      BACKUP_ROOT: /backups
+      BACKUP_STATUS_DIR: /backup-status/status
+      RESTORE_DRILL_DB_HOST: ithute-restore-drill-db
+      RESTORE_DRILL_DB_USER: ${ITHUTE_RESTORE_DRILL_DB_USER:-ithute_restore}
+      RESTORE_DRILL_DB_PASSWORD: ${ITHUTE_RESTORE_DRILL_DB_PASSWORD}
+      RESTORE_DRILL_INTERVAL_SECONDS: ${ITHUTE_RESTORE_DRILL_INTERVAL_SECONDS:-604800}
+      RESTORE_DRILL_INITIAL_DELAY_SECONDS: ${ITHUTE_RESTORE_DRILL_INITIAL_DELAY_SECONDS:-120}
+    volumes:
+      - ./infrastructure/backup:/opt/ithute-backup:ro
+      - ithute_backup_data:/backups:ro
+      - ithute_backup_status:/backup-status/status
+    depends_on:
+      ithute-backup:
+        condition: service_healthy
+      ithute-restore-drill-db:
+        condition: service_healthy
+    networks: [ithute]
+
+volumes:
+  ithute_backup_data:
+  ithute_backup_status:

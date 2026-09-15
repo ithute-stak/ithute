@@ -53,6 +53,10 @@ def backup_operational_status() -> dict:
     age_seconds = None
     if last_success:
         age_seconds = max(0, int((now - last_success).total_seconds()))
+        if age_seconds > settings.backup_max_age_seconds:
+            reasons.append("latest successful backup is older than the allowed recovery-point window")
+    elif last_run is not None:
+        reasons.append("latest successful backup timestamp is invalid")
 
     healthy = not reasons
     severity = "ok" if healthy else "critical"

@@ -1,0 +1,107 @@
+name: Backup Assurance CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "compose.backup.yml"
+      - "infrastructure/backup/**"
+      - "apps/backend/app/services/backup_status.py"
+      - ".github/workflows/backup-assurance-ci.yml"
+      - ".github/workflows/deploy-backup-assurance.yml"
+  push:
+    branches: [main]
+    paths:
+      - "compose.backup.yml"
+      - "infrastructure/backup/**"
+      - "apps/backend/app/services/backup_status.py"
+      - ".github/workflows/backup-assurance-ci.yml"
+      - ".github/workflows/deploy-backup-assurance.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ITHUTE_IMAGE_TAG: "0000000000000000000000000000000000000000"
+      ITHUTE_PUBLIC_IPV4: 204.12.205.224
+      ITHUTE_APP_DB_PASSWORD: ci-app-db-password-000000000000
+      ITHUTE_APP_SECRET_KEY: ci-app-secret-000000000000000000000000000000000000
+      ITHUTE_APP_DKIM_ENCRYPTION_KEY: ci-dkim-secret-1111111111111111111111111111111111
+      ITHUTE_APP_BILLING_WEBHOOK_SECRET: ci-billing-secret-22222222222222222222222222222222
+      ITHUTE_APP_BOOTSTRAP_ADMIN_PASSWORD: ci-bootstrap-owner-password-123456
+      ITHUTE_APP_MAIL_OPS_TOKEN: ci-mail-ops-token-333333333333333333333333
+      ITHUTE_APP_MAIL_NODE_TOKEN: ci-mail-node-token-33333333333333333333333
+      ITHUTE_APP_RECOVERY_OPS_TOKEN: ci-recovery-token-44444444444444444444444
+      ITHUTE_APP_POWERDNS_API_KEY: ci-powerdns-token-55555555555555555555555
+      ITHUTE_AUTH_DB_PASSWORD: ci-auth-db-password
+      ITHUTE_PUSH_DB_PASSWORD: ci-push-db-password
+      ITHUTE_REALTIME_DB_PASSWORD: ci-realtime-db-password
+      ITHUTE_RESTORE_DRILL_DB_PASSWORD: ci-restore-drill-password-000000000000
+      ITHUTE_RESTORE_DRILL_INITIAL_DELAY_SECONDS: 0
+      ITHUTE_RESTORE_DRILL_INTERVAL_SECONDS: 86400
+      ITHUTE_BACKUP_INTERVAL_SECONDS: 86400
+      ITHUTE_AUTH_TOTP_ENCRYPTION_KEY: eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg=
+      ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY: eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXk=
+      ITHUTE_SERVICE_REALTIME_SECRET: ci-realtime-service-secret-0000000000000000
+      ITHUTE_SYSTEM_OWNER_PASSWORD: ci-owner-password-12345
+      ITHUTE_AUTH_SERVICE_CLIENT_SECRETS_JSON: '{"ithute-realtime":"ci-realtime-service-secret-0000000000000000"}'
+      ITHUTE_AUTH_REDIRECT_URIS_JSON: '{"mailbox-dns":["https://ithute.co.ls/api/v1/auth/ithute/callback"]}'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate scripts and private topology
+        run: |
+          set -euo pipefail
+          bash -n infrastructure/backup/backup-loop.sh
+          bash -n infrastructure/backup/restore-drill-loop.sh
+          docker compose -f compose.production.yml -f compose.backup.yml config > /tmp/ithute-backup-compose.yml
+          services="$(docker compose -f compose.production.yml -f compose.backup.yml config --services)"
+          printf '%s\n' "$services" | grep -Fxq ithute-backup
+          printf '%s\n' "$services" | grep -Fxq ithute-restore-drill-db
+          printf '%s\n' "$services" | grep -Fxq ithute-restore-drill
+          ! grep -Eq '^[[:space:]]+ports:' compose.backup.yml
+          grep -Fq 'source: ithute_backup_status' /tmp/ithute-backup-compose.yml
+          grep -Fq 'target: /backup-status/status' /tmp/ithute-backup-compose.yml
+          grep -Fq 'read_only: true' /tmp/ithute-backup-compose.yml
+
+      - name: Run a real backup and isolated restore drill
+        run: |
+          set -euo pipefail
+          compose() {
+            docker compose -p ithute-backup-ci -f compose.production.yml -f compose.backup.yml "$@"
+          }
+          cleanup() { compose down -v --remove-orphans >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          compose up -d ithute-app-db ithute-auth-db ithute-push-db ithute-realtime-db ithute-backup ithute-restore-drill-db
+
+          for attempt in $(seq 1 60); do
+            if compose exec -T ithute-backup sh -c "grep -q '\"status\": \"success\"' /backup-status/status/last-run.json" >/dev/null 2>&1; then
+              break
+            fi
+            test "$attempt" -lt 60 || { compose logs ithute-backup >&2; exit 1; }
+            sleep 3
+          done
+
+          compose up -d ithute-restore-drill
+          for attempt in $(seq 1 80); do
+            if compose exec -T ithute-backup sh -c "tail -n1 /backup-status/status/restore-drills.jsonl 2>/dev/null | grep -q '\"status\":\"success\"'"; then
+              break
+            fi
+            test "$attempt" -lt 80 || { compose logs ithute-restore-drill ithute-restore-drill-db >&2; exit 1; }
+            sleep 3
+          done
+
+          compose exec -T ithute-backup sh -c 'ls -lh /backups/*.dump && cat /backup-status/status/last-run.json && tail -n1 /backup-status/status/restore-drills.jsonl'
+
+      - name: Validate backup status backend source
+        run: |
+          set -euo pipefail
+          python -m py_compile apps/backend/app/services/backup_status.py
+          grep -Fq 'settings.backup_max_age_seconds' apps/backend/app/services/backup_status.py
