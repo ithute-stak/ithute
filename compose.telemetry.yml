@@ -36,8 +36,6 @@ services:
       - --docker_only=true
       - --housekeeping_interval=15s
       - --store_container_labels=false
-    devices:
-      - /dev/kmsg:/dev/kmsg
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
