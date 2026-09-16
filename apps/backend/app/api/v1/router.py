@@ -35,6 +35,7 @@ from app.api.v1 import (
     payments,
     plan_admin,
     platform_mail,
+    platform_mail_forwarding,
     platform_setup,
     professional_email,
     public_hosting,
@@ -70,6 +71,7 @@ api_router.include_router(dns_phase5.router)
 api_router.include_router(edge.router)
 api_router.include_router(mailboxes.router)
 api_router.include_router(platform_mail.router)
+api_router.include_router(platform_mail_forwarding.router)
 api_router.include_router(professional_email.router)
 api_router.include_router(deliverability.router)
 api_router.include_router(mail_intelligence.router)
