@@ -10,7 +10,8 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import ManagedServiceClient, ManagedServiceCredential, utcnow
+from .managed_service_models import ManagedServiceClient, ManagedServiceCredential
+from .models import utcnow
 
 
 _CAPABILITY_RE = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,119}$")
