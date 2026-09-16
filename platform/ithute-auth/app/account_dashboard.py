@@ -85,13 +85,14 @@ ACCOUNT_DASHBOARD_SCRIPT = r"""
   const stats = overview ? [...overview.querySelectorAll('.stat')] : [];
   const statValue = (index, fallback = '—') => stats[index]?.querySelector('strong')?.textContent.trim() || fallback;
   const statusText = (card, fallback = '—') => card?.querySelector('.badge')?.textContent.trim() || fallback;
+  const isMfaEnabled = contactCards[2]?.querySelector('.badge')?.classList.contains('good') === true;
 
   const kpis = document.createElement('section');
   kpis.className = 'auth-dashboard-kpis';
   const definitions = [
     ['Active product sessions', statValue(0, '0'), 'Current trusted product sessions', ''],
     ['Successful security events', statValue(1, '0'), 'Recent successful identity events', 'green'],
-    ['MFA protection', statusText(contactCards[2], 'Not enabled'), 'Central account protection', statusText(contactCards[2]).toLowerCase().includes('enabled') ? 'green' : 'amber'],
+    ['MFA protection', statusText(contactCards[2], 'Not enabled'), 'Central account protection', isMfaEnabled ? 'green' : 'amber'],
     ['Latest activity', statValue(2), 'Most recent security event', '']
   ];
   definitions.forEach(([label, value, meta, tone]) => {
