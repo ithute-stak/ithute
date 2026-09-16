@@ -36,11 +36,42 @@ class LogoutRequest(BaseModel):
 class ServiceTokenRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=120)
     client_secret: str = Field(min_length=24, max_length=512)
-    audience: str = Field(default="ithute-push", pattern=r"^(ithute-push|ithute-realtime)$")
+    audience: str = Field(
+        default="ithute-push",
+        pattern=r"^(ithute-push|ithute-realtime|ithute-auth|ithute-mail|business-digital-address)$",
+    )
     scope: str = Field(
         default="push.send",
-        pattern=r"^(?:push\.send|realtime\.(?:publish|manage|metrics|broadcast))(?: (?:push\.send|realtime\.(?:publish|manage|metrics|broadcast)))*$",
+        pattern=(
+            r"^(?:push\.send|realtime\.(?:publish|manage|metrics|broadcast)|identity\.invite|"
+            r"mailbox\.create|mail\.send|mail\.forward|business\.register|official-message\.send)"
+            r"(?: (?:push\.send|realtime\.(?:publish|manage|metrics|broadcast)|identity\.invite|"
+            r"mailbox\.create|mail\.send|mail\.forward|business\.register|official-message\.send))*$"
+        ),
     )
+
+    @model_validator(mode="after")
+    def enforce_managed_service_permissions(self) -> "ServiceTokenRequest":
+        requested = frozenset(self.scope.split())
+        if self.client_id == "business-digital-address":
+            allowed = {
+                "ithute-auth": frozenset({"identity.invite"}),
+                "ithute-mail": frozenset({"mailbox.create", "mail.send", "mail.forward"}),
+            }
+            audience_scopes = allowed.get(self.audience)
+            if audience_scopes is None or not requested or not requested.issubset(audience_scopes):
+                raise ValueError("service client is not authorized for the requested audience or scope")
+        elif self.client_id == "trade-simulator":
+            if self.audience != "business-digital-address" or requested != {"business.register"}:
+                raise ValueError("service client is not authorized for the requested audience or scope")
+        elif self.client_id == "rsl-simulator":
+            if self.audience != "business-digital-address" or requested != {"official-message.send"}:
+                raise ValueError("service client is not authorized for the requested audience or scope")
+        elif self.audience not in {"ithute-push", "ithute-realtime"}:
+            # Existing Push/Realtime service clients keep their established
+            # behavior, but no unrecognized client may mint BDA/Auth/Mail scopes.
+            raise ValueError("service client is not authorized for the requested audience")
+        return self
 
 
 class TokenResponse(BaseModel):
