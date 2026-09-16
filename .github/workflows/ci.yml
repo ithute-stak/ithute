@@ -114,6 +114,8 @@ jobs:
               raise SystemExit('Production deployment must load and verify the restored app API image.')
           if 'PowerDNSClient().get_zone' not in deploy:
               raise SystemExit('Production deployment must verify app-to-PowerDNS connectivity.')
+          if 'Production Safety CI' not in deploy:
+              raise SystemExit('Production deployment must wait for the production startup safety gate.')
           for source_dir in ('apps', 'platform'):
               if f'            {source_dir} \\' in deploy:
                   raise SystemExit(f'Production bundle still contains source directory: {source_dir}')
@@ -121,7 +123,11 @@ jobs:
 
           grep -Fq 'group: ithute-vps-production' .github/workflows/deploy-production.yml
           grep -Fq '/home/administrator/ithute-platform' .github/workflows/deploy-production.yml
-          grep -Fq 'compose up -d --remove-orphans --no-build' scripts/deploy-production.sh
+          grep -Fq 'compose up -d --no-build' scripts/deploy-production.sh
+          grep -Fq 'rollback_to_last_good' scripts/deploy-production.sh
+          grep -Fq '.last-known-good.env' scripts/deploy-production.sh
+          grep -Fq '.last-known-good-runtime.tgz' scripts/deploy-production.sh
+          ! grep -Eq '^[[:space:]]*(compose|docker compose).*--remove-orphans' scripts/deploy-production.sh
           grep -Fq 'caddy reload --config /etc/caddy/Caddyfile' scripts/deploy-production.sh
           ! grep -Fq 'compose build' scripts/deploy-production.sh
           ! grep -Fq 'docker compose build' scripts/deploy-production.sh
