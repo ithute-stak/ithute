@@ -1,0 +1,146 @@
+name: Production Safety CI
+
+on:
+  pull_request:
+    paths:
+      - "scripts/deploy-production.sh"
+      - "platform/ithute-auth/**"
+      - ".github/workflows/deploy-production.yml"
+      - ".github/workflows/deploy-backup-assurance.yml"
+      - ".github/workflows/deploy-telemetry.yml"
+      - ".github/workflows/vps-disk-maintenance.yml"
+      - ".github/workflows/production-safety-ci.yml"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Reject destructive routine deployment operations
+        run: |
+          set -euo pipefail
+          bash -n scripts/deploy-production.sh
+          python3 - <<'PY'
+          from pathlib import Path
+
+          deploy_paths = [
+              Path("scripts/deploy-production.sh"),
+              Path(".github/workflows/deploy-production.yml"),
+          ]
+          forbidden = (
+              "docker compose down",
+              "compose down",
+              "docker stop",
+              "docker rm",
+          )
+          failures = []
+          for path in deploy_paths:
+              for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                  line = raw.strip()
+                  if not line or line.startswith("#"):
+                      continue
+                  if "--remove-orphans" in line:
+                      failures.append(f"{path}:{number}: --remove-orphans is forbidden in routine production deployment")
+                  for needle in forbidden:
+                      if needle in line:
+                          failures.append(f"{path}:{number}: destructive operation {needle!r}")
+
+          script = Path("scripts/deploy-production.sh").read_text(encoding="utf-8")
+          for required in (
+              ".last-known-good.env",
+              ".last-known-good-runtime.tgz",
+              "rollback_to_last_good",
+              "ITHUTE_FALLBACK_IMAGE_TAG",
+          ):
+              if required not in script:
+                  failures.append(f"deploy-production.sh is missing rollback contract: {required}")
+
+          disk = Path(".github/workflows/vps-disk-maintenance.yml").read_text(encoding="utf-8")
+          header = disk.split("jobs:", 1)[0]
+          if "push:" in header:
+              failures.append("VPS disk maintenance must not run automatically on every push")
+          if ".last-known-good.env" not in disk:
+              failures.append("VPS disk maintenance must preserve last-known-good images")
+
+          if failures:
+              raise SystemExit("Unsafe production automation:\n" + "\n".join(failures))
+          PY
+
+      - name: Build Auth candidate for startup smoke test
+        run: |
+          set -euo pipefail
+          docker build --pull -t ithute-auth:production-smoke ./platform/ithute-auth
+
+      - name: Start disposable Auth database
+        run: |
+          set -euo pipefail
+          docker network create ithute-production-smoke
+          docker run -d --name ithute-auth-smoke-db \
+            --network ithute-production-smoke \
+            -e POSTGRES_DB=ithute_auth \
+            -e POSTGRES_USER=ithute_auth \
+            -e POSTGRES_PASSWORD=ci-auth-password \
+            postgres:16-alpine
+          for attempt in $(seq 1 40); do
+            if docker exec ithute-auth-smoke-db pg_isready -U ithute_auth -d ithute_auth >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs ithute-auth-smoke-db >&2 || true
+          exit 1
+
+      - name: Run full Auth entrypoint and health check
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ithute-auth-smoke-secrets
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+            -out /tmp/ithute-auth-smoke-secrets/jwt-private.pem >/dev/null 2>&1
+          openssl rsa -pubout \
+            -in /tmp/ithute-auth-smoke-secrets/jwt-private.pem \
+            -out /tmp/ithute-auth-smoke-secrets/jwt-public.pem >/dev/null 2>&1
+
+          docker run -d --name ithute-auth-smoke \
+            --network ithute-production-smoke \
+            -v /tmp/ithute-auth-smoke-secrets:/run/secrets:ro \
+            -e AUTH_DATABASE_URL=postgresql+psycopg://ithute_auth:ci-auth-password@ithute-auth-smoke-db:5432/ithute_auth \
+            -e AUTH_ISSUER=https://auth.ithute.co.ls \
+            -e AUTH_ACCOUNT_BASE_URL=https://auth.ithute.co.ls \
+            -e AUTH_SYSTEM_OWNER_EMAIL=ci-owner@ithute.invalid \
+            -e AUTH_SYSTEM_OWNER_PASSWORD=ci-owner-password-12345 \
+            -e AUTH_TOTP_ENCRYPTION_KEY=eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg= \
+            ithute-auth:production-smoke api
+
+          for attempt in $(seq 1 60); do
+            state="$(docker inspect --format '{{.State.Status}}' ithute-auth-smoke)"
+            if [ "$state" = "exited" ] || [ "$state" = "dead" ]; then
+              echo "Auth candidate exited during production startup smoke test." >&2
+              docker logs ithute-auth-smoke >&2 || true
+              exit 1
+            fi
+            if docker exec ithute-auth-smoke curl -fsS http://127.0.0.1:8080/healthz | grep -q ithute-auth; then
+              docker logs ithute-auth-smoke
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Auth candidate never became healthy." >&2
+          docker logs ithute-auth-smoke >&2 || true
+          exit 1
+
+      - name: Cleanup smoke-test containers
+        if: always()
+        run: |
+          docker rm -f ithute-auth-smoke ithute-auth-smoke-db >/dev/null 2>&1 || true
+          docker network rm ithute-production-smoke >/dev/null 2>&1 || true
