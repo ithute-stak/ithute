@@ -115,11 +115,15 @@ def create_notification(
         channels_json=json.dumps(payload.channels, separators=(",", ":")),
         status="queued",
     )
-    db.add(item)
-    db.flush()
-    for channel in payload.channels:
-        db.add(NotificationDelivery(notification_id=item.id, channel=channel, status="pending"))
     try:
+        db.add(item)
+        # PostgreSQL can surface the idempotency unique-key race here, before
+        # commit. Keep flush and commit in the same IntegrityError boundary so
+        # concurrent identical requests deterministically resolve to the row
+        # that won the race instead of leaking a 500 response.
+        db.flush()
+        for channel in payload.channels:
+            db.add(NotificationDelivery(notification_id=item.id, channel=channel, status="pending"))
         db.commit()
     except IntegrityError:
         db.rollback()
