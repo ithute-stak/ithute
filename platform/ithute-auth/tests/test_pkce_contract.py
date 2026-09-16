@@ -62,10 +62,11 @@ def test_business_digital_address_oidc_registration_survives_older_env_overrides
 
     assert settings.client_map["business-digital-address"] == "Business Digital Address"
     assert settings.redirect_uris["business-digital-address"] == (
-        "https://business.ls/api/auth/callback",
+        "https://business.ithute.co.ls/api/auth/callback",
         "http://localhost:3000/api/auth/callback",
     )
-    assert "https://business.ls/api/auth/callback/extra" not in settings.redirect_uris["business-digital-address"]
+    assert "https://business.ithute.co.ls/api/auth/callback/extra" not in settings.redirect_uris["business-digital-address"]
+    assert "https://business.ithute.co.ls" in settings.allowed_origins
 
 
 def _rsa_settings(tmp_path) -> Settings:
