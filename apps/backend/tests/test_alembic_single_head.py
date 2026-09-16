@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0024_platform_mail_namespace_grants"
+LATEST_MIGRATION_HEAD = "0024_mail_namespace"
 
 
 def test_alembic_has_one_consolidated_head():
