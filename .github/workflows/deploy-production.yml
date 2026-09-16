@@ -29,8 +29,6 @@ jobs:
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
       EXPECTED_IPV4: 204.12.205.224
-      # Seed the rollback chain from the most recent release that passed every
-      # production health check before the 2026-09-16 Auth startup failures.
       BOOTSTRAP_ROLLBACK_SHA: ddd0f1ec78f90132299fbeedabee2dee132f64c0
       BOOTSTRAP_ROLLBACK_RUN_ID: "35084915814"
 
@@ -56,6 +54,36 @@ jobs:
           test -f "ithute-images-${DEPLOY_SHA}.tar.gz"
           test -f "ithute-images-${DEPLOY_SHA}.sha256"
           sha256sum -c "ithute-images-${DEPLOY_SHA}.sha256"
+
+      - name: Require Production Safety CI for exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "Waiting for Production Safety CI for ${DEPLOY_SHA}. No VPS mutation happens before this gate passes."
+          for attempt in $(seq 1 120); do
+            runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/production-safety-ci.yml/runs?branch=main&per_page=30")"
+            row="$(printf '%s' "$runs" | jq -r --arg sha "$DEPLOY_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] | if . == null then "" else [.status, (.conclusion // ""), (.html_url // "")] | @tsv end')"
+            if [ -z "$row" ]; then
+              echo "Production Safety CI has not been created yet (${attempt}/120)."
+              sleep 5
+              continue
+            fi
+            IFS=$'\t' read -r status conclusion url <<< "$row"
+            echo "Production Safety CI: status=${status} conclusion=${conclusion:-pending} ${url}"
+            if [ "$status" = "completed" ]; then
+              test "$conclusion" = "success" || {
+                echo "Candidate failed production startup safety checks; VPS left untouched." >&2
+                exit 1
+              }
+              break
+            fi
+            test "$attempt" -lt 120 || {
+              echo "Timed out waiting for Production Safety CI; VPS left untouched." >&2
+              exit 1
+            }
+            sleep 5
+          done
 
       - name: Validate VPS inputs
         run: |
@@ -130,8 +158,6 @@ jobs:
           then
             echo 'NEED_ROLLBACK_BUNDLE=0' >> "$GITHUB_ENV"
           else
-            # If a stale last-known-good marker points to pruned images, fall
-            # back to the bootstrap release and load its retained CI artifact.
             printf 'ROLLBACK_TAG=%s\n' "$BOOTSTRAP_ROLLBACK_SHA" >> "$GITHUB_ENV"
             echo 'NEED_ROLLBACK_BUNDLE=1' >> "$GITHUB_ENV"
           fi
@@ -202,11 +228,6 @@ jobs:
           ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' ROLLBACK_TAG='$ROLLBACK_TAG' bash -s" <<'REMOTE'
           set -euo pipefail
           mkdir -p "$APP_DIR/infrastructure/caddy" "$APP_DIR/infrastructure/dns/zones"
-
-          # Preserve the previous runtime definition before replacing it. The
-          # deployment script also maintains this archive after every healthy
-          # release, but this seeds it for installations upgraded from the old
-          # deployment mechanism.
           if [ ! -s "$APP_DIR/.last-known-good-runtime.tgz" ] && \
              [ -f "$APP_DIR/.image.env" ] && \
              grep -Fxq "ITHUTE_IMAGE_TAG=$ROLLBACK_TAG" "$APP_DIR/.image.env"; then
