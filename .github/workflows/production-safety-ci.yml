@@ -27,12 +27,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Reject destructive routine deployment operations
+      - name: Reject destructive runtime and migration hazards
         run: |
           set -euo pipefail
           bash -n scripts/deploy-production.sh
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           deploy_paths = [
               Path("scripts/deploy-production.sh"),
@@ -73,8 +74,30 @@ jobs:
           if ".last-known-good.env" not in disk:
               failures.append("VPS disk maintenance must preserve last-known-good images")
 
+          # Alembic creates alembic_version.version_num as VARCHAR(32) unless a
+          # project explicitly customizes it. A longer revision ID executes the
+          # migration DDL and then crashes while stamping the version table.
+          # That exact failure took Ithute Auth offline on 2026-09-16.
+          revision_pattern = re.compile(r'^revision\s*=\s*["\']([^"\']+)["\']', re.MULTILINE)
+          seen = {}
+          for path in sorted(Path("platform/ithute-auth/alembic/versions").glob("*.py")):
+              text = path.read_text(encoding="utf-8")
+              match = revision_pattern.search(text)
+              if not match:
+                  failures.append(f"{path}: missing Alembic revision identifier")
+                  continue
+              revision = match.group(1)
+              if len(revision) > 32:
+                  failures.append(
+                      f"{path}: Alembic revision {revision!r} is {len(revision)} characters; maximum is 32"
+                  )
+              previous = seen.get(revision)
+              if previous:
+                  failures.append(f"duplicate Alembic revision {revision!r}: {previous} and {path}")
+              seen[revision] = path
+
           if failures:
-              raise SystemExit("Unsafe production automation:\n" + "\n".join(failures))
+              raise SystemExit("Unsafe production automation or migration:\n" + "\n".join(failures))
           PY
 
       - name: Build Auth candidate for startup smoke test
