@@ -1,3 +1,6 @@
+from .identity_invitation_portal import router as identity_invitation_portal_router
+from .identity_invitations import platform_router as identity_invitation_platform_router
+from .identity_invitations import public_router as identity_invitation_public_router
 from .main import app
 from .platform_admin_authorize import router as platform_admin_authorize_router
 from .service_client_admin import router as service_client_admin_router
@@ -22,3 +25,10 @@ app.router.routes = [
 ]
 app.include_router(service_token_router)
 app.include_router(service_client_admin_router)
+
+# New platform capabilities accept only database-managed service identities.
+# The trusted invitation API is therefore unavailable to the legacy runtime
+# secret compatibility path even while older Push/Realtime clients migrate.
+app.include_router(identity_invitation_platform_router)
+app.include_router(identity_invitation_public_router)
+app.include_router(identity_invitation_portal_router)
