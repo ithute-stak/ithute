@@ -17,10 +17,17 @@ class TrustedIdentityInvitationRequest(BaseModel):
     def validate_delivery_target(self) -> "TrustedIdentityInvitationRequest":
         if not self.email and not self.phone:
             raise ValueError("email or phone is required")
-        if self.preferred_channel == "phone" and not self.phone:
-            raise ValueError("phone is required when preferred_channel is phone")
-        if self.preferred_channel == "email" and not self.email:
-            raise ValueError("email is required when preferred_channel is email")
+        if self.preferred_channel == "phone":
+            if not self.phone:
+                raise ValueError("phone is required when preferred_channel is phone")
+            # Auth keeps only the contact actually verified by this invitation.
+            # Other business contact details belong in the product database and
+            # can be added to central identity later through normal verification.
+            self.email = None
+        else:
+            if not self.email:
+                raise ValueError("email is required when preferred_channel is email")
+            self.phone = None
         return self
 
 
