@@ -42,9 +42,9 @@ def test_migration_seeds_rsl_trade_and_business_clients() -> None:
 def test_admin_api_covers_lifecycle_and_audit_operations() -> None:
     source = ADMIN.read_text(encoding="utf-8")
     for required in (
-        '@router.get("")',
-        '@router.post("")',
-        '@router.patch("/{client_id}")',
+        '@router.get(""',
+        '@router.post(""',
+        '@router.patch("/{client_id}"',
         '"/{client_id}/rotate-secret"',
         '"/{client_id}/credentials/{credential_id}/revoke"',
         '"/{client_id}/audit"',
