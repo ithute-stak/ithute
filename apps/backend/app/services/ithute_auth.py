@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Any
 from uuid import UUID
@@ -8,6 +9,9 @@ import jwt
 from jwt import PyJWKClient
 from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+_SERVICE_CLIENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,119}$")
 
 
 class IthuteAuthDisabled(RuntimeError):
@@ -51,9 +55,19 @@ def get_ithute_auth_settings() -> IthuteAuthSettings:
 
 @lru_cache(maxsize=8)
 def _jwks_client(url: str) -> PyJWKClient:
-    # The product receives only public signing keys. It never reads or stores
-    # the central Auth database or private signing key.
+    # Products receive only central Auth public signing keys. They never read
+    # the Auth database or private signing key.
     return PyJWKClient(url)
+
+
+def _signing_key(token: str, settings: IthuteAuthSettings, jwks_client: Any | None = None):
+    client = jwks_client or _jwks_client(settings.resolved_jwks_url)
+    try:
+        return client.get_signing_key_from_jwt(token).key
+    except PyJWKClientConnectionError as error:
+        raise IthuteAuthUnavailable("!thute Auth signing keys are unavailable") from error
+    except PyJWKClientError as error:
+        raise jwt.InvalidTokenError("unknown or invalid !thute Auth signing key") from error
 
 
 def ithute_auth_enabled() -> bool:
@@ -66,29 +80,15 @@ def decode_ithute_access_token(
     config: IthuteAuthSettings | None = None,
     jwks_client: Any | None = None,
 ) -> dict[str, Any]:
-    """Validate a first-party !thute Auth access token for Mailbox DNS.
-
-    Normal users still receive product-local authorization after their central
-    identity is linked. The one signed ``is_platform_admin`` identity may be
-    projected to the Mailbox DNS platform-owner role without sharing its
-    central password or private signing material with this product.
-    """
+    """Validate a first-party Ithute Auth human access token."""
 
     settings = config or get_ithute_auth_settings()
     if not settings.enabled:
         raise IthuteAuthDisabled("!thute Auth is disabled for Mailbox DNS")
 
-    client = jwks_client or _jwks_client(settings.resolved_jwks_url)
-    try:
-        signing_key = client.get_signing_key_from_jwt(token).key
-    except PyJWKClientConnectionError as error:
-        raise IthuteAuthUnavailable("!thute Auth signing keys are unavailable") from error
-    except PyJWKClientError as error:
-        raise jwt.InvalidTokenError("unknown or invalid !thute Auth signing key") from error
-
     claims = jwt.decode(
         token,
-        signing_key,
+        _signing_key(token, settings, jwks_client),
         algorithms=["RS256"],
         issuer=settings.resolved_issuer,
         audience=settings.audience,
@@ -105,4 +105,64 @@ def decode_ithute_access_token(
     except (KeyError, TypeError, ValueError) as error:
         raise jwt.InvalidTokenError("invalid !thute Auth identity claims") from error
 
+    return claims
+
+
+def decode_ithute_service_token(
+    token: str,
+    *,
+    audience: str,
+    config: IthuteAuthSettings | None = None,
+    jwks_client: Any | None = None,
+) -> dict[str, Any]:
+    """Validate a database-managed machine token issued by Ithute Auth.
+
+    Privileged platform APIs deliberately reject legacy environment-secret
+    service tokens. New managed tokens carry ``service_auth=managed`` and use
+    ``azp`` as the canonical service client identity while ``sub`` remains the
+    namespaced JWT subject ``service:<client_id>``.
+    """
+
+    settings = config or get_ithute_auth_settings()
+    if not settings.enabled:
+        raise IthuteAuthDisabled("!thute Auth is disabled for platform services")
+
+    claims = jwt.decode(
+        token,
+        _signing_key(token, settings, jwks_client),
+        algorithms=["RS256"],
+        issuer=settings.resolved_issuer,
+        audience=audience,
+        options={
+            "require": [
+                "iss",
+                "sub",
+                "aud",
+                "azp",
+                "scope",
+                "service_auth",
+                "jti",
+                "iat",
+                "nbf",
+                "exp",
+                "token_use",
+            ],
+        },
+    )
+    if claims.get("token_use") != "service" or claims.get("service_auth") != "managed":
+        raise jwt.InvalidTokenError("managed Ithute service token required")
+
+    client_id = str(claims.get("azp") or "").strip().lower()
+    if not _SERVICE_CLIENT_ID_RE.fullmatch(client_id):
+        raise jwt.InvalidTokenError("invalid Ithute service client identity")
+    if str(claims.get("sub") or "") != f"service:{client_id}":
+        raise jwt.InvalidTokenError("service subject does not match authorized party")
+
+    scope = str(claims.get("scope") or "").strip()
+    scopes = tuple(dict.fromkeys(part for part in scope.split() if part))
+    if not scopes:
+        raise jwt.InvalidTokenError("Ithute service token has no scopes")
+
+    claims["azp"] = client_id
+    claims["scope"] = " ".join(scopes)
     return claims

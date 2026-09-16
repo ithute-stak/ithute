@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from .config import Settings, get_settings
 from .db import get_db
 from .managed_service_models import ManagedServiceClient
+from .managed_service_token_security import create_managed_service_token
 from .models import Application
 from .schemas import ServiceTokenResponse
 from .security import create_service_token
@@ -51,7 +52,7 @@ def issue_service_token(
             db.commit()
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
 
-        token = create_service_token(
+        token = create_managed_service_token(
             settings=config,
             client_id=managed.client_id,
             audience=payload.audience,
@@ -77,8 +78,9 @@ def issue_service_token(
         )
 
     # Compatibility bridge for existing first-party integrations. New platform
-    # clients must be stored in managed_service_clients; this path can be
-    # removed after the remaining runtime JSON secrets have been migrated.
+    # clients must be stored in managed_service_clients; these legacy tokens
+    # intentionally do not carry the service_auth=managed claim required by
+    # new privileged platform APIs.
     application = db.scalar(
         select(Application).where(
             Application.client_id == payload.client_id,

@@ -14,6 +14,7 @@ from app.models.entities import (
 from app.models.auth import PasswordResetToken
 from app.models.domains import Domain, DomainDnsMode, DomainEvent, DomainStatus, DomainVerificationAttempt
 from app.models.mail import DistributionGroup, DistributionGroupMember, MailAlias, Mailbox, MailboxStatus
+from app.models.platform_mail import PlatformMailDomainGrant, PlatformMailboxBinding
 from app.models.deliverability import DkimKey
 from app.models.billing import (
     BillingInvoice,
@@ -94,9 +95,9 @@ __all__ = [
     "ApiKey", "AuditLog", "Invitation", "MembershipRole", "MembershipStatus", "Tenant",
     "TenantMembership", "TenantStatus", "User", "UserRole", "UserSession", "PasswordResetToken", "Domain",
     "DomainDnsMode", "DomainEvent", "DomainStatus", "DomainVerificationAttempt", "Mailbox",
-    "MailboxStatus", "MailAlias", "DistributionGroup", "DistributionGroupMember", "DkimKey",
-    "BillingPlan", "TenantSubscription", "UsageSnapshot", "BillingInvoice", "BillingPaymentEvent",
-    "SubscriptionStatus", "InvoiceStatus", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject",
+    "MailboxStatus", "MailAlias", "DistributionGroup", "DistributionGroupMember", "PlatformMailDomainGrant",
+    "PlatformMailboxBinding", "DkimKey", "BillingPlan", "TenantSubscription", "UsageSnapshot", "BillingInvoice",
+    "BillingPaymentEvent", "SubscriptionStatus", "InvoiceStatus", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject",
     "HOSTING_RUNTIME_MANIFEST_VERSION", "HostingDeployment", "HostingEnvironmentVariable", "HostingNodeAgent",
     "CustomerProfile", "Notification", "ServiceIncident", "ServiceIncidentImpact", "ServiceIncidentStatus",
     "SupportTicket", "SupportTicketMessage", "SupportTicketPriority", "SupportTicketStatus", "DomainOrder",

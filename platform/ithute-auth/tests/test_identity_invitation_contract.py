@@ -66,6 +66,7 @@ def test_migration_creates_durable_pending_invitation_state() -> None:
 def test_new_platform_api_requires_managed_identity_invite_scope() -> None:
     source = AUTHZ.read_text(encoding="utf-8")
     assert 'claims.get("token_use") != "service"' in source
+    assert 'claims.get("service_auth") != "managed"' in source
     assert 'token_audience != audience' in source
     assert "ManagedServiceClient" in source
     assert "Legacy" in source
