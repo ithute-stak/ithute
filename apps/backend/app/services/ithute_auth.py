@@ -101,12 +101,7 @@ def decode_ithute_service_token(
     config: IthuteAuthSettings | None = None,
     jwks_client: Any | None = None,
 ) -> dict[str, Any]:
-    """Validate a short-lived managed machine token issued by Ithute Auth.
-
-    Leaf services trust only Auth's RS256 signature, exact issuer/audience and
-    the scoped capability embedded in the short-lived token. They never receive
-    a service client's long-lived credential or read the central Auth database.
-    """
+    """Validate a short-lived managed machine token issued by Ithute Auth."""
     settings = config or get_ithute_auth_settings()
     if not settings.enabled:
         raise IthuteAuthDisabled("!thute Auth is disabled for Mailbox DNS")
@@ -116,12 +111,13 @@ def decode_ithute_service_token(
         algorithms=["RS256"],
         issuer=settings.resolved_issuer,
         audience=audience,
-        options={"require": ["iss", "sub", "aud", "iat", "nbf", "exp", "token_use", "scope"]},
+        options={"require": ["iss", "sub", "azp", "aud", "iat", "nbf", "exp", "token_use", "scope"]},
     )
     if claims.get("token_use") != "service":
         raise jwt.InvalidTokenError("wrong !thute Auth token type")
-    client_id = str(claims.get("sub") or "").strip()
-    if not client_id or len(client_id) > 120:
+    client_id = str(claims.get("azp") or "").strip()
+    subject = str(claims.get("sub") or "").strip()
+    if not client_id or len(client_id) > 120 or subject != f"service:{client_id}":
         raise jwt.InvalidTokenError("invalid service client identity")
     scopes = {item for item in str(claims.get("scope") or "").split() if item}
     if required_scope and required_scope not in scopes:
