@@ -53,7 +53,7 @@ class Settings(BaseSettings):
         '{"nbros":["https://nbro.ithute.co.ls/api/auth/oidc/callback"],'
         '"tjekatjeka":["https://tjekane.ithute.co.ls/api/auth/oidc/callback"],'
         '"business-digital-address":['
-        '"https://business.ls/api/auth/callback",'
+        '"https://business.ithute.co.ls/api/auth/callback",'
         '"http://localhost:3000/api/auth/callback"'
         ']}'
     )
@@ -136,7 +136,7 @@ class Settings(BaseSettings):
         result.setdefault(
             "business-digital-address",
             (
-                "https://business.ls/api/auth/callback",
+                "https://business.ithute.co.ls/api/auth/callback",
                 "http://localhost:3000/api/auth/callback",
             ),
         )
@@ -183,7 +183,7 @@ class Settings(BaseSettings):
     @property
     def allowed_origins(self) -> list[str]:
         origins = [value.strip() for value in self.cors_origins.split(",") if value.strip()]
-        for required_origin in ("https://nbro.ithute.co.ls", "https://tjekane.ithute.co.ls"):
+        for required_origin in ("https://nbro.ithute.co.ls", "https://tjekane.ithute.co.ls", "https://business.ithute.co.ls"):
             if required_origin not in origins:
                 origins.append(required_origin)
         return origins
