@@ -39,8 +39,11 @@ def require_managed_service_scope(required_scope: str, *, audience: str = "ithut
         except jwt.PyJWTError:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid service token") from None
 
-        if claims.get("token_use") != "service":
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid service token")
+        # New privileged platform APIs accept only service JWTs minted after a
+        # database-managed credential was authenticated. Legacy runtime-secret
+        # compatibility tokens deliberately omit service_auth=managed.
+        if claims.get("token_use") != "service" or claims.get("service_auth") != "managed":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="managed service token required")
         token_audience = claims.get("aud")
         client_id = claims.get("azp")
         subject = claims.get("sub")
@@ -51,9 +54,9 @@ def require_managed_service_scope(required_scope: str, *, audience: str = "ithut
         if required_scope not in scopes:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="service scope required")
 
-        # Only database-managed identities may call new platform APIs. Legacy
-        # runtime-secret clients remain supported for older integrations but do
-        # not inherit new capabilities such as identity.invite.
+        # Re-check current database policy on every privileged request so an
+        # already-issued five-minute token loses capability immediately when a
+        # client is disabled or its allowed audience/scope is revoked.
         client = db.scalar(select(ManagedServiceClient).where(ManagedServiceClient.client_id == client_id))
         now = utcnow()
         if client is None or not client.is_active or (client.expires_at is not None and client.expires_at <= now):
