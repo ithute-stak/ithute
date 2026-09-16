@@ -6,19 +6,26 @@ from pydantic import ValidationError
 from app.schemas.platform_mail import (
     PlatformMailDomainGrantCreate,
     PlatformMailSendRequest,
+    PlatformMailboxForwardingRequest,
     PlatformMailboxProvisionRequest,
 )
 
 
 ROOT = Path(__file__).parents[1]
+REPO = ROOT.parents[1]
 API = ROOT / "app" / "api" / "v1" / "platform_mail.py"
+FORWARDING_API = ROOT / "app" / "api" / "v1" / "platform_mail_forwarding.py"
 AUTH = ROOT / "app" / "api" / "platform_service_auth.py"
 ITHUTE_AUTH = ROOT / "app" / "services" / "ithute_auth.py"
+ACCOUNT_SYNC = ROOT / "app" / "services" / "mail_account_sync.py"
 MODELS = ROOT / "app" / "models" / "platform_mail.py"
 MIGRATION = ROOT / "alembic" / "versions" / "0023_platform_mail_provisioning.py"
 NAMESPACE_MIGRATION = ROOT / "alembic" / "versions" / "0024_platform_mail_namespace_grants.py"
 SEND_MIGRATION = ROOT / "alembic" / "versions" / "0025_platform_mail_send.py"
+FORWARDING_MIGRATION = ROOT / "alembic" / "versions" / "0026_platform_mail_inbound_forwarding.py"
 ROUTER = ROOT / "app" / "api" / "v1" / "router.py"
+BOOTSTRAP_MAIL = REPO / "scripts" / "bootstrap-mail.sh"
+MAIL_COMPOSE = REPO / "mail" / "compose.yml"
 
 
 def test_platform_mailbox_request_defaults_to_one_gibibyte() -> None:
@@ -58,6 +65,13 @@ def test_platform_mail_send_request_is_single_recipient_and_idempotent_reference
     assert payload.external_reference == "bda-delivery:123"
     assert payload.recipient == "accounts@example.com"
     assert payload.subject == "Official communication"
+
+
+def test_platform_mail_forwarding_request_normalizes_destination() -> None:
+    payload = PlatformMailboxForwardingRequest(destination=" Business@Gmail.COM ")
+    assert payload.destination == "business@gmail.com"
+    with pytest.raises(ValidationError):
+        PlatformMailboxForwardingRequest(destination="not-an-email")
 
 
 def test_service_tokens_are_separate_from_human_and_legacy_tokens() -> None:
@@ -131,6 +145,42 @@ def test_service_send_is_owned_scoped_namespaced_rate_limited_and_idempotent() -
     assert "payload.sender" not in source
 
 
+def test_inbound_forwarding_is_owned_scoped_namespaced_and_runtime_synced() -> None:
+    source = FORWARDING_API.read_text(encoding="utf-8")
+    for required in (
+        '"/mailboxes/{binding_id}/inbound-forwarding"',
+        'require_platform_service_scope("mail.forward")',
+        "_owned_binding",
+        "_active_binding_grant",
+        "mailbox.status != MailboxStatus.active",
+        "normalize_destination(payload.destination)",
+        "destination == mailbox.address.lower()",
+        "binding.inbound_forward_to = destination",
+        "sync_mailbox_forwarding(mailbox, destination)",
+        "sync_mailbox_forwarding(mailbox, None)",
+        'action="platform_mail.inbound_forwarding.configured"',
+        'action="platform_mail.inbound_forwarding.disabled"',
+        'action="platform_mail.inbound_forwarding.sync_failed"',
+        'settings.environment.lower() == "production" and not synced',
+    ):
+        assert required in source
+
+
+def test_runtime_forwarding_keeps_original_mailbox_and_uses_recipient_bcc_map() -> None:
+    source = ACCOUNT_SYNC.read_text(encoding="utf-8")
+    bootstrap = BOOTSTRAP_MAIL.read_text(encoding="utf-8")
+    mail_compose = MAIL_COMPOSE.read_text(encoding="utf-8")
+    for required in (
+        "def sync_mailbox_forwarding(",
+        'postfix-recipient-bcc.cf',
+        'platform-forwarding-revision:',
+        "Mailbox cannot forward to itself",
+    ):
+        assert required in source
+    assert "recipient_bcc_maps = texthash:/mail-accounts/postfix-recipient-bcc.cf" in bootstrap
+    assert 'DMS_CONFIG_POLL: "2"' in mail_compose
+
+
 def test_platform_mail_models_enforce_service_ownership_namespace_and_outbound_idempotency() -> None:
     source = MODELS.read_text(encoding="utf-8")
     assert "platform_mail_domain_grants" in source
@@ -139,6 +189,7 @@ def test_platform_mail_models_enforce_service_ownership_namespace_and_outbound_i
     assert "platform_mailbox_bindings" in source
     assert "uq_platform_mailbox_binding_client_reference" in source
     assert "uq_platform_mailbox_binding_mailbox" in source
+    assert "inbound_forward_to" in source
     assert "platform_mail_outbound_deliveries" in source
     assert "uq_platform_mail_outbound_client_reference" in source
     assert "transactional_message_id" in source
@@ -174,7 +225,18 @@ def test_send_migration_extends_namespaced_platform_mail() -> None:
     assert "transactional_messages.id" in source
 
 
+def test_forwarding_migration_extends_managed_platform_mail() -> None:
+    source = FORWARDING_MIGRATION.read_text(encoding="utf-8")
+    assert 'revision = "0026_mail_forwarding"' in source
+    assert 'down_revision = "0025_platform_mail_send"' in source
+    assert '"platform_mailbox_bindings"' in source
+    assert '"inbound_forward_to"' in source
+    assert "String(length=320)" in source
+
+
 def test_router_mounts_platform_mail_api() -> None:
     source = ROUTER.read_text(encoding="utf-8")
     assert "platform_mail," in source
+    assert "platform_mail_forwarding," in source
     assert "api_router.include_router(platform_mail.router)" in source
+    assert "api_router.include_router(platform_mail_forwarding.router)" in source
