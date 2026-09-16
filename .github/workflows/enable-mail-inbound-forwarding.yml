@@ -1,0 +1,99 @@
+name: Enable Ithute Mail Inbound Forwarding
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/enable-mail-inbound-forwarding.yml"
+      - "mail/enable-recipient-bcc.sh"
+
+concurrency:
+  group: ithute-vps-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
+      VPS_MAIL_DIR: /home/administrator/ithute-platform-mail
+
+    steps:
+      - name: Checkout tested runtime installer
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate protected inputs
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST" || { echo 'Missing VPS_HOST secret.' >&2; exit 1; }
+          test -n "$VPS_USER" || { echo 'Missing VPS_USER secret.' >&2; exit 1; }
+          test -n "$VPS_SSH_KEY" || { echo 'Missing VPS_SSH_KEY secret.' >&2; exit 1; }
+          test "$VPS_MAIL_DIR" = /home/administrator/ithute-platform-mail
+
+          normalized_host="$(printf '%s' "$VPS_HOST" | tr -d '\r\n\t ')"
+          normalized_user="$(printf '%s' "$VPS_USER" | tr -d '\r\n\t ')"
+          case "$normalized_user" in *@*) normalized_user="${normalized_user%%@*}" ;; esac
+          case "$normalized_host" in *@*) normalized_host="${normalized_host##*@}" ;; esac
+          [[ "$normalized_user" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Invalid VPS_USER.' >&2; exit 1; }
+          [[ "$normalized_host" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Invalid VPS_HOST.' >&2; exit 1; }
+          printf 'ITHUTE_VPS_HOST=%s\n' "$normalized_host" >> "$GITHUB_ENV"
+          printf 'ITHUTE_VPS_USER=%s\n' "$normalized_user" >> "$GITHUB_ENV"
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_mail_forwarding"
+          chmod 600 "$HOME/.ssh/ithute_mail_forwarding"
+          eval "$(ssh-agent -s)"
+          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            cat > /tmp/ithute-askpass.sh <<'SH'
+          #!/usr/bin/env sh
+          printf '%s\n' "$VPS_SSH_PASSPHRASE"
+          SH
+            chmod 700 /tmp/ithute-askpass.sh
+            SSH_ASKPASS=/tmp/ithute-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh-add "$HOME/.ssh/ithute_mail_forwarding" </dev/null
+            rm -f /tmp/ithute-askpass.sh
+          else
+            ssh-add "$HOME/.ssh/ithute_mail_forwarding" </dev/null
+          fi
+          ssh-keyscan -T 10 -H "$ITHUTE_VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Install and verify recipient-copy runtime
+        run: |
+          set -euo pipefail
+          remote="${ITHUTE_VPS_USER}@${ITHUTE_VPS_HOST}"
+          scp mail/enable-recipient-bcc.sh "$remote:/tmp/ithute-enable-recipient-bcc.sh"
+          ssh "$remote" "ITHUTE_MAIL_DIR='$VPS_MAIL_DIR' bash /tmp/ithute-enable-recipient-bcc.sh"
+          ssh "$remote" "rm -f /tmp/ithute-enable-recipient-bcc.sh"
+
+      - name: Verify production marker and Postfix map
+        run: |
+          set -euo pipefail
+          remote="${ITHUTE_VPS_USER}@${ITHUTE_VPS_HOST}"
+          ssh "$remote" "MAIL_DIR='$VPS_MAIL_DIR' bash -s" <<'REMOTE'
+          set -euo pipefail
+          test -f "$MAIL_DIR/accounts/.recipient-bcc-ready"
+          test "$(docker inspect --format '{{.State.Health.Status}}' ithute-mail)" = healthy
+          test "$(docker exec ithute-mail postconf -h recipient_bcc_maps | tr -d '\r')" = 'texthash:/mail-accounts/postfix-recipient-bcc.cf'
+          docker exec ithute-mail test -f /mail-accounts/postfix-recipient-bcc.cf
+          REMOTE
+
+      - name: Summary
+        run: echo 'Ithute Mail now preserves each local mailbox while copying inbound recipients through the managed recipient BCC map.'
