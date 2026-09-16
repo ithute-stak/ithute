@@ -45,3 +45,14 @@ def test_account_portal_exposes_security_navigation_and_session_controls() -> No
     assert "Security activity" in source
     assert "Sign out everywhere" in source
     assert "Review passkeys" in source
+
+
+def test_login_screen_explains_central_identity_and_mfa_setup() -> None:
+    source = _source()
+    assert "One identity, separate product permissions" in source
+    assert "Where do I get the authenticator or recovery code?" in source
+    assert "If you never enabled MFA" in source
+    assert "How to enable MFA" in source
+    assert "Account → Multi-factor authentication" in source
+    assert "Set up authenticator" in source
+    assert "Ithute will then show one-time recovery codes" in source
