@@ -11,6 +11,11 @@ Machine callers first obtain a short-lived RS256 service token from Ithute Auth.
 - audience: `ithute-mail`
 - scope: `mailbox.create`
 - token type: `service`
+- managed-service marker: `service_auth=managed`
+
+Managed service JWTs keep the namespaced JWT subject `sub=service:<client_id>` and carry the authenticated machine identity in `azp=<client_id>`. The mail backend verifies that `sub` and `azp` agree before using `azp` for domain-grant and mailbox ownership checks.
+
+The `service_auth=managed` claim is intentionally emitted only for database-managed service clients. The temporary `AUTH_SERVICE_CLIENT_SECRETS_JSON` compatibility path continues to issue legacy tokens without that marker, so old integrations cannot inherit these new privileged government-facing platform capabilities merely by requesting an `ithute-mail` audience or `mailbox.create` scope.
 
 The backend validates the token against Ithute Auth JWKS and never accepts a human access token for these endpoints.
 
@@ -75,7 +80,7 @@ The intended prototype sequence is:
 1. a platform owner onboards or verifies the chosen official business domain;
 2. the platform owner grants that domain to `business-digital-address` and/or `trade-simulator`;
 3. Trade creates the business and uses Trusted Identity Invitations to activate its owner;
-4. the Business Digital Address service requests `aud=ithute-mail`, `scope=mailbox.create`;
+4. the Business Digital Address service requests a managed token with `aud=ithute-mail`, `scope=mailbox.create`;
 5. it provisions the permanent official address, such as `tjekatjeka@rsl-business.ls`;
 6. the plaintext internal mailbox credential is never exposed to Trade, RSL, or the business owner.
 
