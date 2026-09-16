@@ -18,6 +18,7 @@ class MailAccountSyncError(RuntimeError):
 
 _listener_installed = False
 _FORWARDING_MARKER_PREFIX = "# platform-forwarding-revision:"
+_FORWARDING_READY_MARKER = ".recipient-bcc-ready"
 
 
 def _accounts_path() -> Path | None:
@@ -134,11 +135,17 @@ def sync_mailbox_forwarding(mailbox: Mailbox, destination: str | None) -> bool:
     directory. A deterministic revision comment in the account file is updated
     whenever the map changes, causing DMS to reload Postfix and reopen the
     ``texthash`` recipient BCC map without restarting the mail container.
+
+    The runtime installer creates ``.recipient-bcc-ready`` only after Postfix
+    reports the exact expected ``recipient_bcc_maps`` setting. Until that proof
+    exists this method returns ``False`` and production API calls fail closed.
     """
 
     accounts_path = _accounts_path()
     forwarding_path = _forwarding_path()
     if accounts_path is None or forwarding_path is None:
+        return False
+    if not (accounts_path.parent / _FORWARDING_READY_MARKER).is_file():
         return False
 
     clean_address = mailbox.address.strip().lower()
