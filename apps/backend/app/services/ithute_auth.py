@@ -25,11 +25,7 @@ class IthuteAuthSettings(BaseSettings):
     jwks_url: str | None = None
     internal_url: str = "http://ithute-auth:8080"
 
-    model_config = SettingsConfigDict(
-        env_prefix="ITHUTE_AUTH_",
-        case_sensitive=False,
-        extra="ignore",
-    )
+    model_config = SettingsConfigDict(env_prefix="ITHUTE_AUTH_", case_sensitive=False, extra="ignore")
 
     @property
     def resolved_issuer(self) -> str:
@@ -51,13 +47,21 @@ def get_ithute_auth_settings() -> IthuteAuthSettings:
 
 @lru_cache(maxsize=8)
 def _jwks_client(url: str) -> PyJWKClient:
-    # The product receives only public signing keys. It never reads or stores
-    # the central Auth database or private signing key.
     return PyJWKClient(url)
 
 
 def ithute_auth_enabled() -> bool:
     return bool(get_ithute_auth_settings().enabled)
+
+
+def _signing_key(token: str, settings: IthuteAuthSettings, jwks_client: Any | None = None):
+    client = jwks_client or _jwks_client(settings.resolved_jwks_url)
+    try:
+        return client.get_signing_key_from_jwt(token).key
+    except PyJWKClientConnectionError as error:
+        raise IthuteAuthUnavailable("!thute Auth signing keys are unavailable") from error
+    except PyJWKClientError as error:
+        raise jwt.InvalidTokenError("unknown or invalid !thute Auth signing key") from error
 
 
 def decode_ithute_access_token(
@@ -66,43 +70,60 @@ def decode_ithute_access_token(
     config: IthuteAuthSettings | None = None,
     jwks_client: Any | None = None,
 ) -> dict[str, Any]:
-    """Validate a first-party !thute Auth access token for Mailbox DNS.
-
-    Normal users still receive product-local authorization after their central
-    identity is linked. The one signed ``is_platform_admin`` identity may be
-    projected to the Mailbox DNS platform-owner role without sharing its
-    central password or private signing material with this product.
-    """
-
+    """Validate a first-party Ithute Auth human access token."""
     settings = config or get_ithute_auth_settings()
     if not settings.enabled:
         raise IthuteAuthDisabled("!thute Auth is disabled for Mailbox DNS")
 
-    client = jwks_client or _jwks_client(settings.resolved_jwks_url)
-    try:
-        signing_key = client.get_signing_key_from_jwt(token).key
-    except PyJWKClientConnectionError as error:
-        raise IthuteAuthUnavailable("!thute Auth signing keys are unavailable") from error
-    except PyJWKClientError as error:
-        raise jwt.InvalidTokenError("unknown or invalid !thute Auth signing key") from error
-
     claims = jwt.decode(
         token,
-        signing_key,
+        _signing_key(token, settings, jwks_client),
         algorithms=["RS256"],
         issuer=settings.resolved_issuer,
         audience=settings.audience,
-        options={
-            "require": ["iss", "sub", "aud", "sid", "iat", "nbf", "exp", "token_use"],
-        },
+        options={"require": ["iss", "sub", "aud", "sid", "iat", "nbf", "exp", "token_use"]},
     )
     if claims.get("token_use") != "access":
         raise jwt.InvalidTokenError("wrong !thute Auth token type")
-
     try:
         UUID(str(claims["sub"]))
         UUID(str(claims["sid"]))
     except (KeyError, TypeError, ValueError) as error:
         raise jwt.InvalidTokenError("invalid !thute Auth identity claims") from error
+    return claims
 
+
+def decode_ithute_service_token(
+    token: str,
+    *,
+    audience: str,
+    required_scope: str | None = None,
+    config: IthuteAuthSettings | None = None,
+    jwks_client: Any | None = None,
+) -> dict[str, Any]:
+    """Validate a short-lived managed machine token issued by Ithute Auth.
+
+    Leaf services trust only Auth's RS256 signature, exact issuer/audience and
+    the scoped capability embedded in the short-lived token. They never receive
+    a service client's long-lived credential or read the central Auth database.
+    """
+    settings = config or get_ithute_auth_settings()
+    if not settings.enabled:
+        raise IthuteAuthDisabled("!thute Auth is disabled for Mailbox DNS")
+    claims = jwt.decode(
+        token,
+        _signing_key(token, settings, jwks_client),
+        algorithms=["RS256"],
+        issuer=settings.resolved_issuer,
+        audience=audience,
+        options={"require": ["iss", "sub", "aud", "iat", "nbf", "exp", "token_use", "scope"]},
+    )
+    if claims.get("token_use") != "service":
+        raise jwt.InvalidTokenError("wrong !thute Auth token type")
+    client_id = str(claims.get("sub") or "").strip()
+    if not client_id or len(client_id) > 120:
+        raise jwt.InvalidTokenError("invalid service client identity")
+    scopes = {item for item in str(claims.get("scope") or "").split() if item}
+    if required_scope and required_scope not in scopes:
+        raise jwt.InvalidTokenError("required service scope is missing")
     return claims
