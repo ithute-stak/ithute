@@ -4,8 +4,8 @@ import hmac
 import uuid
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import or_, select
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -34,6 +34,7 @@ from .service_authorization import ServiceContext, require_managed_service_scope
 
 
 INVITATION_TTL = timedelta(hours=24)
+RESEND_COOLDOWN = timedelta(seconds=60)
 MAX_ACTIVATION_ATTEMPTS = 8
 
 platform_router = APIRouter(prefix="/v1/platform/identity-invitations", tags=["trusted-identity-invitations"])
@@ -99,21 +100,22 @@ def _deliver(
                 "Do not share this code."
             ),
         )
-    else:
-        if not invitation.email:
-            raise DeliveryUnavailable("email target unavailable")
-        activation_url = f"{base_url}/account/activate?invitation={invitation.id}&token={token}"
-        send_email(
-            settings,
-            recipient=invitation.email,
-            subject="Activate your Ithute identity",
-            body=(
-                f"Hello {invitation.display_name},\n\n"
-                "A trusted Ithute service has invited you to activate your central Ithute identity.\n\n"
-                f"Activate securely: {activation_url}\n\n"
-                "This activation link expires in 24 hours. If you did not expect this invitation, you can ignore it."
-            ),
-        )
+        return
+
+    if not invitation.email:
+        raise DeliveryUnavailable("email target unavailable")
+    activation_url = f"{base_url}/account/activate?invitation={invitation.id}&token={token}"
+    send_email(
+        settings,
+        recipient=invitation.email,
+        subject="Activate your Ithute identity",
+        body=(
+            f"Hello {invitation.display_name},\n\n"
+            "A trusted Ithute service has invited you to activate your central Ithute identity.\n\n"
+            f"Activate securely: {activation_url}\n\n"
+            "This activation link expires in 24 hours. If you did not expect this invitation, you can ignore it."
+        ),
+    )
 
 
 def _attempt_delivery(
@@ -143,6 +145,7 @@ def _attempt_delivery(
             },
         )
         return
+
     invitation.delivery_status = "sent"
     invitation.last_sent_at = utcnow()
     record_audit(
@@ -180,7 +183,10 @@ def create_identity_invitation(
     if invitation is not None and invitation.consumed_at is not None:
         return _response(db, invitation)
 
+    created = invitation is None
     if invitation is None:
+        # Use unique temporary challenge digests before the first flush so the
+        # database never sees a shared placeholder in a unique column.
         invitation = IdentityInvitation(
             source_client_id=context.client_id,
             external_reference=reference,
@@ -188,8 +194,8 @@ def create_identity_invitation(
             email=email,
             phone=phone,
             preferred_channel=payload.preferred_channel,
-            challenge_token_hash="pending",
-            challenge_code_hash="pending",
+            challenge_token_hash=hash_security_token(new_security_token()),
+            challenge_code_hash=hash_password(new_numeric_code()),
             expires_at=utcnow() + INVITATION_TTL,
         )
         db.add(invitation)
@@ -201,7 +207,17 @@ def create_identity_invitation(
         invitation.preferred_channel = payload.preferred_channel
 
     token, code = _refresh_challenge(invitation)
-    db.flush()
+    record_audit(
+        db,
+        event_type="trusted_identity_invitation_created" if created else "trusted_identity_invitation_refreshed",
+        client_id=context.client_id,
+        request=request,
+        details={
+            "invitation_id": str(invitation.id),
+            "external_reference": invitation.external_reference,
+            "channel": invitation.preferred_channel,
+        },
+    )
     _attempt_delivery(
         db,
         invitation=invitation,
@@ -209,7 +225,7 @@ def create_identity_invitation(
         code=code,
         settings=settings,
         request=request,
-        event_type="trusted_identity_invitation_created",
+        event_type="trusted_identity_invitation_sent",
     )
     db.commit()
     db.refresh(invitation)
@@ -229,6 +245,8 @@ def resend_identity_invitation(
         raise HTTPException(status_code=404, detail="invitation not found")
     if invitation.consumed_at is not None:
         raise HTTPException(status_code=409, detail="invitation already activated")
+    if invitation.last_sent_at is not None and utcnow() - invitation.last_sent_at < RESEND_COOLDOWN:
+        raise HTTPException(status_code=429, detail="wait before resending this invitation")
 
     token, code = _refresh_challenge(invitation)
     _attempt_delivery(
@@ -239,6 +257,32 @@ def resend_identity_invitation(
         settings=settings,
         request=request,
         event_type="trusted_identity_invitation_resent",
+    )
+    db.commit()
+    db.refresh(invitation)
+    return _response(db, invitation)
+
+
+@platform_router.post("/{invitation_id}/cancel", response_model=IdentityInvitationResponse)
+def cancel_identity_invitation(
+    invitation_id: uuid.UUID,
+    request: Request,
+    context: ServiceContext = Depends(require_managed_service_scope("identity.invite")),
+    db: Session = Depends(get_db),
+) -> IdentityInvitationResponse:
+    invitation = db.get(IdentityInvitation, invitation_id)
+    if invitation is None or invitation.source_client_id != context.client_id:
+        raise HTTPException(status_code=404, detail="invitation not found")
+    if invitation.consumed_at is not None:
+        raise HTTPException(status_code=409, detail="invitation already activated")
+    invitation.status = "cancelled"
+    invitation.cancelled_at = utcnow()
+    record_audit(
+        db,
+        event_type="trusted_identity_invitation_cancelled",
+        client_id=context.client_id,
+        request=request,
+        details={"invitation_id": str(invitation.id), "external_reference": invitation.external_reference},
     )
     db.commit()
     db.refresh(invitation)
