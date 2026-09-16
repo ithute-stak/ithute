@@ -1,0 +1,79 @@
+name: Platform Mail CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/backend/app/api/platform_service_auth.py"
+      - "apps/backend/app/api/v1/platform_mail.py"
+      - "apps/backend/app/api/v1/router.py"
+      - "apps/backend/app/models/platform_mail.py"
+      - "apps/backend/app/models/__init__.py"
+      - "apps/backend/app/schemas/platform_mail.py"
+      - "apps/backend/app/services/ithute_auth.py"
+      - "apps/backend/alembic/versions/**"
+      - "apps/backend/tests/test_platform_mail_provisioning_contract.py"
+      - "apps/backend/tests/test_alembic_single_head.py"
+      - "platform/ithute-auth/app/managed_service_token_security.py"
+      - "platform/ithute-auth/app/service_token_api.py"
+      - "platform/ithute-auth/app/service_authorization.py"
+      - ".github/workflows/platform-mail-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/backend/app/api/platform_service_auth.py"
+      - "apps/backend/app/api/v1/platform_mail.py"
+      - "apps/backend/app/api/v1/router.py"
+      - "apps/backend/app/models/platform_mail.py"
+      - "apps/backend/app/models/__init__.py"
+      - "apps/backend/app/schemas/platform_mail.py"
+      - "apps/backend/app/services/ithute_auth.py"
+      - "apps/backend/alembic/versions/**"
+      - "apps/backend/tests/test_platform_mail_provisioning_contract.py"
+      - "apps/backend/tests/test_alembic_single_head.py"
+      - "platform/ithute-auth/app/managed_service_token_security.py"
+      - "platform/ithute-auth/app/service_token_api.py"
+      - "platform/ithute-auth/app/service_authorization.py"
+      - ".github/workflows/platform-mail-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  platform-mail-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/backend/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: apps/backend
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Compile platform mail boundary
+        working-directory: apps/backend
+        run: |
+          python -m compileall -q \
+            app/api/platform_service_auth.py \
+            app/api/v1/platform_mail.py \
+            app/models/platform_mail.py \
+            app/schemas/platform_mail.py \
+            app/services/ithute_auth.py \
+            alembic/versions/0023_platform_mail_provisioning.py
+
+      - name: Run platform mail and migration contracts
+        working-directory: apps/backend
+        run: |
+          pytest -q \
+            tests/test_platform_mail_provisioning_contract.py \
+            tests/test_alembic_single_head.py
