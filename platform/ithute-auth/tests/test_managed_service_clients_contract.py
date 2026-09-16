@@ -10,6 +10,7 @@ MANAGED_TOKEN = ROOT / "app" / "managed_service_token_security.py"
 MODELS = ROOT / "app" / "managed_service_models.py"
 SERVICE_CLIENTS = ROOT / "app" / "service_clients.py"
 MIGRATION = ROOT / "alembic" / "versions" / "0006_managed_service_clients.py"
+BDA_GRANTS_MIGRATION = ROOT / "alembic" / "versions" / "0008_bda_service_grants.py"
 SERVER = ROOT / "app" / "server.py"
 
 
@@ -39,6 +40,22 @@ def test_migration_seeds_rsl_trade_and_business_clients() -> None:
         '"notification.send"',
     ):
         assert required in source
+
+
+def test_bda_integration_grants_are_least_privilege_and_migration_safe() -> None:
+    source = BDA_GRANTS_MIGRATION.read_text(encoding="utf-8")
+    assert 'revision = "0008_bda_service_grants"' in source
+    assert 'down_revision = "0007_identity_invites"' in source
+    assert len("0008_bda_service_grants") <= 32
+    assert '"trade-simulator"' in source
+    assert '"rsl-simulator"' in source
+    assert source.count('"audience": "business-digital-address"') == 2
+    assert '"scope": "business.register"' in source
+    assert '"scope": "official-message.send"' in source
+    assert "identity.invite" not in source
+    assert "mailbox.create" not in source
+    assert "mail.send" not in source
+    assert "notification.send" not in source
 
 
 def test_admin_api_covers_lifecycle_and_audit_operations() -> None:
