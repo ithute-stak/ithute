@@ -15,6 +15,10 @@ def _mailbox(address: str, password_hash: str, status: MailboxStatus = MailboxSt
     )
 
 
+def _enable_forwarding_runtime(tmp_path: Path) -> None:
+    (tmp_path / ".recipient-bcc-ready").write_text("ready\n", encoding="utf-8")
+
+
 def test_sync_replaces_only_matching_account_and_preserves_external_accounts(tmp_path: Path, monkeypatch):
     account_file = tmp_path / "postfix-accounts.cf"
     account_file.write_text(
@@ -73,6 +77,19 @@ def test_sync_is_disabled_without_runtime_account_file(monkeypatch):
     assert sync_mailbox(mailbox) is False
 
 
+def test_forwarding_fails_closed_until_postfix_runtime_is_verified(tmp_path: Path, monkeypatch):
+    account_file = tmp_path / "postfix-accounts.cf"
+    account_file.write_text(
+        "bda-reg12345@ithute.co.ls|{SHA512-CRYPT}$6$current$hash\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAIL_ACCOUNTS_FILE", str(account_file))
+    mailbox = _mailbox("bda-reg12345@ithute.co.ls", "{SHA512-CRYPT}$6$current$hash")
+
+    assert sync_mailbox_forwarding(mailbox, "business@gmail.com") is False
+    assert not (tmp_path / "postfix-recipient-bcc.cf").exists()
+
+
 def test_forwarding_keeps_mailbox_account_and_writes_external_copy_rule(tmp_path: Path, monkeypatch):
     account_file = tmp_path / "postfix-accounts.cf"
     account_file.write_text(
@@ -81,6 +98,7 @@ def test_forwarding_keeps_mailbox_account_and_writes_external_copy_rule(tmp_path
         encoding="utf-8",
     )
     monkeypatch.setenv("MAIL_ACCOUNTS_FILE", str(account_file))
+    _enable_forwarding_runtime(tmp_path)
 
     mailbox = _mailbox("bda-reg12345@ithute.co.ls", "{SHA512-CRYPT}$6$current$hash")
     assert sync_mailbox_forwarding(mailbox, "Business@Gmail.COM") is True
@@ -102,6 +120,7 @@ def test_forwarding_destination_can_be_replaced_and_disabled(tmp_path: Path, mon
         encoding="utf-8",
     )
     monkeypatch.setenv("MAIL_ACCOUNTS_FILE", str(account_file))
+    _enable_forwarding_runtime(tmp_path)
     mailbox = _mailbox("bda-reg12345@ithute.co.ls", "{SHA512-CRYPT}$6$current$hash")
 
     sync_mailbox_forwarding(mailbox, "first@gmail.com")
@@ -134,6 +153,7 @@ def test_forwarding_rejects_self_destination(tmp_path: Path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setenv("MAIL_ACCOUNTS_FILE", str(account_file))
+    _enable_forwarding_runtime(tmp_path)
     mailbox = _mailbox("bda-reg12345@ithute.co.ls", "{SHA512-CRYPT}$6$current$hash")
 
     try:
@@ -151,6 +171,7 @@ def test_suspended_mailbox_removes_forwarding_rule(tmp_path: Path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setenv("MAIL_ACCOUNTS_FILE", str(account_file))
+    _enable_forwarding_runtime(tmp_path)
     mailbox = _mailbox("bda-reg12345@ithute.co.ls", "{SHA512-CRYPT}$6$current$hash")
     sync_mailbox_forwarding(mailbox, "business@gmail.com")
 
