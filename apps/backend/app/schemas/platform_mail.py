@@ -87,6 +87,26 @@ class PlatformMailboxStatusResponse(BaseModel):
     status: str
 
 
+class PlatformMailboxForwardingRequest(BaseModel):
+    destination: str = Field(min_length=3, max_length=320)
+
+    @field_validator("destination")
+    @classmethod
+    def normalize_destination(cls, value: str) -> str:
+        destination = value.strip().lower()
+        if "@" not in destination or any(char.isspace() for char in destination):
+            raise ValueError("destination must be a valid email address")
+        return destination
+
+
+class PlatformMailboxForwardingResponse(BaseModel):
+    binding_id: uuid.UUID
+    address: str
+    destination: str | None
+    active: bool
+    runtime_synced: bool
+
+
 class PlatformMailSendRequest(BaseModel):
     external_reference: str = Field(min_length=1, max_length=200)
     recipient: str = Field(min_length=3, max_length=320)
