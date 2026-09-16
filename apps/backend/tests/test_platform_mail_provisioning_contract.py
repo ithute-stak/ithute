@@ -59,10 +59,10 @@ def test_domain_grants_require_platform_owner_and_explicit_namespace() -> None:
 def test_platform_service_identity_comes_from_canonical_azp() -> None:
     source = PLATFORM_AUTH.read_text(encoding="utf-8")
     for required in (
-        'claims.get("azp")',
-        'claims.get("sub") != f"service:{client_id}"',
-        'claims.get("service_auth") != "managed"',
-        "PlatformServicePrincipal(client_id=client_id",
+        "decode_ithute_service_token",
+        'client_id=str(claims["azp"])',
+        'token_id=str(claims["jti"])',
+        "required_scope not in scopes",
     ):
         assert required in source
     assert 'claims.get("client_id")' not in source
@@ -166,8 +166,9 @@ def test_namespace_migration_fails_closed_for_existing_grants() -> None:
     assert 'revision = "0024_mail_namespace"' in source
     assert 'down_revision = "0023_platform_mail_provisioning"' in source
     assert '"local_part_prefix"' in source
-    assert 'server_default="disabled-"' in source
-    assert 'sa.text("active = false")' in source
+    assert '_LEGACY_DISABLED_PREFIX = "legacy-disabled-"' in source
+    assert '"SET active = false, local_part_prefix = :prefix"' in source
+    assert "nullable=False" in source
 
 
 def test_send_migration_adds_idempotent_outbound_ledger() -> None:
