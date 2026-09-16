@@ -63,7 +63,7 @@ jobs:
 
       - name: Compile Notification service
         working-directory: platform/ithute-notification
-        run: python -m compileall -q app alembic
+        run: python -m compileall -q app alembic tests
 
       - name: Migrate Notification database
         working-directory: platform/ithute-notification
@@ -71,7 +71,7 @@ jobs:
 
       - name: Run Notification contracts
         working-directory: platform/ithute-notification
-        run: pytest -q
+        run: python -m pytest -q
 
       - name: Build Notification image
         run: docker build -t ithute-notification:ci platform/ithute-notification
