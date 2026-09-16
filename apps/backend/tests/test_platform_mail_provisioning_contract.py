@@ -108,7 +108,7 @@ def test_initial_platform_mail_migration_extends_commercial_catalog() -> None:
 
 def test_namespace_migration_disables_legacy_whole_domain_grants() -> None:
     source = NAMESPACE_MIGRATION.read_text(encoding="utf-8")
-    assert 'revision = "0024_platform_mail_namespace_grants"' in source
+    assert 'revision = "0024_mail_namespace"' in source
     assert 'down_revision = "0023_platform_mail_provisioning"' in source
     assert 'sa.Column("local_part_prefix", sa.String(length=32), nullable=True)' in source
     assert '"SET active = false, local_part_prefix = :prefix"' in source
