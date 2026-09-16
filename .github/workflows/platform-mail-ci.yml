@@ -43,6 +43,20 @@ jobs:
   platform-mail-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ci_platform_mail
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci_platform_mail"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       SECRET_KEY: ci-platform-mail-secret-000000000000000000000000000000
       DATABASE_URL: postgresql+psycopg://ci:ci@127.0.0.1:5432/ci_platform_mail
@@ -72,7 +86,12 @@ jobs:
             app/models/platform_mail.py \
             app/schemas/platform_mail.py \
             app/services/ithute_auth.py \
-            alembic/versions/0023_platform_mail_provisioning.py
+            alembic/versions/0023_platform_mail_provisioning.py \
+            alembic/versions/0024_platform_mail_namespace_grants.py
+
+      - name: Apply backend migrations to PostgreSQL
+        working-directory: apps/backend
+        run: alembic upgrade head
 
       - name: Run platform mail and migration contracts
         working-directory: apps/backend
