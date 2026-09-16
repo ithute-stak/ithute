@@ -20,6 +20,7 @@ from .oauth import router as oauth_router
 from .passkeys import router as passkey_router
 from .portal import router as portal_router
 from .portal_passkeys import router as portal_passkey_router
+from .portal_theme import apply_portal_theme
 from .recovery_portal import router as recovery_portal_router
 from .schemas import (
     DeviceRequest,
@@ -66,6 +67,11 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+# Keep authentication behavior in portal.py and apply the presentation layer
+# separately. This lets the Auth UI evolve without changing the security flow.
+apply_portal_theme()
+
 app.include_router(oauth_router)
 app.include_router(account_router)
 app.include_router(admin_router)
