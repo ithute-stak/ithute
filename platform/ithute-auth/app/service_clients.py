@@ -97,11 +97,26 @@ def authenticate_managed_service_client(
     scope: str,
 ) -> tuple[ManagedServiceCredential, str]:
     now = utcnow()
-    if not client.is_active:
-        raise ServiceClientAuthError(401, "service client disabled")
-    if client.expires_at is not None and client.expires_at <= now:
-        raise ServiceClientAuthError(401, "service client expired")
 
+    # Authenticate first. Do not expose client state, allowed audiences, or
+    # allowed scopes to a caller that cannot prove possession of a live secret.
+    if not client.is_active:
+        raise ServiceClientAuthError(401, "invalid service credentials")
+    if client.expires_at is not None and client.expires_at <= now:
+        raise ServiceClientAuthError(401, "invalid service credentials")
+    credential = db.scalar(
+        select(ManagedServiceCredential).where(
+            ManagedServiceCredential.service_client_id == client.id,
+            ManagedServiceCredential.secret_hash == hash_service_secret(client_secret),
+            ManagedServiceCredential.revoked_at.is_(None),
+        )
+    )
+    if credential is None:
+        raise ServiceClientAuthError(401, "invalid service credentials")
+    if credential.expires_at is not None and credential.expires_at <= now:
+        raise ServiceClientAuthError(401, "invalid service credentials")
+
+    # Authorization is evaluated only after machine authentication succeeds.
     requested_audience = audience.strip().lower()
     if not _CAPABILITY_RE.fullmatch(requested_audience):
         raise ServiceClientAuthError(403, "audience not permitted")
@@ -116,18 +131,6 @@ def authenticate_managed_service_client(
     allowed_scopes = set(decode_capabilities(client.allowed_scopes_json))
     if not set(requested_scopes).issubset(allowed_scopes):
         raise ServiceClientAuthError(403, "scope not permitted")
-
-    credential = db.scalar(
-        select(ManagedServiceCredential).where(
-            ManagedServiceCredential.service_client_id == client.id,
-            ManagedServiceCredential.secret_hash == hash_service_secret(client_secret),
-            ManagedServiceCredential.revoked_at.is_(None),
-        )
-    )
-    if credential is None:
-        raise ServiceClientAuthError(401, "invalid service credentials")
-    if credential.expires_at is not None and credential.expires_at <= now:
-        raise ServiceClientAuthError(401, "service credential expired")
 
     client.last_used_at = now
     credential.last_used_at = now
