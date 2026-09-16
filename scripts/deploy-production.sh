@@ -218,17 +218,30 @@ ensure_edge_and_reload() {
   compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null || return 1
 }
 
+require_public_marker() {
+  local label="$1"
+  local url="$2"
+  local expected="$3"
+  local body
+  body="$(curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS "$url")" || {
+    echo "Public health failed: $label could not be fetched at $url" >&2
+    return 1
+  }
+  if [[ "$body" != *"$expected"* ]]; then
+    echo "Public health failed: $label did not contain expected marker: $expected" >&2
+    return 1
+  fi
+}
+
 verify_public_health() {
   [ "$REQUIRE_PUBLIC_HEALTH" = "1" ] || return 0
-  local body
-  body="$(curl --retry 15 --retry-delay 3 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/)" || return 1
-  [[ "$body" == *"One home for the systems that move organisations forward."* ]] || return 1
-  curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/pricing | grep -Fq 'Your business online from' || return 1
-  curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/hosting-docs | grep -Fq 'Rules for every system hosted on Ithute.' || return 1
-  curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/docs | grep -Fq 'Public configuration manual' || return 1
-  curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth || return 1
-  curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://push.ithute.co.ls/readyz | grep -q '\"status\":\"ready\"' || return 1
-  curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://realtime.ithute.co.ls/readyz | grep -q '\"status\":\"ready\"' || return 1
+  require_public_marker 'Ithute home' 'https://ithute.co.ls/' 'One home for the systems that move organisations forward.' || return 1
+  require_public_marker 'Pricing' 'https://ithute.co.ls/pricing' 'Your business online from' || return 1
+  require_public_marker 'Hosting rules' 'https://ithute.co.ls/hosting-docs' 'Rules for every system hosted on Ithute.' || return 1
+  require_public_marker 'Documentation' 'https://ithute.co.ls/docs' 'Public configuration manual' || return 1
+  require_public_marker 'Central Auth health' 'https://auth.ithute.co.ls/healthz' 'ithute-auth' || return 1
+  require_public_marker 'Push health' 'https://push.ithute.co.ls/readyz' '"status":"ready"' || return 1
+  require_public_marker 'Realtime health' 'https://realtime.ithute.co.ls/readyz' '"status":"ready"' || return 1
 }
 
 dump_failure_logs() {

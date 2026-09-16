@@ -63,9 +63,21 @@ jobs:
               ".last-known-good-runtime.tgz",
               "rollback_to_last_good",
               "ITHUTE_FALLBACK_IMAGE_TAG",
+              "require_public_marker",
           ):
               if required not in script:
-                  failures.append(f"deploy-production.sh is missing rollback contract: {required}")
+                  failures.append(f"deploy-production.sh is missing rollback/health contract: {required}")
+
+          # With `set -o pipefail`, `curl ... | grep -q` can make curl exit 23
+          # after grep finds its match and closes the pipe. Production deploy
+          # #231 hit exactly this false negative. Public checks must capture the
+          # response first and then inspect it without a streaming pipe.
+          marker = "verify_public_health() {"
+          end_marker = "\n}\n\ndump_failure_logs()"
+          if marker in script and end_marker in script.split(marker, 1)[1]:
+              public_health = script.split(marker, 1)[1].split(end_marker, 1)[0]
+              if "| grep" in public_health:
+                  failures.append("verify_public_health must not stream curl output into grep under pipefail")
 
           disk = Path(".github/workflows/vps-disk-maintenance.yml").read_text(encoding="utf-8")
           header = disk.split("jobs:", 1)[0]
@@ -152,7 +164,8 @@ jobs:
               docker logs ithute-auth-smoke >&2 || true
               exit 1
             fi
-            if docker exec ithute-auth-smoke curl -fsS http://127.0.0.1:8080/healthz | grep -q ithute-auth; then
+            body="$(docker exec ithute-auth-smoke curl -fsS http://127.0.0.1:8080/healthz 2>/dev/null || true)"
+            if [[ "$body" == *"ithute-auth"* ]]; then
               docker logs ithute-auth-smoke
               exit 0
             fi
