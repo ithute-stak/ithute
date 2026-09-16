@@ -5,7 +5,6 @@ import time
 from datetime import timedelta
 
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from .config import get_settings
 from .db import SessionLocal
@@ -18,8 +17,7 @@ def _backoff(attempt: int) -> timedelta:
     return timedelta(seconds=seconds)
 
 
-def _refresh_notification_status(notification: Notification) -> None:
-    statuses = {delivery.status for delivery in notification.deliveries}
+def _refresh_notification_status(notification: Notification, statuses: set[str]) -> None:
     if statuses and statuses <= {"delivered"}:
         notification.status = "delivered"
         notification.completed_at = utcnow()
@@ -81,10 +79,17 @@ def process_one() -> bool:
         )
         if delivery is None:
             return False
+
+        # Lock the parent notification as well as the selected delivery. This
+        # serializes aggregate-state updates for channels belonging to the same
+        # notification while still allowing unrelated notifications to process
+        # concurrently. Without this lock, two workers can each see a stale
+        # sibling delivery and both leave an otherwise completed notification
+        # in the queued state.
         notification = db.scalar(
             select(Notification)
-            .options(selectinload(Notification.deliveries))
             .where(Notification.id == delivery.notification_id)
+            .with_for_update()
         )
         if notification is None:
             delivery.status = "failed"
@@ -113,7 +118,20 @@ def process_one() -> bool:
             delivery.provider_reference = reference[:255]
             delivery.last_error = None
             delivery.delivered_at = utcnow()
-        _refresh_notification_status(notification)
+
+        # Flush this worker's channel result, then derive the aggregate from
+        # fresh database state while the parent notification lock is held. A
+        # worker that was waiting for this notification will run afterwards and
+        # see the status committed by the preceding worker.
+        db.flush()
+        statuses = set(
+            db.scalars(
+                select(NotificationDelivery.status).where(
+                    NotificationDelivery.notification_id == notification.id
+                )
+            ).all()
+        )
+        _refresh_notification_status(notification, statuses)
         db.commit()
         return True
 
