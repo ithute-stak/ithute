@@ -34,11 +34,13 @@ def test_service_tokens_are_separate_from_human_and_legacy_tokens() -> None:
     assert '"jti"' in source
 
 
-def test_platform_mail_requires_ithute_mail_scope() -> None:
+def test_platform_mail_requires_ithute_mail_scope_and_uses_azp_identity() -> None:
     source = AUTH.read_text(encoding="utf-8")
     assert 'audience: str = "ithute-mail"' in source
     assert "require_platform_service_scope" in source
     assert "required_scope not in scopes" in source
+    assert 'client_id=str(claims["azp"])' in source
+    assert 'client_id=str(claims["sub"])' not in source
 
 
 def test_provisioning_is_domain_granted_idempotent_and_credentialless() -> None:
