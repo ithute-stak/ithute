@@ -4,10 +4,16 @@ set -euo pipefail
 APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute-platform}"
 ENV_FILE="${ITHUTE_ENV_FILE:-$APP_DIR/.env.production}"
 IMAGE_ENV_FILE="${ITHUTE_IMAGE_ENV_FILE:-$APP_DIR/.image.env}"
+LAST_GOOD_ENV_FILE="${ITHUTE_LAST_GOOD_ENV_FILE:-$APP_DIR/.last-known-good.env}"
+LAST_GOOD_RUNTIME_ARCHIVE="${ITHUTE_LAST_GOOD_RUNTIME_ARCHIVE:-$APP_DIR/.last-known-good-runtime.tgz}"
+CANDIDATE_IMAGE_ENV_FILE="$APP_DIR/.image.candidate.env"
+ROLLBACK_IMAGE_ENV_FILE="$APP_DIR/.image.rollback.env"
 COMPOSE_FILE="$APP_DIR/compose.production.yml"
 PROJECT_NAME="ithute"
 CUTOVER_MARKER="$APP_DIR/.dns-cutover-complete"
 PUBLIC_EDGE_NETWORK="${PUBLIC_EDGE_NETWORK:-public-edge}"
+FALLBACK_IMAGE_TAG="${ITHUTE_FALLBACK_IMAGE_TAG:-}"
+REQUIRE_PUBLIC_HEALTH="${ITHUTE_REQUIRE_PUBLIC_HEALTH:-0}"
 
 cd "$APP_DIR"
 
@@ -95,43 +101,54 @@ path.write_text("\n".join(kept) + "\n", encoding="utf-8")
 PY
 chmod 600 "$ENV_FILE"
 
-if [ -n "${ITHUTE_IMAGE_TAG:-}" ]; then
-  case "$ITHUTE_IMAGE_TAG" in
-    *[!0-9a-f]*|'') echo "ITHUTE_IMAGE_TAG must be a lowercase Git commit SHA." >&2; exit 2 ;;
-  esac
-  if [ "${#ITHUTE_IMAGE_TAG}" -ne 40 ]; then
-    echo "ITHUTE_IMAGE_TAG must be a full 40-character Git commit SHA." >&2
-    exit 2
+valid_tag() {
+  local tag="${1:-}"
+  [[ "$tag" =~ ^[0-9a-f]{40}$ ]]
+}
+
+require_tag() {
+  local tag="$1"
+  local label="$2"
+  if ! valid_tag "$tag"; then
+    echo "$label must be a full 40-character lowercase Git commit SHA." >&2
+    return 1
   fi
-  umask 077
-  printf 'ITHUTE_IMAGE_TAG=%s\n' "$ITHUTE_IMAGE_TAG" > "$IMAGE_ENV_FILE.tmp"
-  mv "$IMAGE_ENV_FILE.tmp" "$IMAGE_ENV_FILE"
-  chmod 600 "$IMAGE_ENV_FILE"
-fi
+}
 
-test -f "$IMAGE_ENV_FILE" || { echo "Missing $IMAGE_ENV_FILE" >&2; exit 2; }
-IMAGE_TAG="$(sed -n 's/^ITHUTE_IMAGE_TAG=//p' "$IMAGE_ENV_FILE" | tail -n1)"
-case "$IMAGE_TAG" in
-  *[!0-9a-f]*|'') echo "Invalid image tag in $IMAGE_ENV_FILE" >&2; exit 2 ;;
-esac
-if [ "${#IMAGE_TAG}" -ne 40 ]; then
-  echo "Image tag must be a full 40-character Git commit SHA." >&2
+images_present() {
+  local tag="$1"
+  local image
+  for image in ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime; do
+    docker image inspect "$image:$tag" >/dev/null 2>&1 || return 1
+  done
+}
+
+if [ -n "${ITHUTE_IMAGE_TAG:-}" ]; then
+  CANDIDATE_TAG="$ITHUTE_IMAGE_TAG"
+else
+  CANDIDATE_TAG="$(sed -n 's/^ITHUTE_IMAGE_TAG=//p' "$IMAGE_ENV_FILE" 2>/dev/null | tail -n1)"
+fi
+require_tag "$CANDIDATE_TAG" "ITHUTE_IMAGE_TAG"
+images_present "$CANDIDATE_TAG" || {
+  echo "Candidate image bundle is incomplete on the VPS for $CANDIDATE_TAG." >&2
   exit 2
+}
+
+ROLLBACK_TAG=""
+if [ -f "$LAST_GOOD_ENV_FILE" ]; then
+  stored="$(sed -n 's/^ITHUTE_IMAGE_TAG=//p' "$LAST_GOOD_ENV_FILE" | tail -n1)"
+  if valid_tag "$stored" && images_present "$stored"; then
+    ROLLBACK_TAG="$stored"
+  fi
+fi
+if [ -z "$ROLLBACK_TAG" ] && valid_tag "$FALLBACK_IMAGE_TAG" && images_present "$FALLBACK_IMAGE_TAG"; then
+  ROLLBACK_TAG="$FALLBACK_IMAGE_TAG"
 fi
 
-for image in \
-  "ithute-web:$IMAGE_TAG" \
-  "ithute-app-api:$IMAGE_TAG" \
-  "ithute-auth:$IMAGE_TAG" \
-  "ithute-push:$IMAGE_TAG" \
-  "ithute-realtime:$IMAGE_TAG"
-do
-  docker image inspect "$image" >/dev/null 2>&1 || {
-    echo "Missing prebuilt image on VPS: $image" >&2
-    echo "Images must be built by GitHub Actions and loaded before deployment." >&2
-    exit 2
-  }
-done
+umask 077
+printf 'ITHUTE_IMAGE_TAG=%s\n' "$CANDIDATE_TAG" > "$CANDIDATE_IMAGE_ENV_FILE"
+chmod 600 "$CANDIDATE_IMAGE_ENV_FILE"
+ACTIVE_IMAGE_ENV_FILE="$CANDIDATE_IMAGE_ENV_FILE"
 
 # Once DNS/TLS cutover has been finalized, routine deployments must never
 # re-enable the temporary direct-IP route just because the repository still
@@ -144,24 +161,150 @@ fi
 compose() {
   docker compose \
     --env-file "$ENV_FILE" \
-    --env-file "$IMAGE_ENV_FILE" \
+    --env-file "$ACTIVE_IMAGE_ENV_FILE" \
     -p "$PROJECT_NAME" \
     -f "$COMPOSE_FILE" \
     "$@"
 }
 
-compose config >/tmp/ithute-compose.rendered.yml
-if grep -Eq 'external:[[:space:]]*true' /tmp/ithute-compose.rendered.yml; then
-  echo "Refusing deployment: standalone Ithute compose contains an external Docker resource." >&2
+validate_runtime() {
+  compose config >/tmp/ithute-compose.rendered.yml || return 1
+  if grep -Eq 'external:[[:space:]]*true' /tmp/ithute-compose.rendered.yml; then
+    echo "Refusing deployment: standalone Ithute compose contains an external Docker resource." >&2
+    return 1
+  fi
+  if grep -Eq '^[[:space:]]*build:' /tmp/ithute-compose.rendered.yml; then
+    echo "Refusing deployment: production compose must use prebuilt images only." >&2
+    return 1
+  fi
+}
+
+wait_service() {
+  local name="$1"
+  local command="$2"
+  local attempt
+  for attempt in $(seq 1 60); do
+    if compose exec -T "$name" sh -c "$command" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "Health verification failed for $name" >&2
+  compose ps >&2 || true
+  compose logs --tail=160 "$name" >&2 || true
+  return 1
+}
+
+verify_core_health() {
+  wait_service ithute-dns "python3 -c 'import os,urllib.request; request=urllib.request.Request(\"http://127.0.0.1:8081/api/v1/servers/localhost\", headers={\"X-API-Key\": os.environ[\"PDNS_AUTH_API_KEY\"]}); urllib.request.urlopen(request, timeout=3).read()'" || return 1
+  wait_service ithute-auth "curl -fsS http://127.0.0.1:8080/healthz | grep -q ithute-auth" || return 1
+  wait_service ithute-app-api "curl -fsS http://127.0.0.1:8000/health/ready | grep -q '\"status\":\"ready\"'" || return 1
+  wait_service ithute-web "wget -qO- http://127.0.0.1:3000/health | grep -q ithute-web" || return 1
+  wait_service ithute-push "curl -fsS http://127.0.0.1:8080/readyz | grep -q '\"status\":\"ready\"'" || return 1
+  wait_service ithute-realtime "curl -fsS http://127.0.0.1:8080/readyz | grep -q '\"status\":\"ready\"'" || return 1
+  wait_service ithute-app-api "python -c 'from app.services.powerdns import PowerDNSClient; zone=PowerDNSClient().get_zone(\"ithute.co.ls\"); assert zone.get(\"name\") == \"ithute.co.ls.\"'" || return 1
+}
+
+ensure_edge_and_reload() {
+  docker network inspect "$PUBLIC_EDGE_NETWORK" >/dev/null 2>&1 || docker network create "$PUBLIC_EDGE_NETWORK" >/dev/null || return 1
+  local caddy_id
+  caddy_id="$(compose ps -q caddy)"
+  test -n "$caddy_id" || return 1
+  if ! docker inspect -f '{{json .NetworkSettings.Networks}}' "$caddy_id" | grep -q "\"$PUBLIC_EDGE_NETWORK\""; then
+    docker network connect "$PUBLIC_EDGE_NETWORK" "$caddy_id" || return 1
+  fi
+  compose exec -T caddy mkdir -p /data/product-routes || return 1
+  compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null || return 1
+  compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null || return 1
+}
+
+verify_public_health() {
+  [ "$REQUIRE_PUBLIC_HEALTH" = "1" ] || return 0
+  local body
+  body="$(curl --retry 15 --retry-delay 3 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/)" || return 1
+  [[ "$body" == *"One home for the systems that move organisations forward."* ]] || return 1
+  curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/pricing | grep -Fq 'Your business online from' || return 1
+  curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/hosting-docs | grep -Fq 'Rules for every system hosted on Ithute.' || return 1
+  curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://ithute.co.ls/docs | grep -Fq 'Public configuration manual' || return 1
+  curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth || return 1
+  curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://push.ithute.co.ls/readyz | grep -q '\"status\":\"ready\"' || return 1
+  curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS https://realtime.ithute.co.ls/readyz | grep -q '\"status\":\"ready\"' || return 1
+}
+
+dump_failure_logs() {
+  echo "Candidate release $CANDIDATE_TAG failed. Container state:" >&2
+  compose ps >&2 || true
+  compose logs --tail=220 ithute-auth ithute-app-api ithute-web ithute-push ithute-realtime >&2 || true
+}
+
+record_last_good() {
+  local tag="$1"
+  umask 077
+  printf 'ITHUTE_IMAGE_TAG=%s\n' "$tag" > "$LAST_GOOD_ENV_FILE.tmp"
+  mv "$LAST_GOOD_ENV_FILE.tmp" "$LAST_GOOD_ENV_FILE"
+  chmod 600 "$LAST_GOOD_ENV_FILE"
+  tar -czf "$LAST_GOOD_RUNTIME_ARCHIVE.tmp" \
+    compose.production.yml \
+    infrastructure/caddy/Caddyfile \
+    infrastructure/dns/zones/db.ithute.co.ls
+  mv "$LAST_GOOD_RUNTIME_ARCHIVE.tmp" "$LAST_GOOD_RUNTIME_ARCHIVE"
+  chmod 600 "$LAST_GOOD_RUNTIME_ARCHIVE"
+}
+
+rollback_to_last_good() {
+  if [ -z "$ROLLBACK_TAG" ]; then
+    echo "No healthy rollback image set is available on the VPS." >&2
+    return 1
+  fi
+  echo "Rolling Ithute production back to last-known-good image $ROLLBACK_TAG." >&2
+  images_present "$ROLLBACK_TAG" || return 1
+
+  if [ -s "$LAST_GOOD_RUNTIME_ARCHIVE" ]; then
+    tar -xzf "$LAST_GOOD_RUNTIME_ARCHIVE" -C "$APP_DIR" || return 1
+  fi
+
+  umask 077
+  printf 'ITHUTE_IMAGE_TAG=%s\n' "$ROLLBACK_TAG" > "$ROLLBACK_IMAGE_ENV_FILE"
+  chmod 600 "$ROLLBACK_IMAGE_ENV_FILE"
+  ACTIVE_IMAGE_ENV_FILE="$ROLLBACK_IMAGE_ENV_FILE"
+  validate_runtime || return 1
+
+  # Never use --remove-orphans here or in the normal deployment path. Backup,
+  # telemetry and restore-drill containers share the project intentionally and
+  # must not be stopped merely because they live in auxiliary Compose files.
+  compose up -d --no-build || {
+    compose ps >&2 || true
+    compose logs --tail=220 ithute-auth ithute-app-api ithute-web ithute-push ithute-realtime >&2 || true
+    return 1
+  }
+  ensure_edge_and_reload || return 1
+  verify_core_health || return 1
+  verify_public_health || return 1
+
+  mv "$ROLLBACK_IMAGE_ENV_FILE" "$IMAGE_ENV_FILE"
+  chmod 600 "$IMAGE_ENV_FILE"
+  ACTIVE_IMAGE_ENV_FILE="$IMAGE_ENV_FILE"
+  record_last_good "$ROLLBACK_TAG"
+  echo "Rollback completed; production is healthy on $ROLLBACK_TAG." >&2
+  return 0
+}
+
+fail_release() {
+  dump_failure_logs
+  if rollback_to_last_good; then
+    echo "The candidate deployment failed, but the previous healthy production release was restored." >&2
+  else
+    echo "CRITICAL: candidate deployment failed and automated rollback could not restore service." >&2
+  fi
+  rm -f "$CANDIDATE_IMAGE_ENV_FILE" "$ROLLBACK_IMAGE_ENV_FILE"
   exit 1
-fi
-if grep -Eq '^[[:space:]]*build:' /tmp/ithute-compose.rendered.yml; then
-  echo "Refusing deployment: production compose must use prebuilt images only." >&2
-  exit 1
-fi
+}
+
+validate_runtime || exit 1
 
 # Pull only third-party runtime images. All Ithute application images were
-# already built and tested by GitHub Actions.
+# already built and tested by GitHub Actions. This happens before any live
+# application container is replaced.
 compose pull \
   ithute-app-db \
   ithute-app-redis \
@@ -173,69 +316,31 @@ compose pull \
   ithute-dns \
   caddy
 
-if ! compose up -d --remove-orphans --no-build; then
-  echo "Ithute containers did not reach their Compose startup conditions." >&2
-  compose ps >&2 || true
-  echo "Restored app API logs:" >&2
-  compose logs --tail=200 ithute-app-api >&2 || true
-  echo "Authoritative DNS logs:" >&2
-  compose logs --tail=200 ithute-dns >&2 || true
-  exit 1
+# Replace only services declared by the production Compose file. In particular,
+# do not use --remove-orphans: operational services in the same project are not
+# disposable just because they are described in telemetry/backup Compose files.
+if ! compose up -d --no-build; then
+  fail_release
+fi
+if ! ensure_edge_and_reload; then
+  fail_release
+fi
+if ! verify_core_health; then
+  fail_release
+fi
+if ! verify_public_health; then
+  echo "Candidate failed public health verification." >&2
+  fail_release
 fi
 
-# The public edge is a transport boundary only. Product repositories own their
-# routes and application containers; this stack only keeps the public proxy on
-# the generic edge network and never joins product database/cache networks.
-docker network inspect "$PUBLIC_EDGE_NETWORK" >/dev/null 2>&1 || docker network create "$PUBLIC_EDGE_NETWORK" >/dev/null
-CADDY_ID="$(compose ps -q caddy)"
-test -n "$CADDY_ID" || { echo "Unable to locate the public Caddy container." >&2; exit 1; }
-if ! docker inspect -f '{{json .NetworkSettings.Networks}}' "$CADDY_ID" | grep -q "\"$PUBLIC_EDGE_NETWORK\""; then
-  docker network connect "$PUBLIC_EDGE_NETWORK" "$CADDY_ID"
-fi
-
-# Product route fragments live in Caddy's persistent data volume and are
-# installed by product repositories, not by Ithute deployments.
-compose exec -T caddy mkdir -p /data/product-routes
-
-# Activate uploaded Caddy runtime configuration explicitly. PowerDNS record
-# changes are applied through its HTTP API and require no nameserver reload.
-compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
-compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null
-
-check_service() {
-  local name="$1"
-  local command="$2"
-  local attempt
-  for attempt in $(seq 1 60); do
-    if compose exec -T "$name" sh -c "$command" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 2
-  done
-  echo "Health verification failed for $name" >&2
-  compose ps
-  compose logs --tail=120 "$name" >&2 || true
-  return 1
-}
-
-check_service ithute-dns "python3 -c 'import os,urllib.request; request=urllib.request.Request(\"http://127.0.0.1:8081/api/v1/servers/localhost\", headers={\"X-API-Key\": os.environ[\"PDNS_AUTH_API_KEY\"]}); urllib.request.urlopen(request, timeout=3).read()'"
-check_service ithute-web "wget -qO- http://127.0.0.1:3000/health | grep -q ithute-web"
-check_service ithute-app-api "curl -fsS http://127.0.0.1:8000/health/ready | grep -q '\"status\":\"ready\"'"
-check_service ithute-app-api "python -c 'from app.services.powerdns import PowerDNSClient; zone=PowerDNSClient().get_zone(\"ithute.co.ls\"); assert zone.get(\"name\") == \"ithute.co.ls.\"'"
-check_service ithute-auth "curl -fsS http://127.0.0.1:8080/healthz | grep -q ithute-auth"
-check_service ithute-push "curl -fsS http://127.0.0.1:8080/readyz | grep -q '\"status\":\"ready\"'"
-check_service ithute-realtime "curl -fsS http://127.0.0.1:8080/readyz | grep -q '\"status\":\"ready\"'"
-
-if [ "${ITHUTE_REQUIRE_PUBLIC_HEALTH:-0}" = "1" ]; then
-  html="$(curl --retry 15 --retry-delay 3 --retry-all-errors -fsS https://ithute.co.ls/)"
-  printf '%s' "$html" | grep -Fq 'Mail & DNS'
-  curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://ithute.co.ls/pricing | grep -Fq 'Choose capacity'
-  curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://ithute.co.ls/docs | grep -Fq 'Packages'
-  curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://auth.ithute.co.ls/healthz | grep -q ithute-auth
-  curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://push.ithute.co.ls/readyz | grep -q '\"status\":\"ready\"'
-  curl --retry 10 --retry-delay 2 --retry-all-errors -fsS https://realtime.ithute.co.ls/readyz | grep -q '\"status\":\"ready\"'
-fi
+# Commit the release marker only after the complete candidate is healthy. Until
+# this point the previous .image.env and last-known-good marker remain intact.
+mv "$CANDIDATE_IMAGE_ENV_FILE" "$IMAGE_ENV_FILE"
+chmod 600 "$IMAGE_ENV_FILE"
+ACTIVE_IMAGE_ENV_FILE="$IMAGE_ENV_FILE"
+record_last_good "$CANDIDATE_TAG"
+rm -f "$ROLLBACK_IMAGE_ENV_FILE"
 
 compose ps
 compose images
-printf '\nIthute restored application, central platform, and PowerDNS authoritative DNS are healthy.\n'
+printf '\nIthute production is healthy. Last-known-good release: %s\n' "$CANDIDATE_TAG"

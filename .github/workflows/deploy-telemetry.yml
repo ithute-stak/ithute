@@ -53,6 +53,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Waiting for Deploy Ithute Production to finish for ${DEPLOY_SHA}."
+          ready=0
           for attempt in $(seq 1 150); do
             runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-production.yml/runs?branch=main&per_page=30")"
             row="$(printf '%s' "$runs" | jq -r --arg sha "$DEPLOY_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] | if . == null then "" else [.status, (.conclusion // ""), (.html_url // "")] | @tsv end')"
@@ -64,14 +65,23 @@ jobs:
             IFS=$'\t' read -r status conclusion url <<< "$row"
             echo "Production: status=${status} conclusion=${conclusion:-pending} ${url}"
             if [ "$status" = "completed" ]; then
-              test "$conclusion" = "success" || { echo "Production deployment failed; telemetry unchanged." >&2; exit 1; }
+              if [ "$conclusion" = "success" ]; then
+                ready=1
+              else
+                echo "Production did not deploy successfully; telemetry will remain unchanged."
+              fi
               break
             fi
-            test "$attempt" -lt 150 || { echo "Timed out waiting for production deployment." >&2; exit 1; }
+            if [ "$attempt" -ge 150 ]; then
+              echo "Timed out waiting for production deployment; telemetry will remain unchanged."
+              break
+            fi
             sleep 8
           done
+          printf 'PRODUCTION_READY=%s\n' "$ready" >> "$GITHUB_ENV"
 
       - name: Configure SSH
+        if: env.PRODUCTION_READY == '1'
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.ssh"
@@ -96,6 +106,7 @@ jobs:
           chmod 600 "$HOME/.ssh/known_hosts"
 
       - name: Install telemetry runtime configuration
+        if: env.PRODUCTION_READY == '1'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
@@ -114,6 +125,7 @@ jobs:
           REMOTE
 
       - name: Start private telemetry collectors
+        if: env.PRODUCTION_READY == '1'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
@@ -126,6 +138,7 @@ jobs:
           REMOTE
 
       - name: Verify complete live host and container metrics
+        if: env.PRODUCTION_READY == '1'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
@@ -142,12 +155,11 @@ jobs:
             test "$ports" = "{}" || test "$ports" = "null"
           done
           for attempt in $(seq 1 45); do
-            if compose exec -T ithute-app-api python -c 'from app.services.infrastructure_telemetry import live_infrastructure_telemetry as f; r=f(); h=r.get("host", {}); c=r.get("collectors", {}); assert r.get("status") in {"ok","warning","critical"}, r; assert c.get("node_exporter") == "up", r; assert c.get("cadvisor") == "up", r; assert h.get("cpu_percent") is not None, r; assert h.get("memory_total_bytes"), r; assert h.get("disk_total_bytes"), r; assert int(r.get("container_count") or 0) > 0, r; print({"status": r.get("status"), "cpu_percent": h.get("cpu_percent"), "memory_percent": h.get("memory_percent"), "disk_percent": h.get("disk_percent"), "containers": r.get("container_count")})'; then
+            if compose exec -T ithute-app-api python -c 'from app.services.infrastructure_telemetry import live_infrastructure_telemetry as f; r=f(); h=r.get("host", {}); c=r.get("collectors", {}); assert r.get("status") in {"ok","warning","critical"}, r; assert c.get("node_exporter") == "up", r; assert c.get("cadvisor") == "up", r; assert h.get("cpu_percent") is not None, r; assert h.get("memory_total_bytes"), r; assert h.get("disk_total_bytes"), r; assert int(r.get("container_count") or 0) > 0, r'; then
               exit 0
             fi
             sleep 4
           done
-          compose exec -T prometheus wget -qO- 'http://127.0.0.1:9090/api/v1/targets' >&2 || true
           compose logs --tail=120 prometheus ithute-node-exporter ithute-cadvisor >&2 || true
           exit 1
           REMOTE

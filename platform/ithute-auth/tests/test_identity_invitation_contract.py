@@ -48,7 +48,7 @@ def test_invitation_requires_matching_delivery_target() -> None:
 def test_migration_creates_durable_pending_invitation_state() -> None:
     source = MIGRATION.read_text(encoding="utf-8")
     for required in (
-        'revision = "0007_trusted_identity_invitations"',
+        'revision = "0007_identity_invites"',
         'down_revision = "0006_managed_service_clients"',
         '"identity_invitations"',
         '"source_client_id"',

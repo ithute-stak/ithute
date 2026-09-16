@@ -1,12 +1,14 @@
 name: Ithute VPS Disk Maintenance
 
+# Disk cleanup is intentionally manual. It must never race a production rollout
+# or remove rollback images merely because a candidate temporarily replaced the
+# running containers.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ithute-vps-disk-maintenance
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -19,6 +21,7 @@ jobs:
     env:
       VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_APP_DIR: /home/administrator/ithute-platform
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
       EXPECTED_IPV4: 204.12.205.224
@@ -56,11 +59,11 @@ jobs:
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Reclaim stale Ithute deployment storage
+      - name: Reclaim stale Ithute deployment storage safely
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" bash -s <<'REMOTE'
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
           set -euo pipefail
 
           echo 'Disk usage before Ithute cleanup:'
@@ -78,12 +81,24 @@ jobs:
             /tmp/ithute-ip-disabled-body
 
           running_images="$(docker ps --format '{{.Image}}' | sort -u)"
+          last_good_tag=""
+          if [ -f "$APP_DIR/.last-known-good.env" ]; then
+            last_good_tag="$(sed -n 's/^ITHUTE_IMAGE_TAG=//p' "$APP_DIR/.last-known-good.env" | tail -n1)"
+          fi
+          case "$last_good_tag" in
+            ''|*[!0-9a-f]* ) last_good_tag="" ;;
+          esac
+          if [ -n "$last_good_tag" ] && [ "${#last_good_tag}" -ne 40 ]; then
+            last_good_tag=""
+          fi
 
           for repo in ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime; do
             docker image ls "$repo" --format '{{.Repository}}:{{.Tag}}' | sort -u | while IFS= read -r image; do
               [ -n "$image" ] || continue
               if printf '%s\n' "$running_images" | grep -Fxq "$image"; then
                 echo "Keeping running image $image"
+              elif [ -n "$last_good_tag" ] && [ "$image" = "$repo:$last_good_tag" ]; then
+                echo "Keeping last-known-good rollback image $image"
               else
                 echo "Removing unused Ithute image $image"
                 docker image rm "$image" || true
@@ -91,6 +106,8 @@ jobs:
             done
           done
 
+          # Only dangling layers are pruned. Named running and last-known-good
+          # Ithute images above are retained explicitly.
           docker image prune -f || true
 
           echo 'Disk usage after Ithute cleanup:'

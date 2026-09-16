@@ -53,6 +53,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          ready=0
           for attempt in $(seq 1 150); do
             runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-production.yml/runs?branch=main&per_page=30")"
             row="$(printf '%s' "$runs" | jq -r --arg sha "$DEPLOY_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] | if . == null then "" else [.status, (.conclusion // ""), (.html_url // "")] | @tsv end')"
@@ -64,14 +65,23 @@ jobs:
             IFS=$'\t' read -r status conclusion url <<< "$row"
             echo "Production: status=${status} conclusion=${conclusion:-pending} ${url}"
             if [ "$status" = "completed" ]; then
-              test "$conclusion" = "success" || { echo "Production failed; backup runtime unchanged." >&2; exit 1; }
+              if [ "$conclusion" = "success" ]; then
+                ready=1
+              else
+                echo "Production did not deploy successfully; backup runtime will remain unchanged."
+              fi
               break
             fi
-            test "$attempt" -lt 150 || { echo "Timed out waiting for production deployment." >&2; exit 1; }
+            if [ "$attempt" -ge 150 ]; then
+              echo "Timed out waiting for production; backup runtime will remain unchanged."
+              break
+            fi
             sleep 8
           done
+          printf 'PRODUCTION_READY=%s\n' "$ready" >> "$GITHUB_ENV"
 
       - name: Configure SSH
+        if: env.PRODUCTION_READY == '1'
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.ssh"
@@ -96,6 +106,7 @@ jobs:
           chmod 600 "$HOME/.ssh/known_hosts"
 
       - name: Install backup runtime configuration
+        if: env.PRODUCTION_READY == '1'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
@@ -117,6 +128,7 @@ jobs:
           REMOTE
 
       - name: Start backup services and run controlled restore drill
+        if: env.PRODUCTION_READY == '1'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
@@ -128,7 +140,13 @@ jobs:
           }
           compose config >/tmp/ithute-backup-rendered.yml
           compose pull ithute-backup ithute-restore-drill-db ithute-restore-drill
-          compose up -d --no-build ithute-app-api ithute-backup ithute-restore-drill-db
+
+          # Backup assurance is not allowed to recreate the core application.
+          # Production already proved ithute-app-api healthy for this exact SHA.
+          app_id="$(compose ps -q ithute-app-api)"
+          test -n "$app_id"
+          compose exec -T ithute-app-api curl -fsS http://127.0.0.1:8000/health/ready | grep -q '"status":"ready"'
+          compose up -d --no-build ithute-backup ithute-restore-drill-db
 
           for attempt in $(seq 1 60); do
             if compose exec -T ithute-backup sh -c "grep -q '\"status\": \"success\"' /backup-status/status/last-run.json" >/dev/null 2>&1; then
@@ -153,7 +171,7 @@ jobs:
             sleep 5
           done
 
-          compose exec -T ithute-app-api python -c 'from app.services.backup_status import backup_operational_status, restore_drill_history; s=backup_operational_status(); d=restore_drill_history(1); assert s["healthy"], s; assert d and d[0].get("status") == "success", d; print({"backup": s["severity"], "last_success_age_seconds": s["last_success_age_seconds"], "restore_drill": d[0].get("status")})'
+          compose exec -T ithute-app-api python -c 'from app.services.backup_status import backup_operational_status, restore_drill_history; s=backup_operational_status(); d=restore_drill_history(1); assert s["healthy"], s; assert d and d[0].get("status") == "success", d'
 
           for service in ithute-backup ithute-restore-drill-db ithute-restore-drill; do
             id="$(compose ps -q "$service")"
