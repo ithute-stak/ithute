@@ -111,11 +111,12 @@ def test_provider_ttl_uses_remaining_lifetime() -> None:
     assert 115 <= ttl <= 120
 
 
-def test_realtime_is_only_default_delegated_platform_sender() -> None:
+def test_default_delegated_platform_senders_are_realtime_and_notification() -> None:
     settings = Settings(database_url="sqlite://", endpoint_encryption_key=_key())
-    assert "ithute-realtime" in settings.service_clients
-    assert settings.delegated_clients == {"ithute-realtime"}
+    assert {"ithute-realtime", "ithute-notification"} <= settings.service_clients
+    assert settings.delegated_clients == {"ithute-realtime", "ithute-notification"}
     assert "ithute-realtime" not in settings.user_clients
+    assert "ithute-notification" not in settings.user_clients
 
 
 def test_delegated_message_carries_original_product_namespace() -> None:
