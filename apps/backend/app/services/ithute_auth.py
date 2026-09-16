@@ -115,11 +115,12 @@ def decode_ithute_service_token(
     config: IthuteAuthSettings | None = None,
     jwks_client: Any | None = None,
 ) -> dict[str, Any]:
-    """Validate a short-lived machine token issued by central Ithute Auth.
+    """Validate a database-managed machine token issued by Ithute Auth.
 
-    Service tokens are intentionally separate from browser/user access tokens.
-    The caller is identified by ``sub`` and receives only the space-separated
-    scopes granted by Auth for the requested audience.
+    Privileged platform APIs deliberately reject legacy environment-secret
+    service tokens. New managed tokens carry ``service_auth=managed`` and use
+    ``azp`` as the canonical service client identity while ``sub`` remains the
+    namespaced JWT subject ``service:<client_id>``.
     """
 
     settings = config or get_ithute_auth_settings()
@@ -133,21 +134,35 @@ def decode_ithute_service_token(
         issuer=settings.resolved_issuer,
         audience=audience,
         options={
-            "require": ["iss", "sub", "aud", "scope", "jti", "iat", "nbf", "exp", "token_use"],
+            "require": [
+                "iss",
+                "sub",
+                "aud",
+                "azp",
+                "scope",
+                "service_auth",
+                "jti",
+                "iat",
+                "nbf",
+                "exp",
+                "token_use",
+            ],
         },
     )
-    if claims.get("token_use") != "service":
-        raise jwt.InvalidTokenError("wrong !thute Auth token type")
+    if claims.get("token_use") != "service" or claims.get("service_auth") != "managed":
+        raise jwt.InvalidTokenError("managed Ithute service token required")
 
-    client_id = str(claims.get("sub") or "").strip().lower()
+    client_id = str(claims.get("azp") or "").strip().lower()
     if not _SERVICE_CLIENT_ID_RE.fullmatch(client_id):
         raise jwt.InvalidTokenError("invalid Ithute service client identity")
+    if str(claims.get("sub") or "") != f"service:{client_id}":
+        raise jwt.InvalidTokenError("service subject does not match authorized party")
 
     scope = str(claims.get("scope") or "").strip()
     scopes = tuple(dict.fromkeys(part for part in scope.split() if part))
     if not scopes:
         raise jwt.InvalidTokenError("Ithute service token has no scopes")
 
-    claims["sub"] = client_id
+    claims["azp"] = client_id
     claims["scope"] = " ".join(scopes)
     return claims
