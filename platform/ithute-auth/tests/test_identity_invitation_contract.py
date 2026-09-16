@@ -19,10 +19,23 @@ def test_invitation_requires_matching_delivery_target() -> None:
     request = TrustedIdentityInvitationRequest(
         external_reference="2026/001234:owner",
         display_name="Business Owner",
+        email="owner@example.com",
         phone="+26662000000",
         preferred_channel="phone",
     )
     assert request.phone == "+26662000000"
+    assert request.email is None
+
+    email_request = TrustedIdentityInvitationRequest(
+        external_reference="2026/001235:owner",
+        display_name="Business Owner",
+        email="owner@example.com",
+        phone="+26662000001",
+        preferred_channel="email",
+    )
+    assert str(email_request.email) == "owner@example.com"
+    assert email_request.phone is None
+
     with pytest.raises(ValidationError):
         TrustedIdentityInvitationRequest(
             external_reference="2026/001234:owner",
