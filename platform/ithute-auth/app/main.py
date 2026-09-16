@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .account import router as account_router
+from .account_dashboard import apply_account_dashboard
 from .admin import router as admin_router
 from .config import Settings, get_settings
 from .db import get_db
@@ -71,6 +72,7 @@ app.add_middleware(
 # Keep authentication behavior in portal.py and apply the presentation layer
 # separately. This lets the Auth UI evolve without changing the security flow.
 apply_portal_theme()
+apply_account_dashboard()
 
 app.include_router(oauth_router)
 app.include_router(account_router)
