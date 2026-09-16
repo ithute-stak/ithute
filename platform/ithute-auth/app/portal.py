@@ -159,8 +159,24 @@ table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:11px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 th{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
 code{background:#eef2f7;padding:3px 7px;border-radius:7px;word-break:break-all;font-size:.92em}
-.login-wrap{min-height:100vh;display:grid;place-items:center;padding:24px}
-.login-card{width:min(470px,100%)}
+.login-wrap{min-height:100vh;display:grid;place-items:center;padding:28px}
+.login-shell{width:min(1040px,100%);display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:18px;align-items:stretch}
+.login-card{width:100%;display:flex;flex-direction:column;justify-content:center}
+.login-help{width:100%;background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%)}
+.login-help h2{font-size:22px;margin-top:2px}
+.login-help h3{font-size:14px;margin-top:0}
+.login-help p{font-size:13px}
+.login-steps{display:grid;gap:12px;margin-top:18px}
+.login-step{display:grid;grid-template-columns:30px 1fr;gap:11px;align-items:start}
+.step-number{width:30px;height:30px;border-radius:10px;background:var(--soft-blue);border:1px solid #cfe0ff;color:var(--brand);display:grid;place-items:center;font-weight:900;font-size:13px}
+.step-copy strong{display:block;color:var(--ink);font-size:13px;margin-top:1px}
+.step-copy p{margin-top:3px;line-height:1.45}
+.mfa-box{margin-top:18px;padding:16px;border-radius:14px;background:#fff;border:1px solid var(--line)}
+.mfa-box ul{margin:10px 0 0;padding-left:19px;color:var(--muted);font-size:13px;line-height:1.55}
+.mfa-box li+li{margin-top:7px}
+.mfa-box strong{color:var(--ink-soft)}
+.mfa-field-help{margin-top:-5px;padding:10px 11px;border-radius:10px;background:var(--soft-blue);border:1px solid #d7e6ff;color:var(--ink-soft);font-size:12px;line-height:1.45}
+.login-footer-note{margin-top:18px;padding-top:16px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);line-height:1.55}
 .logo-mark{width:50px;height:50px;border-radius:15px;background:var(--brand);display:grid;place-items:center;color:#fff;font-weight:900;font-size:23px;margin-bottom:18px;box-shadow:0 10px 22px rgba(31,94,255,.23)}
 .setup-card{max-width:760px;margin:28px auto}
 .recovery-list{columns:2;gap:18px;padding-left:22px}
@@ -169,6 +185,7 @@ code{background:#eef2f7;padding:3px 7px;border-radius:7px;word-break:break-all;f
 @media(max-width:900px){
   .col-3,.col-4,.col-5,.col-6,.col-7,.col-8,.col-9{grid-column:span 12}
   .hero{display:block}.id-card{min-width:0;max-width:none;margin-top:18px}
+  .login-shell{grid-template-columns:1fr;max-width:620px}
 }
 @media(max-width:680px){
   .shell{padding:14px}.topbar{padding-top:6px}.brand{font-size:17px}.brand-mark{width:31px;height:31px}
@@ -176,6 +193,7 @@ code{background:#eef2f7;padding:3px 7px;border-radius:7px;word-break:break-all;f
   .row-actions{justify-content:flex-start;width:100%}.section-head{flex-direction:column}
   .section-head form,.section-head button{width:100%}.stats{grid-template-columns:1fr}
   .nav{gap:3px}.nav-link{padding:7px 8px}.recovery-list{columns:1}
+  .login-wrap{padding:14px}.login-shell{gap:12px}.login-help h2{font-size:20px}
 }
 """
 
@@ -219,7 +237,7 @@ def _page(title: str, body: str, *, user: User | None = None) -> str:
 def _login_page(*, csrf_token: str, error: str | None = None, notice: str | None = None) -> str:
     error_html = f'<div class="notice error">{_e(error)}</div>' if error else ""
     notice_html = f'<div class="notice">{_e(notice)}</div>' if notice else ""
-    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · !thute</title><style>{_STYLE}</style></head><body><div class="login-wrap"><div class="card login-card"><div class="logo-mark">!</div><div class="eyebrow">Ithute Identity</div><h1>Sign in securely</h1><p>One central identity for Ithute products.</p><div style="height:16px"></div>{notice_html}{error_html}<form method="post" action="/account/login"><input type="hidden" name="csrf_token" value="{_e(csrf_token)}"><label>Email or phone</label><input name="identifier" autocomplete="username" placeholder="you@ithute.co.ls" required><label>Password</label><input type="password" name="password" autocomplete="current-password" required><label>Authenticator or recovery code <span class="small">(if MFA is enabled)</span></label><input name="mfa_code" autocomplete="one-time-code"><button type="submit">Continue</button></form><div class="actions" style="margin-top:16px;justify-content:space-between"><a href="/forgot-password">Forgot password?</a><a href="/account/passkey-login">Use a passkey</a></div><div class="callout" style="margin-top:18px">Authentication is provided centrally by !thute Auth. Product roles and business permissions remain inside each Ithute product.</div></div></div></body></html>"""
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · !thute</title><style>{_STYLE}</style></head><body><div class="login-wrap"><div class="login-shell"><div class="card login-card"><div class="logo-mark">!</div><div class="eyebrow">Ithute Identity</div><h1>Sign in securely</h1><p>Use one central Ithute identity to access the Ithute products and services that have been assigned to you.</p><div style="height:16px"></div>{notice_html}{error_html}<form method="post" action="/account/login"><input type="hidden" name="csrf_token" value="{_e(csrf_token)}"><label>Email or phone</label><input name="identifier" autocomplete="username" placeholder="you@ithute.co.ls" required><label>Password</label><input type="password" name="password" autocomplete="current-password" required><label>Authenticator or recovery code <span class="small">(only if MFA is enabled)</span></label><input name="mfa_code" autocomplete="one-time-code" placeholder="6-digit authenticator code or recovery code"><div class="mfa-field-help"><strong>No MFA yet?</strong> Leave this field empty and sign in normally. After signing in, open <strong>Account → Multi-factor authentication</strong> to enable it.</div><button type="submit">Continue securely</button></form><div class="actions" style="margin-top:16px;justify-content:space-between"><a href="/forgot-password">Forgot password?</a><a href="/account/passkey-login">Use a passkey</a></div><div class="login-footer-note">Ithute Auth verifies who you are. Each Ithute product still keeps its own business roles and permissions, so signing in here does not automatically grant access to every product.</div></div><div class="card login-help"><div class="eyebrow">How this sign-in works</div><h2>One identity, separate product permissions</h2><p>Your Ithute account is your central identity. Products such as Mail, LoanHub or future business platforms can trust Ithute Auth without receiving or storing your central password.</p><div class="login-steps"><div class="login-step"><div class="step-number">1</div><div class="step-copy"><strong>Enter your email or phone and password</strong><p>Ithute Auth checks your central account, password, account status and login security controls.</p></div></div><div class="login-step"><div class="step-number">2</div><div class="step-copy"><strong>Complete MFA only when it is enabled</strong><p>If your account has multi-factor authentication enabled, enter the current code from your authenticator app or one unused recovery code.</p></div></div><div class="login-step"><div class="step-number">3</div><div class="step-copy"><strong>Ithute creates your secure central session</strong><p>Connected Ithute products can then identify you through secure tokens. They decide your role and what you are allowed to do inside that product.</p></div></div></div><div class="mfa-box"><h3>Where do I get the authenticator or recovery code?</h3><ul><li><strong>Authenticator code:</strong> a changing six-digit code generated by the authenticator app you connected when you enabled MFA. Open that app and use the current code for your Ithute account.</li><li><strong>Recovery code:</strong> a one-time backup code Ithute shows after MFA is successfully enabled. Keep these codes somewhere safe and offline. Each recovery code works only once.</li><li><strong>If you never enabled MFA:</strong> you do not need either code. Leave the field blank.</li></ul></div><div class="mfa-box"><h3>How to enable MFA</h3><ul><li>First sign in with your email or phone and password.</li><li>Open your <strong>Account</strong> page and find <strong>Multi-factor authentication</strong>.</li><li>Enter your current password and choose <strong>Set up authenticator</strong>.</li><li>Add the setup secret shown by Ithute to a TOTP authenticator app.</li><li>Enter the six-digit code generated by the authenticator app and choose <strong>Enable MFA</strong>.</li><li>Ithute will then show one-time recovery codes. Save them immediately because they are not shown again.</li></ul></div></div></div></div></body></html>"""
 
 
 def _cookie_user(request: Request, db: Session, settings: Settings) -> User | None:
