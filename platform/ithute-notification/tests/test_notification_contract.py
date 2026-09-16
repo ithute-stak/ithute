@@ -50,6 +50,14 @@ def test_notification_queue_is_idempotent_and_per_channel() -> None:
     assert "request_fingerprint" in main
     assert "Idempotency-Key was already used for a different notification" in main
 
+    # The unique-key race can be raised by flush, not only commit. Both must
+    # live inside the same IntegrityError boundary so concurrent retries return
+    # the winning row instead of an internal server error.
+    creation = main.split("item = Notification(", 1)[1]
+    assert creation.index("try:") < creation.index("db.flush()")
+    assert creation.index("db.flush()") < creation.index("db.commit()")
+    assert creation.index("db.commit()") < creation.index("except IntegrityError:")
+
 
 def test_worker_has_retry_backoff_and_crash_safe_processing_state() -> None:
     source = WORKER.read_text(encoding="utf-8")
