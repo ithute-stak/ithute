@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.platform_mail import PlatformMailDomainGrantCreate, PlatformMailboxProvisionRequest
+from app.schemas.platform_mail import (
+    PlatformMailDomainGrantCreate,
+    PlatformMailSendRequest,
+    PlatformMailboxProvisionRequest,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -13,6 +17,7 @@ ITHUTE_AUTH = ROOT / "app" / "services" / "ithute_auth.py"
 MODELS = ROOT / "app" / "models" / "platform_mail.py"
 MIGRATION = ROOT / "alembic" / "versions" / "0023_platform_mail_provisioning.py"
 NAMESPACE_MIGRATION = ROOT / "alembic" / "versions" / "0024_platform_mail_namespace_grants.py"
+SEND_MIGRATION = ROOT / "alembic" / "versions" / "0025_platform_mail_send.py"
 ROUTER = ROOT / "app" / "api" / "v1" / "router.py"
 
 
@@ -41,6 +46,18 @@ def test_domain_grant_requires_explicit_reserved_namespace_prefix() -> None:
                 domain_name="ithute.co.ls",
                 local_part_prefix=invalid,
             )
+
+
+def test_platform_mail_send_request_is_single_recipient_and_idempotent_reference_ready() -> None:
+    payload = PlatformMailSendRequest(
+        external_reference="bda-delivery:123",
+        recipient=" Accounts@Example.COM ",
+        subject="Official communication",
+        text="Retained in the official inbox first.",
+    )
+    assert payload.external_reference == "bda-delivery:123"
+    assert payload.recipient == "accounts@example.com"
+    assert payload.subject == "Official communication"
 
 
 def test_service_tokens_are_separate_from_human_and_legacy_tokens() -> None:
@@ -88,7 +105,33 @@ def test_provisioning_is_domain_granted_namespaced_idempotent_and_credentialless
     assert "internal_password" not in (ROOT / "app" / "schemas" / "platform_mail.py").read_text(encoding="utf-8")
 
 
-def test_platform_mail_models_enforce_service_ownership_and_namespace() -> None:
+def test_service_send_is_owned_scoped_namespaced_rate_limited_and_idempotent() -> None:
+    source = API.read_text(encoding="utf-8")
+    for required in (
+        '"/mailboxes/{binding_id}/send"',
+        'require_platform_service_scope("mail.send")',
+        "binding.service_client_id != principal.client_id",
+        "mailbox.status != MailboxStatus.active",
+        "grant.service_client_id != principal.client_id",
+        "_require_grant_namespace(grant, mailbox.local_part)",
+        "PlatformMailOutboundDelivery.service_client_id == principal.client_id",
+        "PlatformMailOutboundDelivery.external_reference == payload.external_reference",
+        "Outbound external reference was already used for different content",
+        "payload_hash",
+        'status="submitting"',
+        "db.commit()",
+        "send_message(",
+        "sender=mailbox.address",
+        "recipients=[recipient]",
+        "settings.transactional_tenant_daily_limit",
+        'action="platform_mail.message.submitted"',
+        'action="platform_mail.message.failed"',
+    ):
+        assert required in source
+    assert "payload.sender" not in source
+
+
+def test_platform_mail_models_enforce_service_ownership_namespace_and_outbound_idempotency() -> None:
     source = MODELS.read_text(encoding="utf-8")
     assert "platform_mail_domain_grants" in source
     assert "uq_platform_mail_grant_client_domain" in source
@@ -96,6 +139,10 @@ def test_platform_mail_models_enforce_service_ownership_and_namespace() -> None:
     assert "platform_mailbox_bindings" in source
     assert "uq_platform_mailbox_binding_client_reference" in source
     assert "uq_platform_mailbox_binding_mailbox" in source
+    assert "platform_mail_outbound_deliveries" in source
+    assert "uq_platform_mail_outbound_client_reference" in source
+    assert "transactional_message_id" in source
+    assert "payload_hash" in source
 
 
 def test_initial_platform_mail_migration_extends_commercial_catalog() -> None:
@@ -115,6 +162,16 @@ def test_namespace_migration_disables_legacy_whole_domain_grants() -> None:
     assert '_LEGACY_DISABLED_PREFIX = "legacy-disabled-"' in source
     assert '"local_part_prefix"' in source
     assert "nullable=False" in source
+
+
+def test_send_migration_extends_namespaced_platform_mail() -> None:
+    source = SEND_MIGRATION.read_text(encoding="utf-8")
+    assert 'revision = "0025_platform_mail_send"' in source
+    assert 'down_revision = "0024_mail_namespace"' in source
+    assert "platform_mail_outbound_deliveries" in source
+    assert "uq_platform_mail_outbound_client_reference" in source
+    assert "platform_mailbox_bindings.id" in source
+    assert "transactional_messages.id" in source
 
 
 def test_router_mounts_platform_mail_api() -> None:

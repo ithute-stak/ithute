@@ -85,3 +85,33 @@ class PlatformMailboxStatusResponse(BaseModel):
     mailbox_id: uuid.UUID
     address: str
     status: str
+
+
+class PlatformMailSendRequest(BaseModel):
+    external_reference: str = Field(min_length=1, max_length=200)
+    recipient: str = Field(min_length=3, max_length=320)
+    subject: str = Field(min_length=1, max_length=500)
+    text: str | None = Field(default=None, max_length=1_000_000)
+    html: str | None = Field(default=None, max_length=2_000_000)
+
+    @field_validator("external_reference")
+    @classmethod
+    def normalize_external_reference(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("recipient")
+    @classmethod
+    def normalize_recipient(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class PlatformMailSendResponse(BaseModel):
+    delivery_id: uuid.UUID
+    binding_id: uuid.UUID
+    external_reference: str
+    sender: str
+    recipient: str
+    status: str
+    provider_message_id: str | None = None
+    error: str | None = None
+    created_at: datetime
