@@ -10,6 +10,7 @@ on:
       - "apps/backend/app/models/__init__.py"
       - "apps/backend/app/schemas/platform_mail.py"
       - "apps/backend/app/services/ithute_auth.py"
+      - "apps/backend/app/services/transactional_mail.py"
       - "apps/backend/alembic/versions/**"
       - "apps/backend/tests/test_platform_mail_provisioning_contract.py"
       - "apps/backend/tests/test_alembic_single_head.py"
@@ -27,6 +28,7 @@ on:
       - "apps/backend/app/models/__init__.py"
       - "apps/backend/app/schemas/platform_mail.py"
       - "apps/backend/app/services/ithute_auth.py"
+      - "apps/backend/app/services/transactional_mail.py"
       - "apps/backend/alembic/versions/**"
       - "apps/backend/tests/test_platform_mail_provisioning_contract.py"
       - "apps/backend/tests/test_alembic_single_head.py"
@@ -86,8 +88,10 @@ jobs:
             app/models/platform_mail.py \
             app/schemas/platform_mail.py \
             app/services/ithute_auth.py \
+            app/services/transactional_mail.py \
             alembic/versions/0023_platform_mail_provisioning.py \
-            alembic/versions/0024_platform_mail_namespace_grants.py
+            alembic/versions/0024_platform_mail_namespace_grants.py \
+            alembic/versions/0025_platform_mail_send.py
 
       - name: Apply backend migrations to PostgreSQL
         working-directory: apps/backend
