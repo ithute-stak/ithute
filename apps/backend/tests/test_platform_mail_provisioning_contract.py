@@ -24,7 +24,8 @@ NAMESPACE_MIGRATION = ROOT / "alembic" / "versions" / "0024_platform_mail_namesp
 SEND_MIGRATION = ROOT / "alembic" / "versions" / "0025_platform_mail_send.py"
 FORWARDING_MIGRATION = ROOT / "alembic" / "versions" / "0026_platform_mail_inbound_forwarding.py"
 ROUTER = ROOT / "app" / "api" / "v1" / "router.py"
-BOOTSTRAP_MAIL = REPO / "scripts" / "bootstrap-mail.sh"
+RUNTIME_INSTALLER = REPO / "mail" / "enable-recipient-bcc.sh"
+RUNTIME_WORKFLOW = REPO / ".github" / "workflows" / "enable-mail-inbound-forwarding.yml"
 MAIL_COMPOSE = REPO / "mail" / "compose.yml"
 
 
@@ -168,16 +169,24 @@ def test_inbound_forwarding_is_owned_scoped_namespaced_and_runtime_synced() -> N
 
 def test_runtime_forwarding_keeps_original_mailbox_and_uses_recipient_bcc_map() -> None:
     source = ACCOUNT_SYNC.read_text(encoding="utf-8")
-    bootstrap = BOOTSTRAP_MAIL.read_text(encoding="utf-8")
+    installer = RUNTIME_INSTALLER.read_text(encoding="utf-8")
+    workflow = RUNTIME_WORKFLOW.read_text(encoding="utf-8")
     mail_compose = MAIL_COMPOSE.read_text(encoding="utf-8")
     for required in (
         "def sync_mailbox_forwarding(",
-        'postfix-recipient-bcc.cf',
-        'platform-forwarding-revision:',
+        "postfix-recipient-bcc.cf",
+        "platform-forwarding-revision:",
+        ".recipient-bcc-ready",
         "Mailbox cannot forward to itself",
     ):
         assert required in source
-    assert "recipient_bcc_maps = texthash:/mail-accounts/postfix-recipient-bcc.cf" in bootstrap
+    assert "recipient_bcc_maps = texthash:/mail-accounts/postfix-recipient-bcc.cf" in installer
+    assert "postconf -h recipient_bcc_maps" in installer
+    assert "postconf -m" in installer
+    assert ".recipient-bcc-ready" in installer
+    assert "--force-recreate mailserver" in installer
+    assert "mail/enable-recipient-bcc.sh" in workflow
+    assert "Verify production marker and Postfix map" in workflow
     assert 'DMS_CONFIG_POLL: "2"' in mail_compose
 
 
