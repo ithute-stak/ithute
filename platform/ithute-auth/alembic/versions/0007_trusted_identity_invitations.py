@@ -1,6 +1,6 @@
 """add trusted identity invitations
 
-Revision ID: 0007_trusted_identity_invitations
+Revision ID: 0007_identity_invites
 Revises: 0006_managed_service_clients
 """
 
@@ -8,7 +8,9 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0007_trusted_identity_invitations"
+# Alembic's default version_num column is VARCHAR(32). Keep revision IDs below
+# that limit so the migration can be stamped after its transactional DDL runs.
+revision = "0007_identity_invites"
 down_revision = "0006_managed_service_clients"
 branch_labels = None
 depends_on = None
