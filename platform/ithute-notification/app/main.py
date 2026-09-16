@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -11,7 +12,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .auth import AuthError, ServicePrincipal, verifier
-from .config import get_settings
 from .db import get_db
 from .models import Notification, NotificationDelivery
 from .schemas import DeliveryResponse, NotificationRequest, NotificationResponse
@@ -108,7 +108,10 @@ def create_notification(
         title=payload.title,
         body=payload.body,
         route=payload.route,
-        data_json=json.dumps({"data": payload.data, "sound": payload.sound, "ttl_seconds": payload.ttl_seconds}, separators=(",", ":")),
+        data_json=json.dumps(
+            {"data": payload.data, "sound": payload.sound, "ttl_seconds": payload.ttl_seconds},
+            separators=(",", ":"),
+        ),
         channels_json=json.dumps(payload.channels, separators=(",", ":")),
         status="queued",
     )
@@ -139,7 +142,7 @@ def create_notification(
 
 @app.get("/v1/notifications/{notification_id}", response_model=NotificationResponse)
 def get_notification(
-    notification_id: str,
+    notification_id: uuid.UUID,
     principal: Annotated[ServicePrincipal, Depends(notification_principal)],
     db: Annotated[Session, Depends(get_db)],
 ) -> NotificationResponse:
