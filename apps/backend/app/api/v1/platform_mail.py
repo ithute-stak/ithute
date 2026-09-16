@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_platform_owner
 from app.api.platform_service_auth import PlatformServicePrincipal, require_platform_service_scope
+from app.core.config import settings
 from app.db.session import get_db
 from app.models import (
     AuditLog,
@@ -20,17 +23,22 @@ from app.models import (
     MailboxStatus,
     PlatformMailDomainGrant,
     PlatformMailboxBinding,
+    PlatformMailOutboundDelivery,
+    TransactionalMessage,
     User,
 )
 from app.schemas.platform_mail import (
     PlatformMailDomainGrantCreate,
     PlatformMailDomainGrantResponse,
+    PlatformMailSendRequest,
+    PlatformMailSendResponse,
     PlatformMailboxProvisionRequest,
     PlatformMailboxResponse,
     PlatformMailboxStatusResponse,
 )
 from app.services.mail_account_sync import sync_mailbox
-from app.services.mailboxes import hash_mailbox_password, mailbox_address, normalize_local_part
+from app.services.mailboxes import hash_mailbox_password, mailbox_address, normalize_destination, normalize_local_part
+from app.services.transactional_mail import send_message
 
 
 router = APIRouter(prefix="/platform/mail", tags=["platform-mail"])
@@ -124,6 +132,67 @@ def _owned_binding(
     if mailbox is None:
         raise HTTPException(status_code=410, detail="Platform mailbox no longer exists")
     return binding, mailbox
+
+
+def _active_binding_grant(
+    db: Session,
+    *,
+    binding: PlatformMailboxBinding,
+    mailbox: Mailbox,
+    principal: PlatformServicePrincipal,
+) -> PlatformMailDomainGrant:
+    grant = db.get(PlatformMailDomainGrant, binding.domain_grant_id)
+    if (
+        grant is None
+        or not grant.active
+        or grant.service_client_id != principal.client_id
+        or grant.domain_id != mailbox.domain_id
+    ):
+        raise HTTPException(status_code=403, detail="Mail domain grant is no longer active")
+    _require_grant_namespace(grant, mailbox.local_part)
+    return grant
+
+
+def _send_payload_hash(
+    *,
+    binding_id: uuid.UUID,
+    recipient: str,
+    subject: str,
+    text: str | None,
+    html: str | None,
+) -> str:
+    canonical = json.dumps(
+        {
+            "binding_id": str(binding_id),
+            "recipient": recipient,
+            "subject": subject,
+            "text": text,
+            "html": html,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _outbound_response(
+    row: PlatformMailOutboundDelivery,
+    *,
+    binding: PlatformMailboxBinding,
+    mailbox: Mailbox,
+) -> PlatformMailSendResponse:
+    return PlatformMailSendResponse(
+        delivery_id=row.id,
+        binding_id=binding.id,
+        external_reference=row.external_reference,
+        sender=mailbox.address,
+        recipient=row.recipient,
+        status=row.status,
+        provider_message_id=row.provider_message_id,
+        error=row.error,
+        created_at=row.created_at,
+    )
 
 
 @router.post("/domain-grants", response_model=PlatformMailDomainGrantResponse, status_code=201)
@@ -369,3 +438,143 @@ def reactivate_platform_mailbox(
     return PlatformMailboxStatusResponse(
         binding_id=binding.id, mailbox_id=mailbox.id, address=mailbox.address, status=mailbox.status.value
     )
+
+
+@router.post(
+    "/mailboxes/{binding_id}/send",
+    response_model=PlatformMailSendResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def send_from_platform_mailbox(
+    binding_id: uuid.UUID,
+    payload: PlatformMailSendRequest,
+    db: Session = Depends(get_db),
+    principal: PlatformServicePrincipal = Depends(require_platform_service_scope("mail.send")),
+) -> PlatformMailSendResponse:
+    binding, mailbox = _owned_binding(db, binding_id=binding_id, principal=principal)
+    if mailbox.status != MailboxStatus.active:
+        raise HTTPException(status_code=409, detail="Platform mailbox is not active")
+    _active_binding_grant(db, binding=binding, mailbox=mailbox, principal=principal)
+
+    try:
+        recipient = normalize_destination(payload.recipient)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    payload_hash = _send_payload_hash(
+        binding_id=binding.id,
+        recipient=recipient,
+        subject=payload.subject,
+        text=payload.text,
+        html=payload.html,
+    )
+    existing = db.scalar(
+        select(PlatformMailOutboundDelivery).where(
+            PlatformMailOutboundDelivery.service_client_id == principal.client_id,
+            PlatformMailOutboundDelivery.external_reference == payload.external_reference,
+        )
+    )
+    if existing is not None:
+        if existing.mailbox_binding_id != binding.id or existing.payload_hash != payload_hash:
+            raise HTTPException(status_code=409, detail="Outbound external reference was already used for different content")
+        return _outbound_response(existing, binding=binding, mailbox=mailbox)
+
+    start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    sent_today = db.scalar(
+        select(func.count(TransactionalMessage.id)).where(
+            TransactionalMessage.tenant_id == mailbox.tenant_id,
+            TransactionalMessage.created_at >= start,
+            TransactionalMessage.status != "failed",
+        )
+    ) or 0
+    if int(sent_today) >= settings.transactional_tenant_daily_limit:
+        raise HTTPException(status_code=429, detail="Transactional daily sending limit reached")
+
+    outbound = PlatformMailOutboundDelivery(
+        service_client_id=principal.client_id,
+        external_reference=payload.external_reference,
+        mailbox_binding_id=binding.id,
+        recipient=recipient,
+        payload_hash=payload_hash,
+        status="submitting",
+    )
+    db.add(outbound)
+    try:
+        # Commit the idempotency reservation before SMTP submission. If the
+        # process disappears mid-submit, a retry observes `submitting` rather
+        # than creating a second message blindly.
+        db.commit()
+        db.refresh(outbound)
+    except IntegrityError:
+        db.rollback()
+        race = db.scalar(
+            select(PlatformMailOutboundDelivery).where(
+                PlatformMailOutboundDelivery.service_client_id == principal.client_id,
+                PlatformMailOutboundDelivery.external_reference == payload.external_reference,
+            )
+        )
+        if race is None or race.mailbox_binding_id != binding.id or race.payload_hash != payload_hash:
+            raise HTTPException(status_code=409, detail="Outbound external reference is already in use")
+        return _outbound_response(race, binding=binding, mailbox=mailbox)
+
+    try:
+        message = send_message(
+            db,
+            tenant_id=mailbox.tenant_id,
+            api_key_id=None,
+            sender=mailbox.address,
+            recipients=[recipient],
+            subject=payload.subject,
+            text_body=payload.text,
+            html_body=payload.html,
+        )
+    except ValueError as exc:
+        outbound.status = "failed"
+        outbound.error = str(exc)[:4000]
+        db.commit()
+        return _outbound_response(outbound, binding=binding, mailbox=mailbox)
+    except Exception as exc:
+        # `send_message` records its own failed transactional attempt in this
+        # transaction. Preserve both records for audit/reconciliation rather
+        # than pretending the official inbox copy failed.
+        outbound.status = "failed"
+        outbound.error = str(exc)[:4000]
+        _audit(
+            db,
+            action="platform_mail.message.failed",
+            resource_type="platform_mail_outbound_delivery",
+            resource_id=str(outbound.id),
+            tenant_id=mailbox.tenant_id,
+            metadata={
+                "service_client_id": principal.client_id,
+                "token_id": principal.token_id,
+                "external_reference": outbound.external_reference,
+                "sender": mailbox.address,
+                "recipient": recipient,
+            },
+        )
+        db.commit()
+        return _outbound_response(outbound, binding=binding, mailbox=mailbox)
+
+    outbound.transactional_message_id = message.id
+    outbound.provider_message_id = message.message_id
+    outbound.status = message.status
+    outbound.error = message.error
+    _audit(
+        db,
+        action="platform_mail.message.submitted",
+        resource_type="platform_mail_outbound_delivery",
+        resource_id=str(outbound.id),
+        tenant_id=mailbox.tenant_id,
+        metadata={
+            "service_client_id": principal.client_id,
+            "token_id": principal.token_id,
+            "external_reference": outbound.external_reference,
+            "sender": mailbox.address,
+            "recipient": recipient,
+            "provider_message_id": message.message_id,
+        },
+    )
+    db.commit()
+    db.refresh(outbound)
+    return _outbound_response(outbound, binding=binding, mailbox=mailbox)
