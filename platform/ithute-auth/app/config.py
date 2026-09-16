@@ -46,11 +46,16 @@ class Settings(BaseSettings):
     first_party_clients: str = (
         "loanhub:LoanHub,rsl-pos:RSL POS,mailbox-dns:Mailbox DNS,"
         "ithute-account:Ithute Account,ithute-tutor:Ithute Tutor,ithute-pay:Ithute Pay,"
-        "nbros:NBros,tjekatjeka:Tjekatjeka Holdings,ithute-realtime:!thute Realtime"
+        "nbros:NBros,tjekatjeka:Tjekatjeka Holdings,business-digital-address:Business Digital Address,"
+        "ithute-realtime:!thute Realtime"
     )
     redirect_uris_json: str = (
         '{"nbros":["https://nbro.ithute.co.ls/api/auth/oidc/callback"],'
-        '"tjekatjeka":["https://tjekane.ithute.co.ls/api/auth/oidc/callback"]}'
+        '"tjekatjeka":["https://tjekane.ithute.co.ls/api/auth/oidc/callback"],'
+        '"business-digital-address":['
+        '"https://business.ithute.co.ls/api/auth/callback",'
+        '"http://localhost:3000/api/auth/callback"'
+        ']}'
     )
     service_client_secrets_json: str = "{}"
     cors_origins: str = "https://panel.ithute.co.ls,https://nbro.ithute.co.ls,https://tjekane.ithute.co.ls"
@@ -97,6 +102,7 @@ class Settings(BaseSettings):
         # when an older production environment overrides the client list.
         result.setdefault("nbros", "NBros")
         result.setdefault("tjekatjeka", "Tjekatjeka Holdings")
+        result.setdefault("business-digital-address", "Business Digital Address")
         return result
 
     @property
@@ -127,6 +133,13 @@ class Settings(BaseSettings):
                 result[client_id] = tuple(dict.fromkeys(uris))
         result.setdefault("nbros", ("https://nbro.ithute.co.ls/api/auth/oidc/callback",))
         result.setdefault("tjekatjeka", ("https://tjekane.ithute.co.ls/api/auth/oidc/callback",))
+        result.setdefault(
+            "business-digital-address",
+            (
+                "https://business.ithute.co.ls/api/auth/callback",
+                "http://localhost:3000/api/auth/callback",
+            ),
+        )
         return result
 
     @property
@@ -170,7 +183,7 @@ class Settings(BaseSettings):
     @property
     def allowed_origins(self) -> list[str]:
         origins = [value.strip() for value in self.cors_origins.split(",") if value.strip()]
-        for required_origin in ("https://nbro.ithute.co.ls", "https://tjekane.ithute.co.ls"):
+        for required_origin in ("https://nbro.ithute.co.ls", "https://tjekane.ithute.co.ls", "https://business.ithute.co.ls"):
             if required_origin not in origins:
                 origins.append(required_origin)
         return origins

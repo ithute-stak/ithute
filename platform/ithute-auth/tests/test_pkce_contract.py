@@ -53,6 +53,22 @@ def test_redirect_uri_allowlist_is_exact_and_rejects_insecure_remote_http() -> N
     assert "http://localhost.evil.example/auth/callback" not in settings.redirect_uris["loanhub"]
 
 
+def test_business_digital_address_oidc_registration_survives_older_env_overrides() -> None:
+    settings = Settings(
+        database_url="sqlite://",
+        first_party_clients="loanhub:LoanHub",
+        redirect_uris_json='{"loanhub":["https://loanhub.example/auth/callback"]}',
+    )
+
+    assert settings.client_map["business-digital-address"] == "Business Digital Address"
+    assert settings.redirect_uris["business-digital-address"] == (
+        "https://business.ithute.co.ls/api/auth/callback",
+        "http://localhost:3000/api/auth/callback",
+    )
+    assert "https://business.ithute.co.ls/api/auth/callback/extra" not in settings.redirect_uris["business-digital-address"]
+    assert "https://business.ithute.co.ls" in settings.allowed_origins
+
+
 def _rsa_settings(tmp_path) -> Settings:
     private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     private_path = tmp_path / "private.pem"
