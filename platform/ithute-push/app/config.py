@@ -9,9 +9,9 @@ class Settings(BaseSettings):
     database_url: str
     auth_issuer: str = "https://auth.ithute.co.ls"
     auth_jwks_url: str = "https://auth.ithute.co.ls/.well-known/jwks.json"
-    allowed_user_clients: str = "loanhub,rsl-pos,mailbox-dns,ithute-account,ithute-tutor,ithute-pay"
-    allowed_service_clients: str = "loanhub,rsl-pos,mailbox-dns,ithute-account,ithute-tutor,ithute-pay,ithute-realtime"
-    delegated_service_clients: str = "ithute-realtime"
+    allowed_user_clients: str = "loanhub,rsl-pos,mailbox-dns,ithute-account,ithute-tutor,ithute-pay,business-digital-address"
+    allowed_service_clients: str = "loanhub,rsl-pos,mailbox-dns,ithute-account,ithute-tutor,ithute-pay,ithute-realtime,ithute-notification"
+    delegated_service_clients: str = "ithute-realtime,ithute-notification"
     allowed_admin_clients: str = "mailbox-dns"
     auth_clock_skew_seconds: int = 30
     auth_max_push_access_seconds: int = 600
@@ -21,9 +21,6 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = 2.0
     max_attempts: int = 4
 
-    # Android/FCM is the v1 production baseline. APNs and Web Push remain
-    # implemented providers, but they do not block readiness until explicitly
-    # added to PUSH_REQUIRED_PROVIDERS.
     required_providers: str = "fcm"
 
     fcm_project_id: str | None = None
@@ -78,20 +75,13 @@ class Settings(BaseSettings):
             return False
         if not isinstance(payload, dict):
             return False
-        return bool(
-            payload.get("client_email")
-            and payload.get("private_key")
-            and payload.get("token_uri")
-        )
+        return bool(payload.get("client_email") and payload.get("private_key") and payload.get("token_uri"))
 
     def provider_readiness(self) -> dict[str, bool]:
         return {
             "fcm": self.fcm_ready(),
             "apns": bool(
-                self.apns_team_id
-                and self.apns_key_id
-                and self.apns_bundle_id
-                and Path(self.apns_private_key_file).is_file()
+                self.apns_team_id and self.apns_key_id and self.apns_bundle_id and Path(self.apns_private_key_file).is_file()
             ),
             "webpush": bool(self.vapid_public_key and Path(self.vapid_private_key_file).is_file()),
         }
