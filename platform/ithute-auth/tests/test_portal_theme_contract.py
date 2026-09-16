@@ -36,6 +36,16 @@ def test_auth_theme_preserves_login_field_contract() -> None:
     assert 'name="mfa_code"' in source
 
 
+def test_auth_theme_brands_browser_tab() -> None:
+    source = _theme_source()
+    assert '<title>Ithute Auth · Sign in</title>' in source
+    assert 'rel="icon"' in source
+    assert 'type="image/svg+xml"' in source
+    assert 'theme-color' in source
+    assert '%231475d1' in source
+    assert '%23249716' in source
+
+
 def test_main_applies_auth_theme_before_router_registration() -> None:
     source = MAIN.read_text(encoding="utf-8")
     assert "from .portal_theme import apply_portal_theme" in source
