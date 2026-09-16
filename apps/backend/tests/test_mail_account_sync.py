@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from app.models.mail import Mailbox, MailboxStatus
-from app.services.mail_account_sync import MailAccountSyncError, sync_mailbox
+from app.services.mail_account_sync import MailAccountSyncError, sync_mailbox, sync_mailbox_forwarding
 
 
 def _mailbox(address: str, password_hash: str, status: MailboxStatus = MailboxStatus.active) -> Mailbox:
@@ -71,3 +71,89 @@ def test_sync_is_disabled_without_runtime_account_file(monkeypatch):
     monkeypatch.delenv("MAIL_ACCOUNTS_FILE", raising=False)
     mailbox = _mailbox("info@ithute.co.ls", "{SHA512-CRYPT}$6$current$hash")
     assert sync_mailbox(mailbox) is False
+
+
+def test_forwarding_keeps_mailbox_account_and_writes_external_copy_rule(tmp_path: Path, monkeypatch):
+    account_file = tmp_path / "postfix-accounts.cf"
+    account_file.write_text(
+        "bda-reg12345@ithute.co.ls|{SHA512-CRYPT}$6$current$hash\n"
+        "info@external.example|{SHA512-CRYPT}$6$external$hash\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAIL_ACCOUNTS_FILE", str(account_file))
+
+    mailbox = _mailbox("bda-reg12345@ithute.co.ls", "{SHA512-CRYPT}$6$current$hash")
+    assert sync_mailbox_forwarding(mailbox, "Business@Gmail.COM") is True
+
+    forwarding_file = tmp_path / "postfix-recipient-bcc.cf"
+    assert forwarding_file.read_text(encoding="utf-8") == "bda-reg12345@ithute.co.ls business@gmail.com\n"
+    assert forwarding_file.stat().st_mode & 0o777 == 0o600
+
+    accounts = account_file.read_text(encoding="utf-8")
+    assert "bda-reg12345@ithute.co.ls|{SHA512-CRYPT}$6$current$hash" in accounts
+    assert "info@external.example|{SHA512-CRYPT}$6$external$hash" in accounts
+    assert accounts.count("# platform-forwarding-revision:") == 1
+
+
+def test_forwarding_destination_can_be_replaced_and_disabled(tmp_path: Path, monkeypatch):
+    account_file = tmp_path / "postfix-accounts.cf"
+    account_file.write_text(
+        "bda-reg12345@ithute.co.ls|{SHA512-CRYPT}$6$current$hash\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAIL_ACCOUNTS_FILE", str(account_file))
+    mailbox = _mailbox("bda-reg12345@ithute.co.ls", "{SHA512-CRYPT}$6$current$hash")
+
+    sync_mailbox_forwarding(mailbox, "first@gmail.com")
+    first_marker = [
+        line for line in account_file.read_text(encoding="utf-8").splitlines()
+        if line.startswith("# platform-forwarding-revision:")
+    ][0]
+
+    sync_mailbox_forwarding(mailbox, "second@gmail.com")
+    forwarding_file = tmp_path / "postfix-recipient-bcc.cf"
+    assert "first@gmail.com" not in forwarding_file.read_text(encoding="utf-8")
+    assert forwarding_file.read_text(encoding="utf-8") == "bda-reg12345@ithute.co.ls second@gmail.com\n"
+    second_marker = [
+        line for line in account_file.read_text(encoding="utf-8").splitlines()
+        if line.startswith("# platform-forwarding-revision:")
+    ][0]
+    assert second_marker != first_marker
+
+    sync_mailbox_forwarding(mailbox, None)
+    assert forwarding_file.read_text(encoding="utf-8") == ""
+    accounts = account_file.read_text(encoding="utf-8")
+    assert "bda-reg12345@ithute.co.ls|{SHA512-CRYPT}$6$current$hash" in accounts
+    assert accounts.count("# platform-forwarding-revision:") == 1
+
+
+def test_forwarding_rejects_self_destination(tmp_path: Path, monkeypatch):
+    account_file = tmp_path / "postfix-accounts.cf"
+    account_file.write_text(
+        "bda-reg12345@ithute.co.ls|{SHA512-CRYPT}$6$current$hash\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAIL_ACCOUNTS_FILE", str(account_file))
+    mailbox = _mailbox("bda-reg12345@ithute.co.ls", "{SHA512-CRYPT}$6$current$hash")
+
+    try:
+        sync_mailbox_forwarding(mailbox, "bda-reg12345@ithute.co.ls")
+    except MailAccountSyncError as exc:
+        assert "itself" in str(exc)
+    else:
+        raise AssertionError("self-forwarding was accepted")
+
+
+def test_suspended_mailbox_removes_forwarding_rule(tmp_path: Path, monkeypatch):
+    account_file = tmp_path / "postfix-accounts.cf"
+    account_file.write_text(
+        "bda-reg12345@ithute.co.ls|{SHA512-CRYPT}$6$current$hash\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAIL_ACCOUNTS_FILE", str(account_file))
+    mailbox = _mailbox("bda-reg12345@ithute.co.ls", "{SHA512-CRYPT}$6$current$hash")
+    sync_mailbox_forwarding(mailbox, "business@gmail.com")
+
+    mailbox.status = MailboxStatus.suspended
+    sync_mailbox_forwarding(mailbox, "business@gmail.com")
+    assert (tmp_path / "postfix-recipient-bcc.cf").read_text(encoding="utf-8") == ""
