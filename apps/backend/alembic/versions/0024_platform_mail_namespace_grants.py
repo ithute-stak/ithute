@@ -1,6 +1,6 @@
 """Scope platform mail domain grants to explicit mailbox namespaces.
 
-Revision ID: 0024_platform_mail_namespace_grants
+Revision ID: 0024_mail_namespace
 Revises: 0023_platform_mail_provisioning
 """
 
@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0024_platform_mail_namespace_grants"
+revision = "0024_mail_namespace"
 down_revision = "0023_platform_mail_provisioning"
 branch_labels = None
 depends_on = None
