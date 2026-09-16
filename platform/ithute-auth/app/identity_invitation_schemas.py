@@ -43,6 +43,11 @@ class IdentityInvitationResponse(BaseModel):
     delivery_status: str
     expires_at: datetime
     existing_identity: bool
+    # Only the source service can read this response. It stays null until the
+    # invitation is actually consumed, then exposes the immutable Ithute Auth
+    # subject so the source product can link membership without guessing by
+    # email or phone.
+    activated_sub: str | None = None
 
 
 class IdentityInvitationActivationRequest(BaseModel):

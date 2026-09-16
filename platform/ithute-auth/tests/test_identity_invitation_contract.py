@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from app.identity_invitation_schemas import TrustedIdentityInvitationRequest
+from app.identity_invitation_schemas import IdentityInvitationResponse, TrustedIdentityInvitationRequest
 
 
 ROOT = Path(__file__).parents[1]
@@ -92,6 +92,20 @@ def test_invitation_lifecycle_is_idempotent_audited_and_rate_limited() -> None:
         'event_type="identity.invitation_activated"',
     ):
         assert required in source
+
+
+def test_source_service_can_reconcile_only_the_consumed_invitation_subject() -> None:
+    schema_fields = IdentityInvitationResponse.model_fields
+    assert "activated_sub" in schema_fields
+    assert schema_fields["activated_sub"].default is None
+
+    source = INVITATIONS.read_text(encoding="utf-8")
+    assert "invitation.consumed_at is not None and invitation.user_id is not None" in source
+    assert "activated_sub=activated_sub" in source
+    # The lookup endpoint remains source-client locked and scope protected.
+    get_route = source[source.index('@platform_router.get("/{invitation_id}"'):]
+    assert 'Depends(require_managed_service_scope("identity.invite"))' in get_route
+    assert "invitation.source_client_id != context.client_id" in get_route
 
 
 def test_existing_identity_can_only_be_invited_through_its_registered_contact() -> None:
