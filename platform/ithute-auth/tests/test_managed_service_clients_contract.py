@@ -11,6 +11,7 @@ MODELS = ROOT / "app" / "managed_service_models.py"
 SERVICE_CLIENTS = ROOT / "app" / "service_clients.py"
 MIGRATION = ROOT / "alembic" / "versions" / "0006_managed_service_clients.py"
 BDA_GRANTS_MIGRATION = ROOT / "alembic" / "versions" / "0008_bda_service_grants.py"
+BDA_FORWARD_GRANT_MIGRATION = ROOT / "alembic" / "versions" / "0009_bda_mail_forward_grant.py"
 SERVER = ROOT / "app" / "server.py"
 
 
@@ -56,6 +57,19 @@ def test_bda_integration_grants_are_least_privilege_and_migration_safe() -> None
     assert "mailbox.create" not in source
     assert "mail.send" not in source
     assert "notification.send" not in source
+
+
+def test_bda_mail_forward_scope_is_added_by_narrow_followup_migration() -> None:
+    source = BDA_FORWARD_GRANT_MIGRATION.read_text(encoding="utf-8")
+    assert 'revision = "0009_bda_mail_forward"' in source
+    assert 'down_revision = "0008_bda_service_grants"' in source
+    assert '_CLIENT_ID = "business-digital-address"' in source
+    assert '_SCOPE = "mail.forward"' in source
+    assert "allowed_scopes_json" in source
+    assert "Business Digital Address managed service client is missing" in source
+    assert "mailbox.create" not in source
+    assert "mail.send" not in source
+    assert "identity.invite" not in source
 
 
 def test_admin_api_covers_lifecycle_and_audit_operations() -> None:
