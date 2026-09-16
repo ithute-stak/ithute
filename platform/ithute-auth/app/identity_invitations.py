@@ -49,6 +49,27 @@ def _resolve_existing_identity(db: Session, *, email: str | None, phone: str | N
     return by_email or by_phone
 
 
+def _validate_existing_identity_target(
+    user: User | None,
+    *,
+    preferred_channel: str,
+    email: str | None,
+    phone: str | None,
+) -> None:
+    if user is None:
+        return
+    if preferred_channel == "phone" and (not phone or user.phone != phone):
+        raise HTTPException(
+            status_code=409,
+            detail="existing Ithute identity must be invited through its registered phone",
+        )
+    if preferred_channel == "email" and (not email or user.email != email):
+        raise HTTPException(
+            status_code=409,
+            detail="existing Ithute identity must be invited through its registered email",
+        )
+
+
 def _response(db: Session, invitation: IdentityInvitation) -> IdentityInvitationResponse:
     existing = _resolve_existing_identity(db, email=invitation.email, phone=invitation.phone)
     return IdentityInvitationResponse(
@@ -171,7 +192,13 @@ def create_identity_invitation(
 ) -> IdentityInvitationResponse:
     email = normalize_email(str(payload.email) if payload.email else None)
     phone = normalize_phone(payload.phone)
-    _resolve_existing_identity(db, email=email, phone=phone)
+    existing_identity = _resolve_existing_identity(db, email=email, phone=phone)
+    _validate_existing_identity_target(
+        existing_identity,
+        preferred_channel=payload.preferred_channel,
+        email=email,
+        phone=phone,
+    )
 
     reference = payload.external_reference.strip()
     invitation = db.scalar(
@@ -248,6 +275,13 @@ def resend_identity_invitation(
     if invitation.last_sent_at is not None and utcnow() - invitation.last_sent_at < RESEND_COOLDOWN:
         raise HTTPException(status_code=429, detail="wait before resending this invitation")
 
+    existing_identity = _resolve_existing_identity(db, email=invitation.email, phone=invitation.phone)
+    _validate_existing_identity_target(
+        existing_identity,
+        preferred_channel=invitation.preferred_channel,
+        email=invitation.email,
+        phone=invitation.phone,
+    )
     token, code = _refresh_challenge(invitation)
     _attempt_delivery(
         db,
@@ -367,6 +401,12 @@ def activate_identity_invitation(
         raise HTTPException(status_code=401, detail="invalid activation challenge")
 
     user = _resolve_existing_identity(db, email=invitation.email, phone=invitation.phone)
+    _validate_existing_identity_target(
+        user,
+        preferred_channel=invitation.preferred_channel,
+        email=invitation.email,
+        phone=invitation.phone,
+    )
     existing_identity = user is not None
     if user is not None and not user.is_active:
         record_audit(
