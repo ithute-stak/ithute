@@ -43,7 +43,9 @@ def require_platform_service_scope(required_scope: str, *, audience: str = "ithu
         if required_scope not in scopes:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Service scope required: {required_scope}")
         return PlatformServicePrincipal(
-            client_id=str(claims["sub"]),
+            # The decoder has already verified sub == service:<azp> and
+            # normalized azp to the canonical database-managed client ID.
+            client_id=str(claims["azp"]),
             scopes=scopes,
             token_id=str(claims["jti"]),
         )
