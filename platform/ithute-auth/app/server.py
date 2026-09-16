@@ -1,4 +1,5 @@
 from .identity_invitation_portal import router as identity_invitation_portal_router
+from .identity_invitation_reconciliation import router as identity_invitation_reconciliation_router
 from .identity_invitations import platform_router as identity_invitation_platform_router
 from .identity_invitations import public_router as identity_invitation_public_router
 from .main import app
@@ -27,8 +28,9 @@ app.include_router(service_token_router)
 app.include_router(service_client_admin_router)
 
 # New platform capabilities accept only database-managed service identities.
-# The trusted invitation API is therefore unavailable to the legacy runtime
-# secret compatibility path even while older Push/Realtime clients migrate.
+# The subject reconciliation route is mounted before the UUID catch-all route
+# so `/activated-sub/{user_id}` cannot be consumed by `/{invitation_id}`.
+app.include_router(identity_invitation_reconciliation_router)
 app.include_router(identity_invitation_platform_router)
 app.include_router(identity_invitation_public_router)
 app.include_router(identity_invitation_portal_router)
