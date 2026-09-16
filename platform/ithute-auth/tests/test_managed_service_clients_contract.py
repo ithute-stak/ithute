@@ -6,6 +6,7 @@ from app.service_client_schemas import ManagedServiceTokenRequest
 ROOT = Path(__file__).parents[1]
 ADMIN = ROOT / "app" / "service_client_admin.py"
 API = ROOT / "app" / "service_token_api.py"
+MANAGED_TOKEN = ROOT / "app" / "managed_service_token_security.py"
 MODELS = ROOT / "app" / "managed_service_models.py"
 SERVICE_CLIENTS = ROOT / "app" / "service_clients.py"
 MIGRATION = ROOT / "alembic" / "versions" / "0006_managed_service_clients.py"
@@ -71,6 +72,19 @@ def test_machine_authentication_happens_before_scope_authorization() -> None:
     scope_check = source.index("allowed_scopes = set(decode_capabilities")
     assert credential_lookup < audience_check < scope_check
     assert source.count('ServiceClientAuthError(401, "invalid service credentials")') >= 4
+
+
+def test_managed_tokens_are_cryptographically_distinguishable_from_legacy_tokens() -> None:
+    api_source = API.read_text(encoding="utf-8")
+    token_source = MANAGED_TOKEN.read_text(encoding="utf-8")
+    assert "create_managed_service_token" in api_source
+    assert '"service_auth": "managed"' in token_source
+    assert '"azp": client_id' in token_source
+    assert '"sub": f"service:{client_id}"' in token_source
+    assert "create_service_token(" in api_source
+    managed_call = api_source.index("create_managed_service_token(")
+    legacy_call = api_source.rindex("create_service_token(")
+    assert managed_call < legacy_call
 
 
 def test_managed_tokens_take_precedence_over_legacy_runtime_secret_fallback() -> None:
