@@ -7,7 +7,10 @@ MODELS = ROOT / "app" / "models" / "mail.py"
 AUTH = ROOT / "app" / "services" / "ithute_auth.py"
 MIGRATION = ROOT / "alembic" / "versions" / "0023_platform_mail_provisioning.py"
 ROUTER = ROOT / "app" / "api" / "v1" / "router.py"
-AUTH_SCOPE_MIGRATION = ROOT.parent.parent / "platform" / "ithute-auth" / "alembic" / "versions" / "0008_platform_mail_management_scope.py"
+AUTH_ROOT = ROOT.parent.parent / "platform" / "ithute-auth"
+AUTH_SCOPE_MIGRATION = AUTH_ROOT / "alembic" / "versions" / "0008_platform_mail_management_scope.py"
+MANAGED_TOKEN = AUTH_ROOT / "app" / "managed_service_token.py"
+TOKEN_API = AUTH_ROOT / "app" / "service_token_api.py"
 
 
 def test_platform_mail_api_uses_exact_machine_audience_and_scopes() -> None:
@@ -51,11 +54,16 @@ def test_mail_schema_supports_machine_actor_without_fake_human_user() -> None:
     assert '"platform_mailbox_provisioning"' in migration
 
 
-def test_ithute_auth_validates_machine_tokens_separately_from_human_tokens() -> None:
+def test_ithute_auth_validates_managed_machine_tokens_separately_from_human_and_legacy_tokens() -> None:
     source = AUTH.read_text(encoding="utf-8")
     assert "def decode_ithute_service_token" in source
-    assert 'claims.get("token_use") != "service"' in source
+    assert 'claims.get("managed_service_client") is not True' in source
     assert "required_scope not in scopes" in source
+    managed = MANAGED_TOKEN.read_text(encoding="utf-8")
+    token_api = TOKEN_API.read_text(encoding="utf-8")
+    assert '"managed_service_client": True' in managed
+    assert "create_managed_service_token" in token_api
+    assert "create_service_token" in token_api
 
 
 def test_platform_mail_router_is_mounted() -> None:
