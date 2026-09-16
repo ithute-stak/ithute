@@ -7,6 +7,7 @@ ROOT = Path(__file__).parents[1]
 ADMIN = ROOT / "app" / "service_client_admin.py"
 API = ROOT / "app" / "service_token_api.py"
 MODELS = ROOT / "app" / "managed_service_models.py"
+SERVICE_CLIENTS = ROOT / "app" / "service_clients.py"
 MIGRATION = ROOT / "alembic" / "versions" / "0006_managed_service_clients.py"
 SERVER = ROOT / "app" / "server.py"
 
@@ -61,6 +62,15 @@ def test_secrets_are_hashed_and_plaintext_is_not_a_model_column() -> None:
     assert "secret_hash" in source
     assert "secret_prefix" in source
     assert "client_secret" not in source
+
+
+def test_machine_authentication_happens_before_scope_authorization() -> None:
+    source = SERVICE_CLIENTS.read_text(encoding="utf-8")
+    credential_lookup = source.index("ManagedServiceCredential.secret_hash == hash_service_secret(client_secret)")
+    audience_check = source.index("allowed_audiences = set(decode_capabilities")
+    scope_check = source.index("allowed_scopes = set(decode_capabilities")
+    assert credential_lookup < audience_check < scope_check
+    assert source.count('ServiceClientAuthError(401, "invalid service credentials")') >= 4
 
 
 def test_managed_tokens_take_precedence_over_legacy_runtime_secret_fallback() -> None:
