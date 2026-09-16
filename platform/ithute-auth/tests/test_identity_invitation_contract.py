@@ -80,6 +80,14 @@ def test_invitation_lifecycle_is_idempotent_audited_and_rate_limited() -> None:
         assert required in source
 
 
+def test_existing_identity_can_only_be_invited_through_its_registered_contact() -> None:
+    source = INVITATIONS.read_text(encoding="utf-8")
+    assert "_validate_existing_identity_target" in source
+    assert "existing Ithute identity must be invited through its registered phone" in source
+    assert "existing Ithute identity must be invited through its registered email" in source
+    assert source.count("_validate_existing_identity_target(") >= 4
+
+
 def test_invitation_never_uses_phone_as_password_and_creates_credentials_only_after_activation() -> None:
     source = INVITATIONS.read_text(encoding="utf-8")
     assert "password_hash=hash_password(payload.password)" in source
