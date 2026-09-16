@@ -5,14 +5,14 @@ from dataclasses import dataclass
 from uuid import UUID
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_platform_owner
+from app.api.deps import require_platform_owner
 from app.db.session import get_db
 from app.models.domains import Domain, DomainStatus
 from app.models.entities import User
@@ -55,9 +55,7 @@ class MailboxProvisionResponse(BaseModel):
 
 
 def _require_service_scope(required_scope: str):
-    def dependency(
-        credentials: HTTPAuthorizationCredentials = Depends(service_bearer),
-    ) -> MailServiceContext:
+    def dependency(credentials: HTTPAuthorizationCredentials = Depends(service_bearer)) -> MailServiceContext:
         if not credentials or credentials.scheme.lower() != "bearer":
             raise HTTPException(status_code=401, detail="Ithute service token required")
         try:
@@ -73,7 +71,7 @@ def _require_service_scope(required_scope: str):
         except jwt.InvalidTokenError as exc:
             raise HTTPException(status_code=401, detail="Invalid or insufficient Ithute service token") from exc
         return MailServiceContext(
-            client_id=str(claims["sub"]),
+            client_id=str(claims["azp"]),
             scopes=frozenset(str(claims.get("scope") or "").split()),
         )
     return dependency
@@ -159,13 +157,9 @@ def bind_service_client_to_domain(
     db.commit()
     db.refresh(binding)
     return {
-        "id": str(binding.id),
-        "service_client_id": binding.service_client_id,
-        "domain_id": str(binding.domain_id),
-        "domain": domain.ascii_name,
-        "allow_create": binding.allow_create,
-        "allow_manage": binding.allow_manage,
-        "active": binding.active,
+        "id": str(binding.id), "service_client_id": binding.service_client_id,
+        "domain_id": str(binding.domain_id), "domain": domain.ascii_name,
+        "allow_create": binding.allow_create, "allow_manage": binding.allow_manage, "active": binding.active,
     }
 
 
@@ -201,29 +195,18 @@ def provision_mailbox(
     if db.scalar(select(Mailbox).where(Mailbox.address == address)) is not None:
         raise HTTPException(status_code=409, detail="Mailbox address is already in use")
 
-    # The machine caller never chooses or receives the mailbox credential.
-    # It is an infrastructure credential; the business owner authenticates to
-    # the future official-inbox product through central Ithute Auth.
     generated_secret = f"{secrets.token_urlsafe(36)}!A9"
     mailbox = Mailbox(
-        tenant_id=domain.tenant_id,
-        domain_id=domain.id,
-        local_part=local_part,
-        address=address,
-        display_name=payload.display_name,
-        password_hash=hash_mailbox_password(generated_secret),
-        quota_bytes=payload.quota_bytes,
-        status=MailboxStatus.active,
-        created_by_user_id=None,
-        created_by_service_client_id=context.client_id,
+        tenant_id=domain.tenant_id, domain_id=domain.id, local_part=local_part, address=address,
+        display_name=payload.display_name, password_hash=hash_mailbox_password(generated_secret),
+        quota_bytes=payload.quota_bytes, status=MailboxStatus.active,
+        created_by_user_id=None, created_by_service_client_id=context.client_id,
     )
     db.add(mailbox)
     db.flush()
     provisioning = PlatformMailboxProvisioning(
-        service_client_id=context.client_id,
-        external_reference=reference,
-        mailbox_id=mailbox.id,
-        domain_id=domain.id,
+        service_client_id=context.client_id, external_reference=reference,
+        mailbox_id=mailbox.id, domain_id=domain.id,
     )
     db.add(provisioning)
     try:
@@ -242,9 +225,7 @@ def get_provisioned_mailbox(
     db: Session = Depends(get_db),
     context: MailServiceContext = Depends(_require_service_scope("mailbox.create")),
 ):
-    provisioning, mailbox, domain = _owned_provisioning(
-        db, client_id=context.client_id, external_reference=external_reference
-    )
+    provisioning, mailbox, domain = _owned_provisioning(db, client_id=context.client_id, external_reference=external_reference)
     return _response(provisioning, mailbox, domain)
 
 
