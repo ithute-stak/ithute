@@ -72,6 +72,7 @@ def _validate_existing_identity_target(
 
 def _response(db: Session, invitation: IdentityInvitation) -> IdentityInvitationResponse:
     existing = _resolve_existing_identity(db, email=invitation.email, phone=invitation.phone)
+    activated_sub = str(invitation.user_id) if invitation.consumed_at is not None and invitation.user_id is not None else None
     return IdentityInvitationResponse(
         id=invitation.id,
         source_client_id=invitation.source_client_id,
@@ -84,6 +85,7 @@ def _response(db: Session, invitation: IdentityInvitation) -> IdentityInvitation
         delivery_status=invitation.delivery_status,
         expires_at=invitation.expires_at,
         existing_identity=existing is not None,
+        activated_sub=activated_sub,
     )
 
 
