@@ -25,6 +25,7 @@ def _refresh_notification_status(notification: Notification) -> None:
         notification.completed_at = utcnow()
     elif "pending" in statuses or "retry" in statuses or "processing" in statuses:
         notification.status = "queued"
+        notification.completed_at = None
     elif "delivered" in statuses:
         notification.status = "partial"
         notification.completed_at = utcnow()
@@ -91,10 +92,12 @@ def process_one() -> bool:
             db.commit()
             return True
 
+        # Keep the selected delivery row locked until the provider attempt has
+        # been recorded. If the worker crashes, the transaction rolls back to
+        # pending/retry rather than leaving a permanent "processing" record.
         delivery.status = "processing"
         delivery.attempt_count += 1
         delivery.last_attempt_at = utcnow()
-        db.commit()
 
         try:
             reference = _deliver(notification, delivery)
