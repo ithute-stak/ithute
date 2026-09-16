@@ -80,6 +80,23 @@ def _grant_for(db: Session, *, client_id: str, domain: Domain) -> PlatformMailDo
     return grant
 
 
+def _require_grant_namespace(grant: PlatformMailDomainGrant, local_part: str) -> None:
+    if not local_part.startswith(grant.local_part_prefix):
+        raise HTTPException(status_code=403, detail="Mailbox local part is outside the service client namespace")
+
+
+def _grant_response(grant: PlatformMailDomainGrant, domain: Domain) -> PlatformMailDomainGrantResponse:
+    return PlatformMailDomainGrantResponse(
+        id=grant.id,
+        service_client_id=grant.service_client_id,
+        domain_id=domain.id,
+        domain_name=domain.ascii_name,
+        local_part_prefix=grant.local_part_prefix,
+        active=grant.active,
+        created_at=grant.created_at,
+    )
+
+
 def _binding_response(binding: PlatformMailboxBinding, mailbox: Mailbox) -> PlatformMailboxResponse:
     return PlatformMailboxResponse(
         binding_id=binding.id,
@@ -126,12 +143,14 @@ def create_domain_grant(
         grant = PlatformMailDomainGrant(
             service_client_id=payload.service_client_id,
             domain_id=domain.id,
+            local_part_prefix=payload.local_part_prefix,
             active=True,
             created_by_user_id=owner.id,
         )
         db.add(grant)
         db.flush()
     else:
+        grant.local_part_prefix = payload.local_part_prefix
         grant.active = True
         grant.created_by_user_id = owner.id
 
@@ -142,18 +161,15 @@ def create_domain_grant(
         resource_id=str(grant.id),
         tenant_id=domain.tenant_id,
         actor_user_id=owner.id,
-        metadata={"service_client_id": grant.service_client_id, "domain": domain.ascii_name},
+        metadata={
+            "service_client_id": grant.service_client_id,
+            "domain": domain.ascii_name,
+            "local_part_prefix": grant.local_part_prefix,
+        },
     )
     db.commit()
     db.refresh(grant)
-    return PlatformMailDomainGrantResponse(
-        id=grant.id,
-        service_client_id=grant.service_client_id,
-        domain_id=domain.id,
-        domain_name=domain.ascii_name,
-        active=grant.active,
-        created_at=grant.created_at,
-    )
+    return _grant_response(grant, domain)
 
 
 @router.get("/domain-grants", response_model=list[PlatformMailDomainGrantResponse])
@@ -166,17 +182,7 @@ def list_domain_grants(
         .join(Domain, Domain.id == PlatformMailDomainGrant.domain_id)
         .order_by(PlatformMailDomainGrant.service_client_id, Domain.ascii_name)
     ).all()
-    return [
-        PlatformMailDomainGrantResponse(
-            id=grant.id,
-            service_client_id=grant.service_client_id,
-            domain_id=domain.id,
-            domain_name=domain.ascii_name,
-            active=grant.active,
-            created_at=grant.created_at,
-        )
-        for grant, domain in rows
-    ]
+    return [_grant_response(grant, domain) for grant, domain in rows]
 
 
 @router.post("/domain-grants/{grant_id}/disable", response_model=PlatformMailDomainGrantResponse)
@@ -199,18 +205,15 @@ def disable_domain_grant(
         resource_id=str(grant.id),
         tenant_id=domain.tenant_id,
         actor_user_id=owner.id,
-        metadata={"service_client_id": grant.service_client_id, "domain": domain.ascii_name},
+        metadata={
+            "service_client_id": grant.service_client_id,
+            "domain": domain.ascii_name,
+            "local_part_prefix": grant.local_part_prefix,
+        },
     )
     db.commit()
     db.refresh(grant)
-    return PlatformMailDomainGrantResponse(
-        id=grant.id,
-        service_client_id=grant.service_client_id,
-        domain_id=domain.id,
-        domain_name=domain.ascii_name,
-        active=grant.active,
-        created_at=grant.created_at,
-    )
+    return _grant_response(grant, domain)
 
 
 @router.post("/mailboxes", response_model=PlatformMailboxResponse, status_code=201)
@@ -223,6 +226,7 @@ def provision_mailbox(
     grant = _grant_for(db, client_id=principal.client_id, domain=domain)
     try:
         local_part = normalize_local_part(payload.local_part)
+        _require_grant_namespace(grant, local_part)
         address = mailbox_address(local_part, domain.ascii_name)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -288,6 +292,7 @@ def provision_mailbox(
             "token_id": principal.token_id,
             "external_reference": reference,
             "address": mailbox.address,
+            "local_part_prefix": grant.local_part_prefix,
             "credential_mode": "platform-managed",
         },
     )
@@ -344,6 +349,7 @@ def reactivate_platform_mailbox(
     domain = _domain(db, mailbox.address.split("@", 1)[1])
     if domain.id != mailbox.domain_id or grant.domain_id != domain.id:
         raise HTTPException(status_code=409, detail="Mailbox domain binding is invalid")
+    _require_grant_namespace(grant, mailbox.local_part)
     mailbox.status = MailboxStatus.active
     db.flush()
     sync_mailbox(mailbox)
@@ -353,7 +359,11 @@ def reactivate_platform_mailbox(
         resource_type="mailbox",
         resource_id=str(mailbox.id),
         tenant_id=mailbox.tenant_id,
-        metadata={"service_client_id": principal.client_id, "token_id": principal.token_id},
+        metadata={
+            "service_client_id": principal.client_id,
+            "token_id": principal.token_id,
+            "local_part_prefix": grant.local_part_prefix,
+        },
     )
     db.commit()
     return PlatformMailboxStatusResponse(
