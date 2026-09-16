@@ -22,11 +22,14 @@ def test_platform_mailbox_request_defaults_to_one_gibibyte() -> None:
     assert payload.quota_bytes == 1024**3
 
 
-def test_service_tokens_are_separate_from_human_tokens() -> None:
+def test_service_tokens_are_separate_from_human_and_legacy_tokens() -> None:
     source = ITHUTE_AUTH.read_text(encoding="utf-8")
     assert "decode_ithute_service_token" in source
     assert 'claims.get("token_use") != "service"' in source
+    assert 'claims.get("service_auth") != "managed"' in source
     assert 'audience=audience' in source
+    assert 'client_id = str(claims.get("azp")' in source
+    assert 'str(claims.get("sub") or "") != f"service:{client_id}"' in source
     assert '"scope"' in source
     assert '"jti"' in source
 
