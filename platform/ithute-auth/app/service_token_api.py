@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from .config import Settings, get_settings
 from .db import get_db
 from .managed_service_models import ManagedServiceClient
+from .managed_service_token import create_managed_service_token
 from .models import Application
 from .schemas import ServiceTokenResponse
 from .security import create_service_token
@@ -27,9 +28,7 @@ def issue_service_token(
     db: Session = Depends(get_db),
     config: Settings = Depends(get_settings),
 ) -> ServiceTokenResponse:
-    managed = db.scalar(
-        select(ManagedServiceClient).where(ManagedServiceClient.client_id == payload.client_id)
-    )
+    managed = db.scalar(select(ManagedServiceClient).where(ManagedServiceClient.client_id == payload.client_id))
     if managed is not None:
         try:
             credential, normalized_scope = authenticate_managed_service_client(
@@ -51,7 +50,7 @@ def issue_service_token(
             db.commit()
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
 
-        token = create_service_token(
+        token = create_managed_service_token(
             settings=config,
             client_id=managed.client_id,
             audience=payload.audience,
@@ -76,9 +75,9 @@ def issue_service_token(
             scope=normalized_scope,
         )
 
-    # Compatibility bridge for existing first-party integrations. New platform
-    # clients must be stored in managed_service_clients; this path can be
-    # removed after the remaining runtime JSON secrets have been migrated.
+    # Temporary compatibility bridge. These tokens intentionally do not carry
+    # managed_service_client=true and therefore cannot call new privileged
+    # platform APIs such as the mail provisioning boundary.
     application = db.scalar(
         select(Application).where(
             Application.client_id == payload.client_id,
