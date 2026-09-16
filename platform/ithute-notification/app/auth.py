@@ -38,14 +38,14 @@ class AuthVerifier:
                 options={
                     "require": [
                         "iss", "sub", "azp", "aud", "scope", "token_use",
-                        "managed_service_client", "jti", "iat", "nbf", "exp",
+                        "service_auth", "jti", "iat", "nbf", "exp",
                     ]
                 },
             )
         except (jwt.PyJWTError, ValueError, TypeError) as exc:
             raise AuthError("invalid Ithute managed service token") from exc
 
-        if claims.get("token_use") != "service" or claims.get("managed_service_client") is not True:
+        if claims.get("token_use") != "service" or claims.get("service_auth") != "managed":
             raise AuthError("managed Ithute service token required")
         client_id = claims.get("azp")
         if not isinstance(client_id, str) or not client_id or claims.get("sub") != f"service:{client_id}":
