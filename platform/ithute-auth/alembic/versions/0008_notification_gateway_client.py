@@ -1,7 +1,7 @@
 """add Ithute Notification managed service client
 
 Revision ID: 0008_notification_gateway_client
-Revises: 0007_trusted_identity_invitations
+Revises: 0007_identity_invites
 """
 
 from datetime import datetime, timezone
@@ -12,7 +12,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0008_notification_gateway_client"
-down_revision = "0007_trusted_identity_invitations"
+down_revision = "0007_identity_invites"
 branch_labels = None
 depends_on = None
 
