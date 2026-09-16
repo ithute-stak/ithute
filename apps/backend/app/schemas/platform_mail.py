@@ -1,12 +1,26 @@
+import re
 import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
 
+_NAMESPACE_PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9-]*-$")
+
+
+def normalize_namespace_prefix(value: str) -> str:
+    prefix = value.strip().lower()
+    if not 4 <= len(prefix) <= 32:
+        raise ValueError("local_part_prefix must be between 4 and 32 characters")
+    if not _NAMESPACE_PREFIX_RE.fullmatch(prefix):
+        raise ValueError("local_part_prefix must start with a letter or digit, use only letters, digits and hyphens, and end with a hyphen")
+    return prefix
+
+
 class PlatformMailDomainGrantCreate(BaseModel):
     service_client_id: str = Field(min_length=1, max_length=120, pattern=r"^[a-z0-9][a-z0-9._:-]{0,119}$")
     domain_name: str = Field(min_length=3, max_length=253)
+    local_part_prefix: str = Field(min_length=4, max_length=32)
 
     @field_validator("domain_name")
     @classmethod
@@ -16,12 +30,18 @@ class PlatformMailDomainGrantCreate(BaseModel):
             raise ValueError("domain_name must be a fully-qualified domain")
         return domain
 
+    @field_validator("local_part_prefix")
+    @classmethod
+    def normalize_prefix(cls, value: str) -> str:
+        return normalize_namespace_prefix(value)
+
 
 class PlatformMailDomainGrantResponse(BaseModel):
     id: uuid.UUID
     service_client_id: str
     domain_id: uuid.UUID
     domain_name: str
+    local_part_prefix: str
     active: bool
     created_at: datetime
 
