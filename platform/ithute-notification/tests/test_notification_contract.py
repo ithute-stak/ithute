@@ -51,7 +51,7 @@ def test_notification_queue_is_idempotent_and_per_channel() -> None:
     assert "Idempotency-Key was already used for a different notification" in main
 
 
-def test_worker_has_retry_backoff_and_no_persisted_processing_lease() -> None:
+def test_worker_has_retry_backoff_and_crash_safe_processing_state() -> None:
     source = WORKER.read_text(encoding="utf-8")
     assert "with_for_update(skip_locked=True)" in source
     assert "delivery.status = \"processing\"" in source
@@ -59,6 +59,16 @@ def test_worker_has_retry_backoff_and_no_persisted_processing_lease() -> None:
     assert "db.commit()" not in segment
     assert "_backoff" in source
     assert "settings.max_attempts" in source
+
+
+def test_worker_serializes_and_recomputes_aggregate_status() -> None:
+    source = WORKER.read_text(encoding="utf-8")
+    assert "select(Notification)" in source
+    assert ".with_for_update()" in source
+    assert "db.flush()" in source
+    assert "select(NotificationDelivery.status)" in source
+    assert "_refresh_notification_status(notification, statuses)" in source
+    assert "selectinload" not in source
 
 
 def test_gateway_delegates_push_instead_of_reimplementing_fcm() -> None:
@@ -71,6 +81,8 @@ def test_gateway_delegates_push_instead_of_reimplementing_fcm() -> None:
 
 def test_auth_registers_notification_gateway_without_a_default_secret() -> None:
     source = AUTH_MIGRATION.read_text(encoding="utf-8")
+    assert 'revision = "0008_notification_gateway_client"' in source
+    assert 'down_revision = "0007_identity_invites"' in source
     assert '"ithute-notification"' in source
     assert '"ithute-push"' in source
     assert '"push.send.delegated"' in source
