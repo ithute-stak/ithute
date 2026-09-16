@@ -43,6 +43,9 @@ jobs:
   platform-mail-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      SECRET_KEY: ci-platform-mail-secret-000000000000000000000000000000
+      DATABASE_URL: postgresql+psycopg://ci:ci@127.0.0.1:5432/ci_platform_mail
     steps:
       - name: Checkout
         uses: actions/checkout@v5
