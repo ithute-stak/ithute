@@ -6,6 +6,12 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/repair-mail-runtime-path.yml"
+      - "mail/compose.yml"
+  workflow_run:
+    workflows: ["Deploy Ithute Production"]
+    types: [completed]
+  schedule:
+    - cron: "17 * * * *"
 
 concurrency:
   group: ithute-vps-production
@@ -16,6 +22,7 @@ permissions:
 
 jobs:
   repair:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
@@ -106,26 +113,56 @@ jobs:
           echo 'App API resolves mail.ithute.co.ls through the private Ithute network.'
 
           app_ip="$(docker inspect --format '{{with index .NetworkSettings.Networks "ithute_ithute"}}{{.IPAddress}}{{end}}' "$app_id")"
+          app_subnet="$(docker network inspect --format '{{(index .IPAM.Config 0).Subnet}}' "$APP_NETWORK")"
           test -n "$app_ip"
+          test -n "$app_subnet"
 
-          # The App API is a trusted in-host mail client. If Fail2Ban learned its
-          # private Docker IP from previous failed mailbox attempts, unban only
-          # that private address. Never alter bans for public clients here.
-          case "$app_ip" in
-            10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.2?.*|172.30.*|172.31.*|192.168.*)
-              jail_status="$(docker exec ithute-mail fail2ban-client status 2>/dev/null || true)"
-              jails="$(printf '%s\n' "$jail_status" | sed -n 's/.*Jail list:[[:space:]]*//p' | tr ',' ' ')"
-              for jail in $jails; do
-                jail="$(printf '%s' "$jail" | xargs)"
-                [ -n "$jail" ] || continue
-                docker exec ithute-mail fail2ban-client set "$jail" unbanip "$app_ip" >/dev/null 2>&1 || true
-              done
-              ;;
+          # Webmail authenticates through the App API, so every hosted mailbox
+          # reaches Dovecot from this trusted private Docker network. Fail2Ban
+          # must continue protecting public IMAP/SMTP clients without ever
+          # banning the internal application path for all users.
+          case "$app_subnet" in
+            10.*/*|172.1[6-9].*/*|172.2[0-9].*/*|172.3[01].*/*|192.168.*/*) ;;
             *)
-              echo 'Refusing to alter Fail2Ban because the App API address is not private.' >&2
+              echo 'Refusing to trust a non-private application subnet in Fail2Ban.' >&2
               exit 1
               ;;
           esac
+
+          mkdir -p "$VPS_MAIL_DIR/config"
+          python3 - "$VPS_MAIL_DIR/config/fail2ban-jail.cf" "$app_subnet" <<'PY'
+          import configparser
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          subnet = sys.argv[2]
+          parser = configparser.RawConfigParser()
+          parser.optionxform = str
+          if path.exists() and path.stat().st_size:
+              parser.read(path)
+          current = parser.defaults().get("ignoreip", "").replace(",", " ").split()
+          wanted = []
+          for value in ["127.0.0.1/8", *current, subnet]:
+              if value and value not in wanted:
+                  wanted.append(value)
+          parser["DEFAULT"]["ignoreip"] = " ".join(wanted)
+          tmp = path.with_suffix(path.suffix + ".tmp")
+          with tmp.open("w", encoding="utf-8") as handle:
+              parser.write(handle)
+          tmp.chmod(0o600)
+          tmp.replace(path)
+          PY
+
+          jail_status="$(docker exec ithute-mail fail2ban-client status 2>/dev/null || true)"
+          jails="$(printf '%s\n' "$jail_status" | sed -n 's/.*Jail list:[[:space:]]*//p' | tr ',' ' ')"
+          for jail in $jails; do
+            jail="$(printf '%s' "$jail" | xargs)"
+            [ -n "$jail" ] || continue
+            docker exec ithute-mail fail2ban-client set "$jail" addignoreip "$app_subnet" >/dev/null 2>&1 || true
+            docker exec ithute-mail fail2ban-client set "$jail" unbanip "$app_ip" >/dev/null 2>&1 || true
+          done
+          echo 'Fail2Ban keeps public protection while trusting the private Ithute application subnet.'
 
           docker exec "$app_id" python -c 'import imaplib, ssl; c=imaplib.IMAP4_SSL("mail.ithute.co.ls", 993, ssl_context=ssl.create_default_context(), timeout=10); c.logout()'
           docker exec "$app_id" python -c 'import smtplib, ssl; c=smtplib.SMTP("mail.ithute.co.ls", 587, timeout=10); c.ehlo(); c.starttls(context=ssl.create_default_context()); c.ehlo(); c.quit()'
