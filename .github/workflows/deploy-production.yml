@@ -1,10 +1,12 @@
 name: Deploy Ithute Production
 
 on:
-  workflow_run:
-    workflows: ["Ithute Standalone CI"]
-    types: [completed]
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: "Optional 40-character main commit SHA; leave blank to deploy current main"
+        required: false
+        type: string
 
 concurrency:
   group: ithute-vps-production
@@ -13,77 +15,104 @@ concurrency:
 permissions:
   contents: read
   actions: read
+  packages: read
 
 jobs:
   deploy:
-    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 50
     environment: production
     env:
-      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
-      SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
       VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_USER: ${{ secrets.VPS_USER }}
       VPS_APP_DIR: /home/administrator/ithute-platform
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
       EXPECTED_IPV4: 204.12.205.224
-      BOOTSTRAP_ROLLBACK_SHA: ddd0f1ec78f90132299fbeedabee2dee132f64c0
-      BOOTSTRAP_ROLLBACK_RUN_ID: "35084915814"
+      GHCR_REGISTRY: ghcr.io/ithute-stak
+      MIN_FREE_KB: "15728640"
 
     steps:
-      - name: Checkout validated commit
+      - name: Checkout main for manual release selection
         uses: actions/checkout@v5
         with:
-          ref: ${{ env.DEPLOY_SHA }}
+          ref: main
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Download tested Docker images from CI
-        uses: actions/download-artifact@v4
-        with:
-          name: ithute-images-${{ env.DEPLOY_SHA }}
-          path: /tmp/ithute-images
-          run-id: ${{ env.SOURCE_RUN_ID }}
-          github-token: ${{ github.token }}
-
-      - name: Verify candidate image artifact
+      - name: Resolve exact release commit
+        env:
+          REQUESTED_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
-          cd /tmp/ithute-images
-          test -f "ithute-images-${DEPLOY_SHA}.tar.gz"
-          test -f "ithute-images-${DEPLOY_SHA}.sha256"
-          sha256sum -c "ithute-images-${DEPLOY_SHA}.sha256"
+          main_sha="$(git rev-parse HEAD)"
+          requested="${REQUESTED_SHA:-}"
+          if [ -n "$requested" ]; then
+            [[ "$requested" =~ ^[0-9a-f]{40}$ ]] || {
+              echo 'release_sha must be a full 40-character lowercase commit SHA.' >&2
+              exit 1
+            }
+            git cat-file -e "$requested^{commit}"
+            git merge-base --is-ancestor "$requested" "$main_sha" || {
+              echo 'Requested release is not part of main.' >&2
+              exit 1
+            }
+            deploy_sha="$requested"
+          else
+            deploy_sha="$main_sha"
+          fi
+          git checkout --detach "$deploy_sha"
+          printf 'DEPLOY_SHA=%s\n' "$deploy_sha" >> "$GITHUB_ENV"
+          echo "Manual deployment selected commit $deploy_sha"
 
-      - name: Require Production Safety CI for exact commit
+      - name: Require green CI gates for exact commit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          echo "Waiting for Production Safety CI for ${DEPLOY_SHA}. No VPS mutation happens before this gate passes."
-          for attempt in $(seq 1 120); do
-            runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/production-safety-ci.yml/runs?branch=main&per_page=30")"
-            row="$(printf '%s' "$runs" | jq -r --arg sha "$DEPLOY_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] | if . == null then "" else [.status, (.conclusion // ""), (.html_url // "")] | @tsv end')"
-            if [ -z "$row" ]; then
-              echo "Production Safety CI has not been created yet (${attempt}/120)."
-              sleep 5
-              continue
-            fi
-            IFS=$'\t' read -r status conclusion url <<< "$row"
-            echo "Production Safety CI: status=${status} conclusion=${conclusion:-pending} ${url}"
-            if [ "$status" = "completed" ]; then
-              test "$conclusion" = "success" || {
-                echo "Candidate failed production startup safety checks; VPS left untouched." >&2
+          require_success() {
+            workflow="$1"
+            label="$2"
+            echo "Waiting for $label on ${DEPLOY_SHA}. No VPS mutation happens before both gates pass."
+            for attempt in $(seq 1 120); do
+              runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?branch=main&per_page=40")"
+              row="$(printf '%s' "$runs" | jq -r --arg sha "$DEPLOY_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] | if . == null then "" else [.status, (.conclusion // ""), (.html_url // "")] | @tsv end')"
+              if [ -z "$row" ]; then
+                echo "$label has not been created yet (${attempt}/120)."
+                sleep 5
+                continue
+              fi
+              IFS=$'\t' read -r status conclusion url <<< "$row"
+              echo "$label: status=${status} conclusion=${conclusion:-pending} ${url}"
+              if [ "$status" = "completed" ]; then
+                test "$conclusion" = "success" || {
+                  echo "$label did not pass; VPS left untouched." >&2
+                  exit 1
+                }
+                return 0
+              fi
+              test "$attempt" -lt 120 || {
+                echo "Timed out waiting for $label; VPS left untouched." >&2
                 exit 1
               }
-              break
-            fi
-            test "$attempt" -lt 120 || {
-              echo "Timed out waiting for Production Safety CI; VPS left untouched." >&2
-              exit 1
-            }
-            sleep 5
+              sleep 5
+            done
+          }
+          require_success ci.yml 'Ithute Standalone CI'
+          require_success production-safety-ci.yml 'Production Safety CI'
+
+      - name: Verify candidate images exist in GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for image in ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime; do
+            ref="${GHCR_REGISTRY}/${image}:${DEPLOY_SHA}"
+            echo "Verifying $ref"
+            docker manifest inspect "$ref" >/dev/null
           done
+          docker logout ghcr.io >/dev/null 2>&1 || true
 
       - name: Validate VPS inputs
         run: |
@@ -117,68 +146,111 @@ jobs:
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Require bootstrap and resolve rollback release
+      - name: Preflight VPS and resolve rollback release
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "test -f '$VPS_APP_DIR/.ithute-bootstrapped' && test -f '$VPS_APP_DIR/.env.production'" || {
-            echo 'Ithute production is not bootstrapped in the runtime directory.' >&2
-            exit 1
+          rollback_tag="$(ssh "$remote" "APP_DIR='$VPS_APP_DIR' MIN_FREE_KB='$MIN_FREE_KB' bash -s" <<'REMOTE'
+          set -euo pipefail
+          test -f "$APP_DIR/.ithute-bootstrapped"
+          test -f "$APP_DIR/.env.production"
+          docker info >/dev/null
+
+          valid_tag() { [[ "${1:-}" =~ ^[0-9a-f]{40}$ ]]; }
+          read_tag() {
+            file="$1"
+            [ -f "$file" ] || return 0
+            sed -n 's/^ITHUTE_IMAGE_TAG=//p' "$file" | tail -n1
           }
 
-          rollback_tag="$(ssh "$remote" "APP_DIR='$VPS_APP_DIR' SEED='$BOOTSTRAP_ROLLBACK_SHA' bash -s" <<'REMOTE'
-          set -euo pipefail
-          valid_tag() { [[ "${1:-}" =~ ^[0-9a-f]{40}$ ]]; }
-          images_present() {
-            local tag="$1" image
-            for image in ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime; do
-              docker image inspect "$image:$tag" >/dev/null 2>&1 || return 1
-            done
-          }
-          stored=""
-          if [ -f "$APP_DIR/.last-known-good.env" ]; then
-            stored="$(sed -n 's/^ITHUTE_IMAGE_TAG=//p' "$APP_DIR/.last-known-good.env" | tail -n1)"
-          fi
-          if valid_tag "$stored" && images_present "$stored"; then
-            printf '%s\n' "$stored"
+          current="$(read_tag "$APP_DIR/.image.env")"
+          last_good="$(read_tag "$APP_DIR/.last-known-good.env")"
+          rollback=""
+          if valid_tag "$current"; then
+            rollback="$current"
+          elif valid_tag "$last_good"; then
+            rollback="$last_good"
           else
-            printf '%s\n' "$SEED"
+            echo 'No valid current or last-known-good Ithute release is available for rollback.' >&2
+            exit 1
           fi
+
+          echo 'VPS storage before targeted Ithute cleanup:' >&2
+          df -h / /tmp >&2 || true
+          docker system df >&2 || true
+
+          rm -f /tmp/ithute-images-*.tar.gz /tmp/ithute-runtime-*.tgz /tmp/ithute-deploy-production.sh
+          running_images="$(docker ps --format '{{.Image}}' | sort -u)"
+          for repo in ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime; do
+            docker image ls "$repo" --format '{{.Repository}}:{{.Tag}}' | sort -u | while IFS= read -r image; do
+              [ -n "$image" ] || continue
+              if printf '%s\n' "$running_images" | grep -Fxq "$image"; then
+                echo "Keeping running image $image" >&2
+              elif [ "$image" = "$repo:$rollback" ]; then
+                echo "Keeping rollback image $image" >&2
+              else
+                echo "Removing stale Ithute image $image" >&2
+                docker image rm "$image" >/dev/null 2>&1 || true
+              fi
+            done
+          done
+          docker image prune -f >/dev/null 2>&1 || true
+
+          available_kb="$(df -Pk / | awk 'NR==2 {print $4}')"
+          available_inodes="$(df -Pi / | awk 'NR==2 {print $4}')"
+          if [ "${available_kb:-0}" -lt "$MIN_FREE_KB" ]; then
+            echo "Refusing deployment: less than 15 GiB free after safe Ithute-only cleanup." >&2
+            exit 1
+          fi
+          if [ "${available_inodes:-0}" -lt 100000 ]; then
+            echo "Refusing deployment: fewer than 100,000 free inodes." >&2
+            exit 1
+          fi
+
+          printf '%s\n' "$rollback"
           REMOTE
           )"
           [[ "$rollback_tag" =~ ^[0-9a-f]{40}$ ]]
           printf 'ROLLBACK_TAG=%s\n' "$rollback_tag" >> "$GITHUB_ENV"
+          echo "Rollback release: $rollback_tag"
 
-          if ssh "$remote" "TAG='$rollback_tag' bash -s" <<'REMOTE'
-          set -euo pipefail
-          for image in ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime; do
-            docker image inspect "$image:$TAG" >/dev/null
-          done
-          REMOTE
-          then
-            echo 'NEED_ROLLBACK_BUNDLE=0' >> "$GITHUB_ENV"
-          else
-            printf 'ROLLBACK_TAG=%s\n' "$BOOTSTRAP_ROLLBACK_SHA" >> "$GITHUB_ENV"
-            echo 'NEED_ROLLBACK_BUNDLE=1' >> "$GITHUB_ENV"
-          fi
-
-      - name: Download bootstrap rollback images
-        if: env.NEED_ROLLBACK_BUNDLE == '1'
-        uses: actions/download-artifact@v4
-        with:
-          name: ithute-images-${{ env.BOOTSTRAP_ROLLBACK_SHA }}
-          path: /tmp/ithute-rollback-images
-          run-id: ${{ env.BOOTSTRAP_ROLLBACK_RUN_ID }}
-          github-token: ${{ github.token }}
-
-      - name: Verify bootstrap rollback artifact
-        if: env.NEED_ROLLBACK_BUNDLE == '1'
+      - name: Pull candidate from GHCR without image bundle transfer
+        env:
+          GHCR_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          cd /tmp/ithute-rollback-images
-          test -f "ithute-images-${BOOTSTRAP_ROLLBACK_SHA}.tar.gz"
-          test -f "ithute-images-${BOOTSTRAP_ROLLBACK_SHA}.sha256"
-          sha256sum -c "ithute-images-${BOOTSTRAP_ROLLBACK_SHA}.sha256"
+          remote="${VPS_USER}@${VPS_HOST}"
+          auth_dir="/tmp/ithute-ghcr-${DEPLOY_SHA}"
+          ssh "$remote" "rm -rf '$auth_dir' && mkdir -p '$auth_dir' && chmod 700 '$auth_dir'"
+          printf '%s' "$GHCR_TOKEN" | ssh "$remote" "DOCKER_CONFIG='$auth_dir' docker login ghcr.io -u '$GITHUB_ACTOR' --password-stdin >/dev/null"
+          ssh "$remote" "DEPLOY_SHA='$DEPLOY_SHA' ROLLBACK_TAG='$ROLLBACK_TAG' REGISTRY='$GHCR_REGISTRY' AUTH_DIR='$auth_dir' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cleanup_auth() { rm -rf "$AUTH_DIR"; }
+          trap cleanup_auth EXIT
+
+          pull_as_local() {
+            repo="$1"
+            tag="$2"
+            local_ref="$repo:$tag"
+            if docker image inspect "$local_ref" >/dev/null 2>&1; then
+              echo "Already available: $local_ref"
+              return 0
+            fi
+            remote_ref="$REGISTRY/$repo:$tag"
+            echo "Pulling $remote_ref"
+            DOCKER_CONFIG="$AUTH_DIR" docker pull "$remote_ref"
+            docker tag "$remote_ref" "$local_ref"
+            docker image rm "$remote_ref" >/dev/null 2>&1 || true
+            docker image inspect "$local_ref" >/dev/null
+          }
+
+          for repo in ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime; do
+            pull_as_local "$repo" "$DEPLOY_SHA"
+          done
+          for repo in ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime; do
+            pull_as_local "$repo" "$ROLLBACK_TAG"
+          done
+          REMOTE
 
       - name: Build runtime-only configuration bundle
         run: |
@@ -188,36 +260,6 @@ jobs:
             infrastructure/caddy/Caddyfile \
             infrastructure/dns/zones/db.ithute.co.ls
           ! tar -tzf "/tmp/ithute-runtime-${DEPLOY_SHA}.tgz" | grep -Eq '^(apps|platform)/'
-
-      - name: Transfer and load candidate and rollback images
-        run: |
-          set -euo pipefail
-          remote="${VPS_USER}@${VPS_HOST}"
-          scp "/tmp/ithute-images/ithute-images-${DEPLOY_SHA}.tar.gz" "$remote:/tmp/ithute-images-${DEPLOY_SHA}.tar.gz"
-          if [ "${NEED_ROLLBACK_BUNDLE:-0}" = "1" ]; then
-            scp "/tmp/ithute-rollback-images/ithute-images-${BOOTSTRAP_ROLLBACK_SHA}.tar.gz" \
-              "$remote:/tmp/ithute-images-${BOOTSTRAP_ROLLBACK_SHA}.tar.gz"
-          fi
-          ssh "$remote" "DEPLOY_SHA='$DEPLOY_SHA' ROLLBACK_TAG='$ROLLBACK_TAG' BOOTSTRAP='$BOOTSTRAP_ROLLBACK_SHA' NEED_ROLLBACK='${NEED_ROLLBACK_BUNDLE:-0}' bash -s" <<'REMOTE'
-          set -euo pipefail
-          load_bundle() {
-            local tag="$1"
-            local archive="/tmp/ithute-images-${tag}.tar.gz"
-            test -s "$archive"
-            gzip -dc "$archive" | docker load
-            rm -f "$archive"
-          }
-          load_bundle "$DEPLOY_SHA"
-          if [ "$NEED_ROLLBACK" = "1" ]; then
-            load_bundle "$BOOTSTRAP"
-            ROLLBACK_TAG="$BOOTSTRAP"
-          fi
-          for tag in "$DEPLOY_SHA" "$ROLLBACK_TAG"; do
-            for image in ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime; do
-              docker image inspect "$image:$tag" >/dev/null
-            done
-          done
-          REMOTE
 
       - name: Upload runtime config and start candidate safely
         run: |
@@ -331,3 +373,35 @@ jobs:
           grep -Fiq 'auth.ithute.co.ls/oauth/authorize' /tmp/ithute-sso-headers
           grep -Fiq 'client_id=mailbox-dns' /tmp/ithute-sso-headers
           echo 'Ithute production deployment and rollback guard passed.'
+
+      - name: Retain only current and previous Ithute releases on VPS
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' ROLLBACK_TAG='$ROLLBACK_TAG' bash -s" <<'REMOTE'
+          set -euo pipefail
+          if [ "$DEPLOY_SHA" != "$ROLLBACK_TAG" ]; then
+            printf 'ITHUTE_IMAGE_TAG=%s\n' "$ROLLBACK_TAG" > "$APP_DIR/.previous-release.env"
+            chmod 600 "$APP_DIR/.previous-release.env"
+          fi
+
+          running_images="$(docker ps --format '{{.Image}}' | sort -u)"
+          for repo in ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime; do
+            docker image ls "$repo" --format '{{.Repository}}:{{.Tag}}' | sort -u | while IFS= read -r image; do
+              [ -n "$image" ] || continue
+              if printf '%s\n' "$running_images" | grep -Fxq "$image"; then
+                echo "Keeping running image $image"
+              elif [ "$image" = "$repo:$DEPLOY_SHA" ] || [ "$image" = "$repo:$ROLLBACK_TAG" ]; then
+                echo "Keeping current/rollback image $image"
+              else
+                echo "Removing old Ithute release $image"
+                docker image rm "$image" >/dev/null 2>&1 || true
+              fi
+            done
+          done
+          docker image prune -f >/dev/null 2>&1 || true
+          rm -f /tmp/ithute-runtime-compose.yml /tmp/ithute-sso-headers /tmp/ithute-sso-body
+          echo 'VPS storage after deployment retention:'
+          df -h / /tmp || true
+          docker system df || true
+          REMOTE
