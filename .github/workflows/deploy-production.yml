@@ -45,7 +45,7 @@ jobs:
           REQUESTED_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
-          git fetch origin main --force
+          main_sha="$(git rev-parse HEAD)"
           requested="${REQUESTED_SHA:-}"
           if [ -n "$requested" ]; then
             [[ "$requested" =~ ^[0-9a-f]{40}$ ]] || {
@@ -53,13 +53,13 @@ jobs:
               exit 1
             }
             git cat-file -e "$requested^{commit}"
-            git merge-base --is-ancestor "$requested" origin/main || {
+            git merge-base --is-ancestor "$requested" "$main_sha" || {
               echo 'Requested release is not part of main.' >&2
               exit 1
             }
             deploy_sha="$requested"
           else
-            deploy_sha="$(git rev-parse origin/main)"
+            deploy_sha="$main_sha"
           fi
           git checkout --detach "$deploy_sha"
           printf 'DEPLOY_SHA=%s\n' "$deploy_sha" >> "$GITHUB_ENV"
