@@ -20,6 +20,7 @@ from app.services.external_webmail import (
     _tls_context,
     normalized_config,
 )
+from app.services.mail_provider_detection import mail_exchange_hosts, provider_candidates
 
 
 @dataclass(frozen=True)
@@ -164,15 +165,27 @@ def _incoming_candidates(address: str, host: str, port: int, security: str):
     supplied = []
     if host:
         supplied.append((host.strip().lower(), int(port or 993), (security or "ssl").strip().lower()))
-    return _unique(
-        supplied
-        + [
-            (f"mail.{domain}", 993, "ssl"),
-            (f"imap.{domain}", 993, "ssl"),
-            (f"mail.{domain}", 143, "starttls"),
-            (f"imap.{domain}", 143, "starttls"),
-        ]
-    )
+
+    provider_incoming, _ = provider_candidates(address)
+    try:
+        mx_hosts = mail_exchange_hosts(address)[:2]
+    except ValueError:
+        mx_hosts = ()
+
+    standard = [
+        (f"mail.{domain}", 993, "ssl"),
+        (f"imap.{domain}", 993, "ssl"),
+        (domain, 993, "ssl"),
+        (f"mail.{domain}", 143, "starttls"),
+        (f"imap.{domain}", 143, "starttls"),
+        (domain, 143, "starttls"),
+    ]
+    mx_candidates = [(mx_host, 993, "ssl") for mx_host in mx_hosts]
+
+    # Keep an explicitly supplied host first, then try provider-aware and
+    # standards-compatible fallbacks. Every candidate still passes through the
+    # same public-host, TLS-certificate and authentication checks before use.
+    return _unique(supplied + provider_incoming + standard + mx_candidates)
 
 
 def _outgoing_candidates(address: str, host: str, port: int, security: str):
@@ -181,23 +194,37 @@ def _outgoing_candidates(address: str, host: str, port: int, security: str):
     port_value = int(port or 587)
     security_value = (security or "starttls").strip().lower()
 
+    _, provider_outgoing = provider_candidates(address)
+    try:
+        mx_hosts = mail_exchange_hosts(address)[:2]
+    except ValueError:
+        mx_hosts = ()
+
     standard = [
+        *provider_outgoing,
         (f"mail.{domain}", 587, "starttls"),
         (f"smtp.{domain}", 587, "starttls"),
+        (domain, 587, "starttls"),
         (f"mail.{domain}", 465, "ssl"),
         (f"smtp.{domain}", 465, "ssl"),
+        (domain, 465, "ssl"),
         (f"mail.{domain}", 2525, "starttls"),
         (f"smtp.{domain}", 2525, "starttls"),
     ]
+    mx_candidates = [
+        candidate
+        for mx_host in mx_hosts
+        for candidate in ((mx_host, 587, "starttls"), (mx_host, 465, "ssl"))
+    ]
 
     # The old web UI generated mail.<domain>:465/SSL as its default. Prefer
-    # the modern submission port first for that generated value, while still
-    # keeping explicitly-entered settings as the first candidate otherwise.
+    # the modern/provider-aware submission ports first for that generated
+    # value, while still keeping explicitly-entered settings first otherwise.
     looks_like_old_default = (
         host_value == f"mail.{domain}" and port_value == 465 and security_value == "ssl"
     )
     supplied = [(host_value, port_value, security_value)] if host_value else []
-    return _unique((standard + supplied) if looks_like_old_default else (supplied + standard))
+    return _unique((standard + supplied + mx_candidates) if looks_like_old_default else (supplied + standard + mx_candidates))
 
 
 def _probe_imap(host: str, port: int, security: str, username: str, password: str) -> str:

@@ -156,6 +156,18 @@ def _mx_hosts(domain: str) -> tuple[str, ...]:
         return ()
 
 
+def mail_exchange_hosts(address: str) -> tuple[str, ...]:
+    """Return the domain's public MX host names for secure client discovery.
+
+    MX records identify receiving infrastructure rather than guaranteeing an
+    IMAP/submission endpoint, so callers must still probe only standard secure
+    client ports and enforce normal TLS hostname verification/SSRF controls.
+    """
+
+    _, domain = _normalize_address(address)
+    return _mx_hosts(domain)
+
+
 def detect_mail_provider(address: str) -> MailProviderProfile | None:
     _, domain = _normalize_address(address)
     direct = _DIRECT_DOMAINS.get(domain)
