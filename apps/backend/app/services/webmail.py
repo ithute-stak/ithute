@@ -2,6 +2,7 @@ import base64
 import hashlib
 import imaplib
 import json
+import logging
 import secrets
 import smtplib
 import ssl
@@ -17,6 +18,9 @@ import redis
 
 from app.core.config import settings
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
+
+
+logger = logging.getLogger(__name__)
 
 
 class WebmailError(RuntimeError):
@@ -177,27 +181,45 @@ def _decode(value) -> str:
     return str(value)
 
 
+def _decode_payload(value, charset: str | None = None) -> str:
+    """Return MIME content as text even when the email package returns bytes.
+
+    Non-text root parts such as application/octet-stream legitimately return
+    bytes from EmailMessage.get_content(). A mailbox list must still be able to
+    produce a safe snippet instead of raising TypeError while joining bytes.
+    """
+    if value is None:
+        return ""
+    if not isinstance(value, bytes):
+        return str(value)
+
+    encoding = charset or "utf-8"
+    try:
+        return value.decode(encoding, errors="replace")
+    except (LookupError, UnicodeError):
+        return value.decode("utf-8", errors="replace")
+
+
+def _part_text(part) -> str:
+    try:
+        value = part.get_content()
+    except Exception:
+        value = part.get_payload(decode=True) or b""
+    return _decode_payload(value, part.get_content_charset())
+
+
 def _plain_body(message) -> str:
     if message.is_multipart():
         for part in message.walk():
             if part.get_content_type() == "text/plain" and part.get_content_disposition() != "attachment":
-                try:
-                    return part.get_content()
-                except Exception:
-                    payload = part.get_payload(decode=True) or b""
-                    return payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+                return _part_text(part)
         for part in message.walk():
             if part.get_content_type() == "text/html" and part.get_content_disposition() != "attachment":
-                try:
-                    html = part.get_content()
-                except Exception:
-                    html = (part.get_payload(decode=True) or b"").decode(part.get_content_charset() or "utf-8", errors="replace")
+                html = _part_text(part)
                 return unescape(sub(r"<[^>]+>", " ", html))
         return ""
-    try:
-        value = message.get_content()
-    except Exception:
-        value = (message.get_payload(decode=True) or b"").decode(message.get_content_charset() or "utf-8", errors="replace")
+
+    value = _part_text(message)
     if message.get_content_type() == "text/html":
         value = unescape(sub(r"<[^>]+>", " ", value))
     return value
@@ -306,17 +328,27 @@ def messages(address: str, password: str, folder: str = "INBOX", limit: int = 50
             status, data = client.uid("search", None, "ALL")
         if status != "OK":
             raise WebmailError("Unable to search mailbox")
-        uids = data[0].decode().split() if data and data[0] else []
+        uids = data[0].decode(errors="replace").split() if data and data[0] else []
         uids.reverse()
         selected = uids[offset : offset + limit]
         rows = []
+        skipped = 0
         for uid in selected:
             try:
                 raw, meta = _fetch_raw(client, uid, mark_seen=False)
-            except WebmailError:
-                continue
-            rows.append(_message_json(uid, raw, meta))
-        return {"items": rows, "total": len(uids), "folder": folder, "limit": limit, "offset": offset, "query": query.strip()}
+                rows.append(_message_json(uid, raw, meta))
+            except Exception as exc:
+                skipped += 1
+                logger.warning("Skipping unreadable webmail message folder=%s uid=%s: %s", folder, uid, exc)
+        return {
+            "items": rows,
+            "total": len(uids),
+            "folder": folder,
+            "limit": limit,
+            "offset": offset,
+            "query": query.strip(),
+            "skipped": skipped,
+        }
     finally:
         _close_imap(client)
 
@@ -326,7 +358,11 @@ def message(address: str, password: str, uid: str, folder: str = "INBOX") -> dic
     try:
         _select(client, folder, readonly=False)
         raw, meta = _fetch_raw(client, uid, mark_seen=True)
-        return _message_json(uid, raw, meta, include_body=True)
+        try:
+            return _message_json(uid, raw, meta, include_body=True)
+        except Exception as exc:
+            logger.warning("Unable to parse webmail message folder=%s uid=%s: %s", folder, uid, exc)
+            raise WebmailError("Unable to read message") from exc
     finally:
         _close_imap(client)
 
@@ -344,7 +380,11 @@ def set_flags(address: str, password: str, uid: str, folder: str, seen: bool | N
             if status != "OK":
                 raise WebmailError("Unable to update message flags")
         raw, meta = _fetch_raw(client, uid, mark_seen=False)
-        return _message_json(uid, raw, meta)
+        try:
+            return _message_json(uid, raw, meta)
+        except Exception as exc:
+            logger.warning("Unable to parse webmail message after flag update folder=%s uid=%s: %s", folder, uid, exc)
+            raise WebmailError("Unable to read message") from exc
     finally:
         _close_imap(client)
 
