@@ -22,11 +22,38 @@ def cleanup_domain(db, domain_id):
     db.commit()
 
 
+def no_external_dns(name, platform):
+    return {
+        "lookup_status": "no_nameservers",
+        "lookup_detail": "No authoritative nameservers were returned for this domain.",
+        "delegation_source": None,
+        "current_nameservers": [],
+        "current_provider": None,
+        "platform_nameservers": list(platform),
+        "platform_nameservers_configured": True,
+        "already_on_platform_nameservers": False,
+    }
+
+
+def cloudflare_dns(name, platform):
+    return {
+        "lookup_status": "found",
+        "lookup_detail": None,
+        "delegation_source": "recursive",
+        "current_nameservers": ["ada.ns.cloudflare.com", "bob.ns.cloudflare.com"],
+        "current_provider": "Cloudflare",
+        "platform_nameservers": list(platform),
+        "platform_nameservers_configured": True,
+        "already_on_platform_nameservers": False,
+    }
+
+
 def test_new_registrar_domain_is_created_without_txt_challenge(client, db, tenant_admin, monkeypatch):
     user, tenant, _ = tenant_admin
     headers = login(client, user.email)
     monkeypatch.setattr("app.api.v1.domains.settings.nameserver_1", "ns1.ithute.co.ls")
     monkeypatch.setattr("app.api.v1.domains.settings.nameserver_2", "ns2.ithute.co.ls")
+    monkeypatch.setattr("app.api.v1.domains.inspect_nameservers", no_external_dns)
 
     name = f"new-registration-{uuid.uuid4().hex[:10]}.co.ls"
     response = client.post(
@@ -45,19 +72,17 @@ def test_new_registrar_domain_is_created_without_txt_challenge(client, db, tenan
         headers=headers,
     )
     assert challenge.status_code == 409
-    assert "TXT verification is not required" in challenge.json()["detail"]
+    assert "No external authoritative DNS provider" in challenge.json()["detail"]
     cleanup_domain(db, uuid.UUID(body["id"]))
 
 
-def test_existing_dns_migration_is_created_without_txt_challenge(client, db, tenant_admin, monkeypatch):
+def test_existing_external_dns_migration_is_created_with_txt_challenge(client, db, tenant_admin, monkeypatch):
     user, tenant, _ = tenant_admin
     headers = login(client, user.email)
     monkeypatch.setattr("app.api.v1.domains.settings.nameserver_1", "ns1.ithute.co.ls")
     monkeypatch.setattr("app.api.v1.domains.settings.nameserver_2", "ns2.ithute.co.ls")
+    monkeypatch.setattr("app.api.v1.domains.inspect_nameservers", cloudflare_dns)
 
-    # Creation intentionally does not depend on the old provider being reachable.
-    # Existing DNS records must be staged/copied before cutover, while registrar
-    # nameserver delegation is the ownership proof for managed authoritative DNS.
     name = f"existing-migration-{uuid.uuid4().hex[:10]}.co.ls"
     response = client.post(
         f"/api/v1/tenants/{tenant.id}/domains",
@@ -66,9 +91,43 @@ def test_existing_dns_migration_is_created_without_txt_challenge(client, db, ten
     )
     assert response.status_code == 201, response.text
     body = response.json()
+    assert body["verification_method"] == "txt"
+    assert body["verification_value"].startswith("mailbox-dns-verification=")
+    assert body["verification_token_hint"] != "not-needed"
+    cleanup_domain(db, uuid.UUID(body["id"]))
+
+
+def test_pending_nameserver_domain_can_switch_to_txt_when_external_dns_is_detected(client, db, tenant_admin, monkeypatch):
+    user, tenant, _ = tenant_admin
+    headers = login(client, user.email)
+    monkeypatch.setattr("app.api.v1.domains.settings.nameserver_1", "ns1.ithute.co.ls")
+    monkeypatch.setattr("app.api.v1.domains.settings.nameserver_2", "ns2.ithute.co.ls")
+    monkeypatch.setattr("app.api.v1.domains.inspect_nameservers", no_external_dns)
+
+    name = f"migration-rescue-{uuid.uuid4().hex[:10]}.co.ls"
+    created = client.post(
+        f"/api/v1/tenants/{tenant.id}/domains",
+        headers=headers,
+        json={"name": name, "dns_mode": "platform"},
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
     assert body["verification_method"] == "nameserver"
-    assert body["verification_value"] is None
-    assert body["verification_token_hint"] == "not-needed"
+
+    monkeypatch.setattr("app.api.v1.domains.inspect_nameservers", cloudflare_dns)
+    challenge = client.post(
+        f"/api/v1/tenants/{tenant.id}/domains/{body['id']}/challenge",
+        headers=headers,
+    )
+    assert challenge.status_code == 200, challenge.text
+    challenge_body = challenge.json()
+    assert challenge_body["record_name"] == f"_mailbox-dns-verification.{name}"
+    assert challenge_body["verification_value"].startswith("mailbox-dns-verification=")
+
+    refreshed = client.get(f"/api/v1/tenants/{tenant.id}/domains/{body['id']}", headers=headers)
+    assert refreshed.status_code == 200
+    assert refreshed.json()["verification_method"] == "txt"
+    assert refreshed.json()["verification_token_hint"] != "not-needed"
     cleanup_domain(db, uuid.UUID(body["id"]))
 
 
@@ -102,4 +161,4 @@ def test_managed_dns_creation_fails_closed_if_public_platform_nameservers_are_no
         json={"name": f"blocked-{uuid.uuid4().hex[:10]}.co.ls", "dns_mode": "platform"},
     )
     assert response.status_code == 503
-    assert "No TXT fallback" in response.json()["detail"]
+    assert "No unsafe verification fallback" in response.json()["detail"]
