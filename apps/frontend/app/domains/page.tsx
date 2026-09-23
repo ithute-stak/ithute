@@ -242,7 +242,7 @@ export default function DomainsPage() {
       setMessage(
         created.verification_method === "nameserver"
           ? `${created.ascii_name} added${packageChanged ? ` under the ${selectedPlanCode} package` : ""}. No TXT token is required. Prepare DNS and records first, then delegate the registrar to both Ithute nameservers and verify after propagation.`
-          : `${created.ascii_name} added${packageChanged ? ` under the ${selectedPlanCode} package` : ""}. Existing/external DNS requires the one-time TXT ownership record before cutover.`,
+          : `${created.ascii_name} added${packageChanged ? ` under the ${selectedPlanCode} package` : ""}. Its current DNS stays live: publish the one-time TXT ownership record there, verify, then cut over to Ithute only after the staged zone is ready.`,
       );
       await loadDomains();
     } catch (reason) {
@@ -254,15 +254,20 @@ export default function DomainsPage() {
 
   async function regenerate(domain: Domain) {
     setError("");
+    const switchingFromNameserver = domain.verification_method === "nameserver";
     const response = await api(`/tenants/${tenantId}/domains/${domain.id}/challenge`, { method: "POST" });
     if (!response.ok) {
-      setError(await detail(response, "Could not regenerate verification challenge"));
+      setError(await detail(response, switchingFromNameserver ? "TXT verification is not available for this domain" : "Could not regenerate verification challenge"));
       return;
     }
     const data = await response.json();
     setChallenge(data);
     setChallengeToken(data.verification_value.split("=", 2)[1] || "");
-    setMessage("New one-time TXT challenge generated; the previous challenge is invalid.");
+    setMessage(
+      switchingFromNameserver
+        ? "TXT ownership verification enabled. Keep the current external DNS nameservers in place, publish the TXT record shown above, then click Verify."
+        : "New one-time TXT challenge generated; the previous challenge is invalid.",
+    );
     await loadDomains();
   }
 
@@ -286,7 +291,7 @@ export default function DomainsPage() {
       data.verified
         ? `${domain.ascii_name} ownership verified. Reconcile its DNS zone to activate the verified DNS/mail lifecycle.`
         : domain.verification_method === "nameserver"
-          ? "Ithute nameserver delegation is not complete yet. Make sure both ns1.ithute.co.ls and ns2.ithute.co.ls are set at the registrar, wait for propagation, then retry."
+          ? "Ithute nameserver delegation is not complete yet. If this domain is still hosted on Cloudflare, Zeecom or another external DNS provider, use TXT before cutover; otherwise set both ns1.ithute.co.ls and ns2.ithute.co.ls at the registrar, wait for propagation, then retry."
           : "TXT record not found or does not match the active challenge yet. Keep the current external DNS active and allow time for TXT propagation.",
     );
     await loadDomains();
@@ -447,13 +452,14 @@ export default function DomainsPage() {
                     {domain.status === "archived" ? <span className="font-bold text-[#89958e]">Archived</span>
                       : domain.ownership_verified_at ? <span className="font-bold text-emerald-700">Ownership verified</span>
                       : domain.verification_method === "nameserver"
-                        ? <div><div className="font-bold text-amber-700">Nameserver delegation required</div><div className="mt-1 text-[9px] text-[#89958e]">No TXT token required</div></div>
+                        ? <div><div className="font-bold text-amber-700">Nameserver delegation required</div><div className="mt-1 text-[9px] text-[#89958e]">On external DNS? Use TXT before cutover</div></div>
                         : <div><div className="font-bold text-amber-700">TXT required</div><div className="mt-1 text-[9px] text-[#89958e]">token …{domain.verification_token_hint}</div></div>}
                   </td>
                   <td>
                     <div className="flex flex-wrap gap-2">
                       {canManage && domain.status !== "archived" && domain.dns_mode === "platform" ? <a href="/dns" className="btn-secondary !min-h-0 px-2.5 py-1.5 text-[10px]"><Database size={12}/>{domain.ownership_verified_at ? "Manage DNS" : "Prepare DNS"}</a> : null}
                       {canManage && domain.status !== "archived" && !domain.ownership_verified_at && domain.verification_method === "txt" ? <button type="button" onClick={() => void regenerate(domain)} className="btn-secondary !min-h-0 px-2.5 py-1.5 text-[10px]">New token</button> : null}
+                      {canManage && domain.status !== "archived" && !domain.ownership_verified_at && domain.dns_mode === "platform" && domain.verification_method === "nameserver" ? <button type="button" onClick={() => void regenerate(domain)} className="btn-secondary !min-h-0 px-2.5 py-1.5 text-[10px]" title="Use this when the domain is still authoritative on Cloudflare, Zeecom or another external DNS provider">Use TXT</button> : null}
                       {canManage && domain.status !== "archived" && !domain.ownership_verified_at ? <button type="button" onClick={() => void verify(domain)} className="btn-primary !min-h-0 px-2.5 py-1.5 text-[10px]">Verify</button> : null}
                       {canTransfer && domain.status !== "archived" && transferOrganizations.length ? <button type="button" onClick={() => openTransfer(domain)} className="btn-secondary !min-h-0 px-2.5 py-1.5 text-[10px]" title="Move domain to another organization"><ArrowRightLeft size={12}/>Move</button> : null}
                       {canManage && domain.status !== "archived" ? <button type="button" onClick={() => void archive(domain)} className="btn-danger !min-h-0 px-2.5 py-1.5 text-[10px]" title="Archive domain"><Archive size={12}/>Archive</button> : null}
