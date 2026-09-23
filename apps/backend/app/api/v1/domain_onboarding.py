@@ -66,14 +66,13 @@ def inspect_domain_onboarding(
         and records["has_existing_dns_records"]
     )
 
-    # Ownership proof and DNS cutover are deliberately separate. If a domain is
-    # already delegated to Cloudflare, Zeecom or another external DNS provider,
-    # prove control there with a TXT record while the current DNS keeps serving.
-    # Only a domain with no external authoritative DNS (or one already delegated
-    # to Ithute) uses registrar nameserver delegation as its ownership proof.
+    # Ownership proof and DNS cutover are deliberately separate. If a managed
+    # domain is already delegated to Cloudflare, Zeecom or another external DNS
+    # provider, prove control there with a TXT record while that DNS stays live.
+    # Keep managed DNS fail-closed when Ithute's public nameservers are not ready.
     verification_method = (
         DomainVerificationMethod.txt
-        if payload.dns_mode == DomainDnsMode.external or has_external_nameservers
+        if payload.dns_mode == DomainDnsMode.external or (wants_platform and platform_ready and has_external_nameservers)
         else DomainVerificationMethod.nameserver
     )
     change_required = bool(
