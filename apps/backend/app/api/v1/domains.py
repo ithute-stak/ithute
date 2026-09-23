@@ -42,7 +42,7 @@ from app.schemas.domains import (
     DomainVerifyResponse,
 )
 from app.services.billing import require_entitlement
-from app.services.domain_discovery import platform_nameservers_ready
+from app.services.domain_discovery import inspect_nameservers, platform_nameservers_ready
 from app.services.domains import (
     add_domain_event,
     new_verification_token,
@@ -168,24 +168,34 @@ def _release_blockers(db: Session, domain: Domain) -> list[str]:
     return blockers
 
 
-def _verification_method_for_new_domain(ascii_name: str, dns_mode: DomainDnsMode) -> DomainVerificationMethod:
-    if dns_mode == DomainDnsMode.external:
-        return DomainVerificationMethod.txt
-
-    # Managed authoritative DNS follows the Cloudflare-style full-zone model:
-    # stage the zone first, then prove control by changing the registrar/registry
-    # delegation to BOTH Ithute nameservers. Existing DNS records change the
-    # migration plan, not the ownership mechanism, so no TXT challenge is needed.
+def _platform_nameserver_discovery(ascii_name: str) -> dict:
     platform_nameservers = [settings.nameserver_1, settings.nameserver_2]
     if not platform_nameservers_ready(platform_nameservers):
         raise HTTPException(
             status_code=503,
             detail=(
                 "Managed DNS onboarding is unavailable because the public Ithute nameservers are not configured. "
-                "No TXT fallback is used for managed DNS."
+                "No unsafe verification fallback is used."
             ),
         )
-    return DomainVerificationMethod.nameserver
+    return inspect_nameservers(ascii_name, platform_nameservers)
+
+
+def _verification_method_for_new_domain(ascii_name: str, dns_mode: DomainDnsMode) -> DomainVerificationMethod:
+    if dns_mode == DomainDnsMode.external:
+        return DomainVerificationMethod.txt
+
+    # Existing authoritative DNS must stay online while ownership is proved.
+    # If Cloudflare, Zeecom or another provider is currently authoritative, use
+    # a TXT challenge there first. Only domains with no external authoritative
+    # DNS (or already on Ithute) use registrar NS delegation as ownership proof.
+    discovery = _platform_nameserver_discovery(ascii_name)
+    has_external_nameservers = bool(
+        discovery["lookup_status"] == "found"
+        and discovery["current_nameservers"]
+        and not discovery["already_on_platform_nameservers"]
+    )
+    return DomainVerificationMethod.txt if has_external_nameservers else DomainVerificationMethod.nameserver
 
 
 @router.post("", response_model=DomainCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -207,8 +217,8 @@ def create_domain(tenant_id: UUID, payload: DomainCreate, db: Session = Depends(
         raise HTTPException(status_code=409, detail="Domain is already claimed by another organization")
 
     # Recompute the ownership policy on the server at creation time. Browser
-    # inspection is advisory only. Managed PowerDNS always uses NS delegation;
-    # External DNS keeps TXT because Ithute will not become authoritative there.
+    # inspection is advisory only. Existing external authoritative DNS uses TXT
+    # before cutover; new/undelegated managed DNS uses Ithute NS delegation.
     verification_method = _verification_method_for_new_domain(ascii_name, payload.dns_mode)
 
     token = new_verification_token()
@@ -276,14 +286,18 @@ def update_domain(tenant_id: UUID, domain_id: UUID, payload: DomainUpdate, db: S
     changes = payload.model_dump(exclude_unset=True)
     for field, value in changes.items():
         setattr(domain, field, value)
-    if domain.ownership_verified_at is None:
-        if domain.dns_mode == DomainDnsMode.external:
-            domain.verification_method = DomainVerificationMethod.txt.value
-        elif domain.dns_mode == DomainDnsMode.platform:
-            if not platform_nameservers_ready([settings.nameserver_1, settings.nameserver_2]):
-                raise HTTPException(status_code=503, detail="Managed DNS onboarding is unavailable because the public Ithute nameservers are not configured")
-            domain.verification_method = DomainVerificationMethod.nameserver.value
+
+    # Preserve the active verification method for ordinary edits. Re-evaluate it
+    # only when an unverified domain actually changes DNS hosting mode; otherwise
+    # a TXT-based migration could be silently pushed back to NS verification.
+    if domain.ownership_verified_at is None and "dns_mode" in changes:
+        method = _verification_method_for_new_domain(domain.ascii_name, domain.dns_mode)
+        domain.verification_method = method.value
+        if method == DomainVerificationMethod.nameserver:
             domain.verification_token_hint = "not-needed"
+        elif domain.verification_token_hint == "not-needed":
+            domain.verification_token_hint = "generate"
+
     add_domain_event(db, domain, current.id, "domain.updated", changes)
     _audit(db, tenant_id, current, "domain.update", domain, changes)
     db.commit()
@@ -358,15 +372,55 @@ def regenerate_challenge(tenant_id: UUID, domain_id: UUID, db: Session = Depends
     domain = _domain_or_404(db, tenant_id, domain_id)
     if domain.status == DomainStatus.archived:
         raise HTTPException(status_code=409, detail="Archived domain cannot be re-verified")
+
+    converted_from_nameserver = False
     if domain.verification_method != DomainVerificationMethod.txt.value:
-        raise HTTPException(status_code=409, detail="TXT verification is not required for this domain; verify ownership by nameserver delegation")
+        if domain.dns_mode != DomainDnsMode.platform:
+            raise HTTPException(status_code=409, detail="TXT verification is not available for this domain")
+
+        discovery = _platform_nameserver_discovery(domain.ascii_name)
+        has_external_nameservers = bool(
+            discovery["lookup_status"] == "found"
+            and discovery["current_nameservers"]
+            and not discovery["already_on_platform_nameservers"]
+        )
+        if not has_external_nameservers:
+            if discovery["already_on_platform_nameservers"]:
+                raise HTTPException(status_code=409, detail="This domain is already delegated to Ithute; use nameserver verification")
+            raise HTTPException(
+                status_code=409,
+                detail="No external authoritative DNS provider was detected. Prepare DNS and delegate both Ithute nameservers to verify ownership.",
+            )
+        domain.verification_method = DomainVerificationMethod.txt.value
+        converted_from_nameserver = True
+        add_domain_event(
+            db,
+            domain,
+            current.id,
+            "domain.verification_method_changed",
+            {
+                "from": DomainVerificationMethod.nameserver.value,
+                "to": DomainVerificationMethod.txt.value,
+                "reason": "external_authoritative_dns_detected",
+                "current_nameservers": discovery["current_nameservers"],
+                "current_provider": discovery.get("current_provider"),
+            },
+        )
+
     token = new_verification_token()
     domain.verification_token_hash = token_hash(token)
     domain.verification_token_hint = token[-8:]
     domain.status = DomainStatus.pending_verification
     domain.ownership_verified_at = None
     add_domain_event(db, domain, current.id, "domain.challenge_regenerated")
-    _audit(db, tenant_id, current, "domain.challenge_regenerate", domain)
+    _audit(
+        db,
+        tenant_id,
+        current,
+        "domain.challenge_regenerate",
+        domain,
+        {"converted_from_nameserver": converted_from_nameserver},
+    )
     db.commit()
     return DomainChallengeResponse(domain_id=domain.id, record_name=domain.verification_record_name, verification_value=verification_value(token))
 
@@ -475,7 +529,7 @@ def domain_readiness(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get
     require_tenant_permission(tenant_id, "dns.read", db, current)
     domain = _domain_or_404(db, tenant_id, domain_id)
     verified = domain.ownership_verified_at is not None and domain.status == DomainStatus.verified
-    pending_step = "Complete TXT ownership verification" if domain.verification_method == DomainVerificationMethod.txt.value else "Prepare DNS, delegate both Ithute nameservers, then verify"
+    pending_step = "Complete TXT ownership verification at the current DNS provider before cutover" if domain.verification_method == DomainVerificationMethod.txt.value else "Prepare DNS, delegate both Ithute nameservers, then verify"
     return DomainReadiness(
         domain_id=domain.id,
         ownership_verified=verified,
