@@ -1,6 +1,6 @@
 $TTL 300
 @   IN  SOA ns1.ithute.co.ls. hostmaster.ithute.co.ls. (
-        2026091201 ; serial
+        2026092301 ; serial
         3600       ; refresh
         900        ; retry
         1209600    ; expire
@@ -21,6 +21,8 @@ auth        IN  A       204.12.205.224
 push        IN  A       204.12.205.224
 realtime    IN  A       204.12.205.224
 mail        IN  A       204.12.205.224
+api.mama    IN  A       204.12.205.224
+media.mama  IN  A       204.12.205.224
 smtp        IN  CNAME   mail.ithute.co.ls.
 imap        IN  CNAME   mail.ithute.co.ls.
 
