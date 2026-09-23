@@ -94,7 +94,7 @@ def test_placeholder_platform_nameservers_are_never_offered_for_delegation():
     assert result["already_on_platform_nameservers"] is False
 
 
-def test_domain_inspection_existing_dns_uses_nameserver_proof_and_returns_capacity(client, tenant_admin, platform_owner, monkeypatch):
+def test_domain_inspection_existing_dns_uses_txt_proof_and_returns_capacity(client, tenant_admin, platform_owner, monkeypatch):
     _, tenant, _ = tenant_admin
     owner_headers = login(client, platform_owner.email)
 
@@ -142,9 +142,10 @@ def test_domain_inspection_existing_dns_uses_nameserver_proof_and_returns_capaci
     assert body["platform_nameservers_configured"] is True
     assert body["has_existing_dns_records"] is True
     assert body["has_existing_external_dns"] is True
-    assert body["verification_method"] == "nameserver"
-    assert body["txt_required"] is False
-    assert "No TXT ownership record is required" in body["next_step"]
+    assert body["verification_method"] == "txt"
+    assert body["txt_required"] is True
+    assert "one-time Ithute TXT ownership record" in body["next_step"]
+    assert "current nameservers stay unchanged" in body["next_step"]
     assert body["package"]["plan_code"] == "starter"
     assert body["domain_capacity"]["limit"] == 2
     assert body["domain_capacity"]["remaining"] == 2
