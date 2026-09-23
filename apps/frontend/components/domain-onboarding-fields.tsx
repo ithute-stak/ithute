@@ -237,11 +237,11 @@ export function DomainOnboardingFields({ tenantId, isPlatformOwner }: Props) {
         <div id="dns-mode-help" className="mt-2 grid gap-2 sm:grid-cols-2">
           <div className={`rounded-xl border p-3 text-[10px] leading-4 ${dnsMode === "platform" ? "border-[#87a69d] bg-[#f2f8f6]" : "border-[#e1e7e3] bg-[#fafcfb]"}`}>
             <div className="flex items-center gap-2 font-black text-[#294a40]"><Server size={13}/>Mailbox DNS / PowerDNS</div>
-            <p className="mt-1 text-[#687970]">We become authoritative DNS. Stage/import the zone first, then verify ownership automatically when the registrar delegates to both Ithute nameservers. No TXT verification string is required for managed DNS.</p>
+            <p className="mt-1 text-[#687970]">We become authoritative DNS after a safe cutover. If Cloudflare, Zeecom or another provider is serving the domain now, verify ownership there by TXT first while it stays live; new or undelegated domains can verify through Ithute nameserver delegation.</p>
           </div>
           <div className={`rounded-xl border p-3 text-[10px] leading-4 ${dnsMode === "external" ? "border-[#87a69d] bg-[#f2f8f6]" : "border-[#e1e7e3] bg-[#fafcfb]"}`}>
             <div className="flex items-center gap-2 font-black text-[#294a40]"><Globe2 size={13}/>External DNS</div>
-            <p className="mt-1 text-[#687970]">Keep Zeecom, Cloudflare or another provider authoritative. TXT ownership proof is required only in this mode, and later MX/SPF/DKIM/DMARC changes must be published at that provider.</p>
+            <p className="mt-1 text-[#687970]">Keep Zeecom, Cloudflare or another provider authoritative. TXT ownership proof is required, and later MX/SPF/DKIM/DMARC changes must be published at that provider.</p>
           </div>
         </div>
       </div>
@@ -269,10 +269,10 @@ export function DomainOnboardingFields({ tenantId, isPlatformOwner }: Props) {
           <span>
             <b>{inspection.txt_required ? "TXT ownership verification required." : "No TXT ownership token required."}</b>{" "}
             {inspection.txt_required
-              ? "This domain will remain on external DNS, so ownership is proved at the provider that stays authoritative."
-              : inspection.has_existing_external_dns
-                ? "Existing DNS was detected. Copy/import those records into the staged PowerDNS zone first; ownership will then be proved automatically by the registrar nameserver delegation."
-                : "Ownership will be proved automatically by delegating the registrar to both Ithute nameservers after the staged zone is ready."}
+              ? dnsMode === "platform"
+                ? "The current external DNS stays authoritative during ownership verification. Publish the TXT there first; switch nameservers only after the Ithute zone is staged and ready."
+                : "This domain will remain on external DNS, so ownership is proved at the provider that stays authoritative."
+              : "Ownership will be proved by the Ithute nameserver delegation after the staged zone is ready."}
           </span>
         </div>
 
@@ -284,12 +284,16 @@ export function DomainOnboardingFields({ tenantId, isPlatformOwner }: Props) {
             </div>
             <p className={`mt-2 text-[10px] font-bold ${inspection.nameserver_change_required ? "text-amber-700" : "text-emerald-700"}`}>
               {inspection.nameserver_change_required
-                ? (inspection.has_existing_external_dns ? "Import/copy all existing records into the staged zone first; then change the registrar nameservers to complete ownership verification." : "Prepare the staged zone and records first; then change the registrar nameservers to complete ownership verification.")
+                ? inspection.txt_required
+                  ? "Verify the TXT at the current DNS provider first. Import/copy the records into the staged Ithute zone, then change registrar nameservers only when the staged zone is ready."
+                  : inspection.has_existing_external_dns
+                    ? "Import/copy all existing records into the staged zone first; then change the registrar nameservers to complete ownership verification."
+                    : "Prepare the staged zone and records first; then change the registrar nameservers to complete ownership verification."
                 : "This domain already uses the platform nameservers."}
             </p>
           </div> : <div className="mt-3 flex gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-[10px] leading-4 text-amber-900">
             <AlertTriangle size={14} className="mt-0.5 shrink-0"/>
-            <span><b>Do not change the registrar nameservers yet.</b> Real public Mailbox DNS nameserver hostnames are not configured on this production installation. Managed DNS onboarding is unavailable until they are configured; Ithute will not fall back to a TXT verification string.</span>
+            <span><b>Do not change the registrar nameservers yet.</b> Real public Mailbox DNS nameserver hostnames are not configured on this production installation. Managed DNS onboarding is unavailable until they are configured; Ithute will not offer a managed-DNS verification path until the target nameservers are safe.</span>
           </div>
         ) : <div className="mt-3 flex gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[10px] leading-4 text-emerald-800"><CheckCircle2 size={13} className="mt-0.5 shrink-0"/><span>No registrar nameserver change is required in External DNS mode.</span></div>}
 
