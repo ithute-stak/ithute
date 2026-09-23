@@ -66,13 +66,14 @@ def inspect_domain_onboarding(
         and records["has_existing_dns_records"]
     )
 
-    # Full-zone managed DNS uses the registrar/registry nameserver delegation as
-    # the ownership proof, exactly as a Cloudflare-style authoritative DNS move
-    # does. Existing records affect migration preparation, not ownership method.
-    # TXT proof is retained only when another DNS provider remains authoritative.
+    # Ownership proof and DNS cutover are deliberately separate. If a domain is
+    # already delegated to Cloudflare, Zeecom or another external DNS provider,
+    # prove control there with a TXT record while the current DNS keeps serving.
+    # Only a domain with no external authoritative DNS (or one already delegated
+    # to Ithute) uses registrar nameserver delegation as its ownership proof.
     verification_method = (
         DomainVerificationMethod.txt
-        if payload.dns_mode == DomainDnsMode.external
+        if payload.dns_mode == DomainDnsMode.external or has_external_nameservers
         else DomainVerificationMethod.nameserver
     )
     change_required = bool(
@@ -87,7 +88,7 @@ def inspect_domain_onboarding(
         if not platform_ready:
             next_step = (
                 "Managed PowerDNS onboarding is temporarily unavailable because real public Ithute nameserver hostnames are not configured. "
-                "Keep the registrar nameservers unchanged. No TXT ownership challenge will be issued for managed DNS; configure the platform nameservers first."
+                "Keep the registrar nameservers unchanged; configure the platform nameservers first."
             )
         elif discovery["already_on_platform_nameservers"]:
             next_step = (
@@ -98,24 +99,23 @@ def inspect_domain_onboarding(
             record_list = ", ".join(records["existing_record_types"])
             provider = discovery["current_provider"] or "the current DNS provider"
             next_step = (
-                f"Existing DNS records were detected ({record_list}) at {provider}. Add the domain and import/copy all existing records into the staged PowerDNS zone first. "
-                f"When the staged zone is ready, change the registrar nameservers to {ns1} and {ns2}. Ithute will verify ownership automatically from that delegation. "
-                "No TXT ownership record is required."
+                f"Existing DNS records were detected ({record_list}) at {provider}. Publish the one-time Ithute TXT ownership record there and verify ownership while the current nameservers stay unchanged. "
+                f"Then add/import all existing records into the staged PowerDNS zone. When the staged zone is ready, change the registrar nameservers to {ns1} and {ns2}."
             )
         elif has_external_nameservers:
             provider = discovery["current_provider"] or "the current DNS provider"
             next_step = (
-                f"Current registrar/DNS nameservers were detected at {provider}. Add the domain, prepare the staged PowerDNS zone, then change the registrar nameservers to {ns1} and {ns2}. "
-                "Ithute will verify ownership automatically from the registrar delegation; no TXT record is required."
+                f"Current authoritative nameservers were detected at {provider}. Publish the one-time Ithute TXT ownership record there and verify ownership before cutover. "
+                f"Keep those nameservers active while you prepare the staged PowerDNS zone; when ready, change the registrar nameservers to {ns1} and {ns2}."
             )
         elif not record_classification_ready:
             next_step = (
                 "The current child DNS is not answering reliably, but managed DNS can still be staged safely. Add the domain and prepare its PowerDNS records first, "
-                f"then change the registrar nameservers to {ns1} and {ns2}. Ownership is verified from the parent-zone delegation, so no TXT record is required."
+                f"then change the registrar nameservers to {ns1} and {ns2}. Ownership is verified from the parent-zone delegation."
             )
         else:
             next_step = (
-                "No active customer-facing DNS records were detected. Add the domain and prepare the staged PowerDNS zone and records first, "
+                "No active external authoritative DNS was detected. Add the domain and prepare the staged PowerDNS zone and records first, "
                 f"then set the registrar nameservers to {ns1} and {ns2}, wait for propagation, and click Verify. "
                 "Ownership is proved by nameserver delegation; no TXT record is required."
             )
