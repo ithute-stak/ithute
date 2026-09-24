@@ -5,6 +5,7 @@ on:
     paths:
       - "scripts/deploy-production.sh"
       - "scripts/deploy-production-manual.sh"
+      - "scripts/deploy-production-latest.sh"
       - "platform/ithute-auth/**"
       - ".github/workflows/release-images.yml"
       - ".github/workflows/deploy-backup-assurance.yml"
@@ -33,6 +34,7 @@ jobs:
           set -euo pipefail
           bash -n scripts/deploy-production.sh
           bash -n scripts/deploy-production-manual.sh
+          bash -n scripts/deploy-production-latest.sh
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -40,6 +42,7 @@ jobs:
           deploy_paths = [
               Path("scripts/deploy-production.sh"),
               Path("scripts/deploy-production-manual.sh"),
+              Path("scripts/deploy-production-latest.sh"),
           ]
           forbidden = (
               "docker compose down",
@@ -61,6 +64,7 @@ jobs:
 
           script = Path("scripts/deploy-production.sh").read_text(encoding="utf-8")
           manual = Path("scripts/deploy-production-manual.sh").read_text(encoding="utf-8")
+          latest = Path("scripts/deploy-production-latest.sh").read_text(encoding="utf-8")
           release = Path(".github/workflows/release-images.yml").read_text(encoding="utf-8")
 
           for required in (
@@ -83,6 +87,16 @@ jobs:
               if required not in manual:
                   failures.append(f"deploy-production-manual.sh is missing production contract: {required}")
 
+          for required in (
+              "/branches/main",
+              "ci.yml",
+              "production-safety-ci.yml",
+              "release-images.yml",
+              "Production is already running the latest main release",
+          ):
+              if required not in latest:
+                  failures.append(f"deploy-production-latest.sh is missing latest-release contract: {required}")
+
           if ':latest' in manual or ':latest' in release:
               failures.append('Mutable latest image tags are forbidden for Ithute production.')
           if 'ssh ' in release or 'scp ' in release or 'VPS_HOST' in release or 'VPS_SSH' in release:
@@ -92,9 +106,6 @@ jobs:
           if 'Ithute Standalone CI' not in release or 'Production Safety CI' not in release:
               failures.append('Ithute Release Images must require both CI gates for the exact SHA.')
 
-          # With `set -o pipefail`, `curl ... | grep -q` can make curl exit 23
-          # after grep finds its match and closes the pipe. Public checks must
-          # capture the response first and then inspect it without a streaming pipe.
           marker = "verify_public_health() {"
           end_marker = "\n}\n\ndump_failure_logs()"
           if marker in script and end_marker in script.split(marker, 1)[1]:
@@ -109,9 +120,6 @@ jobs:
           if ".last-known-good.env" not in disk:
               failures.append("VPS disk maintenance must preserve last-known-good images")
 
-          # Alembic creates alembic_version.version_num as VARCHAR(32) unless a
-          # project explicitly customizes it. A longer revision ID executes the
-          # migration DDL and then crashes while stamping the version table.
           revision_pattern = re.compile(r'^revision\s*=\s*["\']([^"\']+)["\']', re.MULTILINE)
           seen = {}
           for path in sorted(Path("platform/ithute-auth/alembic/versions").glob("*.py")):
