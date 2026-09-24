@@ -54,6 +54,7 @@ jobs:
           set -euo pipefail
           bash -n scripts/bootstrap-vps.sh
           bash -n scripts/deploy-production.sh
+          bash -n scripts/deploy-production-manual.sh
           bash -n scripts/bootstrap-mail.sh
           bash -n mail/renew-tls.sh
           python3 -m py_compile scripts/verify-authoritative-dns.py
@@ -66,11 +67,12 @@ jobs:
 
           runtime_targets = [
               Path('.github/workflows/fresh-cutover.yml'),
-              Path('.github/workflows/deploy-production.yml'),
+              Path('.github/workflows/release-images.yml'),
               Path('.github/workflows/finalize-dns-cutover.yml'),
               Path('.github/workflows/finalize-mail.yml'),
               Path('scripts/bootstrap-vps.sh'),
               Path('scripts/deploy-production.sh'),
+              Path('scripts/deploy-production-manual.sh'),
               Path('scripts/bootstrap-mail.sh'),
               Path('mail/renew-tls.sh'),
           ]
@@ -93,36 +95,48 @@ jobs:
                   if needle in text:
                       failures.append(f'{path}: {label} ({needle})')
 
-          if failures:
-              raise SystemExit('Unsafe or source-based VPS deployment operation found:\n' + '\n'.join(failures))
-
           compose = Path('compose.production.yml').read_text(encoding='utf-8')
           if '\n    build:' in compose or '\n      build:' in compose:
-              raise SystemExit('Production compose must not contain application build contexts.')
+              failures.append('Production compose must not contain application build contexts.')
           for image in ('ithute-web:', 'ithute-app-api:', 'ithute-auth:', 'ithute-push:', 'ithute-realtime:'):
               if f'image: {image}' not in compose:
-                  raise SystemExit(f'Missing immutable runtime image declaration for {image}')
+                  failures.append(f'Missing immutable runtime image declaration for {image}')
           if 'image: powerdns/pdns-auth-49:4.9.17' not in compose:
-              raise SystemExit('Production compose must use the managed PowerDNS authoritative service.')
+              failures.append('Production compose must use the managed PowerDNS authoritative service.')
           if 'POWERDNS_API_URL: http://ithute-dns:8081/api/v1' not in compose:
-              raise SystemExit('Restored app API must use the internal PowerDNS service URL.')
+              failures.append('Restored app API must use the internal PowerDNS service URL.')
           if 'ithute_powerdns_data:/var/lib/powerdns' not in compose:
-              raise SystemExit('PowerDNS must use persistent authoritative data storage.')
+              failures.append('PowerDNS must use persistent authoritative data storage.')
 
-          deploy = Path('.github/workflows/deploy-production.yml').read_text(encoding='utf-8')
-          if 'ithute-app-api:$DEPLOY_SHA' not in deploy:
-              raise SystemExit('Production deployment must load and verify the restored app API image.')
-          if 'PowerDNSClient().get_zone' not in deploy:
-              raise SystemExit('Production deployment must verify app-to-PowerDNS connectivity.')
-          if 'Production Safety CI' not in deploy:
-              raise SystemExit('Production deployment must wait for the production startup safety gate.')
-          for source_dir in ('apps', 'platform'):
-              if f'            {source_dir} \\' in deploy:
-                  raise SystemExit(f'Production bundle still contains source directory: {source_dir}')
+          release = Path('.github/workflows/release-images.yml').read_text(encoding='utf-8')
+          manual = Path('scripts/deploy-production-manual.sh').read_text(encoding='utf-8')
+          if 'packages: write' not in release:
+              failures.append('Release Images must have packages: write permission.')
+          if 'Production Safety CI' not in release or 'Ithute Standalone CI' not in release:
+              failures.append('Release Images must require both production CI gates.')
+          if 'ghcr.io/' not in release:
+              failures.append('Release Images must publish to GHCR.')
+          if ':latest' in release or ':latest' in manual:
+              failures.append('Mutable latest image tags are forbidden for Ithute production.')
+          if 'ssh ' in release or 'scp ' in release or 'VPS_HOST' in release or 'VPS_SSH' in release:
+              failures.append('Release Images must never connect to or mutate the production VPS.')
+          if '/home/administrator/ithute-platform' not in manual:
+              failures.append('Manual production helper must be pinned to the established Ithute app directory.')
+          if 'raw.githubusercontent.com/ithute-stak/ithute' not in manual:
+              failures.append('Manual helper must fetch SHA-pinned runtime configuration from the Ithute repository.')
+          if 'scripts/deploy-production.sh' not in manual:
+              failures.append('Manual helper must reuse the rollback-safe deployment engine.')
+          if 'apps/' in manual or 'platform/' in manual:
+              failures.append('Manual VPS helper must not download application source directories.')
+
+          if failures:
+              raise SystemExit('Unsafe or invalid production release automation:\n' + '\n'.join(failures))
           PY
 
-          grep -Fq 'group: ithute-vps-production' .github/workflows/deploy-production.yml
-          grep -Fq '/home/administrator/ithute-platform' .github/workflows/deploy-production.yml
+          test ! -e .github/workflows/deploy-production.yml
+          grep -Fq 'group: ithute-release-images' .github/workflows/release-images.yml
+          grep -Fq '/home/administrator/ithute-platform' scripts/deploy-production-manual.sh
+          grep -Fq 'Production is already running release' scripts/deploy-production-manual.sh
           grep -Fq 'compose up -d --no-build' scripts/deploy-production.sh
           grep -Fq 'rollback_to_last_good' scripts/deploy-production.sh
           grep -Fq '.last-known-good.env' scripts/deploy-production.sh
@@ -255,29 +269,3 @@ jobs:
           docker image inspect "ithute-auth:$tag" >/dev/null
           docker image inspect "ithute-push:$tag" >/dev/null
           docker image inspect "ithute-realtime:$tag" >/dev/null
-
-      - name: Package tested images for production deployment
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        run: |
-          set -euo pipefail
-          tag="$GITHUB_SHA"
-          docker save \
-            "ithute-web:$tag" \
-            "ithute-app-api:$tag" \
-            "ithute-auth:$tag" \
-            "ithute-push:$tag" \
-            "ithute-realtime:$tag" \
-            | gzip -1 > "ithute-images-$tag.tar.gz"
-          sha256sum "ithute-images-$tag.tar.gz" > "ithute-images-$tag.sha256"
-
-      - name: Upload tested image bundle
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ithute-images-${{ github.sha }}
-          path: |
-            ithute-images-${{ github.sha }}.tar.gz
-            ithute-images-${{ github.sha }}.sha256
-          if-no-files-found: error
-          retention-days: 14
-          compression-level: 0
