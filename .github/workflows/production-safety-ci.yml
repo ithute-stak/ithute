@@ -4,8 +4,9 @@ on:
   pull_request:
     paths:
       - "scripts/deploy-production.sh"
+      - "scripts/deploy-production-manual.sh"
       - "platform/ithute-auth/**"
-      - ".github/workflows/deploy-production.yml"
+      - ".github/workflows/release-images.yml"
       - ".github/workflows/deploy-backup-assurance.yml"
       - ".github/workflows/deploy-telemetry.yml"
       - ".github/workflows/vps-disk-maintenance.yml"
@@ -31,13 +32,14 @@ jobs:
         run: |
           set -euo pipefail
           bash -n scripts/deploy-production.sh
+          bash -n scripts/deploy-production-manual.sh
           python3 - <<'PY'
           from pathlib import Path
           import re
 
           deploy_paths = [
               Path("scripts/deploy-production.sh"),
-              Path(".github/workflows/deploy-production.yml"),
+              Path("scripts/deploy-production-manual.sh"),
           ]
           forbidden = (
               "docker compose down",
@@ -58,6 +60,9 @@ jobs:
                           failures.append(f"{path}:{number}: destructive operation {needle!r}")
 
           script = Path("scripts/deploy-production.sh").read_text(encoding="utf-8")
+          manual = Path("scripts/deploy-production-manual.sh").read_text(encoding="utf-8")
+          release = Path(".github/workflows/release-images.yml").read_text(encoding="utf-8")
+
           for required in (
               ".last-known-good.env",
               ".last-known-good-runtime.tgz",
@@ -68,10 +73,28 @@ jobs:
               if required not in script:
                   failures.append(f"deploy-production.sh is missing rollback/health contract: {required}")
 
+          for required in (
+              "/home/administrator/ithute-platform",
+              "ghcr.io/ithute-stak",
+              "ITHUTE_FALLBACK_IMAGE_TAG",
+              "scripts/deploy-production.sh",
+              "Production is already running release",
+          ):
+              if required not in manual:
+                  failures.append(f"deploy-production-manual.sh is missing production contract: {required}")
+
+          if ':latest' in manual or ':latest' in release:
+              failures.append('Mutable latest image tags are forbidden for Ithute production.')
+          if 'ssh ' in release or 'scp ' in release or 'VPS_HOST' in release or 'VPS_SSH' in release:
+              failures.append('Ithute Release Images must never connect to the production VPS.')
+          if 'packages: write' not in release:
+              failures.append('Ithute Release Images must be able to publish packages.')
+          if 'Ithute Standalone CI' not in release or 'Production Safety CI' not in release:
+              failures.append('Ithute Release Images must require both CI gates for the exact SHA.')
+
           # With `set -o pipefail`, `curl ... | grep -q` can make curl exit 23
-          # after grep finds its match and closes the pipe. Production deploy
-          # #231 hit exactly this false negative. Public checks must capture the
-          # response first and then inspect it without a streaming pipe.
+          # after grep finds its match and closes the pipe. Public checks must
+          # capture the response first and then inspect it without a streaming pipe.
           marker = "verify_public_health() {"
           end_marker = "\n}\n\ndump_failure_logs()"
           if marker in script and end_marker in script.split(marker, 1)[1]:
@@ -89,7 +112,6 @@ jobs:
           # Alembic creates alembic_version.version_num as VARCHAR(32) unless a
           # project explicitly customizes it. A longer revision ID executes the
           # migration DDL and then crashes while stamping the version table.
-          # That exact failure took Ithute Auth offline on 2026-09-16.
           revision_pattern = re.compile(r'^revision\s*=\s*["\']([^"\']+)["\']', re.MULTILINE)
           seen = {}
           for path in sorted(Path("platform/ithute-auth/alembic/versions").glob("*.py")):
