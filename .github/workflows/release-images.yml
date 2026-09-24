@@ -1,0 +1,119 @@
+name: Ithute Release Images
+
+on:
+  workflow_run:
+    workflows: ["Production Safety CI"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: ithute-release-images
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  packages: write
+
+jobs:
+  publish:
+    name: Publish tested Ithute images
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      REGISTRY: ghcr.io/${{ github.repository_owner }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout tested commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          persist-credentials: false
+
+      - name: Require exact green CI gates
+        run: |
+          set -euo pipefail
+          require_success() {
+            workflow="$1"
+            label="$2"
+            runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?branch=main&per_page=100")"
+            row="$(printf '%s' "$runs" | jq -r --arg sha "$RELEASE_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] | if . == null then "" else [.status, (.conclusion // ""), (.html_url // "")] | @tsv end')"
+            test -n "$row" || { echo "$label has no run for $RELEASE_SHA" >&2; exit 1; }
+            IFS=$'\t' read -r status conclusion url <<< "$row"
+            echo "$label: status=$status conclusion=${conclusion:-pending} $url"
+            test "$status" = completed && test "$conclusion" = success || {
+              echo "$label did not pass for $RELEASE_SHA" >&2
+              exit 1
+            }
+          }
+          require_success ci.yml 'Ithute Standalone CI'
+          require_success production-safety-ci.yml 'Production Safety CI'
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Publish web image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/frontend
+          file: apps/frontend/Dockerfile
+          target: runner
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=/api/v1
+          tags: ${{ env.REGISTRY }}/ithute-web:${{ env.RELEASE_SHA }}
+
+      - name: Publish app API image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/backend
+          file: apps/backend/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/ithute-app-api:${{ env.RELEASE_SHA }}
+
+      - name: Publish auth image
+        uses: docker/build-push-action@v6
+        with:
+          context: platform/ithute-auth
+          file: platform/ithute-auth/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/ithute-auth:${{ env.RELEASE_SHA }}
+
+      - name: Publish push image
+        uses: docker/build-push-action@v6
+        with:
+          context: platform/ithute-push
+          file: platform/ithute-push/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/ithute-push:${{ env.RELEASE_SHA }}
+
+      - name: Publish realtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: platform/ithute-realtime
+          file: platform/ithute-realtime/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/ithute-realtime:${{ env.RELEASE_SHA }}
+
+      - name: Release summary
+        run: |
+          echo "Ithute images are published only; no VPS deployment is performed."
+          echo "Release SHA: $RELEASE_SHA"
+          for image in ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime; do
+            echo "$REGISTRY/$image:$RELEASE_SHA"
+          done
+          echo "Production changes only when an operator deploys this exact SHA from the VPS."
