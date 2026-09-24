@@ -43,15 +43,30 @@ jobs:
           require_success() {
             workflow="$1"
             label="$2"
-            runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?branch=main&per_page=100")"
-            row="$(printf '%s' "$runs" | jq -r --arg sha "$RELEASE_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] | if . == null then "" else [.status, (.conclusion // ""), (.html_url // "")] | @tsv end')"
-            test -n "$row" || { echo "$label has no run for $RELEASE_SHA" >&2; exit 1; }
-            IFS=$'\t' read -r status conclusion url <<< "$row"
-            echo "$label: status=$status conclusion=${conclusion:-pending} $url"
-            test "$status" = completed && test "$conclusion" = success || {
-              echo "$label did not pass for $RELEASE_SHA" >&2
-              exit 1
-            }
+            echo "Waiting for $label on $RELEASE_SHA. No image publication occurs before both gates pass."
+            for attempt in $(seq 1 120); do
+              runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?branch=main&per_page=100")"
+              row="$(printf '%s' "$runs" | jq -r --arg sha "$RELEASE_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] | if . == null then "" else [.status, (.conclusion // ""), (.html_url // "")] | @tsv end')"
+              if [ -z "$row" ]; then
+                echo "$label has no run for $RELEASE_SHA yet (${attempt}/120)."
+                sleep 5
+                continue
+              fi
+              IFS=$'\t' read -r status conclusion url <<< "$row"
+              echo "$label: status=$status conclusion=${conclusion:-pending} $url"
+              if [ "$status" = completed ]; then
+                test "$conclusion" = success || {
+                  echo "$label did not pass for $RELEASE_SHA" >&2
+                  exit 1
+                }
+                return 0
+              fi
+              test "$attempt" -lt 120 || {
+                echo "Timed out waiting for $label on $RELEASE_SHA" >&2
+                exit 1
+              }
+              sleep 5
+            done
           }
           require_success ci.yml 'Ithute Standalone CI'
           require_success production-safety-ci.yml 'Production Safety CI'
