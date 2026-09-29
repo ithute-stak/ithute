@@ -5,39 +5,69 @@ on:
     workflows: ["Ithute Standalone CI"]
     types: [completed]
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: "Exact tested main commit SHA to publish"
+        required: true
+        type: string
 
 permissions:
   contents: read
-  actions: read
   packages: write
+
+concurrency:
+  group: ithute-release-images
+  cancel-in-progress: false
 
 jobs:
   publish:
-    if: github.event.workflow_run.conclusion == 'success'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
-      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
-      SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+      RELEASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.release_sha || github.event.workflow_run.head_sha }}
       GHCR_REGISTRY: ghcr.io/ithute-stak
 
     steps:
-      - name: Download exact tested image bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: ithute-images-${{ env.RELEASE_SHA }}
-          path: /tmp/ithute-images
-          run-id: ${{ env.SOURCE_RUN_ID }}
-          github-token: ${{ github.token }}
-
-      - name: Verify and load tested images
+      - name: Validate release SHA
         run: |
           set -euo pipefail
-          cd /tmp/ithute-images
-          test -f "ithute-images-${RELEASE_SHA}.tar.gz"
-          test -f "ithute-images-${RELEASE_SHA}.sha256"
-          sha256sum -c "ithute-images-${RELEASE_SHA}.sha256"
-          gzip -dc "ithute-images-${RELEASE_SHA}.tar.gz" | docker load
+          if ! printf '%s' "$RELEASE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "RELEASE_SHA must be an exact 40-character commit SHA." >&2
+            exit 1
+          fi
+
+      - name: Checkout exact tested source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          persist-credentials: false
+
+      - name: Verify release belongs to main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          main_sha="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          test -n "$main_sha"
+          if [ "$RELEASE_SHA" != "$main_sha" ]; then
+            echo "Refusing to publish $RELEASE_SHA because current main is $main_sha." >&2
+            exit 1
+          fi
+
+      - name: Build immutable production images
+        run: |
+          set -euo pipefail
+          docker build --pull --target runner \
+            --build-arg NEXT_PUBLIC_API_URL=/api/v1 \
+            -t "ithute-web:$RELEASE_SHA" ./apps/frontend
+          docker build --pull -t "ithute-app-api:$RELEASE_SHA" ./apps/backend
+          docker build --pull -t "ithute-auth:$RELEASE_SHA" ./platform/ithute-auth
+          docker build --pull -t "ithute-push:$RELEASE_SHA" ./platform/ithute-push
+          docker build --pull -t "ithute-realtime:$RELEASE_SHA" ./platform/ithute-realtime
           for image in ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime; do
             docker image inspect "$image:$RELEASE_SHA" >/dev/null
           done
@@ -66,4 +96,5 @@ jobs:
             docker manifest inspect "$GHCR_REGISTRY/$image:$RELEASE_SHA" >/dev/null
           done
           docker logout ghcr.io >/dev/null 2>&1 || true
-          echo "Published tested Ithute release $RELEASE_SHA to GHCR."
+          echo "Published Ithute release $RELEASE_SHA to GHCR."
+          echo "Production remains manual: run scripts/deploy-production-manual.sh $RELEASE_SHA on the VPS when ready."
