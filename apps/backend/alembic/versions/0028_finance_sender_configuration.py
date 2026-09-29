@@ -1,6 +1,6 @@
 """add finance sender configuration
 
-Revision ID: 0028_finance_sender_configuration
+Revision ID: 0028_finance_sender
 Revises: 0027_finance_invoices
 """
 
@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "0028_finance_sender_configuration"
+revision = "0028_finance_sender"
 down_revision = "0027_finance_invoices"
 branch_labels = None
 depends_on = None
