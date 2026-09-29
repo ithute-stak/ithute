@@ -137,6 +137,16 @@ def download_finance_invoice_pdf(
     )
 
 
+def _persist_send_failure(db: Session, invoice_id: UUID, error: Exception) -> None:
+    db.rollback()
+    failed = db.get(FinanceInvoice, invoice_id)
+    if failed is None:
+        return
+    failed.status = "failed"
+    failed.last_error = str(error)[:2000]
+    db.commit()
+
+
 @router.post("/invoices/{invoice_id}/send")
 def send_finance_invoice(
     invoice_id: UUID,
@@ -154,10 +164,10 @@ def send_finance_invoice(
         send_invoice(db, invoice)
         db.commit()
     except ValueError as exc:
-        db.rollback()
+        _persist_send_failure(db, invoice_id, exc)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
-        db.rollback()
+        _persist_send_failure(db, invoice_id, exc)
         raise HTTPException(status_code=502, detail=f"Invoice email could not be sent: {str(exc)[:300]}") from exc
     db.refresh(invoice)
     return invoice_out(invoice)
