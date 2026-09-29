@@ -11,7 +11,8 @@ from app.api.deps import require_platform_owner
 from app.core.security import encrypt_secret
 from app.db.session import get_db
 from app.models import FinanceInvoice, FinanceSenderConfiguration, User
-from app.services.finance_invoice_v2 import render_invoice_pdf, send_invoice
+from app.services.finance_delivery import send_invoice
+from app.services.finance_invoice_v2 import render_invoice_pdf
 from app.services.finance_invoices import (
     build_default_email_body,
     build_default_subject,
