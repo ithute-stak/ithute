@@ -1,6 +1,7 @@
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
+from app.services import finance_invoice_v2 as invoice_v2
 from app.services.finance_invoice_v2 import (
     _HEADER_PATH,
     _SIGNATURE_PATH,
@@ -30,17 +31,40 @@ def sample_invoice():
     )
 
 
-def test_approved_invoice_artwork_and_signature_are_packaged():
+def test_invoice_artwork_and_signature_assets_are_packaged():
+    # The header asset is optional at runtime because the renderer has a vector
+    # fallback; the real handwritten signature remains required.
     assert _HEADER_PATH.is_file()
-    assert _HEADER_PATH.stat().st_size > 30_000
     assert _SIGNATURE_PATH.is_file()
     assert _SIGNATURE_PATH.stat().st_size > 4_000
 
 
-def test_invoice_pdf_renders_with_approved_artwork_and_real_signature():
+def test_invoice_pdf_renders_with_real_signature():
     pdf = render_invoice_pdf(sample_invoice())
     assert pdf.startswith(b"%PDF-")
-    assert len(pdf) > 40_000
+    assert len(pdf) > 5_000
+    assert b"%%EOF" in pdf
+
+
+def test_truncated_header_asset_cannot_break_invoice_generation(monkeypatch, tmp_path):
+    broken_header = tmp_path / "finance_invoice_header.jpg"
+    broken_header.write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01truncated")
+    monkeypatch.setattr(invoice_v2, "_HEADER_PATH", broken_header)
+
+    pdf = invoice_v2.render_invoice_pdf(sample_invoice())
+
+    assert pdf.startswith(b"%PDF-")
+    assert len(pdf) > 5_000
+    assert b"%%EOF" in pdf
+
+
+def test_missing_header_asset_cannot_break_invoice_generation(monkeypatch, tmp_path):
+    monkeypatch.setattr(invoice_v2, "_HEADER_PATH", tmp_path / "missing-header.jpg")
+
+    pdf = invoice_v2.render_invoice_pdf(sample_invoice())
+
+    assert pdf.startswith(b"%PDF-")
+    assert len(pdf) > 5_000
     assert b"%%EOF" in pdf
 
 

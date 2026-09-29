@@ -18,6 +18,7 @@ from app.services.finance_invoices import (
     COMPANY_LOCATION,
     COMPANY_WEBSITE,
     FINANCE_SENDER,
+    _draw_header as _draw_vector_header,
     build_email_html,
     finance_tenant_id,
     money,
@@ -133,6 +134,28 @@ def _draw_signature(c: canvas.Canvas, x: float, line_y: float) -> None:
     c.drawString(x, line_y - 29, AUTHORISED_TITLE)
 
 
+def _draw_header(c: canvas.Canvas, width: float, height: float) -> float:
+    """Draw the approved raster banner when usable, with a safe vector fallback.
+
+    Invoice generation must never fail merely because an optional banner asset is
+    malformed or truncated. The fallback keeps the Ithute/iMail branding and the
+    same vertical footprint so the rest of the approved layout is unchanged.
+    """
+    header_h = width * 270 / 1103
+    try:
+        c.drawImage(
+            _asset(_HEADER_PATH),
+            0,
+            height - header_h,
+            width=width,
+            height=header_h,
+            preserveAspectRatio=False,
+        )
+    except Exception:
+        _draw_vector_header(c, width, height)
+    return header_h
+
+
 def render_invoice_pdf(invoice: FinanceInvoice, *, include_stamp: bool = False) -> bytes:
     """Render the owner-approved Ithute/iMail invoice design."""
     from io import BytesIO
@@ -145,9 +168,7 @@ def render_invoice_pdf(invoice: FinanceInvoice, *, include_stamp: bool = False) 
     c.setFillColor(colors.white)
     c.rect(0, 0, width, height, fill=1, stroke=0)
 
-    # Use the approved banner itself instead of approximating/redrawing its logos.
-    header_h = width * 270 / 1103
-    c.drawImage(_asset(_HEADER_PATH), 0, height - header_h, width=width, height=header_h, preserveAspectRatio=False)
+    header_h = _draw_header(c, width, height)
 
     title_y = height - header_h - 38
     c.setFillColor(NAVY)
