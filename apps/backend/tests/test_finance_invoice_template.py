@@ -1,6 +1,10 @@
 from datetime import date, datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
+from reportlab.lib.utils import ImageReader
+
+from app.services.finance_invoice_v2 import render_invoice_pdf as render_invoice_pdf_v2
 from app.services.finance_invoices import (
     BANK_ACCOUNT_NUMBER,
     FINANCE_SENDER,
@@ -52,6 +56,21 @@ def test_default_invoice_email_is_specific_and_payment_ready():
 
 def test_invoice_pdf_is_a_real_pdf_and_contains_multiple_objects():
     pdf = render_invoice_pdf(sample_invoice())
+    assert pdf.startswith(b"%PDF-")
+    assert len(pdf) > 5000
+    assert b"%%EOF" in pdf
+
+
+def test_live_v2_header_asset_is_decodable():
+    asset = Path(__file__).resolve().parents[1] / "app" / "assets" / "finance_invoice_header.jpg"
+    reader = ImageReader(str(asset))
+    width, height = reader.getSize()
+    assert width > 0
+    assert height > 0
+
+
+def test_live_v2_invoice_pdf_renders_successfully():
+    pdf = render_invoice_pdf_v2(sample_invoice())
     assert pdf.startswith(b"%PDF-")
     assert len(pdf) > 5000
     assert b"%%EOF" in pdf
