@@ -1,7 +1,7 @@
 """add finance invoices
 
 Revision ID: 0027_finance_invoices
-Revises: 0026_platform_mail_inbound_forwarding
+Revises: 0026_mail_forwarding
 """
 
 from alembic import op
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "0027_finance_invoices"
-down_revision = "0026_platform_mail_inbound_forwarding"
+down_revision = "0026_mail_forwarding"
 branch_labels = None
 depends_on = None
 
