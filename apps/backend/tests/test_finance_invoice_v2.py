@@ -1,11 +1,11 @@
 from datetime import date, datetime, timezone
-from io import BytesIO
 from types import SimpleNamespace
 
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-
-from app.services.finance_invoice_v2 import _draw_company_stamp, render_invoice_pdf
+from app.services.finance_invoice_v2 import (
+    _HEADER_PATH,
+    _SIGNATURE_PATH,
+    render_invoice_pdf,
+)
 
 
 def sample_invoice():
@@ -30,20 +30,23 @@ def sample_invoice():
     )
 
 
-def test_v2_invoice_pdf_contains_branded_signature_and_stamp_objects():
+def test_approved_invoice_artwork_and_signature_are_packaged():
+    assert _HEADER_PATH.is_file()
+    assert _HEADER_PATH.stat().st_size > 30_000
+    assert _SIGNATURE_PATH.is_file()
+    assert _SIGNATURE_PATH.stat().st_size > 4_000
+
+
+def test_invoice_pdf_renders_with_approved_artwork_and_real_signature():
     pdf = render_invoice_pdf(sample_invoice())
     assert pdf.startswith(b"%PDF-")
-    assert len(pdf) > 7000
+    assert len(pdf) > 40_000
     assert b"%%EOF" in pdf
 
 
-def test_company_stamp_is_generated_as_vector_pdf_content():
-    buffer = BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4, pageCompression=0)
-    _draw_company_stamp(c, 300, 300, "IM-2026-0001")
-    c.save()
-    pdf = buffer.getvalue()
-    assert b"ITHUTE DIGITAL SOLUTIONS" in pdf
-    assert b"AUTHORISED" in pdf
-    assert b"FINANCE" in pdf
-    assert b"IM-2026-0001" in pdf
+def test_stamp_is_optional_and_does_not_break_renderer():
+    # The approved default reference has no stamp; it remains an opt-in capability only.
+    default_pdf = render_invoice_pdf(sample_invoice())
+    stamped_pdf = render_invoice_pdf(sample_invoice(), include_stamp=True)
+    assert stamped_pdf.startswith(b"%PDF-")
+    assert len(stamped_pdf) > len(default_pdf)
