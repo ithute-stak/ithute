@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -9,12 +9,7 @@ from app.db.session import Base
 
 
 class FinanceInvoice(Base):
-    """Internal Ithute invoice record used by the Finance module.
-
-    This is intentionally separate from tenant subscription billing invoices. It
-    represents invoices Ithute Digital Solutions sends to arbitrary customers
-    for iMail and other services.
-    """
+    """Internal Ithute invoice record used by the Finance module."""
 
     __tablename__ = "finance_invoices"
 
@@ -47,13 +42,37 @@ class FinanceInvoice(Base):
     )
 
 
-class FinanceSenderConfiguration(Base):
-    """Singleton SMTP sender configured and verified by the platform owner.
+class FinanceInvoiceSchedule(Base):
+    """Monthly invoice template that automatically generates and sends an invoice."""
 
-    The SMTP password is encrypted with Ithute's application encryption key and
-    is never returned by the API. Any change to connection/authentication fields
-    invalidates verification until a real SMTP AUTH succeeds again.
-    """
+    __tablename__ = "finance_invoice_schedules"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    client_name: Mapped[str] = mapped_column(String(180), nullable=False)
+    recipient_email: Mapped[str] = mapped_column(String(320), index=True, nullable=False)
+    client_address: Mapped[str] = mapped_column(String(500), default="", server_default="", nullable=False)
+    description: Mapped[str] = mapped_column(String(500), nullable=False)
+    details: Mapped[str] = mapped_column(String(1200), default="", server_default="", nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+    rate_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    tax_minor: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), default="LSL", server_default="LSL", nullable=False)
+    send_day: Mapped[int] = mapped_column(Integer, nullable=False)
+    due_days: Mapped[int] = mapped_column(Integer, default=7, server_default="7", nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False, index=True)
+    last_sent_period: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class FinanceSenderConfiguration(Base):
+    """Singleton SMTP sender configured and verified by the platform owner."""
 
     __tablename__ = "finance_sender_configurations"
 
