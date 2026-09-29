@@ -152,3 +152,9 @@ def install_finance_recurring_scheduler() -> None:
             return
         _started = True
         threading.Thread(target=_scheduler_loop, name="finance-recurring", daemon=True).start()
+
+
+# finance.py imports this module as part of normal API startup, so the scheduler
+# starts automatically in every API process. The PostgreSQL advisory lock keeps
+# only one worker active for each processing pass.
+install_finance_recurring_scheduler()
