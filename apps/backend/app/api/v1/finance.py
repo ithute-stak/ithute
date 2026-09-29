@@ -10,13 +10,12 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_platform_owner
 from app.db.session import get_db
 from app.models import FinanceInvoice, User
+from app.services.finance_invoice_v2 import render_invoice_pdf, send_invoice
 from app.services.finance_invoices import (
     build_default_email_body,
     build_default_subject,
     invoice_out,
     next_invoice_number,
-    render_invoice_pdf,
-    send_invoice,
 )
 
 router = APIRouter(prefix="/finance", tags=["finance"])
