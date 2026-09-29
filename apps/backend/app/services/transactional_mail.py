@@ -7,6 +7,7 @@ from email.message import EmailMessage
 from email.utils import make_msgid
 from uuid import UUID
 
+from passlib.hash import sha512_crypt
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -18,24 +19,58 @@ from app.models import Domain, DomainStatus, SmtpCredential, TransactionalMessag
 from app.services.mailboxes import hash_mailbox_password, normalize_destination
 
 
+_SHA512_CRYPT_PREFIX = "{SHA512-CRYPT}"
+
+
 def _strong_secret() -> str:
     return "Tx!" + secrets.token_urlsafe(36) + "aA9"
 
 
-def _provision_system_credential(tenant_id: UUID) -> tuple[UUID, str]:
-    """Persist the internal SMTP credential before another service authenticates it.
+def _secret_matches_password_hash(credential: SmtpCredential, raw: str) -> bool:
+    """Return whether the recoverable system secret matches Dovecot's stored hash."""
+    stored = credential.password_hash or ""
+    if stored.startswith(_SHA512_CRYPT_PREFIX):
+        stored = stored[len(_SHA512_CRYPT_PREFIX) :]
+    if not stored:
+        return False
+    try:
+        return bool(sha512_crypt.verify(raw, stored))
+    except (TypeError, ValueError):
+        return False
 
-    Dovecot checks smtp_credentials through its own PostgreSQL connection. A mere
-    flush in the caller's transaction is therefore insufficient: the credential
-    must be committed before SMTP AUTH can see it. Use a dedicated short-lived
-    transaction so we do not commit unrelated work in the caller's session.
+
+def _credential_is_usable(credential: SmtpCredential, raw: str) -> bool:
+    return bool(
+        credential.active
+        and credential.system_managed
+        and credential.secret_encrypted
+        and _secret_matches_password_hash(credential, raw)
+    )
+
+
+def _provision_system_credential(tenant_id: UUID) -> tuple[UUID, str]:
+    """Persist a valid internal SMTP credential before external SMTP AUTH.
+
+    Dovecot authenticates against ``smtp_credentials.password_hash`` using its own
+    PostgreSQL connection, while the application authenticates with the decrypted
+    ``secret_encrypted`` value. Both representations therefore have to describe
+    the exact same secret and must be committed before SMTP AUTH is attempted.
+
+    If a historical row contains an encrypted secret whose password hash has
+    drifted out of sync, rotate both values atomically instead of repeatedly
+    submitting a password Dovecot can never accept.
     """
     username = f"api_{tenant_id.hex}"
     for attempt in range(2):
         with SessionLocal() as provisioning_db:
             row = provisioning_db.scalar(select(SmtpCredential).where(SmtpCredential.username == username))
             if row and row.secret_encrypted:
-                return row.id, decrypt_secret(row.secret_encrypted)
+                try:
+                    existing_raw = decrypt_secret(row.secret_encrypted)
+                except Exception:
+                    existing_raw = ""
+                if existing_raw and _credential_is_usable(row, existing_raw):
+                    return row.id, existing_raw
 
             raw = _strong_secret()
             if row is None:
@@ -76,7 +111,12 @@ def ensure_system_credential(db: Session, tenant_id: UUID) -> tuple[SmtpCredenti
     username = f"api_{tenant_id.hex}"
     row = db.scalar(select(SmtpCredential).where(SmtpCredential.username == username))
     if row and row.secret_encrypted:
-        return row, decrypt_secret(row.secret_encrypted)
+        try:
+            raw = decrypt_secret(row.secret_encrypted)
+        except Exception:
+            raw = ""
+        if raw and _credential_is_usable(row, raw):
+            return row, raw
 
     credential_id, raw = _provision_system_credential(tenant_id)
 
@@ -90,6 +130,8 @@ def ensure_system_credential(db: Session, tenant_id: UUID) -> tuple[SmtpCredenti
         credential = db.get(SmtpCredential, credential_id)
     if credential is None or not credential.secret_encrypted:
         raise RuntimeError("Committed transactional SMTP credential is not visible to the caller")
+    if not _credential_is_usable(credential, raw):
+        raise RuntimeError("Committed transactional SMTP credential is internally inconsistent")
     return credential, raw
 
 
