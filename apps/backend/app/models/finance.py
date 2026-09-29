@@ -45,3 +45,34 @@ class FinanceInvoice(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class FinanceSenderConfiguration(Base):
+    """Singleton SMTP sender configured and verified by the platform owner.
+
+    The SMTP password is encrypted with Ithute's application encryption key and
+    is never returned by the API. Any change to connection/authentication fields
+    invalidates verification until a real SMTP AUTH succeeds again.
+    """
+
+    __tablename__ = "finance_sender_configurations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    sender_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    smtp_username: Mapped[str] = mapped_column(String(320), nullable=False)
+    smtp_password_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    smtp_host: Mapped[str] = mapped_column(String(255), nullable=False)
+    smtp_port: Mapped[int] = mapped_column(Integer, nullable=False)
+    security_mode: Mapped[str] = mapped_column(String(20), default="starttls", server_default="starttls", nullable=False)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_verification_error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
