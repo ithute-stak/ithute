@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_platform_owner
 from app.core.security import encrypt_secret
 from app.db.session import get_db
-from app.models import FinanceInvoice, FinanceSenderConfiguration, User
+from app.models import FinanceInvoice, FinanceInvoiceSchedule, FinanceSenderConfiguration, User
 from app.services.finance_delivery import send_invoice
 from app.services.finance_invoice_v2 import render_invoice_pdf
 from app.services.finance_invoices import (
@@ -20,6 +20,7 @@ from app.services.finance_invoices import (
     next_invoice_number,
 )
 from app.services.finance_mail import finance_sender_out, get_finance_sender_configuration, verify_finance_sender
+from app.services.finance_recurring import process_due_finance_schedules, schedule_out
 
 router = APIRouter(prefix="/finance", tags=["finance"])
 
@@ -44,6 +45,24 @@ class SendInvoiceRequest(BaseModel):
     resend: bool = False
 
 
+class FinanceScheduleCreate(BaseModel):
+    client_name: str = Field(min_length=2, max_length=180)
+    recipient_email: EmailStr
+    client_address: str = Field(default="", max_length=500)
+    description: str = Field(min_length=2, max_length=500)
+    details: str = Field(default="", max_length=1200)
+    quantity: int = Field(default=1, ge=1, le=10000)
+    rate_minor: int = Field(ge=0, le=2_000_000_000)
+    tax_minor: int = Field(default=0, ge=0, le=2_000_000_000)
+    currency: str = Field(default="LSL", min_length=3, max_length=3)
+    send_day: int = Field(ge=1, le=31)
+    due_days: int = Field(default=7, ge=0, le=365)
+
+
+class FinanceScheduleUpdate(BaseModel):
+    enabled: bool
+
+
 class FinanceSenderUpdate(BaseModel):
     sender_email: EmailStr
     smtp_username: str | None = Field(default=None, max_length=320)
@@ -54,20 +73,13 @@ class FinanceSenderUpdate(BaseModel):
 
 
 @router.get("/sender")
-def get_finance_sender(
-    db: Session = Depends(get_db),
-    current: User = Depends(require_platform_owner),
-):
+def get_finance_sender(db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     del current
     return finance_sender_out(get_finance_sender_configuration(db))
 
 
 @router.put("/sender")
-def update_finance_sender(
-    payload: FinanceSenderUpdate,
-    db: Session = Depends(get_db),
-    current: User = Depends(require_platform_owner),
-):
+def update_finance_sender(payload: FinanceSenderUpdate, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     mode = payload.security_mode.strip().lower()
     if mode not in {"starttls", "ssl", "plain"}:
         raise HTTPException(status_code=422, detail="Security mode must be starttls, ssl or plain")
@@ -119,10 +131,7 @@ def update_finance_sender(
 
 
 @router.post("/sender/verify")
-def verify_finance_sender_endpoint(
-    db: Session = Depends(get_db),
-    current: User = Depends(require_platform_owner),
-):
+def verify_finance_sender_endpoint(db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     del current
     config = get_finance_sender_configuration(db)
     if config is None:
@@ -138,22 +147,14 @@ def verify_finance_sender_endpoint(
 
 
 @router.get("/invoices")
-def list_finance_invoices(
-    limit: int = Query(default=100, ge=1, le=300),
-    db: Session = Depends(get_db),
-    current: User = Depends(require_platform_owner),
-):
+def list_finance_invoices(limit: int = Query(default=100, ge=1, le=300), db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     del current
     rows = db.scalars(select(FinanceInvoice).order_by(FinanceInvoice.created_at.desc()).limit(limit)).all()
     return {"items": [invoice_out(row) for row in rows], "total": len(rows)}
 
 
 @router.post("/invoices", status_code=201)
-def create_finance_invoice(
-    payload: FinanceInvoiceCreate,
-    db: Session = Depends(get_db),
-    current: User = Depends(require_platform_owner),
-):
+def create_finance_invoice(payload: FinanceInvoiceCreate, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     currency = payload.currency.strip().upper()
     if currency != "LSL":
         raise HTTPException(status_code=422, detail="Finance invoices currently use LSL")
@@ -202,11 +203,7 @@ def create_finance_invoice(
 
 
 @router.get("/invoices/{invoice_id}")
-def get_finance_invoice(
-    invoice_id: UUID,
-    db: Session = Depends(get_db),
-    current: User = Depends(require_platform_owner),
-):
+def get_finance_invoice(invoice_id: UUID, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     del current
     invoice = db.get(FinanceInvoice, invoice_id)
     if invoice is None:
@@ -214,22 +211,25 @@ def get_finance_invoice(
     return invoice_out(invoice)
 
 
+@router.delete("/invoices/{invoice_id}", status_code=204)
+def delete_finance_invoice(invoice_id: UUID, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
+    del current
+    invoice = db.get(FinanceInvoice, invoice_id)
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    db.delete(invoice)
+    db.commit()
+    return Response(status_code=204)
+
+
 @router.get("/invoices/{invoice_id}/pdf")
-def download_finance_invoice_pdf(
-    invoice_id: UUID,
-    db: Session = Depends(get_db),
-    current: User = Depends(require_platform_owner),
-):
+def download_finance_invoice_pdf(invoice_id: UUID, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     del current
     invoice = db.get(FinanceInvoice, invoice_id)
     if invoice is None:
         raise HTTPException(status_code=404, detail="Invoice not found")
     pdf = render_invoice_pdf(invoice)
-    return Response(
-        content=pdf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{invoice.invoice_number}.pdf"'},
-    )
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{invoice.invoice_number}.pdf"'})
 
 
 def _persist_send_failure(db: Session, invoice_id: UUID, error: Exception) -> None:
@@ -243,12 +243,7 @@ def _persist_send_failure(db: Session, invoice_id: UUID, error: Exception) -> No
 
 
 @router.post("/invoices/{invoice_id}/send")
-def send_finance_invoice(
-    invoice_id: UUID,
-    payload: SendInvoiceRequest,
-    db: Session = Depends(get_db),
-    current: User = Depends(require_platform_owner),
-):
+def send_finance_invoice(invoice_id: UUID, payload: SendInvoiceRequest, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     del current
     invoice = db.get(FinanceInvoice, invoice_id)
     if invoice is None:
@@ -266,3 +261,65 @@ def send_finance_invoice(
         raise HTTPException(status_code=502, detail=f"Invoice email could not be sent: {str(exc)[:300]}") from exc
     db.refresh(invoice)
     return invoice_out(invoice)
+
+
+@router.get("/schedules")
+def list_finance_schedules(db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
+    del current
+    rows = db.scalars(select(FinanceInvoiceSchedule).order_by(FinanceInvoiceSchedule.created_at.desc())).all()
+    return {"items": [schedule_out(row) for row in rows], "total": len(rows)}
+
+
+@router.post("/schedules", status_code=201)
+def create_finance_schedule(payload: FinanceScheduleCreate, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
+    currency = payload.currency.strip().upper()
+    if currency != "LSL":
+        raise HTTPException(status_code=422, detail="Finance invoices currently use LSL")
+    row = FinanceInvoiceSchedule(
+        client_name=payload.client_name.strip(),
+        recipient_email=str(payload.recipient_email).lower(),
+        client_address=payload.client_address.strip(),
+        description=payload.description.strip(),
+        details=payload.details.strip(),
+        quantity=payload.quantity,
+        rate_minor=payload.rate_minor,
+        tax_minor=payload.tax_minor,
+        currency=currency,
+        send_day=payload.send_day,
+        due_days=payload.due_days,
+        enabled=True,
+        created_by_user_id=current.id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return schedule_out(row)
+
+
+@router.patch("/schedules/{schedule_id}")
+def update_finance_schedule(schedule_id: UUID, payload: FinanceScheduleUpdate, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
+    del current
+    row = db.get(FinanceInvoiceSchedule, schedule_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Invoice schedule not found")
+    row.enabled = payload.enabled
+    db.commit()
+    db.refresh(row)
+    return schedule_out(row)
+
+
+@router.delete("/schedules/{schedule_id}", status_code=204)
+def delete_finance_schedule(schedule_id: UUID, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
+    del current
+    row = db.get(FinanceInvoiceSchedule, schedule_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Invoice schedule not found")
+    db.delete(row)
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.post("/schedules/process")
+def process_finance_schedules_now(current: User = Depends(require_platform_owner)):
+    del current
+    return {"sent": process_due_finance_schedules()}
