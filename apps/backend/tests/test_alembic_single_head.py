@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0026_mail_forwarding"
+LATEST_MIGRATION_HEAD = "0027_finance_invoices"
 
 
 def test_alembic_has_one_consolidated_head():
