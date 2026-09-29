@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-RELEASE_SHA="${1:-}"
+RELEASE_SELECTOR="${1:-latest}"
 APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute-platform}"
 REGISTRY="${ITHUTE_GHCR_REGISTRY:-ghcr.io/ithute-stak}"
 MIN_FREE_KB="${ITHUTE_MIN_FREE_KB:-15728640}"
 REPO_RAW="https://raw.githubusercontent.com/ithute-stak/ithute"
+REPO_GIT="https://github.com/ithute-stak/ithute.git"
 IMAGES=(ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime)
 
+if [ "$RELEASE_SELECTOR" = "latest" ]; then
+  echo "[Ithute] Resolving latest main release"
+  RELEASE_SHA="$(git ls-remote "$REPO_GIT" refs/heads/main | awk '{print $1}')"
+else
+  RELEASE_SHA="$RELEASE_SELECTOR"
+fi
+
 if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "Usage: $0 <40-character-tested-release-sha>" >&2
+  echo "Usage: $0 [latest|40-character-tested-release-sha]" >&2
   exit 2
 fi
 
