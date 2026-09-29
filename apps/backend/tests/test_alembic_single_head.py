@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0028_finance_sender_configuration"
+LATEST_MIGRATION_HEAD = "0028_finance_sender"
 
 
 def test_alembic_has_one_consolidated_head():
