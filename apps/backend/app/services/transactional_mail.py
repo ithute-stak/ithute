@@ -119,6 +119,7 @@ def send_message(
     subject: str,
     text_body: str | None,
     html_body: str | None,
+    attachments: list[tuple[str, str, bytes]] | None = None,
 ) -> TransactionalMessage:
     clean_sender = validate_sender(db, tenant_id, sender)
     clean_recipients = [normalize_destination(x) for x in recipients]
@@ -137,6 +138,12 @@ def send_message(
         msg.set_content("This message contains an HTML part.")
     if html_body:
         msg.add_alternative(html_body, subtype="html")
+
+    for filename, media_type, data in attachments or []:
+        if not filename or "/" not in media_type:
+            raise ValueError("Attachment filename and media type are required")
+        maintype, subtype = media_type.split("/", 1)
+        msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=filename)
 
     row = TransactionalMessage(
         tenant_id=tenant_id,
