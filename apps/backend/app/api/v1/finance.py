@@ -8,8 +8,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_platform_owner
+from app.core.security import encrypt_secret
 from app.db.session import get_db
-from app.models import FinanceInvoice, User
+from app.models import FinanceInvoice, FinanceSenderConfiguration, User
 from app.services.finance_invoice_v2 import render_invoice_pdf, send_invoice
 from app.services.finance_invoices import (
     build_default_email_body,
@@ -17,6 +18,7 @@ from app.services.finance_invoices import (
     invoice_out,
     next_invoice_number,
 )
+from app.services.finance_mail import finance_sender_out, get_finance_sender_configuration, verify_finance_sender
 
 router = APIRouter(prefix="/finance", tags=["finance"])
 
@@ -39,6 +41,99 @@ class FinanceInvoiceCreate(BaseModel):
 
 class SendInvoiceRequest(BaseModel):
     resend: bool = False
+
+
+class FinanceSenderUpdate(BaseModel):
+    sender_email: EmailStr
+    smtp_username: str | None = Field(default=None, max_length=320)
+    smtp_password: str | None = Field(default=None, min_length=1, max_length=500)
+    smtp_host: str = Field(min_length=1, max_length=255)
+    smtp_port: int = Field(ge=1, le=65535)
+    security_mode: str = Field(default="starttls", max_length=20)
+
+
+@router.get("/sender")
+def get_finance_sender(
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    del current
+    return finance_sender_out(get_finance_sender_configuration(db))
+
+
+@router.put("/sender")
+def update_finance_sender(
+    payload: FinanceSenderUpdate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    mode = payload.security_mode.strip().lower()
+    if mode not in {"starttls", "ssl", "plain"}:
+        raise HTTPException(status_code=422, detail="Security mode must be starttls, ssl or plain")
+    host = payload.smtp_host.strip()
+    username = (payload.smtp_username or "").strip() or str(payload.sender_email).lower()
+    sender_email = str(payload.sender_email).lower()
+    if any(ch.isspace() for ch in host):
+        raise HTTPException(status_code=422, detail="SMTP host must not contain spaces")
+
+    config = get_finance_sender_configuration(db)
+    password_changed = bool(payload.smtp_password)
+    if config is None:
+        if not payload.smtp_password:
+            raise HTTPException(status_code=422, detail="SMTP password is required when configuring the sender")
+        config = FinanceSenderConfiguration(
+            sender_email=sender_email,
+            smtp_username=username,
+            smtp_password_encrypted=encrypt_secret(payload.smtp_password),
+            smtp_host=host,
+            smtp_port=payload.smtp_port,
+            security_mode=mode,
+            created_by_user_id=current.id,
+            updated_by_user_id=current.id,
+        )
+        db.add(config)
+    else:
+        changed = any((
+            config.sender_email != sender_email,
+            config.smtp_username != username,
+            config.smtp_host != host,
+            config.smtp_port != payload.smtp_port,
+            config.security_mode != mode,
+            password_changed,
+        ))
+        config.sender_email = sender_email
+        config.smtp_username = username
+        config.smtp_host = host
+        config.smtp_port = payload.smtp_port
+        config.security_mode = mode
+        config.updated_by_user_id = current.id
+        if payload.smtp_password:
+            config.smtp_password_encrypted = encrypt_secret(payload.smtp_password)
+        if changed:
+            config.verified_at = None
+            config.last_verification_error = None
+    db.commit()
+    db.refresh(config)
+    return finance_sender_out(config)
+
+
+@router.post("/sender/verify")
+def verify_finance_sender_endpoint(
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    del current
+    config = get_finance_sender_configuration(db)
+    if config is None:
+        raise HTTPException(status_code=409, detail="Configure the Finance sending email first")
+    try:
+        verify_finance_sender(config)
+        db.commit()
+    except Exception as exc:
+        db.commit()
+        raise HTTPException(status_code=422, detail=f"SMTP verification failed: {str(exc)[:300]}") from exc
+    db.refresh(config)
+    return finance_sender_out(config)
 
 
 @router.get("/invoices")
