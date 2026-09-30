@@ -45,7 +45,11 @@ PSQL = os.getenv("ITHUTE_HOSTING_PSQL", "psql")
 CREATEDB = os.getenv("ITHUTE_HOSTING_CREATEDB", "createdb")
 DROPDB = os.getenv("ITHUTE_HOSTING_DROPDB", "dropdb")
 MYSQL = os.getenv("ITHUTE_HOSTING_MYSQL", "mysql")
-POSTGRES_ADMIN_DSN = os.getenv("ITHUTE_HOSTING_POSTGRES_ADMIN_DSN", "").strip()
+POSTGRES_ADMIN_HOST = os.getenv("ITHUTE_HOSTING_POSTGRES_ADMIN_HOST", "127.0.0.1").strip()
+POSTGRES_ADMIN_PORT = int(os.getenv("ITHUTE_HOSTING_POSTGRES_ADMIN_PORT", "5432"))
+POSTGRES_ADMIN_USER = os.getenv("ITHUTE_HOSTING_POSTGRES_ADMIN_USER", "").strip()
+POSTGRES_ADMIN_PASSWORD = os.getenv("ITHUTE_HOSTING_POSTGRES_ADMIN_PASSWORD", "")
+POSTGRES_ADMIN_DATABASE = os.getenv("ITHUTE_HOSTING_POSTGRES_ADMIN_DATABASE", "postgres").strip()
 POSTGRES_APP_HOST = os.getenv("ITHUTE_HOSTING_POSTGRES_HOST", "ithute-db-gateway").strip()
 POSTGRES_APP_PORT = int(os.getenv("ITHUTE_HOSTING_POSTGRES_PORT", "5432"))
 MYSQL_ADMIN_HOST = os.getenv("ITHUTE_HOSTING_MYSQL_ADMIN_HOST", "127.0.0.1").strip()
@@ -61,7 +65,12 @@ if not AGENT_TOKEN.startswith("ith_host_"):
     raise RuntimeError("ITHUTE_HOSTING_AGENT_TOKEN is not a hosting-node credential")
 if not IMAGE_PREFIX:
     raise RuntimeError("ITHUTE_HOSTING_IMAGE_PREFIX cannot be empty")
-for port_name, port in (("ITHUTE_HOSTING_POSTGRES_PORT", POSTGRES_APP_PORT), ("ITHUTE_HOSTING_MYSQL_ADMIN_PORT", MYSQL_ADMIN_PORT), ("ITHUTE_HOSTING_MYSQL_PORT", MYSQL_APP_PORT)):
+for port_name, port in (
+    ("ITHUTE_HOSTING_POSTGRES_ADMIN_PORT", POSTGRES_ADMIN_PORT),
+    ("ITHUTE_HOSTING_POSTGRES_PORT", POSTGRES_APP_PORT),
+    ("ITHUTE_HOSTING_MYSQL_ADMIN_PORT", MYSQL_ADMIN_PORT),
+    ("ITHUTE_HOSTING_MYSQL_PORT", MYSQL_APP_PORT),
+):
     if not 1 <= port <= 65535:
         raise RuntimeError(f"{port_name} must be a valid TCP port")
 
@@ -292,6 +301,8 @@ def validate_database_work(work: dict[str, Any]) -> tuple[str, str, str, str, st
     database_name = str(work.get("database_name") or "")
     username = str(work.get("username") or "")
     password = str(work.get("password") or "")
+    if not database_id:
+        raise RuntimeError("Database job is missing its id")
     if operation not in {"provision", "rotate", "suspend", "resume", "delete"}:
         raise RuntimeError("Unknown database operation")
     if engine not in {"postgresql", "mysql"}:
@@ -303,10 +314,20 @@ def validate_database_work(work: dict[str, Any]) -> tuple[str, str, str, str, st
     return database_id, operation, engine, database_name, username
 
 
-def psql(sql: str) -> str:
-    if not POSTGRES_ADMIN_DSN:
+def postgres_environment() -> dict[str, str]:
+    if not POSTGRES_ADMIN_HOST or not POSTGRES_ADMIN_USER or not POSTGRES_ADMIN_PASSWORD or not POSTGRES_ADMIN_DATABASE:
         raise RuntimeError("PostgreSQL provisioning is not configured on this hosting node")
-    return command([PSQL, POSTGRES_ADMIN_DSN, "-v", "ON_ERROR_STOP=1", "-Atqc", sql], timeout=60).stdout.strip()
+    return {"PGPASSWORD": POSTGRES_ADMIN_PASSWORD}
+
+
+def postgres_connection_args() -> list[str]:
+    postgres_environment()
+    return ["--host", POSTGRES_ADMIN_HOST, "--port", str(POSTGRES_ADMIN_PORT), "--username", POSTGRES_ADMIN_USER]
+
+
+def psql(sql: str) -> str:
+    args = [PSQL, *postgres_connection_args(), "--dbname", POSTGRES_ADMIN_DATABASE, "-v", "ON_ERROR_STOP=1", "-Atqc", sql]
+    return command(args, timeout=60, extra_env=postgres_environment()).stdout.strip()
 
 
 def postgres_database_exists(name: str) -> bool:
@@ -326,7 +347,7 @@ def postgres_operation(work: dict[str, Any]) -> tuple[str, int, str | None]:
         else:
             psql(f"CREATE ROLE {username} LOGIN PASSWORD {sql_literal(password)}")
         if not postgres_database_exists(database_name):
-            command([CREATEDB, f"--maintenance-db={POSTGRES_ADMIN_DSN}", f"--owner={username}", database_name], timeout=120)
+            command([CREATEDB, *postgres_connection_args(), f"--maintenance-db={POSTGRES_ADMIN_DATABASE}", f"--owner={username}", database_name], timeout=120, extra_env=postgres_environment())
         psql(f"GRANT CONNECT ON DATABASE {database_name} TO {username}")
     elif operation == "rotate":
         if not postgres_role_exists(username):
@@ -337,7 +358,7 @@ def postgres_operation(work: dict[str, Any]) -> tuple[str, int, str | None]:
     elif operation == "resume":
         psql(f"ALTER ROLE {username} LOGIN")
     elif operation == "delete":
-        command([DROPDB, f"--maintenance-db={POSTGRES_ADMIN_DSN}", "--if-exists", database_name], timeout=120)
+        command([DROPDB, *postgres_connection_args(), f"--maintenance-db={POSTGRES_ADMIN_DATABASE}", "--if-exists", database_name], timeout=120, extra_env=postgres_environment())
         psql(f"DROP ROLE IF EXISTS {username}")
     version = psql("SHOW server_version") if operation != "delete" else None
     return POSTGRES_APP_HOST, POSTGRES_APP_PORT, version
@@ -375,10 +396,7 @@ def mysql_operation(work: dict[str, Any]) -> tuple[str, int, str | None]:
 
 
 def report_database(database_id: str, success: bool, *, host: str | None = None, port: int | None = None, engine_version: str | None = None, message: str | None = None) -> dict[str, Any]:
-    return api(
-        f"/hosting/agent/databases/{database_id}/status",
-        {"success": success, "host": host, "port": port, "engine_version": engine_version, "message": message},
-    )
+    return api(f"/hosting/agent/databases/{database_id}/status", {"success": success, "host": host, "port": port, "engine_version": engine_version, "message": message})
 
 
 def claim_database() -> dict[str, Any] | None:
