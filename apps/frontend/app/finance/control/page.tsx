@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Calculator, CheckSquare2, LockKeyhole, RotateCcw, Send, Undo2 } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
+import { financeRoleRank, useFinanceAccess } from "../_components/use-finance-access";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 const money = (minor = 0) => `M ${(minor / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -19,7 +20,9 @@ type Invoice = { id: string; invoice_number: string; client_name: string; status
 type Refund = { id: string; invoice_id: string; payment_id: string; amount_minor: number; refund_date: string; reference: string; reason: string };
 
 export default function FinanceControlPage() {
-  const [email, setEmail] = useState(""); const [owner, setOwner] = useState(false); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
+  const { email, allowed, role, loading: accessLoading } = useFinanceAccess();
+  const isAdmin = financeRoleRank(role) >= 4;
+  const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
   const [period, setPeriod] = useState(currentPeriod()); const [periods, setPeriods] = useState<Period[]>([]); const [summary, setSummary] = useState<Summary | null>(null);
   const [taxRates, setTaxRates] = useState<TaxRate[]>([]); const [tax, setTax] = useState({ name: "", rate_percent: "", inclusive: false });
   const [invoices, setInvoices] = useState<Invoice[]>([]); const [refunds, setRefunds] = useState<Refund[]>([]); const [refund, setRefund] = useState({ payment_id: "", amount: "", refund_date: today(), reference: "", reason: "" });
@@ -37,13 +40,13 @@ export default function FinanceControlPage() {
     if (p.ok) setPeriods((await p.json()).items || []); if (s.ok) setSummary(await s.json()); if (t.ok) setTaxRates((await t.json()).items || []); if (i.ok) setInvoices((await i.json()).items || []); if (r.ok) setRefunds((await r.json()).items || []);
   }
 
-  useEffect(() => { void (async () => { const me = await api("/auth/me"); if (!me.ok) return; const body = await me.json(); setEmail(body.email || ""); setOwner(Boolean(body.is_platform_owner)); if (body.is_platform_owner) await load(); })(); }, []);
-  useEffect(() => { if (owner) void load(); }, [period, owner]);
+  useEffect(() => { if (allowed && isAdmin) void load(); }, [allowed, isAdmin]);
+  useEffect(() => { if (allowed && isAdmin) void load(); }, [period, allowed, isAdmin]);
 
   async function setPeriodStatus(lock: boolean) {
     const verb = lock ? "lock" : "reopen"; const promptText = lock ? `Lock ${period}? Financial records in this month will become read-only.` : `Reopen ${period}? This will allow financial changes again.`;
     if (!window.confirm(promptText)) return; setBusy(true); setMessage("");
-    try { const r = await api(`/finance/control/periods/${year}/${month}/${verb}`, { method: "POST", body: JSON.stringify({ note: lock ? "Month-end close" : "Period reopened by platform owner" }) }); const data = await r.json().catch(() => ({})); if (!r.ok) throw new Error(String(data.detail || `Unable to ${verb} period`)); setMessage(`${period} is now ${data.status}.`); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to update period"); } finally { setBusy(false); }
+    try { const r = await api(`/finance/control/periods/${year}/${month}/${verb}`, { method: "POST", body: JSON.stringify({ note: lock ? "Month-end close" : "Period reopened by Finance Admin" }) }); const data = await r.json().catch(() => ({})); if (!r.ok) throw new Error(String(data.detail || `Unable to ${verb} period`)); setMessage(`${period} is now ${data.status}.`); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to update period"); } finally { setBusy(false); }
   }
 
   async function addTaxRate() {
@@ -62,7 +65,7 @@ export default function FinanceControlPage() {
   }
 
   return <ControlShell title="Finance controls" subtitle="Month-end close, tax profiles, refunds and bulk invoice actions" userEmail={email}>
-    {!owner ? <section className="surface-card p-6">Finance is restricted.</section> : <div className="space-y-4 pb-24">
+    {accessLoading ? <section className="surface-card p-6">Checking Finance access…</section> : !allowed || !isAdmin ? <section className="surface-card p-6">Finance Admin access is required for month-end and system-wide financial controls.</section> : <div className="space-y-4 pb-24">
       {message ? <div className="surface-card px-4 py-3 text-xs font-bold">{message}</div> : null}
 
       <section className="surface-card p-5">
