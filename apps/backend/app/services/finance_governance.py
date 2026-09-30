@@ -8,6 +8,10 @@ from sqlalchemy.orm import Session
 from app.models import FinanceApprovalRequest, FinanceGovernanceSetting, FinanceInvoice
 
 
+class FinanceApprovalRequiredError(ValueError):
+    """Raised when an invoice is operationally blocked pending approval."""
+
+
 def get_governance_setting(db: Session) -> FinanceGovernanceSetting:
     row = db.scalar(select(FinanceGovernanceSetting).order_by(FinanceGovernanceSetting.created_at.asc()).limit(1))
     if row is None:
@@ -71,11 +75,11 @@ def ensure_invoice_approved_for_send(db: Session, invoice: FinanceInvoice) -> No
         return
     approval = invoice_approval(db, invoice.id)
     if approval is None:
-        raise ValueError(
+        raise FinanceApprovalRequiredError(
             f"Invoice {invoice.invoice_number} requires approval before sending because it exceeds the configured approval threshold"
         )
     if approval.status != "approved":
-        raise ValueError(
+        raise FinanceApprovalRequiredError(
             f"Invoice {invoice.invoice_number} approval status is {approval.status}; it cannot be sent until approved"
         )
 
