@@ -40,6 +40,7 @@ on:
       - "apps/backend/tests/test_alembic_single_head.py"
       - "apps/backend/tests/conftest.py"
       - "infrastructure/hosting-agent/**"
+      - "infrastructure/hosting-node/**"
       - "infrastructure/hosting-builder/**"
       - "infrastructure/hosting-upload/**"
       - ".github/workflows/hosting-operations-ci.yml"
@@ -111,17 +112,19 @@ jobs:
           tests/test_shared_hosting_contract.py
           tests/test_alembic_single_head.py
 
-      - name: Run ZIP quarantine, retention and builder regressions
+      - name: Run ZIP quarantine, retention, builder and network-policy regressions
         run: |
           python3 -m unittest discover -s infrastructure/hosting-upload -p 'test_*.py'
           python3 -m unittest discover -s infrastructure/hosting-builder -p 'test_*.py'
+          python3 -m unittest discover -s infrastructure/hosting-agent -p 'test_*.py'
 
       - name: Validate hosting runtime boundaries
         run: |
           set -euo pipefail
-          python3 -m py_compile infrastructure/hosting-agent/agent.py infrastructure/hosting-agent/agent_v3.py
+          python3 -m py_compile infrastructure/hosting-agent/agent.py infrastructure/hosting-agent/agent_v3.py infrastructure/hosting-agent/agent_v4.py infrastructure/hosting-agent/network_policy.py
           python3 -m py_compile infrastructure/hosting-builder/builder.py infrastructure/hosting-builder/verified_zip.py
           python3 -m py_compile infrastructure/hosting-upload/service.py infrastructure/hosting-upload/cleanup.py infrastructure/hosting-upload/zip_safety.py
+          bash -n infrastructure/hosting-node/apply-egress-firewall.sh infrastructure/hosting-node/validate-host.sh
           grep -Fq 'no-new-privileges:true' infrastructure/hosting-agent/agent.py
           grep -Fq '"--cap-drop"' infrastructure/hosting-agent/agent.py
           grep -Fq '"--read-only"' infrastructure/hosting-agent/agent.py
@@ -138,6 +141,15 @@ jobs:
           grep -Fq 'docker("logs"' infrastructure/hosting-agent/agent_v3.py
           grep -Fq 'uuid.UUID(project_id)' infrastructure/hosting-agent/agent_v3.py
           ! grep -Fq 'shell=True' infrastructure/hosting-agent/agent_v3.py
+          grep -Fq 'ITHUTE_HOSTING_NETWORK_POOL' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'choose_project_subnet' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'base.ensure_network = ensure_hosted_network' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq '10.240.0.0/12' infrastructure/hosting-node/agent.env.example
+          grep -Fq 'ITHUTE-HOSTING-EGRESS' infrastructure/hosting-node/apply-egress-firewall.sh
+          grep -Fq '169.254.0.0/16' infrastructure/hosting-node/apply-egress-firewall.sh
+          grep -Fq 'iptables -I DOCKER-USER 1 -s "$NETWORK_POOL"' infrastructure/hosting-node/apply-egress-firewall.sh
+          grep -Fq 'ExecStart=/usr/bin/python3 /opt/ithute-hosting-agent/agent_v4.py' infrastructure/hosting-node/ithute-hosting-agent.service
+          grep -Fq 'ReadWritePaths=/var/lib/ithute-hosting' infrastructure/hosting-node/ithute-hosting-agent.service
           grep -Fq 'GIT_TERMINAL_PROMPT' infrastructure/hosting-builder/builder.py
           grep -Fq 'StrictHostKeyChecking=yes' infrastructure/hosting-builder/builder.py
           grep -Fq 'Unable to detect a supported runtime' infrastructure/hosting-builder/builder.py
