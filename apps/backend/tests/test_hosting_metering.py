@@ -1,6 +1,8 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import delete
+
 from app.models import BillingPlan, HostingDatabase, HostingSource, SubscriptionStatus, TenantSubscription
 from app.services.hosting_metering import (
     database_allocation_allowed,
@@ -68,22 +70,30 @@ def test_hosting_resource_meter_counts_database_and_zip_reservations(db, tenant_
     ))
     db.commit()
 
-    meter = hosting_resource_meter(db, tenant.id)
-    assert meter["usage"]["database_count"] == 1
-    assert meter["usage"]["database_storage_bytes"] == 512 * 1024 * 1024
-    assert meter["usage"]["source_storage_bytes"] == 256 * 1024 * 1024
-    assert meter["limits"]["database_count"] == 2
-    assert meter["limits"]["database_storage_bytes"] == 1536 * 1024 * 1024
-    assert meter["limits"]["source_storage_bytes"] == 1024 * 1024 * 1024
+    try:
+        meter = hosting_resource_meter(db, tenant.id)
+        assert meter["usage"]["database_count"] == 1
+        assert meter["usage"]["database_storage_bytes"] == 512 * 1024 * 1024
+        assert meter["usage"]["source_storage_bytes"] == 256 * 1024 * 1024
+        assert meter["limits"]["database_count"] == 2
+        assert meter["limits"]["database_storage_bytes"] == 1536 * 1024 * 1024
+        assert meter["limits"]["source_storage_bytes"] == 1024 * 1024 * 1024
 
-    allowed, _, _ = database_allocation_allowed(db, tenant.id, 512)
-    assert allowed is True
-    allowed, reason, _ = database_allocation_allowed(db, tenant.id, 1200)
-    assert allowed is False
-    assert reason == "Hosted database storage limit reached"
+        allowed, _, _ = database_allocation_allowed(db, tenant.id, 512)
+        assert allowed is True
+        allowed, reason, _ = database_allocation_allowed(db, tenant.id, 1200)
+        assert allowed is False
+        assert reason == "Hosted database storage limit reached"
 
-    allowed, _, _ = source_allocation_allowed(db, tenant.id, 700 * 1024 * 1024)
-    assert allowed is True
-    allowed, reason, _ = source_allocation_allowed(db, tenant.id, 900 * 1024 * 1024)
-    assert allowed is False
-    assert reason == "Hosted source storage limit reached"
+        allowed, _, _ = source_allocation_allowed(db, tenant.id, 700 * 1024 * 1024)
+        assert allowed is True
+        allowed, reason, _ = source_allocation_allowed(db, tenant.id, 900 * 1024 * 1024)
+        assert allowed is False
+        assert reason == "Hosted source storage limit reached"
+    finally:
+        db.rollback()
+        db.execute(delete(HostingSource).where(HostingSource.tenant_id == tenant.id))
+        db.execute(delete(HostingDatabase).where(HostingDatabase.tenant_id == tenant.id))
+        db.execute(delete(TenantSubscription).where(TenantSubscription.tenant_id == tenant.id))
+        db.execute(delete(BillingPlan).where(BillingPlan.id == plan.id))
+        db.commit()
