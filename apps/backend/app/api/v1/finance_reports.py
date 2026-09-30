@@ -1,8 +1,10 @@
 import csv
+from calendar import monthrange
+from datetime import date
 from io import StringIO
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -26,10 +28,99 @@ def _invoices(db: Session) -> list[FinanceInvoice]:
     ).all())
 
 
+def _period_bounds(year: int, month: int) -> tuple[date, date]:
+    start = date(year, month, 1)
+    end = date(year, month, monthrange(year, month)[1])
+    return start, end
+
+
+def _period_rows(invoices: list[FinanceInvoice], start: date, end: date) -> list[dict]:
+    rows: list[dict] = []
+    for invoice in invoices:
+        if not invoice.created_at:
+            continue
+        issued = invoice.created_at.date()
+        if issued < start or issued > end:
+            continue
+        rows.append(invoice_financial_out(invoice))
+    return rows
+
+
 @router.get("/aging")
 def finance_aging_report(db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     del current
     return aging_out(_invoices(db))
+
+
+@router.get("/period")
+def finance_period_report(
+    year: int = Query(ge=2000, le=2100),
+    month: int = Query(ge=1, le=12),
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    del current
+    start, end = _period_bounds(year, month)
+    invoices = _invoices(db)
+    rows = _period_rows(invoices, start, end)
+    active = [row for row in rows if row["status"] != "cancelled"]
+    collected = 0
+    for invoice in invoices:
+        for payment in invoice.payments:
+            if start <= payment.payment_date <= end:
+                collected += payment.amount_minor
+    return {
+        "period": f"{year:04d}-{month:02d}",
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "invoice_count": len(active),
+        "gross_invoiced_minor": sum(row["total_minor"] for row in active),
+        "credits_minor": sum(row.get("credited_minor", 0) for row in active),
+        "net_invoiced_minor": sum(row.get("adjusted_total_minor", row["total_minor"]) for row in active),
+        "collected_minor": collected,
+        "outstanding_minor": sum(row["outstanding_minor"] for row in active),
+        "items": rows,
+    }
+
+
+@router.get("/trend")
+def finance_trend_report(
+    months: int = Query(default=12, ge=3, le=24),
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    del current
+    today = date.today()
+    invoices = _invoices(db)
+    periods: list[tuple[int, int]] = []
+    year, month = today.year, today.month
+    for _ in range(months):
+        periods.append((year, month))
+        month -= 1
+        if month == 0:
+            month = 12
+            year -= 1
+    periods.reverse()
+    result = []
+    for year, month in periods:
+        start, end = _period_bounds(year, month)
+        rows = _period_rows(invoices, start, end)
+        active = [row for row in rows if row["status"] != "cancelled"]
+        collected = sum(
+            payment.amount_minor
+            for invoice in invoices
+            for payment in invoice.payments
+            if start <= payment.payment_date <= end
+        )
+        result.append({
+            "period": f"{year:04d}-{month:02d}",
+            "label": start.strftime("%b %Y"),
+            "invoiced_minor": sum(row.get("adjusted_total_minor", row["total_minor"]) for row in active),
+            "collected_minor": collected,
+            "outstanding_minor": sum(row["outstanding_minor"] for row in active),
+            "invoice_count": len(active),
+        })
+    return {"months": result}
 
 
 @router.get("/clients/{client_id}/statement")

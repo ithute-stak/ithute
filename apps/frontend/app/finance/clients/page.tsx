@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Save, Search, Trash2, Users } from "lucide-react";
+import { Bell, BellOff, Plus, Save, Search, Trash2, Users } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
+const API = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
 type Client = {
   id: string; name: string; email: string; address: string; phone: string;
@@ -28,6 +28,7 @@ export default function FinanceClientsPage() {
   const [email, setEmail] = useState("");
   const [owner, setOwner] = useState(false);
   const [items, setItems] = useState<Client[]>([]);
+  const [reminders, setReminders] = useState<Record<string, boolean>>({});
   const [form, setForm] = useState<Form>(empty);
   const [editing, setEditing] = useState("");
   const [query, setQuery] = useState("");
@@ -41,7 +42,13 @@ export default function FinanceClientsPage() {
 
   async function load(q = query) {
     const suffix = q.trim() ? `?q=${encodeURIComponent(q.trim())}` : "";
-    const r = await api(`/finance/clients${suffix}`); if (r.ok) setItems((await r.json()).items || []);
+    const [r, p] = await Promise.all([api(`/finance/clients${suffix}`), api("/finance/preferences/clients")]);
+    if (r.ok) setItems((await r.json()).items || []);
+    if (p.ok) {
+      const body = await p.json(); const map: Record<string, boolean> = {};
+      for (const row of body.items || []) map[row.client_id] = Boolean(row.reminders_enabled);
+      setReminders(map);
+    }
   }
 
   function edit(client: Client) {
@@ -60,12 +67,22 @@ export default function FinanceClientsPage() {
     } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to save client"); } finally { setBusy(false); }
   }
 
+  async function toggleReminders(client: Client) {
+    const enabled = !(reminders[client.id] ?? true); setBusy(true);
+    try {
+      const r = await api(`/finance/preferences/clients/${client.id}/reminders`, { method: "PATCH", body: JSON.stringify({ enabled }) });
+      const data = await r.json().catch(() => ({})); if (!r.ok) throw new Error(String(data.detail || "Unable to update reminder preference"));
+      setReminders((prev) => ({ ...prev, [client.id]: enabled }));
+      setMessage(`${client.name}: automatic reminders ${enabled ? "enabled" : "paused"}.`);
+    } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to update reminders"); } finally { setBusy(false); }
+  }
+
   async function remove(client: Client) {
     if (!window.confirm(`Delete finance client ${client.name}? Existing invoices will remain.`)) return;
     setBusy(true); try { const r = await api(`/finance/clients/${client.id}`, { method: "DELETE" }); if (!r.ok) throw new Error("Unable to delete client"); await load(); setMessage(`${client.name} deleted.`); } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to delete client"); } finally { setBusy(false); }
   }
 
-  return <ControlShell title="Finance clients" subtitle="Reusable customer accounts and billing defaults" userEmail={email}>
+  return <ControlShell title="Finance clients" subtitle="Reusable customer accounts, billing defaults and reminder controls" userEmail={email}>
     {!owner ? <section className="surface-card p-6">Finance is restricted.</section> : <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
       <section className="surface-card p-5">
         <div className="flex items-center gap-2"><Users size={18} /><h1 className="font-black">{editing ? "Edit client" : "New client"}</h1></div>
@@ -85,7 +102,7 @@ export default function FinanceClientsPage() {
       </section>
       <section className="surface-card overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4"><div><p className="eyebrow-label">Client accounts</p><h2 className="mt-1 font-black">Finance clients</h2></div><div className="flex min-w-64 items-center gap-2 rounded-xl border px-3"><Search size={14} /><input className="w-full bg-transparent py-2 text-xs outline-none" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void load(e.currentTarget.value); }} placeholder="Search name, email or phone" /></div></div>
-        <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead><tr><th className="p-3">Client</th><th className="p-3">Email / phone</th><th className="p-3">Default service</th><th className="p-3">Monthly default</th><th className="p-3">Terms</th><th className="p-3">Status</th><th className="p-3">Actions</th></tr></thead><tbody>{items.map((c) => <tr key={c.id} className="border-t"><td className="p-3 font-bold">{c.name}<p className="mt-1 text-[9px] font-normal text-[var(--admin-muted)]">{c.address}</p></td><td className="p-3">{c.email}<p className="mt-1 text-[9px] text-[var(--admin-muted)]">{c.phone || "—"}</p></td><td className="p-3">{c.default_service || "—"}</td><td className="p-3 font-black">M {(c.default_quantity * c.default_rate_minor / 100 + c.default_tax_minor / 100).toFixed(2)}</td><td className="p-3">{c.payment_terms_days} days</td><td className="p-3"><span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${c.active ? "bg-[#e9f7ee] text-[#146b3a]" : "bg-[#eef3f7] text-[#526474]"}`}>{c.active ? "active" : "inactive"}</span></td><td className="p-3"><div className="flex gap-2"><button className="btn-secondary" onClick={() => edit(c)}>Edit</button><button className="btn-secondary" disabled={busy} onClick={() => void remove(c)}><Trash2 size={13} />Delete</button></div></td></tr>)}{!items.length ? <tr><td colSpan={7} className="p-8 text-center text-[var(--admin-muted)]">No finance clients yet.</td></tr> : null}</tbody></table></div>
+        <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead><tr><th className="p-3">Client</th><th className="p-3">Email / phone</th><th className="p-3">Default service</th><th className="p-3">Monthly default</th><th className="p-3">Terms</th><th className="p-3">Reminders</th><th className="p-3">Status</th><th className="p-3">Actions</th></tr></thead><tbody>{items.map((c) => { const reminderOn = reminders[c.id] ?? true; return <tr key={c.id} className="border-t"><td className="p-3 font-bold">{c.name}<p className="mt-1 text-[9px] font-normal text-[var(--admin-muted)]">{c.address}</p></td><td className="p-3">{c.email}<p className="mt-1 text-[9px] text-[var(--admin-muted)]">{c.phone || "—"}</p></td><td className="p-3">{c.default_service || "—"}</td><td className="p-3 font-black">M {(c.default_quantity * c.default_rate_minor / 100 + c.default_tax_minor / 100).toFixed(2)}</td><td className="p-3">{c.payment_terms_days} days</td><td className="p-3"><button className="btn-secondary" disabled={busy} onClick={() => void toggleReminders(c)}>{reminderOn ? <Bell size={13} /> : <BellOff size={13} />}{reminderOn ? "On" : "Paused"}</button></td><td className="p-3"><span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${c.active ? "bg-[#e9f7ee] text-[#146b3a]" : "bg-[#eef3f7] text-[#526474]"}`}>{c.active ? "active" : "inactive"}</span></td><td className="p-3"><div className="flex gap-2"><button className="btn-secondary" onClick={() => edit(c)}>Edit</button><button className="btn-secondary" disabled={busy} onClick={() => void remove(c)}><Trash2 size={13} />Delete</button></div></td></tr>})}{!items.length ? <tr><td colSpan={8} className="p-8 text-center text-[var(--admin-muted)]">No finance clients yet.</td></tr> : null}</tbody></table></div>
       </section>
     </div>}
   </ControlShell>;
