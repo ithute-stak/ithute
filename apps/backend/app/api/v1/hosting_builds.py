@@ -246,6 +246,9 @@ def claim_build(
         "build": {
             "id": str(row.id),
             "runtime": row.runtime,
+            "build_command": project.build_command,
+            "start_command": project.start_command,
+            "container_port": project.container_port,
             "image_name": f"ghcr.io/ithute-stak/hosted-{str(row.project_id).replace('-', '')}",
             "source": {
                 "type": source.source_type,
@@ -305,11 +308,14 @@ def report_build(
     commit = (payload.source_commit or "").strip().lower() or None
     if commit and (len(commit) < 7 or len(commit) > 64 or any(ch not in "0123456789abcdef" for ch in commit)):
         raise HTTPException(status_code=422, detail="Builder source_commit must be a hexadecimal Git commit id")
+    requester = db.get(User, row.requested_by_user_id)
+    if requester is None:
+        raise HTTPException(status_code=409, detail="Build requester no longer exists")
     previous = _last_healthy(db, project.id)
     deployment = _create_deployment(
         db,
         project=project,
-        current=db.get(User, row.requested_by_user_id),
+        current=requester,
         image_ref=image_ref,
         image_digest=digest,
         source_commit=commit,
