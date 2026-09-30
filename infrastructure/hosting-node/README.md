@@ -10,9 +10,11 @@ A hosting node runs customer application containers and, when enabled, dedicated
 - The production agent entrypoint is `agent_v4.py`.
 - Every project receives a dedicated Docker bridge subnet from `ITHUTE_HOSTING_NETWORK_POOL` (default `10.240.0.0/12`, `/28` per project).
 - `apply-egress-firewall.sh` protects the entire reserved pool in `DOCKER-USER` **before** customer containers start.
+- `ithute-hosting-egress.service` reapplies that policy after Docker starts and before the hosting agent, so the deny-by-default boundary is part of the host boot lifecycle rather than a one-time shell command.
 - Private/link-local/metadata destinations and arbitrary outbound ports are denied. DNS, HTTP, HTTPS and the configured local DB gateway are the only default exceptions.
 - The firewall script changes only the Ithute custom chain and its one reserved-pool jump. It does not flush the VPS firewall or prune Docker resources.
-- `validate-host.sh` fails if database listeners are wildcard/public, if an unrelated Docker network overlaps the reserved pool, if the egress policy is missing, or if known foreign product containers are present.
+- `validate-host.sh` fails if database listeners are wildcard/public, if an unrelated Docker network overlaps the reserved pool, if the egress policy is missing, if the persistent egress service is not enabled/active, or if known foreign product containers are present.
+- Set `ITHUTE_HOSTING_REQUIRE_AGENT_ACTIVE=true` for the final production-readiness pass to additionally require the hosting agent unit to be installed, enabled and active.
 
 ## PostgreSQL ownership model
 
@@ -78,22 +80,26 @@ Recommended host paths:
 ```text
 /etc/ithute-hosting-node/agent.env                 # mode 0600
 /etc/ithute-hosting-node/rclone.conf               # mode 0600
+/opt/ithute-hosting-node/apply-egress-firewall.sh
 /opt/ithute-hosting-agent/agent.py
 /opt/ithute-hosting-agent/agent_v3.py
 /opt/ithute-hosting-agent/agent_v4.py
 /opt/ithute-hosting-agent/network_policy.py
 /opt/ithute-hosting-agent/backup_remote.py
 /var/lib/ithute-hosting/database-backups/
+/etc/systemd/system/ithute-hosting-egress.service
 /etc/systemd/system/ithute-hosting-agent.service
 ```
 
-Create a dedicated `ithute-hosting-agent` system user, add only that account to the Docker group, and copy `agent.env.example` to the protected environment file. The provided systemd unit runs v4 with a read-only host filesystem except for `/var/lib/ithute-hosting`.
+Create a dedicated `ithute-hosting-agent` system user, add only that account to the Docker group, and copy `agent.env.example` to the protected environment file. The provided systemd agent unit runs v4 with a read-only host filesystem except for `/var/lib/ithute-hosting`.
+
+Install `apply-egress-firewall.sh` at `/opt/ithute-hosting-node/apply-egress-firewall.sh` with root ownership and executable permissions. Install `ithute-hosting-egress.service`, run `systemctl daemon-reload`, and enable/start that unit before the hosting agent. The egress unit is ordered after Docker and before `ithute-hosting-agent.service`.
 
 Required host utilities depend on enabled engines:
 
 - Docker Engine / CLI;
 - Python 3.12+;
-- `iptables` and `ss`;
+- `iptables`, `ss` and `systemctl`;
 - `rclone` for required off-node backup replication;
 - PostgreSQL client tools: `psql`, `createdb`, `dropdb`, `pg_dump`, `pg_restore`;
 - MySQL client tools: `mysql`, `mysqldump`.
@@ -105,19 +111,21 @@ Required host utilities depend on enabled engines:
 3. Configure private PostgreSQL/MySQL listeners and authentication.
 4. Bootstrap the PostgreSQL admin role if PostgreSQL is enabled.
 5. Configure a separate off-node `rclone` destination and protect `rclone.conf` with mode `0600`.
-6. Install `agent_v4.py`, `backup_remote.py`, its base modules, environment file, and systemd unit.
-7. Run `apply-egress-firewall.sh` before starting customer workloads.
-8. Run `validate-host.sh`; do not proceed unless it passes.
+6. Install `agent_v4.py`, `backup_remote.py`, its base modules, environment file, both systemd units, and the egress firewall script.
+7. Run `systemctl daemon-reload`, then `systemctl enable --now ithute-hosting-egress.service`. Do not start customer workloads if this unit fails.
+8. Run `validate-host.sh`; do not proceed unless it passes. This proves the current firewall state and its boot persistence unit are present.
 9. Register/rotate the one-time node token in Ithute and store it only in `agent.env`.
-10. Start `ithute-hosting-agent.service`. With the production template it will fail fast if the required backup remote is absent.
-11. Deploy a disposable test project and database, verify outbound web access, verify RFC1918/metadata/SMTP blocking, test DB provision/rotate/suspend/resume/delete, then test backup + suspended restore.
-12. Delete the disposable node-local backup and repeat restore to prove remote rehydration works before accepting customer workloads.
+10. Run `systemctl enable --now ithute-hosting-agent.service`. With the production template it will fail fast if the required backup remote is absent.
+11. Run `ITHUTE_HOSTING_REQUIRE_AGENT_ACTIVE=true validate-host.sh`; this is the strict service-lifecycle readiness pass.
+12. Deploy a disposable test project and database, verify outbound web access, verify RFC1918/metadata/SMTP blocking, test DB provision/rotate/suspend/resume/delete, then test backup + suspended restore.
+13. Delete the disposable node-local backup and repeat restore to prove remote rehydration works before accepting customer workloads.
+14. Reboot the host and repeat the strict validator. Then restart Docker and repeat it again before accepting customer workloads.
 
 ## What is still a production validation task
 
 These files make node setup reproducible and fail-closed, but they do not claim a VPS has already been validated. Before PR #219 is merged, a real dedicated hosting node still needs an end-to-end deployment exercise covering:
 
-- firewall persistence across reboot and Docker restart;
+- actual reboot and Docker-restart verification that `ithute-hosting-egress.service` restores the required policy before the hosting agent resumes workloads;
 - actual Docker/VPC CIDR non-overlap;
 - PostgreSQL/MySQL private listeners and authentication;
 - registry/image transfer into the runtime node;
