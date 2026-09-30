@@ -5,7 +5,7 @@ fail() { echo "ERROR: $*" >&2; exit 1; }
 warn() { echo "WARN: $*" >&2; }
 ok() { echo "OK: $*"; }
 
-for binary in docker ss python3 iptables; do
+for binary in docker ss python3 iptables systemctl; do
   command -v "$binary" >/dev/null 2>&1 || fail "Missing required command: $binary"
 done
 
@@ -69,6 +69,18 @@ grep -Fq -- '-j REJECT' <<<"$iptablestest" || fail "Hosted egress chain has no d
 grep -Fq -- '169.254.0.0/16' <<<"$iptablestest" || fail "Hosted egress chain does not block link-local/cloud metadata range"
 iptables -C DOCKER-USER -s "$NETWORK_POOL" -j ITHUTE-HOSTING-EGRESS >/dev/null 2>&1 || fail "Reserved hosted pool bypasses Ithute egress chain"
 ok "Reserved hosted pool is attached to deny-by-default egress policy"
+
+systemctl cat ithute-hosting-egress.service >/dev/null 2>&1 || fail "ithute-hosting-egress.service is not installed"
+systemctl is-enabled --quiet ithute-hosting-egress.service || fail "ithute-hosting-egress.service is not enabled for reboot persistence"
+systemctl is-active --quiet ithute-hosting-egress.service || fail "ithute-hosting-egress.service is not active"
+ok "Egress firewall service is installed, enabled and active"
+
+if [[ "${ITHUTE_HOSTING_REQUIRE_AGENT_ACTIVE:-false}" == "true" ]]; then
+  systemctl cat ithute-hosting-agent.service >/dev/null 2>&1 || fail "ithute-hosting-agent.service is not installed"
+  systemctl is-enabled --quiet ithute-hosting-agent.service || fail "ithute-hosting-agent.service is not enabled"
+  systemctl is-active --quiet ithute-hosting-agent.service || fail "ithute-hosting-agent.service is not active"
+  ok "Hosting agent service is installed, enabled and active"
+fi
 
 mapfile -t NETWORK_IDS < <(docker network ls --format '{{.ID}}')
 for network_id in "${NETWORK_IDS[@]}"; do
