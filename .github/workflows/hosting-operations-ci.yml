@@ -6,6 +6,7 @@ on:
       - "apps/backend/app/api/v1/application_hosting.py"
       - "apps/backend/app/api/v1/hosting_operations.py"
       - "apps/backend/app/api/v1/hosting_project_operations.py"
+      - "apps/backend/app/api/v1/hosting_database_backups.py"
       - "apps/backend/app/api/v1/hosting_build_settings.py"
       - "apps/backend/app/api/v1/hosting_builds.py"
       - "apps/backend/app/api/v1/hosting_build_logs.py"
@@ -30,6 +31,7 @@ on:
       - "apps/backend/alembic/versions/*zip*.py"
       - "apps/backend/tests/test_application_hosting.py"
       - "apps/backend/tests/test_hosting_operations*.py"
+      - "apps/backend/tests/test_hosting_database_backup_contract.py"
       - "apps/backend/tests/test_hosting_project_operations_contract.py"
       - "apps/backend/tests/test_hosting_builds_contract.py"
       - "apps/backend/tests/test_hosting_build_logs_contract.py"
@@ -103,6 +105,7 @@ jobs:
           tests/test_application_hosting.py
           tests/test_hosting_operations_unit.py
           tests/test_hosting_operations_integration.py
+          tests/test_hosting_database_backup_contract.py
           tests/test_hosting_project_operations_contract.py
           tests/test_hosting_builds_contract.py
           tests/test_hosting_build_logs_contract.py
@@ -144,6 +147,11 @@ jobs:
           grep -Fq 'ITHUTE_HOSTING_NETWORK_POOL' infrastructure/hosting-agent/agent_v4.py
           grep -Fq 'choose_project_subnet' infrastructure/hosting-agent/agent_v4.py
           grep -Fq 'base.ensure_network = ensure_hosted_network' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'base.postgres_operation = postgres_operation_v4' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'REVOKE CONNECT, TEMPORARY ON DATABASE' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'REVOKE CREATE ON SCHEMA public FROM PUBLIC' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq '"--role", username' infrastructure/hosting-agent/agent_v4.py
+          ! grep -Fq 'f"--owner={username}"' infrastructure/hosting-agent/agent_v4.py
           grep -Fq '10.240.0.0/12' infrastructure/hosting-node/agent.env.example
           grep -Fq 'ITHUTE-HOSTING-EGRESS' infrastructure/hosting-node/apply-egress-firewall.sh
           grep -Fq '169.254.0.0/16' infrastructure/hosting-node/apply-egress-firewall.sh
