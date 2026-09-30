@@ -4,12 +4,14 @@ from sqlalchemy.orm import Session
 
 from app.models import FinanceInvoice
 from app.services.finance_audit import log_finance_action
+from app.services.finance_governance import ensure_invoice_approved_for_send
 from app.services.finance_invoice_multi import render_invoice_pdf
 from app.services.finance_invoices import build_email_html
 from app.services.finance_mail import send_finance_message
 
 
 def send_invoice(db: Session, invoice: FinanceInvoice) -> None:
+    ensure_invoice_approved_for_send(db, invoice)
     pdf = render_invoice_pdf(invoice)
     try:
         send_finance_message(
