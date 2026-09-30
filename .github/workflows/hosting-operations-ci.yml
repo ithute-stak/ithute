@@ -162,6 +162,12 @@ jobs:
           grep -Fq 'ITHUTE-HOSTING-EGRESS' infrastructure/hosting-node/apply-egress-firewall.sh
           grep -Fq '169.254.0.0/16' infrastructure/hosting-node/apply-egress-firewall.sh
           grep -Fq 'iptables -I DOCKER-USER 1 -s "$NETWORK_POOL"' infrastructure/hosting-node/apply-egress-firewall.sh
+          grep -Fq 'Before=ithute-hosting-agent.service' infrastructure/hosting-node/ithute-hosting-egress.service
+          grep -Fq 'ExecStart=/opt/ithute-hosting-node/apply-egress-firewall.sh' infrastructure/hosting-node/ithute-hosting-egress.service
+          grep -Fq 'WantedBy=multi-user.target' infrastructure/hosting-node/ithute-hosting-egress.service
+          grep -Fq 'systemctl is-enabled --quiet ithute-hosting-egress.service' infrastructure/hosting-node/validate-host.sh
+          grep -Fq 'systemctl is-active --quiet ithute-hosting-egress.service' infrastructure/hosting-node/validate-host.sh
+          grep -Fq 'ITHUTE_HOSTING_REQUIRE_AGENT_ACTIVE' infrastructure/hosting-node/validate-host.sh
           grep -Fq 'ExecStart=/usr/bin/python3 /opt/ithute-hosting-agent/agent_v4.py' infrastructure/hosting-node/ithute-hosting-agent.service
           grep -Fq 'ReadWritePaths=/var/lib/ithute-hosting' infrastructure/hosting-node/ithute-hosting-agent.service
           grep -Fq 'GIT_TERMINAL_PROMPT' infrastructure/hosting-builder/builder.py
