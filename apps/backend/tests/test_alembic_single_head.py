@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0039_hosting_database_pending_password"
+LATEST_MIGRATION_HEAD = "0039_db_pending_password"
 
 
 def test_alembic_has_one_consolidated_head():
