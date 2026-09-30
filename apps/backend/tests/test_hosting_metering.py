@@ -3,7 +3,8 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete
 
-from app.models import BillingPlan, HostingDatabase, HostingSource, SubscriptionStatus, TenantSubscription
+from app.models import BillingPlan, HostingDatabase, HostingSource, SubscriptionStatus, TenantSubscription, UsageSnapshot
+from app.services.billing import capture_usage
 from app.services.hosting_metering import (
     database_allocation_allowed,
     hosting_resource_meter,
@@ -90,8 +91,14 @@ def test_hosting_resource_meter_counts_database_and_zip_reservations(db, tenant_
         allowed, reason, _ = source_allocation_allowed(db, tenant.id, 900 * 1024 * 1024)
         assert allowed is False
         assert reason == "Hosted source storage limit reached"
+
+        snapshot = capture_usage(db, tenant.id, now, now + timedelta(days=30))
+        assert snapshot.hosting_database_count == 1
+        assert snapshot.hosting_database_storage_bytes == 512 * 1024 * 1024
+        assert snapshot.hosting_source_storage_bytes == 256 * 1024 * 1024
     finally:
         db.rollback()
+        db.execute(delete(UsageSnapshot).where(UsageSnapshot.tenant_id == tenant.id))
         db.execute(delete(HostingSource).where(HostingSource.tenant_id == tenant.id))
         db.execute(delete(HostingDatabase).where(HostingDatabase.tenant_id == tenant.id))
         db.execute(delete(TenantSubscription).where(TenantSubscription.tenant_id == tenant.id))
