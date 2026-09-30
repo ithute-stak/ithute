@@ -40,7 +40,7 @@ class ProductionAcceptanceContractTests(unittest.TestCase):
 
     def test_firewall_unit_orders_after_docker_before_agent(self) -> None:
         text = FIREWALL_UNIT.read_text()
-        self.assertIn("After=docker.service", text)
+        self.assertIn("After=network-online.target docker.service", text)
         self.assertIn("Before=ithute-hosting-agent.service", text)
         self.assertIn("ExecStart=/opt/ithute-hosting-node/apply-egress-firewall.sh", text)
         self.assertIn("WantedBy=multi-user.target", text)
