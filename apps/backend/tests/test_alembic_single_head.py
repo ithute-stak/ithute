@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0041_hosting_commands"
+LATEST_MIGRATION_HEAD = "0042_zip_quarantine"
 
 
 def test_alembic_has_one_consolidated_head():
