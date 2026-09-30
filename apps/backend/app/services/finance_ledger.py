@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, object_session, selectinload
 
-from app.models import FinanceClient, FinanceInvoice, FinancePayment
+from app.models import FinanceClient, FinanceCreditNote, FinanceInvoice, FinancePayment
 from app.services.finance_invoices import invoice_out
 
 
@@ -86,11 +86,24 @@ def invoice_financial_out(invoice: FinanceInvoice) -> dict:
     return data
 
 
+def _settlement_totals(invoice: FinanceInvoice) -> tuple[int, int]:
+    session = object_session(invoice)
+    if session is None or invoice.id is None:
+        return paid_minor(invoice), credited_minor(invoice)
+    paid = session.scalar(
+        select(func.coalesce(func.sum(FinancePayment.amount_minor), 0)).where(FinancePayment.invoice_id == invoice.id)
+    ) or 0
+    credited = session.scalar(
+        select(func.coalesce(func.sum(FinanceCreditNote.amount_minor), 0)).where(FinanceCreditNote.invoice_id == invoice.id)
+    ) or 0
+    return int(paid), int(credited)
+
+
 def sync_invoice_payment_status(invoice: FinanceInvoice) -> None:
     if invoice.status == "cancelled": return
-    paid = paid_minor(invoice)
-    adjusted = adjusted_total_minor(invoice)
-    if adjusted == 0 and credited_minor(invoice) > 0: invoice.status = "credited"
+    paid, credited = _settlement_totals(invoice)
+    adjusted = max(0, invoice.total_minor - credited)
+    if adjusted == 0 and credited > 0: invoice.status = "credited"
     elif paid >= adjusted and adjusted > 0: invoice.status = "paid"
     elif paid > 0: invoice.status = "partial"
     elif invoice.sent_at is not None: invoice.status = "sent"
