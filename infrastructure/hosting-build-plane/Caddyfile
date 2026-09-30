@@ -1,0 +1,28 @@
+{$ITHUTE_HOSTING_UPLOAD_HOST} {
+    encode zstd gzip
+
+    @health path /healthz
+    handle @health {
+        reverse_proxy upload:8096
+    }
+
+    @uploads path /v1/uploads/*
+    handle @uploads {
+        reverse_proxy upload:8096 {
+            transport http {
+                dial_timeout 10s
+                response_header_timeout 30s
+            }
+        }
+    }
+
+    handle {
+        respond "Not found" 404
+    }
+
+    header {
+        -Server
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+    }
+}
