@@ -12,10 +12,23 @@ done
 docker info >/dev/null || fail "Docker daemon is not reachable"
 ok "Docker daemon reachable"
 
+NETWORK_POOL="${ITHUTE_HOSTING_NETWORK_POOL:-10.240.0.0/12}"
+NETWORK_PREFIX="${ITHUTE_HOSTING_NETWORK_PREFIX:-28}"
+
+python3 - "$NETWORK_POOL" "$NETWORK_PREFIX" <<'PY'
+import ipaddress, sys
+pool = ipaddress.ip_network(sys.argv[1], strict=True)
+prefix = int(sys.argv[2])
+if not isinstance(pool, ipaddress.IPv4Network) or not pool.is_private:
+    raise SystemExit("Reserved hosted network pool must be private IPv4")
+if prefix < pool.prefixlen or prefix > 28:
+    raise SystemExit("Hosted project prefix must be between the pool prefix and /28")
+PY
+ok "Reserved hosted network pool is valid: $NETWORK_POOL /$NETWORK_PREFIX"
+
 python3 - <<'PY'
 import ipaddress
 import subprocess
-import sys
 
 ports = {5432: "PostgreSQL", 3306: "MySQL"}
 text = subprocess.run(["ss", "-H", "-ltn"], check=True, capture_output=True, text=True).stdout
@@ -49,23 +62,47 @@ PY
 ok "Database listeners are not wildcard/public"
 
 iptables -S DOCKER-USER >/dev/null 2>&1 || fail "DOCKER-USER chain is unavailable"
-if ! iptables -S ITHUTE-HOSTING-EGRESS >/dev/null 2>&1; then
-  fail "ITHUTE-HOSTING-EGRESS chain is missing; run apply-egress-firewall.sh"
-fi
+iptables -S ITHUTE-HOSTING-EGRESS >/dev/null 2>&1 || fail "ITHUTE-HOSTING-EGRESS chain is missing; run apply-egress-firewall.sh"
+iptablestest="$(iptables -S ITHUTE-HOSTING-EGRESS)"
+grep -Fq -- '--dport 443 -j ACCEPT' <<<"$iptablestest" || warn "HTTPS egress is not allowed"
+grep -Fq -- '-j REJECT' <<<"$iptablestest" || fail "Hosted egress chain has no default reject"
+grep -Fq -- '169.254.0.0/16' <<<"$iptablestest" || fail "Hosted egress chain does not block link-local/cloud metadata range"
+iptables -C DOCKER-USER -s "$NETWORK_POOL" -j ITHUTE-HOSTING-EGRESS >/dev/null 2>&1 || fail "Reserved hosted pool bypasses Ithute egress chain"
+ok "Reserved hosted pool is attached to deny-by-default egress policy"
 
-rules="$(iptables -S ITHUTE-HOSTING-EGRESS)"
-grep -Fq -- '--dport 443 -j ACCEPT' <<<"$rules" || warn "HTTPS egress is not allowed"
-grep -Fq -- '-j REJECT' <<<"$rules" || fail "Hosted egress chain has no default reject"
-grep -Fq -- '169.254.0.0/16' <<<"$rules" || fail "Hosted egress chain does not block link-local/cloud metadata range"
-ok "Hosted egress chain has deny-by-default and metadata blocking"
-
-mapfile -t NETWORK_IDS < <(docker network ls --filter label=ithute.hosted=true --format '{{.ID}}')
+mapfile -t NETWORK_IDS < <(docker network ls --format '{{.ID}}')
 for network_id in "${NETWORK_IDS[@]}"; do
-  subnet="$(docker network inspect "$network_id" --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}')"
-  [[ -n "$subnet" ]] || fail "Hosted network $network_id has no subnet"
-  iptables -C DOCKER-USER -s "$subnet" -j ITHUTE-HOSTING-EGRESS >/dev/null 2>&1 || fail "Hosted network $network_id ($subnet) bypasses Ithute egress policy"
+  hosted="$(docker network inspect "$network_id" --format '{{index .Labels "ithute.hosted"}}' 2>/dev/null || true)"
+  mapfile -t subnets < <(docker network inspect "$network_id" --format '{{range .IPAM.Config}}{{println .Subnet}}{{end}}' 2>/dev/null || true)
+  for subnet in "${subnets[@]}"; do
+    [[ -n "$subnet" ]] || continue
+    relation="$(python3 - "$NETWORK_POOL" "$subnet" <<'PY'
+import ipaddress, sys
+pool = ipaddress.ip_network(sys.argv[1], strict=True)
+try:
+    subnet = ipaddress.ip_network(sys.argv[2], strict=False)
+except ValueError:
+    print("invalid")
+    raise SystemExit
+if not pool.overlaps(subnet):
+    print("outside")
+elif subnet.subnet_of(pool):
+    print("inside")
+else:
+    print("partial")
+PY
+)"
+    case "$relation" in
+      outside) ;;
+      inside)
+        [[ "$hosted" == "true" ]] || fail "Non-Ithute Docker network $network_id ($subnet) occupies reserved hosted pool"
+        ;;
+      partial) fail "Docker network $network_id ($subnet) partially overlaps reserved hosted pool" ;;
+      *) fail "Unable to validate subnet $subnet for Docker network $network_id" ;;
+    esac
+  done
 done
-ok "All current hosted networks are attached to the scoped egress policy"
+ok "Reserved pool is occupied only by labeled Ithute hosted networks"
 
 if docker ps --format '{{.Names}}' | grep -Eq '(^|[-_])(loanhub|khanya|tutor|nbros)([-_]|$)'; then
   fail "This host appears to run another product stack. Dedicated Ithute hosting nodes must not share LoanHub/Khanya/Tutor/NBros runtime hosts."
