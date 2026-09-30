@@ -20,6 +20,7 @@ MAX_ZIP_BYTES = 2 * 1024 * 1024 * 1024
 MAX_UNPACKED_BYTES = 2 * 1024 * 1024 * 1024
 MAX_FILES = 100_000
 UPLOAD_TTL_MINUTES = 30
+MAX_STORAGE_INVENTORY_KEYS = 100_000
 
 
 class UploadAuthorize(BaseModel):
@@ -108,6 +109,33 @@ def create_upload_ticket(
         "content_type": "application/zip",
         "warning": "This one-time upload credential expires in 30 minutes and is invalidated after verification or failure.",
     }
+
+
+@router.post("/hosting/upload/storage/inventory")
+def upload_storage_inventory(
+    x_ithute_upload_service: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Return only storage object keys that still belong to source records.
+
+    This endpoint is service-authenticated and intentionally excludes tenant,
+    user and project metadata. The cleanup worker uses it to identify local
+    verified files that are true filesystem orphans. Referenced archives are
+    never eligible for automatic cleanup here, regardless of age.
+    """
+    _service_auth(x_ithute_upload_service)
+    keys = db.scalars(
+        select(HostingSource.upload_object_key)
+        .where(
+            HostingSource.source_type == "zip",
+            HostingSource.upload_object_key.is_not(None),
+        )
+        .order_by(HostingSource.created_at.desc())
+        .limit(MAX_STORAGE_INVENTORY_KEYS)
+    ).all()
+    if len(keys) >= MAX_STORAGE_INVENTORY_KEYS:
+        raise HTTPException(status_code=503, detail="ZIP storage inventory exceeds the safe cleanup inventory limit")
+    return {"referenced_object_keys": [str(key) for key in keys if key]}
 
 
 @router.post("/hosting/upload/sources/{source_id}/authorize")
