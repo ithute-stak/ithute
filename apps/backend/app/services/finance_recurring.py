@@ -18,13 +18,13 @@ _start_lock = threading.Lock()
 
 
 def effective_send_day(year: int, month: int, requested_day: int) -> int:
-    """Clamp schedules such as day 31 to the last real day of shorter months."""
     return min(max(1, requested_day), calendar.monthrange(year, month)[1])
 
 
 def schedule_out(row: FinanceInvoiceSchedule) -> dict:
     return {
         "id": str(row.id),
+        "client_id": str(row.client_id) if row.client_id else None,
         "client_name": row.client_name,
         "recipient_email": row.recipient_email,
         "client_address": row.client_address,
@@ -51,6 +51,7 @@ def _make_invoice(db, schedule: FinanceInvoiceSchedule, issue_date: date) -> Fin
     service_period = issue_date.strftime("%B %Y")
     invoice = FinanceInvoice(
         invoice_number=number,
+        client_id=schedule.client_id,
         client_name=schedule.client_name,
         recipient_email=schedule.recipient_email,
         client_address=schedule.client_address,
@@ -82,13 +83,6 @@ def _make_invoice(db, schedule: FinanceInvoiceSchedule, issue_date: date) -> Fin
 
 
 def process_due_finance_schedules(now: datetime | None = None) -> int:
-    """Generate and send each due monthly schedule once per calendar month.
-
-    A PostgreSQL advisory lock makes this safe when more than one API worker is
-    running. If the service was offline on the configured day, the schedule is
-    caught up on the next check in the same month. Failed deliveries remain due
-    and are retried on a later scheduler pass.
-    """
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     today = current.date()
     period = today.strftime("%Y-%m")
@@ -134,13 +128,11 @@ def process_due_finance_schedules(now: datetime | None = None) -> int:
 
 
 def _scheduler_loop() -> None:
-    # Give migrations and the application a moment to become ready after boot.
     time.sleep(20)
     while True:
         try:
             process_due_finance_schedules()
         except Exception:
-            # The next hourly pass retries; scheduler failures must never stop the API.
             pass
         time.sleep(3600)
 
@@ -154,7 +146,4 @@ def install_finance_recurring_scheduler() -> None:
         threading.Thread(target=_scheduler_loop, name="finance-recurring", daemon=True).start()
 
 
-# finance.py imports this module as part of normal API startup, so the scheduler
-# starts automatically in every API process. The PostgreSQL advisory lock keeps
-# only one worker active for each processing pass.
 install_finance_recurring_scheduler()
