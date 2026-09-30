@@ -1,0 +1,39 @@
+[Unit]
+Description=Ithute managed hosting node agent
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ithute-hosting-agent
+Group=ithute-hosting-agent
+SupplementaryGroups=docker
+EnvironmentFile=/etc/ithute-hosting-node/agent.env
+ExecStart=/usr/bin/python3 /opt/ithute-hosting-agent/agent.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+KillSignal=SIGTERM
+
+# The agent must reach Docker, the control plane and node-local DB clients, but
+# it does not need a writable host filesystem beyond ordinary runtime state.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
