@@ -77,6 +77,10 @@ const navigation: NavGroup[] = [
     icon: Server,
     children: [
       { label: "Hosted projects", href: "/hosting", icon: Server },
+      { label: "Sources & databases", href: "/hosting-resources", icon: KeyRound },
+      { label: "Build & deploy", href: "/hosting-builds", icon: Activity },
+      { label: "Runtime & logs", href: "/hosting-runtime", icon: Activity },
+      { label: "Database backups", href: "/hosting-backups", icon: Server },
       { label: "Deployments & environment", href: "/hosting-operations", icon: Activity },
       { label: "Reseller & white-label", href: "/hosting-company", icon: Building2 },
     ],
