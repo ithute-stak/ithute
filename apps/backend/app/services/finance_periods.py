@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
+from fastapi import HTTPException
 from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
@@ -105,6 +106,7 @@ def _guard_locked_finance_periods(session: Session, flush_context, instances) ->
             ).limit(1)
         )
         if locked is not None:
-            raise ValueError(
-                f"Accounting period {value.year:04d}-{value.month:02d} is locked; financial records in that period are read-only"
+            raise HTTPException(
+                status_code=409,
+                detail=f"Accounting period {value.year:04d}-{value.month:02d} is locked; financial records in that period are read-only",
             )
