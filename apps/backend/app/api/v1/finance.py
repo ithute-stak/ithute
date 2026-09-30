@@ -20,6 +20,7 @@ from app.models import (
     User,
 )
 from app.services.finance_delivery import send_invoice
+from app.services.finance_governance import FinanceApprovalRequiredError
 from app.services.finance_invoice_multi import render_invoice_pdf
 from app.services.finance_invoices import build_default_email_body, build_default_subject, next_invoice_number
 from app.services.finance_ledger import (
@@ -470,6 +471,9 @@ def send_finance_invoice(invoice_id: UUID, payload: SendInvoiceRequest, db: Sess
     try:
         send_invoice(db, invoice)
         db.commit()
+    except FinanceApprovalRequiredError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         _persist_send_failure(db, invoice_id, exc)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
