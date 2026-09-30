@@ -21,6 +21,7 @@ from app.models import (
     HostingSourceCredential,
     User,
 )
+from app.services.hosting_webhooks import queue_pending_webhook_rebuild
 
 router = APIRouter(tags=["hosting-builds"])
 APPROVED_IMAGE_PREFIX = "ghcr.io/ithute-stak/hosted-"
@@ -330,9 +331,12 @@ def report_build(
     source.status = "ready"
     source.failure_message = None
     source.repository_commit = commit or source.repository_commit
+    db.flush()
+    pending_build = queue_pending_webhook_rebuild(db, source.id)
     db.commit()
     db.refresh(row)
     result = _build_out(row)
     result["deployment_id"] = str(deployment.id)
     result["deployment_status"] = deployment.status
+    result["pending_webhook_build_id"] = str(pending_build.id) if pending_build else None
     return result
