@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, ChevronUp, FileCheck2, FileText, KeyRound, Landmark, LockKeyhole, ReceiptText, Repeat2, Users2, WalletCards } from "lucide-react";
+import { BarChart3, ChevronUp, FileCheck2, FileText, KeyRound, Landmark, LockKeyhole, Mail, ReceiptText, Repeat2, Users2, WalletCards } from "lucide-react";
 import { financeRoleRank, useFinanceAccess } from "./use-finance-access";
 
 const links = [
@@ -14,6 +14,7 @@ const links = [
   { href: "/finance/reports", label: "Reports & statements", icon: BarChart3, minRank: 1 },
   { href: "/finance/control", label: "Controls & month-end close", icon: LockKeyhole, minRank: 4 },
   { href: "/finance/governance", label: "Approvals & statements", icon: FileCheck2, minRank: 3 },
+  { href: "/finance/sender", label: "Invoice sender", icon: Mail, minRank: 4 },
   { href: "/finance/access", label: "Access & client portal", icon: KeyRound, minRank: 5 },
 ];
 
