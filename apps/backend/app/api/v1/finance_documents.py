@@ -30,7 +30,7 @@ from app.services.finance_documents import (
     render_receipt_pdf,
     send_document,
 )
-from app.services.finance_ledger import invoice_financial_out
+from app.services.finance_ledger import invoice_financial_out, sync_invoice_payment_status
 
 router = APIRouter(prefix="/finance", tags=["finance-documents"])
 
@@ -168,9 +168,10 @@ def update_document(document_id: UUID, payload: DocumentUpdate, db: Session = De
         raise HTTPException(status_code=404, detail="Finance document not found")
     if row.status == "converted":
         raise HTTPException(status_code=409, detail="Converted documents are locked")
+    if row.document_type != payload.document_type.strip().lower():
+        raise HTTPException(status_code=409, detail="Document type cannot be changed after numbering; create a new document instead")
     _client(db, payload.client_id)
     subtotal, tax, total = _totals(payload.items)
-    row.document_type = payload.document_type.strip().lower()
     row.client_id = payload.client_id
     row.client_name = payload.client_name.strip()
     row.recipient_email = str(payload.recipient_email).lower()
@@ -284,6 +285,8 @@ def create_credit_note(invoice_id: UUID, payload: CreditNoteCreate, db: Session 
     )
     if invoice is None:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice.status == "cancelled":
+        raise HTTPException(status_code=409, detail="Cannot issue a credit note against a cancelled invoice")
     credited = sum(note.amount_minor for note in invoice.credit_notes)
     remaining_creditable = max(0, invoice.total_minor - credited)
     if payload.amount_minor > remaining_creditable:
@@ -295,7 +298,11 @@ def create_credit_note(invoice_id: UUID, payload: CreditNoteCreate, db: Session 
         reason=payload.reason.strip(),
         created_by_user_id=current.id,
     )
-    db.add(row); db.commit(); db.refresh(row)
+    db.add(row)
+    db.flush()
+    sync_invoice_payment_status(invoice)
+    db.commit()
+    db.refresh(row)
     return credit_note_out(row)
 
 
