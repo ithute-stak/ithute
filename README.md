@@ -1,27 +1,26 @@
 # Ithute
 
-Ithute is a **standalone deployment** for the Ithute website and Ithute-owned platform services. It does not join LoanHub, NBros, Tutor, Pay, Mailbox-DNS, or any other product Docker network, and it does not reuse or delete their containers, databases, images, volumes, or deployment directories.
+Ithute is a **standalone deployment** for the Ithute website and Ithute-owned platform services. It does not join LoanHub, NBros, Tutor, Pay, or any other product Docker network, and it does not reuse or delete their containers, databases, images, volumes, or deployment directories.
 
 ## Runtime
 
 The production application project is `ithute`:
 
 - `ithute-web` — `https://ithute.co.ls`
+- `ithute-app-api` — the FastAPI application behind `/api/v1`, including Mail, DNS, Hosting, Billing, Finance and Business Operations APIs
 - `ithute-auth` — `https://auth.ithute.co.ls`
 - `ithute-push` — `https://push.ithute.co.ls`
 - `ithute-realtime` — `https://realtime.ithute.co.ls`
 - `ithute-dns` — authoritative DNS for the `ithute.co.ls` zone on TCP/UDP 53
-- dedicated Auth, Push and Realtime PostgreSQL services
-- dedicated Realtime Redis
+- dedicated application, Auth, Push and Realtime PostgreSQL services
+- dedicated application and Realtime Redis services
 - a Caddy instance that routes **only** Ithute hostnames
 
 `compose.production.yml` contains **no application build contexts**. Production uses immutable Docker images tagged with the exact Git commit SHA.
 
 ## Authoritative DNS and registrar delegation
 
-Ithute now serves its own authoritative `ithute.co.ls` zone from the production VPS at `204.12.205.224`.
-
-The authoritative names are:
+Ithute serves its own authoritative `ithute.co.ls` zone from the production infrastructure. The initial single-node deployment uses:
 
 ```text
 ns1.ithute.co.ls -> 204.12.205.224
@@ -35,22 +34,23 @@ ns1.ithute.co.ls
 ns2.ithute.co.ls
 ```
 
-The production zone also publishes the apex, `www`, `auth`, `push`, `realtime`, and `mail` A records to `204.12.205.224`, together with the Ithute MX/SPF/DMARC/CAA policy records. GitHub Actions validates the zone before merge and, after deployment, queries the production VPS directly over both UDP and TCP port 53 before considering authoritative DNS healthy.
+The production zone also publishes the apex, `www`, `auth`, `push`, `realtime`, and `mail` A records, together with Ithute MX/SPF/DMARC/CAA policy records. CI validates the authoritative seed before merge.
 
-Using two nameserver names on one IPv4 is sufficient for the requested registrar setup if the reseller accepts it, but it is not infrastructure redundancy. A future second authoritative DNS node should place `ns2.ithute.co.ls` on a different server/network and use zone transfer or another replicated backend.
+Two nameserver names on one IPv4 are **not infrastructure redundancy**. Production readiness therefore treats independent secondary DNS as an external infrastructure requirement: `ns2.ithute.co.ls` should ultimately run on a different server/network and receive the zone through an approved replicated/transfer mechanism. The repository cannot manufacture that independent network from the primary VPS.
 
 ## Build once in GitHub, run on the VPS
 
-Application source is compiled and packaged only on GitHub Actions runners. `Ithute Standalone CI` performs the frontend checks, validates the deployment boundary, builds these four Docker images and packages the exact tested images as a workflow artifact:
+Application source is compiled and packaged only on GitHub Actions runners. `Ithute Standalone CI` validates the frontend, backend and deployment boundary, and builds these five application images:
 
 ```text
 ithute-web:<commit-sha>
+ithute-app-api:<commit-sha>
 ithute-auth:<commit-sha>
 ithute-push:<commit-sha>
 ithute-realtime:<commit-sha>
 ```
 
-`Deploy Ithute Production` downloads that image artifact from the successful CI run, verifies its SHA-256 checksum, transfers the compressed Docker image bundle to the VPS, runs `docker load`, uploads only the small runtime configuration bundle, and starts the Compose project with `--no-build`.
+Release automation publishes immutable commit-SHA images. Production deployment loads/runs the exact release images and starts the Compose project with `--no-build`.
 
 The VPS does **not** need the Git repository, `apps/`, `platform/`, Node.js source, Python source, `npm`, or `pip` to deploy Ithute. It only needs Docker/Compose, runtime configuration, secrets and persistent volumes.
 
@@ -89,11 +89,11 @@ Fresh production bootstraps one authoritative Ithute system owner:
 thekoetlisi@ithute.co.ls
 ```
 
-The password is never stored in Git. GitHub Actions provides the protected production secret to the one-time bootstrap, which writes it only to the VPS runtime `.env.production` with mode `0600`. Auth synchronizes the account on startup. The account is active, email-verified and platform-admin.
+The password is never stored in Git. Protected production secrets are written only to protected runtime storage. Auth synchronizes the account on startup. The account is active, email-verified and platform-admin.
 
 ## Safe VPS bootstrap
 
-`Safe Ithute VPS Bootstrap` is manual and intended only for a new production runtime. It builds the application images on the GitHub runner, transfers the Docker image bundle and runtime configuration, loads the images on the VPS and generates the production secrets. It does **not** clone the repository onto the VPS.
+`Safe Ithute VPS Bootstrap` is manual and intended only for a new production runtime. It builds the application images on the GitHub runner, transfers runtime configuration, loads the images on the VPS and generates production secrets. It does **not** clone the repository onto the VPS.
 
 The bootstrap is intentionally non-destructive outside Ithute. It does not run VPS-wide Docker container/image/volume deletion, Docker prune operations, or delete/move other product deployment directories.
 
@@ -104,9 +104,9 @@ After bootstrap creates both:
 /home/administrator/ithute-platform/.ithute-bootstrapped
 ```
 
-normal successful `main` CI runs are deployed automatically by `Deploy Ithute Production`.
+normal production release/deployment procedures may be used.
 
-All production workflows that mutate the VPS share the same `ithute-vps-production` concurrency group so application deployment, bootstrap and mail finalization cannot modify Ithute production simultaneously.
+All production workflows that mutate the VPS must share the same Ithute production concurrency boundary so application deployment, bootstrap and mail finalization cannot modify Ithute production simultaneously.
 
 ## Deployment safety boundary
 
@@ -119,18 +119,23 @@ Routine application deployment follows this path:
 ```text
 GitHub source
   -> CI tests
-  -> Docker build on GitHub runner
-  -> tested image artifact
-  -> SCP image artifact to VPS
-  -> docker load
-  -> docker compose up --no-build
+  -> immutable Docker build on GitHub runner
+  -> release images
+  -> controlled VPS deployment
+  -> database migrations
+  -> service health checks
+  -> live readiness verification
 ```
+
+## Backups and restore assurance
+
+Backup readiness means **restorability**, not merely the existence of dump files. `Backup Assurance CI` performs a real backup and restores it into an isolated PostgreSQL restore-drill database. Production backup assurance also records backup and restore-drill status for operational health reporting.
+
+Do not mark backup health as complete if restore drills are stale or failing.
 
 ## Mail-only domains
 
-Mail is a separate Docker Compose project, `ithute-mail`, with its own network and host storage under `/home/administrator/ithute-platform-mail`. It does not join the Ithute application network.
-
-Mail finalization also avoids a repository checkout on the VPS. GitHub Actions transfers only the transient mail runtime templates needed for provisioning; persistent mail configuration and data remain in `/home/administrator/ithute-platform-mail`.
+Mail is a separate Docker Compose project, `ithute-mail`, with its own host storage under `/home/administrator/ithute-platform-mail`. Mail attaches only to its private mail network and the controlled Ithute application bridge required for internal application-to-mail traffic.
 
 The deployment provisions these mailboxes when public mail DNS is ready:
 
@@ -143,12 +148,24 @@ info@tjekatjeka.co.ls
 
 `ithute.co.ls` remains the Ithute website as well as a mail domain. The other requested domains are not added to Caddy and therefore are not served as Ithute websites.
 
-The mail provisioning script writes two protected files on the VPS:
+The mail provisioning process writes protected operational files under `/home/administrator/ithute-platform-mail`.
 
-- `/home/administrator/ithute-platform-mail/mailbox-credentials.txt`
-- `/home/administrator/ithute-platform-mail/mail-dns-required.txt`
+Ithute is authoritative for the `ithute.co.ls` DNS zone. Other mail-only domains remain authoritative wherever their registrars currently delegate them unless separately migrated to Ithute DNS. Their MX/SPF/DKIM/DMARC records must be correct at their authoritative DNS providers. The public IPv4 reverse-DNS/PTR must also identify the intended Ithute mail hostname; PTR is controlled by the IP/VPS provider and cannot be created by this repository alone.
 
-Ithute is authoritative for the `ithute.co.ls` DNS zone. The other mail-only domains remain authoritative wherever their registrars currently delegate them, unless they are separately migrated to Ithute DNS. Their MX/SPF/DKIM/DMARC records still need to be applied at their authoritative DNS providers, and the VPS reverse-DNS/PTR should identify the mail host.
+## Production readiness
+
+A release is not considered fully verified merely because it has merged. Final production verification should confirm:
+
+- application, Auth, Push and Realtime health endpoints;
+- current Alembic migration head applied successfully;
+- authoritative DNS answers over both UDP and TCP;
+- TLS and explicit host routing;
+- mail MX/SPF/DKIM/DMARC and provider-controlled PTR/reverse DNS;
+- successful backup plus a recent restore drill;
+- Finance delegated-role boundaries and customer portal access;
+- a live end-to-end customer path covering authentication, provisioning, billing/Finance and the relevant service.
+
+Use `scripts/verify-production-readiness.sh` for the repository-supported public checks. External requirements such as an independent secondary DNS node and provider-controlled PTR must be completed with the appropriate infrastructure provider.
 
 ## Local website
 
@@ -162,6 +179,6 @@ npm run dev
 
 ## Production configuration
 
-Copy `.env.example` only as a reference. Production secrets live exclusively in `.env.production` on the VPS and in the untracked `secrets/` directory.
+Copy `.env.example` only as a reference. Production secrets live exclusively in protected runtime storage and the untracked `secrets/` directory.
 
 The fresh bootstrap generates independent database passwords, encryption keys and JWT signing keys. Push starts without a mandatory FCM provider so the platform can become healthy on a clean server; FCM can be enabled later by installing its service-account credential and setting `ITHUTE_PUSH_REQUIRED_PROVIDERS=fcm`.

@@ -1,0 +1,33 @@
+name: Project Readiness CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Validate repository readiness invariants
+        run: |
+          set -euo pipefail
+          python3 scripts/verify-repository-readiness.py
+          python3 -m py_compile scripts/verify-repository-readiness.py scripts/verify-authoritative-dns.py
+          bash -n scripts/verify-production-readiness.sh
+
+      - name: Verify Finance delegated-role regression coverage
+        run: |
+          set -euo pipefail
+          grep -Fq 'test_finance_adjustments_require_approver' apps/backend/tests/test_finance_role_boundaries.py
+          grep -Fq 'test_finance_configuration_and_deletes_require_admin' apps/backend/tests/test_finance_role_boundaries.py

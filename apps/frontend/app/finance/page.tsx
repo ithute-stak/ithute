@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { CalendarClock, Download, FileText, MailCheck, PauseCircle, PlayCircle, Send, Trash2, WalletCards } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
+import { financeRoleRank, useFinanceAccess } from "./_components/use-finance-access";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
+const API = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
 type Invoice = {
   id: string;
@@ -90,8 +91,7 @@ const initialForm: FormState = {
 };
 
 export default function FinancePage() {
-  const [email, setEmail] = useState("");
-  const [owner, setOwner] = useState(false);
+  const { email, allowed, role, loading: accessLoading } = useFinanceAccess();
   const [form, setForm] = useState<FormState>(initialForm);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -100,6 +100,8 @@ export default function FinancePage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
+  const canWrite = financeRoleRank(role) >= 2;
+  const canAdmin = financeRoleRank(role) >= 4;
   const quantity = Math.max(1, Number(form.quantity) || 1);
   const rate = Math.max(0, Number(form.rate) || 0);
   const tax = Math.max(0, Number(form.tax) || 0);
@@ -114,15 +116,8 @@ export default function FinancePage() {
   }, [form.client_name, form.description, form.due_date, total]);
 
   useEffect(() => {
-    void (async () => {
-      const me = await api("/auth/me");
-      if (!me.ok) return;
-      const body = await me.json();
-      setEmail(body.email || "");
-      setOwner(Boolean(body.is_platform_owner));
-      if (body.is_platform_owner) await loadFinance();
-    })();
-  }, []);
+    if (allowed) void loadFinance();
+  }, [allowed]);
 
   async function loadFinance() {
     const [invoiceResponse, scheduleResponse] = await Promise.all([api("/finance/invoices"), api("/finance/schedules")]);
@@ -152,6 +147,7 @@ export default function FinancePage() {
   }
 
   async function createInvoice(sendNow: boolean) {
+    if (!canWrite) return setMessage("Your Finance role is read-only.");
     if (!validBaseFields() || !form.due_date) return;
     setBusy(true); setMessage("");
     try {
@@ -172,6 +168,7 @@ export default function FinancePage() {
   }
 
   async function saveMonthlySchedule() {
+    if (!canWrite) return setMessage("Your Finance role is read-only.");
     if (!validBaseFields()) return;
     const day = Number(sendDay); const due = Number(dueDays);
     if (!Number.isInteger(day) || day < 1 || day > 31 || !Number.isInteger(due) || due < 0 || due > 365) {
@@ -194,6 +191,7 @@ export default function FinancePage() {
   }
 
   async function sendExisting(invoice: Invoice, resend = false) {
+    if (!canWrite) return setMessage("Your Finance role is read-only.");
     if (!window.confirm(`${resend ? "Resend" : "Send"} ${invoice.invoice_number} to ${invoice.recipient_email}?`)) return;
     setBusy(true); setMessage("");
     try {
@@ -207,6 +205,7 @@ export default function FinancePage() {
   }
 
   async function deleteInvoice(invoice: Invoice) {
+    if (!canAdmin) return setMessage("Finance Admin access is required to delete invoices.");
     if (!window.confirm(`Delete ${invoice.invoice_number} for ${invoice.client_name}? This cannot be undone.`)) return;
     setBusy(true); setMessage("");
     try {
@@ -218,6 +217,7 @@ export default function FinancePage() {
   }
 
   async function toggleSchedule(schedule: Schedule) {
+    if (!canWrite) return setMessage("Your Finance role is read-only.");
     setBusy(true); setMessage("");
     try {
       const r = await api(`/finance/schedules/${schedule.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !schedule.enabled }) });
@@ -228,6 +228,7 @@ export default function FinancePage() {
   }
 
   async function deleteSchedule(schedule: Schedule) {
+    if (!canAdmin) return setMessage("Finance Admin access is required to delete schedules.");
     if (!window.confirm(`Delete the monthly automatic invoice for ${schedule.client_name}?`)) return;
     setBusy(true); setMessage("");
     try {
@@ -249,11 +250,11 @@ export default function FinancePage() {
 
   return (
     <ControlShell title="Finance & invoices" subtitle="Create, review and send branded Ithute invoices" userEmail={email}>
-      {!owner ? <section className="surface-card p-6"><h1 className="text-xl font-black">Finance is restricted</h1><p className="mt-2 text-sm text-[var(--admin-muted)]">Only the Ithute platform owner can manage company invoices.</p></section> : (
+      {accessLoading ? <section className="surface-card p-6">Checking Finance access…</section> : !allowed ? <section className="surface-card p-6"><h1 className="text-xl font-black">Finance is restricted</h1><p className="mt-2 text-sm text-[var(--admin-muted)]">A Finance role or platform-owner access is required.</p></section> : (
         <div className="space-y-4">
           <section className="surface-card overflow-hidden">
             <div className="border-b bg-gradient-to-r from-[#f7fbff] via-white to-[#f5fbf2] p-5">
-              <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="eyebrow-label">Ithute internal finance</p><h1 className="mt-2 text-2xl font-black">New invoice</h1><p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--admin-muted)]">Create one invoice now, or use the same client and service details to schedule automatic monthly generation and sending from invoices@ithute.co.ls.</p></div><div className="rounded-2xl border bg-white px-4 py-3 text-right shadow-sm"><p className="text-[9px] font-black uppercase tracking-[.16em] text-[var(--admin-muted)]">Live total</p><p className="mt-1 text-2xl font-black text-[#0b5b39]">M {total.toFixed(2)}</p></div></div>
+              <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="eyebrow-label">Ithute internal finance</p><h1 className="mt-2 text-2xl font-black">New invoice</h1><p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--admin-muted)]">Create one invoice now, or use the same client and service details to schedule automatic monthly generation and sending from invoices@ithute.co.ls.</p>{!canWrite ? <p className="mt-2 text-[10px] font-black uppercase text-[#8a6410]">Read-only Finance access</p> : null}</div><div className="rounded-2xl border bg-white px-4 py-3 text-right shadow-sm"><p className="text-[9px] font-black uppercase tracking-[.16em] text-[var(--admin-muted)]">Live total</p><p className="mt-1 text-2xl font-black text-[#0b5b39]">M {total.toFixed(2)}</p></div></div>
             </div>
             <div className="grid gap-5 p-5 xl:grid-cols-[1.15fr_.85fr]">
               <div className="space-y-4">
@@ -264,11 +265,11 @@ export default function FinancePage() {
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4"><label className="text-xs font-bold">Service period<input className="input mt-1" value={form.service_period} onChange={(e) => update("service_period", e.target.value)} placeholder="September 2026" /></label><label className="text-xs font-bold">Quantity<input className="input mt-1" type="number" min="1" value={form.quantity} onChange={(e) => update("quantity", e.target.value)} /></label><label className="text-xs font-bold">Rate (M)<input className="input mt-1" type="number" min="0" step="0.01" value={form.rate} onChange={(e) => update("rate", e.target.value)} /></label><label className="text-xs font-bold">Tax (M)<input className="input mt-1" type="number" min="0" step="0.01" value={form.tax} onChange={(e) => update("tax", e.target.value)} /></label></div>
                 <label className="text-xs font-bold">Payment due date<input className="input mt-1 max-w-xs" type="date" value={form.due_date} onChange={(e) => update("due_date", e.target.value)} /></label>
                 <details className="rounded-2xl border bg-[#fafcfb] p-4"><summary className="cursor-pointer text-xs font-black">Optional email override</summary><p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">Leave blank to use the automatic professional email.</p><label className="mt-3 block text-xs font-bold">Subject<input className="input mt-1" value={form.email_subject} onChange={(e) => update("email_subject", e.target.value)} placeholder={autoSubject} /></label><label className="mt-3 block text-xs font-bold">Email body<textarea className="input mt-1 min-h-40 resize-y" value={form.email_body} onChange={(e) => update("email_body", e.target.value)} placeholder={autoBody} /></label></details>
-                <div className="flex flex-wrap gap-2"><button className="btn-secondary" disabled={busy} onClick={() => void createInvoice(false)}><FileText size={15} />Generate invoice</button><button className="btn-primary" disabled={busy} onClick={() => { if (window.confirm(`Generate the invoice and send it to ${form.recipient_email || "the receiving email"}?`)) void createInvoice(true); }}><Send size={15} />Generate PDF & send</button></div>
+                {canWrite ? <div className="flex flex-wrap gap-2"><button className="btn-secondary" disabled={busy} onClick={() => void createInvoice(false)}><FileText size={15} />Generate invoice</button><button className="btn-primary" disabled={busy} onClick={() => { if (window.confirm(`Generate the invoice and send it to ${form.recipient_email || "the receiving email"}?`)) void createInvoice(true); }}><Send size={15} />Generate PDF & send</button></div> : null}
                 <div className="rounded-2xl border border-[#cbdde9] bg-[#f8fbfd] p-4">
                   <div className="flex items-center gap-2"><CalendarClock size={18} className="text-[#075135]" /><div><p className="text-sm font-black">Monthly automatic invoice</p><p className="text-[10px] text-[var(--admin-muted)]">Uses the client, service and amount entered above. The service period is updated automatically each month.</p></div></div>
                   <div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="text-xs font-bold">Generate & send on day<input className="input mt-1" type="number" min="1" max="31" value={sendDay} onChange={(e) => setSendDay(e.target.value)} /></label><label className="text-xs font-bold">Payment due after (days)<input className="input mt-1" type="number" min="0" max="365" value={dueDays} onChange={(e) => setDueDays(e.target.value)} /></label></div>
-                  <button className="btn-primary mt-3" disabled={busy} onClick={() => void saveMonthlySchedule()}><CalendarClock size={15} />Save monthly auto-send</button>
+                  {canWrite ? <button className="btn-primary mt-3" disabled={busy} onClick={() => void saveMonthlySchedule()}><CalendarClock size={15} />Save monthly auto-send</button> : null}
                 </div>
               </div>
               <aside className="rounded-[26px] border border-[#cbdde9] bg-white p-5 shadow-[0_18px_40px_rgba(12,58,86,.07)]">
@@ -282,12 +283,12 @@ export default function FinancePage() {
 
           <section className="surface-card overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4"><div><p className="eyebrow-label">Automatic billing</p><h2 className="mt-1 font-black">Monthly invoice schedules</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">Invoices are generated and sent automatically on the chosen day. Day 29-31 is clamped to the last day in shorter months.</p></div><div className="rounded-xl bg-[#eef6f2] px-3 py-2 text-xs font-black text-[#285b55]">{schedules.filter((x) => x.enabled).length} active</div></div>
-            <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead><tr><th className="p-3">Client</th><th className="p-3">Recipient</th><th className="p-3">Amount</th><th className="p-3">Send day</th><th className="p-3">Due after</th><th className="p-3">Last sent</th><th className="p-3">Actions</th></tr></thead><tbody>{schedules.map((s) => <tr key={s.id} className="border-t align-top"><td className="p-3 font-bold">{s.client_name}<div className="mt-1 text-[9px] font-normal text-[var(--admin-muted)]">{s.description}</div></td><td className="p-3 text-[var(--admin-muted)]">{s.recipient_email}</td><td className="p-3 font-black">{money(s.quantity * s.rate_minor + s.tax_minor)}</td><td className="p-3">Day {s.send_day}</td><td className="p-3">{s.due_days} days</td><td className="p-3"><span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${s.enabled ? "bg-[#e9f7ee] text-[#146b3a]" : "bg-[#eef3f7] text-[#526474]"}`}>{s.enabled ? "active" : "paused"}</span><p className="mt-2 text-[10px]">{s.last_sent_period || "Not yet"}</p>{s.last_error ? <p className="mt-1 max-w-xs text-[9px] text-[#a43a34]">{s.last_error}</p> : null}</td><td className="p-3"><div className="flex flex-wrap gap-2"><button className="btn-secondary" disabled={busy} onClick={() => void toggleSchedule(s)}>{s.enabled ? <PauseCircle size={13} /> : <PlayCircle size={13} />}{s.enabled ? "Pause" : "Enable"}</button><button className="btn-secondary" disabled={busy} onClick={() => void deleteSchedule(s)}><Trash2 size={13} />Delete</button></div></td></tr>)}{!schedules.length ? <tr><td colSpan={7} className="p-8 text-center text-[var(--admin-muted)]">No monthly invoice schedules yet.</td></tr> : null}</tbody></table></div>
+            <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead><tr><th className="p-3">Client</th><th className="p-3">Recipient</th><th className="p-3">Amount</th><th className="p-3">Send day</th><th className="p-3">Due after</th><th className="p-3">Last sent</th><th className="p-3">Actions</th></tr></thead><tbody>{schedules.map((s) => <tr key={s.id} className="border-t align-top"><td className="p-3 font-bold">{s.client_name}<div className="mt-1 text-[9px] font-normal text-[var(--admin-muted)]">{s.description}</div></td><td className="p-3 text-[var(--admin-muted)]">{s.recipient_email}</td><td className="p-3 font-black">{money(s.quantity * s.rate_minor + s.tax_minor)}</td><td className="p-3">Day {s.send_day}</td><td className="p-3">{s.due_days} days</td><td className="p-3"><span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${s.enabled ? "bg-[#e9f7ee] text-[#146b3a]" : "bg-[#eef3f7] text-[#526474]"}`}>{s.enabled ? "active" : "paused"}</span><p className="mt-2 text-[10px]">{s.last_sent_period || "Not yet"}</p>{s.last_error ? <p className="mt-1 max-w-xs text-[9px] text-[#a43a34]">{s.last_error}</p> : null}</td><td className="p-3"><div className="flex flex-wrap gap-2">{canWrite ? <button className="btn-secondary" disabled={busy} onClick={() => void toggleSchedule(s)}>{s.enabled ? <PauseCircle size={13} /> : <PlayCircle size={13} />}{s.enabled ? "Pause" : "Enable"}</button> : null}{canAdmin ? <button className="btn-secondary" disabled={busy} onClick={() => void deleteSchedule(s)}><Trash2 size={13} />Delete</button> : null}</div></td></tr>)}{!schedules.length ? <tr><td colSpan={7} className="p-8 text-center text-[var(--admin-muted)]">No monthly invoice schedules yet.</td></tr> : null}</tbody></table></div>
           </section>
 
           <section className="surface-card overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4"><div><p className="eyebrow-label">Finance register</p><h2 className="mt-1 font-black">Invoices</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">Draft, sent and failed invoice deliveries remain visible here until you explicitly delete them.</p></div><div className="flex items-center gap-2 rounded-xl bg-[#eef6f2] px-3 py-2 text-xs font-black text-[#285b55]"><WalletCards size={15} />{invoices.length} invoices</div></div>
-            <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead><tr><th className="p-3">Invoice</th><th className="p-3">Client</th><th className="p-3">Recipient</th><th className="p-3">Amount</th><th className="p-3">Due</th><th className="p-3">Status</th><th className="p-3">Actions</th></tr></thead><tbody>{invoices.map((x) => <tr key={x.id} className="border-t align-top"><td className="p-3 font-mono font-bold">{x.invoice_number}</td><td className="p-3 font-bold">{x.client_name}</td><td className="p-3 text-[var(--admin-muted)]">{x.recipient_email}</td><td className="p-3 font-black">{money(x.total_minor)}</td><td className="p-3">{new Date(`${x.due_date}T00:00:00`).toLocaleDateString()}</td><td className="p-3"><span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${x.status === "sent" ? "bg-[#e9f7ee] text-[#146b3a]" : x.status === "failed" ? "bg-[#fff0ef] text-[#a43a34]" : "bg-[#eef3f7] text-[#526474]"}`}>{x.status}</span>{x.last_error ? <p className="mt-2 max-w-xs text-[9px] text-[#a43a34]">{x.last_error}</p> : null}</td><td className="p-3"><div className="flex flex-wrap gap-2"><button className="btn-secondary" onClick={() => void downloadPdf(x)}><Download size={13} />PDF</button>{x.status === "sent" ? <button className="btn-secondary" disabled={busy} onClick={() => void sendExisting(x, true)}><MailCheck size={13} />Resend</button> : <button className="btn-primary" disabled={busy} onClick={() => void sendExisting(x, false)}><Send size={13} />Send</button>}<button className="btn-secondary" disabled={busy} onClick={() => void deleteInvoice(x)}><Trash2 size={13} />Delete</button></div></td></tr>)}{!invoices.length ? <tr><td colSpan={7} className="p-8 text-center text-[var(--admin-muted)]">No finance invoices yet.</td></tr> : null}</tbody></table></div>
+            <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead><tr><th className="p-3">Invoice</th><th className="p-3">Client</th><th className="p-3">Recipient</th><th className="p-3">Amount</th><th className="p-3">Due</th><th className="p-3">Status</th><th className="p-3">Actions</th></tr></thead><tbody>{invoices.map((x) => <tr key={x.id} className="border-t align-top"><td className="p-3 font-mono font-bold">{x.invoice_number}</td><td className="p-3 font-bold">{x.client_name}</td><td className="p-3 text-[var(--admin-muted)]">{x.recipient_email}</td><td className="p-3 font-black">{money(x.total_minor)}</td><td className="p-3">{new Date(`${x.due_date}T00:00:00`).toLocaleDateString()}</td><td className="p-3"><span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${x.status === "sent" ? "bg-[#e9f7ee] text-[#146b3a]" : x.status === "failed" ? "bg-[#fff0ef] text-[#a43a34]" : "bg-[#eef3f7] text-[#526474]"}`}>{x.status}</span>{x.last_error ? <p className="mt-2 max-w-xs text-[9px] text-[#a43a34]">{x.last_error}</p> : null}</td><td className="p-3"><div className="flex flex-wrap gap-2"><button className="btn-secondary" onClick={() => void downloadPdf(x)}><Download size={13} />PDF</button>{canWrite ? (x.status === "sent" ? <button className="btn-secondary" disabled={busy} onClick={() => void sendExisting(x, true)}><MailCheck size={13} />Resend</button> : <button className="btn-primary" disabled={busy} onClick={() => void sendExisting(x, false)}><Send size={13} />Send</button>) : null}{canAdmin ? <button className="btn-secondary" disabled={busy} onClick={() => void deleteInvoice(x)}><Trash2 size={13} />Delete</button> : null}</div></td></tr>)}{!invoices.length ? <tr><td colSpan={7} className="p-8 text-center text-[var(--admin-muted)]">No finance invoices yet.</td></tr> : null}</tbody></table></div>
           </section>
         </div>
       )}
