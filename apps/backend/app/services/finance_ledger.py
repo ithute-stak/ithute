@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models import FinanceClient, FinanceInvoice, FinancePayment
 from app.services.finance_invoices import invoice_out
@@ -33,11 +33,21 @@ def paid_minor(invoice: FinanceInvoice) -> int:
     return sum(max(0, int(payment.amount_minor)) for payment in invoice.payments)
 
 
+def credited_minor(invoice: FinanceInvoice) -> int:
+    return sum(max(0, int(note.amount_minor)) for note in getattr(invoice, "credit_notes", []))
+
+
+def adjusted_total_minor(invoice: FinanceInvoice) -> int:
+    return max(0, invoice.total_minor - credited_minor(invoice))
+
+
 def effective_invoice_status(invoice: FinanceInvoice, *, today: date | None = None) -> str:
     current = today or date.today()
     paid = paid_minor(invoice)
+    adjusted = adjusted_total_minor(invoice)
     if invoice.status == "cancelled": return "cancelled"
-    if paid >= invoice.total_minor and invoice.total_minor > 0: return "paid"
+    if adjusted == 0 and credited_minor(invoice) > 0: return "credited"
+    if paid >= adjusted and adjusted > 0: return "paid"
     if paid > 0: return "partial"
     if invoice.due_date < current and invoice.status not in {"draft", "failed"}: return "overdue"
     return invoice.status
@@ -46,13 +56,32 @@ def effective_invoice_status(invoice: FinanceInvoice, *, today: date | None = No
 def invoice_financial_out(invoice: FinanceInvoice) -> dict:
     data = invoice_out(invoice)
     paid = paid_minor(invoice)
+    credited = credited_minor(invoice)
+    adjusted = max(0, invoice.total_minor - credited)
+    items = [
+        {
+            "id": str(item.id), "position": item.position, "description": item.description,
+            "details": item.details, "quantity": item.quantity, "rate_minor": item.rate_minor,
+            "tax_minor": item.tax_minor, "subtotal_minor": item.quantity * item.rate_minor,
+            "total_minor": item.quantity * item.rate_minor + item.tax_minor,
+        }
+        for item in getattr(invoice, "items", [])
+    ]
     data.update({
         "client_id": str(invoice.client_id) if invoice.client_id else None,
         "paid_minor": paid,
-        "outstanding_minor": max(0, invoice.total_minor - paid),
+        "credited_minor": credited,
+        "adjusted_total_minor": adjusted,
+        "outstanding_minor": max(0, adjusted - paid),
         "status": effective_invoice_status(invoice),
         "cancelled_at": invoice.cancelled_at.isoformat() if invoice.cancelled_at else None,
         "payments": [payment_out(payment) for payment in sorted(invoice.payments, key=lambda p: (p.payment_date, p.created_at or datetime.min))],
+        "credit_notes": [
+            {"id": str(note.id), "credit_number": note.credit_number, "amount_minor": note.amount_minor, "reason": note.reason,
+             "created_at": note.created_at.isoformat() if note.created_at else None}
+            for note in sorted(getattr(invoice, "credit_notes", []), key=lambda n: n.created_at or datetime.min)
+        ],
+        "items": items,
     })
     return data
 
@@ -60,21 +89,27 @@ def invoice_financial_out(invoice: FinanceInvoice) -> dict:
 def sync_invoice_payment_status(invoice: FinanceInvoice) -> None:
     if invoice.status == "cancelled": return
     paid = paid_minor(invoice)
-    if paid >= invoice.total_minor and invoice.total_minor > 0: invoice.status = "paid"
+    adjusted = adjusted_total_minor(invoice)
+    if adjusted == 0 and credited_minor(invoice) > 0: invoice.status = "credited"
+    elif paid >= adjusted and adjusted > 0: invoice.status = "paid"
     elif paid > 0: invoice.status = "partial"
     elif invoice.sent_at is not None: invoice.status = "sent"
-    elif invoice.status in {"paid", "partial"}: invoice.status = "draft"
+    elif invoice.status in {"paid", "partial", "credited"}: invoice.status = "draft"
 
 
 def dashboard_out(db: Session) -> dict:
-    invoices = db.scalars(select(FinanceInvoice).order_by(FinanceInvoice.created_at.desc())).all()
+    invoices = db.scalars(
+        select(FinanceInvoice)
+        .options(selectinload(FinanceInvoice.payments), selectinload(FinanceInvoice.credit_notes))
+        .order_by(FinanceInvoice.created_at.desc())
+    ).all()
     clients = db.scalar(select(func.count(FinanceClient.id)).where(FinanceClient.active.is_(True))) or 0
     today = date.today(); month_start = today.replace(day=1)
-    total_invoiced = collected = outstanding = overdue = month_invoiced = month_collected = overdue_count = 0
+    total_invoiced = collected = credits = outstanding = overdue = month_invoiced = month_collected = overdue_count = 0
     for invoice in invoices:
         if invoice.status == "cancelled": continue
-        paid = paid_minor(invoice); balance = max(0, invoice.total_minor - paid)
-        total_invoiced += invoice.total_minor; collected += paid; outstanding += balance
+        paid = paid_minor(invoice); credited = credited_minor(invoice); adjusted = max(0, invoice.total_minor - credited); balance = max(0, adjusted - paid)
+        total_invoiced += invoice.total_minor; collected += paid; credits += credited; outstanding += balance
         if invoice.created_at and invoice.created_at.date() >= month_start: month_invoiced += invoice.total_minor
         for payment in invoice.payments:
             if payment.payment_date >= month_start: month_collected += payment.amount_minor
@@ -82,7 +117,7 @@ def dashboard_out(db: Session) -> dict:
             overdue += balance; overdue_count += 1
     return {
         "active_clients": int(clients), "invoice_count": len(invoices), "total_invoiced_minor": total_invoiced,
-        "collected_minor": collected, "outstanding_minor": outstanding, "overdue_minor": overdue,
+        "collected_minor": collected, "credited_minor": credits, "outstanding_minor": outstanding, "overdue_minor": overdue,
         "overdue_count": overdue_count, "month_invoiced_minor": month_invoiced, "month_collected_minor": month_collected,
     }
 
@@ -99,7 +134,7 @@ def aging_out(invoices: list[FinanceInvoice], *, today: date | None = None) -> d
     rows = []
     for invoice in invoices:
         if invoice.status in {"cancelled", "draft", "failed"}: continue
-        balance = max(0, invoice.total_minor - paid_minor(invoice))
+        balance = max(0, adjusted_total_minor(invoice) - paid_minor(invoice))
         if balance <= 0: continue
         days = (current - invoice.due_date).days
         key = "current" if days <= 0 else "1_30" if days <= 30 else "31_60" if days <= 60 else "61_90" if days <= 90 else "90_plus"
