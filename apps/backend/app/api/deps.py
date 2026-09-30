@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.core.rbac import has_permission
 from app.core.security import ALGORITHM, hash_password, hash_token
 from app.db.session import get_db
-from app.models import ApiKey, MembershipStatus, Tenant, TenantMembership, User
+from app.models import ApiKey, FinanceRoleGrant, MembershipStatus, Tenant, TenantMembership, User
 from app.services.ithute_auth import (
     IthuteAuthDisabled,
     IthuteAuthUnavailable,
@@ -57,9 +57,6 @@ def central_user_from_claims(claims: dict, db: Session) -> User:
             if user is not None and user.auth_user_id not in (None, auth_user_id):
                 raise HTTPException(status_code=409, detail="The system owner email is linked to another central identity")
         if user is None:
-            # The legacy Mailbox DNS schema requires a password hash. Generate a
-            # product-local unusable value; the global owner password remains
-            # exclusively inside central !thute Auth.
             user = User(
                 email=email,
                 auth_user_id=auth_user_id,
@@ -123,7 +120,6 @@ def get_current_local_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: Session = Depends(get_db),
 ) -> User:
-    """Require a Mailbox DNS-issued session for sensitive migration actions."""
     token = credentials.credentials if credentials else request.cookies.get(settings.access_cookie_name)
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
@@ -140,7 +136,6 @@ def get_current_user(
     token = credentials.credentials if credentials else request.cookies.get(settings.access_cookie_name)
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-
     algorithm = _token_algorithm(token)
     if algorithm == ALGORITHM:
         return _decode_local_user(token, db)
@@ -149,7 +144,49 @@ def get_current_user(
     raise HTTPException(status_code=401, detail="Invalid token")
 
 
-def require_platform_owner(current: User = Depends(get_current_user)) -> User:
+def _finance_required_role(request: Request) -> str:
+    method = request.method.upper()
+    path = request.url.path
+    if method == "GET":
+        return "viewer"
+    if method == "DELETE":
+        return "admin"
+    if "/finance/governance/settings" in path:
+        return "admin"
+    if "/finance/governance/approvals/" in path and path.endswith("/decision"):
+        return "approver"
+    if "/finance/control/periods/" in path and (path.endswith("/lock") or path.endswith("/reopen")):
+        return "admin"
+    if "/finance/control/tax-rates" in path:
+        return "admin"
+    if "/finance/control/refunds" in path:
+        return "approver"
+    return "clerk"
+
+
+def finance_role_for_user(db: Session, user_id: UUID) -> str | None:
+    row = db.scalar(select(FinanceRoleGrant).where(FinanceRoleGrant.user_id == user_id, FinanceRoleGrant.active.is_(True)))
+    return row.role if row else None
+
+
+def require_platform_owner(
+    request: Request,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> User:
+    if current.is_platform_owner:
+        return current
+    if request.url.path.startswith("/api/v1/finance"):
+        role = finance_role_for_user(db, current.id)
+        rank = {"viewer": 1, "clerk": 2, "approver": 3, "admin": 4}
+        required = _finance_required_role(request)
+        if role and rank.get(role, 0) >= rank[required]:
+            return current
+        raise HTTPException(status_code=403, detail=f"Finance role required: {required}")
+    raise HTTPException(status_code=403, detail="Platform owner required")
+
+
+def require_actual_platform_owner(current: User = Depends(get_current_user)) -> User:
     if not current.is_platform_owner:
         raise HTTPException(status_code=403, detail="Platform owner required")
     return current
