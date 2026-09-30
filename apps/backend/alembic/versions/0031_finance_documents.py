@@ -35,14 +35,6 @@ def upgrade() -> None:
     )
     op.create_index("ix_finance_invoice_items_invoice_id", "finance_invoice_items", ["invoice_id"])
 
-    # Preserve every existing invoice as a one-line invoice item before the new UI starts using multiple lines.
-    op.execute("""
-        INSERT INTO finance_invoice_items
-            (id, invoice_id, position, description, details, quantity, rate_minor, tax_minor)
-        SELECT gen_random_uuid(), id, 1, description, details, quantity, rate_minor, tax_minor
-        FROM finance_invoices
-    """)
-
     op.create_table(
         "finance_credit_notes",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
