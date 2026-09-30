@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Database, GitBranch, HardDrive, KeyRound, PauseCircle, PlayCircle, RefreshCw, RotateCcw, ShieldCheck, Trash2, Upload } from "lucide-react";
+import { Copy, Database, GitBranch, HardDrive, KeyRound, PauseCircle, PlayCircle, RefreshCw, RotateCcw, ShieldCheck, Trash2, Upload, Webhook } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ControlShell } from "@/components/control-shell";
 import { PageHeader } from "@/components/ui-kit";
@@ -14,6 +14,8 @@ type Project = { id: string; name: string; runtime: string; status: string };
 type HostingDatabase = { id: string; project_id?: string | null; engine: "postgresql" | "mysql"; engine_version?: string | null; database_name: string; username: string; host?: string | null; port: number; storage_mb: number; status: string; operation?: string; failure_message?: string | null };
 type Source = { id: string; source_type: "git" | "zip"; repository_url?: string | null; repository_branch?: string | null; original_filename?: string | null; size_bytes?: number | null; status: string; created_at?: string | null };
 type GitCredential = { id: string; name: string; provider: string; auth_type: string; username?: string | null; status: string; has_secret: boolean };
+type SourceWebhook = { id: string; source_id: string; provider: "github" | "gitlab" | "bitbucket" | "generic"; status: string; pending_rebuild: boolean; webhook_path: string; created_at?: string | null; updated_at?: string | null };
+type CreatedWebhook = SourceWebhook & { secret: string; warning: string };
 type CreatedDatabase = HostingDatabase & { password: string; credential_warning: string };
 type ResourceMeter = {
   usage: { database_count: number; database_storage_bytes: number; source_storage_bytes: number };
@@ -40,6 +42,18 @@ function gb(bytes: number) {
   return (bytes / 1024 / 1024 / 1024).toFixed(bytes >= 10 * 1024 * 1024 * 1024 ? 0 : 1);
 }
 
+function providerFor(source: Source): SourceWebhook["provider"] {
+  const url = (source.repository_url || "").toLowerCase();
+  if (url.includes("github.com")) return "github";
+  if (url.includes("gitlab.com")) return "gitlab";
+  if (url.includes("bitbucket.org")) return "bitbucket";
+  return "generic";
+}
+
+function publicWebhookUrl(path: string) {
+  return `${API.replace(/\/api\/v1\/?$/, "")}${path}`;
+}
+
 export default function HostingResourcesPage() {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
@@ -50,8 +64,10 @@ export default function HostingResourcesPage() {
   const [databases, setDatabases] = useState<HostingDatabase[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [credentials, setCredentials] = useState<GitCredential[]>([]);
+  const [webhooks, setWebhooks] = useState<Record<string, SourceWebhook | null>>({});
   const [meter, setMeter] = useState<ResourceMeter | null>(null);
   const [createdDatabase, setCreatedDatabase] = useState<CreatedDatabase | null>(null);
+  const [createdWebhook, setCreatedWebhook] = useState<CreatedWebhook | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
@@ -78,13 +94,21 @@ export default function HostingResourcesPage() {
   }
 
   async function loadProjectResources(id: string) {
-    if (!tenantId || !id) { setSources([]); setCredentials([]); return; }
+    if (!tenantId || !id) { setSources([]); setCredentials([]); setWebhooks({}); return; }
     const [sourceResponse, credentialResponse] = await Promise.all([
       api(`/tenants/${tenantId}/hosting/projects/${id}/sources`),
       api(`/tenants/${tenantId}/hosting/projects/${id}/source-credentials`),
     ]);
-    setSources(sourceResponse.ok ? (await sourceResponse.json()).items || [] : []);
+    const sourceRows: Source[] = sourceResponse.ok ? (await sourceResponse.json()).items || [] : [];
+    setSources(sourceRows);
     setCredentials(credentialResponse.ok ? (await credentialResponse.json()).items || [] : []);
+    const webhookEntries = await Promise.all(sourceRows.filter((row) => row.source_type === "git").map(async (row) => {
+      const response = await api(`/tenants/${tenantId}/hosting/projects/${id}/sources/${row.id}/webhook`);
+      if (!response.ok) return [row.id, null] as const;
+      const payload = await response.json();
+      return [row.id, (payload.webhook || null) as SourceWebhook | null] as const;
+    }));
+    setWebhooks(Object.fromEntries(webhookEntries));
   }
 
   useEffect(() => {
@@ -105,10 +129,11 @@ export default function HostingResourcesPage() {
     if (!tenantId) return;
     window.localStorage.setItem("mailbox_dns_tenant", tenantId);
     setCreatedDatabase(null);
+    setCreatedWebhook(null);
     void loadTenant(tenantId);
   }, [tenantId]);
 
-  useEffect(() => { void loadProjectResources(projectId); }, [projectId, tenantId]);
+  useEffect(() => { setCreatedWebhook(null); void loadProjectResources(projectId); }, [projectId, tenantId]);
 
   async function createDatabase(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!tenantId) return;
@@ -159,6 +184,34 @@ export default function HostingResourcesPage() {
     form.reset(); setMessage(credentialId ? "Private Git source connected with an encrypted project credential." : "Public Git source registered."); await loadProjectResources(projectId); setSaving(false);
   }
 
+  async function configureWebhook(source: Source) {
+    if (!tenantId || !projectId || !canManage || saving) return;
+    setSaving(true); setError(""); setMessage(""); setCreatedWebhook(null);
+    const provider = providerFor(source);
+    const response = await api(`/tenants/${tenantId}/hosting/projects/${projectId}/sources/${source.id}/webhook`, { method: "PUT", body: JSON.stringify({ provider }) });
+    if (!response.ok) { setError(await detail(response, "Unable to configure automatic Git deployment.")); setSaving(false); return; }
+    const created: CreatedWebhook = await response.json();
+    setCreatedWebhook(created);
+    setMessage(`Automatic ${provider} push deployment is enabled. Copy the webhook URL and one-time secret below into the repository provider now.`);
+    await loadProjectResources(projectId);
+    setSaving(false);
+  }
+
+  async function disableWebhook(source: Source) {
+    if (!tenantId || !projectId || !canManage || saving) return;
+    if (!window.confirm("Disable automatic push deployments for this Git source? Manual builds will still work.")) return;
+    setSaving(true); setError(""); setMessage(""); setCreatedWebhook(null);
+    const response = await api(`/tenants/${tenantId}/hosting/projects/${projectId}/sources/${source.id}/webhook`, { method: "DELETE" });
+    if (!response.ok) setError(await detail(response, "Unable to disable automatic Git deployment.")); else setMessage("Automatic push deployment disabled. Manual builds remain available.");
+    await loadProjectResources(projectId);
+    setSaving(false);
+  }
+
+  function copy(value: string, success: string) {
+    void navigator.clipboard.writeText(value);
+    setMessage(success);
+  }
+
   return <ControlShell title="Hosting resources" subtitle="Databases and deployment sources for shared hosting" userEmail={me?.email}>
     <div className="space-y-5">
       <PageHeader eyebrow="Shared hosting" title="Sources & databases" description="Connect Git or verified ZIP source code and allocate isolated PostgreSQL or MySQL credentials without exposing the VPS, Docker socket or host database administration." />
@@ -173,6 +226,7 @@ export default function HostingResourcesPage() {
       {message ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">{message}</div> : null}
       {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700">{error}</div> : null}
       {createdDatabase ? <section className="rounded-2xl border border-amber-300 bg-amber-50 p-5"><div className="flex items-start gap-3"><KeyRound size={18} className="mt-0.5"/><div><h2 className="text-sm font-black">Save this password now</h2><p className="mt-1 text-xs text-amber-900">{createdDatabase.credential_warning}</p><div className="mt-3 grid gap-2 text-xs md:grid-cols-2"><p><b>Engine:</b> {createdDatabase.engine}</p><p><b>Database:</b> {createdDatabase.database_name}</p><p><b>Username:</b> {createdDatabase.username}</p><p className="break-all"><b>Password:</b> <code>{createdDatabase.password}</code></p></div></div></div></section> : null}
+      {createdWebhook ? <section className="rounded-2xl border border-amber-300 bg-amber-50 p-5"><div className="flex items-start gap-3"><Webhook size={18} className="mt-0.5"/><div className="min-w-0 flex-1"><h2 className="text-sm font-black">Configure this webhook now</h2><p className="mt-1 text-xs text-amber-900">{createdWebhook.warning}</p><div className="mt-3 grid gap-3 text-xs"><div><b>Provider:</b> {createdWebhook.provider}</div><div><b>Callback URL:</b><div className="mt-1 flex gap-2"><code className="min-w-0 flex-1 break-all rounded-lg bg-white p-2">{publicWebhookUrl(createdWebhook.webhook_path)}</code><button className="btn-secondary" type="button" onClick={() => copy(publicWebhookUrl(createdWebhook.webhook_path), "Webhook URL copied.")}><Copy size={13}/>Copy URL</button></div></div><div><b>Secret:</b><div className="mt-1 flex gap-2"><code className="min-w-0 flex-1 break-all rounded-lg bg-white p-2">{createdWebhook.secret}</code><button className="btn-secondary" type="button" onClick={() => copy(createdWebhook.secret, "One-time webhook secret copied.")}><Copy size={13}/>Copy secret</button></div></div><p className="text-[10px] leading-5 text-amber-900">GitHub/Bitbucket: use this as the webhook secret. GitLab: use it as the Secret token. Generic Git: sign the raw JSON body with HMAC-SHA256 and send <code>X-Ithute-Signature: sha256=&lt;digest&gt;</code>.</p></div></div></div></section> : null}
 
       <section className="grid gap-4 xl:grid-cols-2">
         <form className="surface-card p-5" onSubmit={createDatabase}><div className="flex items-center gap-2"><Database size={17}/><h2 className="text-sm font-black">Create database</h2></div><p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">A unique database user and strong password are generated for every database. Database count and allocated storage are enforced against the customer package before provisioning is queued.</p><div className="mt-4 grid gap-3"><select className="input" name="engine"><option value="postgresql">PostgreSQL</option><option value="mysql">MySQL</option></select><input className="input" name="name" placeholder="customer_app" required minLength={2} maxLength={48}/><select className="input" name="project_id" defaultValue={projectId}><option value="">Shared for this customer</option>{projects.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select><input className="input" name="storage_gb" type="number" min="0.125" max="100" step="0.125" defaultValue="1"/><button className="btn-primary" disabled={!canManage || saving}><Database size={14}/>{saving ? "Saving…" : "Create database"}</button></div></form>
@@ -188,9 +242,9 @@ export default function HostingResourcesPage() {
 
       <section className="grid gap-4 xl:grid-cols-2">
         <div className="surface-card overflow-hidden"><div className="border-b p-4"><h2 className="text-sm font-black">Databases</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">Provisioning, credential rotation and access changes are executed by the hosting-node agent.</p></div><div className="space-y-2 p-4">{databases.map((row) => <div key={row.id} className="rounded-xl border p-3 text-xs"><div className="flex flex-wrap items-start justify-between gap-3"><div><b>{row.database_name}</b><p className="mt-1 text-[var(--admin-muted)]">{row.engine}{row.engine_version ? ` ${row.engine_version}` : ""} · {row.username} · {row.storage_mb} MB</p>{row.host ? <p className="mt-1 text-[var(--admin-muted)]">{row.host}:{row.port}</p> : null}</div><span className="rounded-full bg-[#f4f7f5] px-2 py-1 text-[9px] font-black uppercase">{row.operation && row.operation !== "none" ? `${row.status} · ${row.operation}` : row.status}</span></div>{row.failure_message ? <p className="mt-2 rounded-lg bg-red-50 p-2 text-red-700">{row.failure_message}</p> : null}{canManage ? <div className="mt-3 flex flex-wrap gap-2">{row.status === "ready" && (!row.operation || row.operation === "none") ? <><button className="btn-secondary" disabled={saving} onClick={() => void databaseAction(row, "rotate-password")}><RotateCcw size={13}/>Rotate password</button><button className="btn-secondary" disabled={saving} onClick={() => void databaseAction(row, "suspend")}><PauseCircle size={13}/>Suspend</button></> : null}{row.status === "suspended" && (!row.operation || row.operation === "none") ? <button className="btn-secondary" disabled={saving} onClick={() => void databaseAction(row, "resume")}><PlayCircle size={13}/>Resume</button> : null}{!["queued","working","deleting"].includes(row.status) ? <button className="btn-secondary" disabled={saving} onClick={() => void databaseAction(row, "delete")}><Trash2 size={13}/>Delete</button> : null}</div> : null}</div>)}{!databases.length ? <p className="text-xs text-[var(--admin-muted)]">No hosting databases yet.</p> : null}</div></div>
-        <div className="surface-card overflow-hidden"><div className="border-b p-4"><h2 className="text-sm font-black">Sources for selected project</h2></div><div className="space-y-2 p-4">{sources.map((row) => <div key={row.id} className="rounded-xl border p-3 text-xs"><div className="flex justify-between gap-3"><b>{row.source_type === "git" ? row.repository_url : row.original_filename}</b><span>{row.status}</span></div>{row.repository_branch ? <p className="mt-1 text-[var(--admin-muted)]">Branch: {row.repository_branch}</p> : null}{row.source_type === "zip" && row.size_bytes ? <p className="mt-1 text-[var(--admin-muted)]">Archive: {(row.size_bytes / 1024 / 1024).toFixed(1)} MB</p> : null}</div>)}{!sources.length ? <p className="text-xs text-[var(--admin-muted)]">No source records for this project.</p> : null}</div></div>
+        <div className="surface-card overflow-hidden"><div className="border-b p-4"><h2 className="text-sm font-black">Sources for selected project</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">Git sources can rebuild automatically on pushes to the selected branch.</p></div><div className="space-y-2 p-4">{sources.map((row) => { const hook = webhooks[row.id]; const provider = providerFor(row); return <div key={row.id} className="rounded-xl border p-3 text-xs"><div className="flex justify-between gap-3"><b className="break-all">{row.source_type === "git" ? row.repository_url : row.original_filename}</b><span>{row.status}</span></div>{row.repository_branch ? <p className="mt-1 text-[var(--admin-muted)]">Branch: {row.repository_branch}</p> : null}{row.source_type === "zip" && row.size_bytes ? <p className="mt-1 text-[var(--admin-muted)]">Archive: {(row.size_bytes / 1024 / 1024).toFixed(1)} MB</p> : null}{row.source_type === "git" ? <div className="mt-3 rounded-xl bg-[#f7f9f7] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-black">Automatic push deploy</p><p className="mt-1 text-[10px] text-[var(--admin-muted)]">{hook?.status === "active" ? `${hook.provider} · active${hook.pending_rebuild ? " · rebuild pending" : ""}` : `${provider} detected · not configured`}</p></div>{canManage ? <div className="flex flex-wrap gap-2"><button className="btn-secondary" type="button" disabled={saving} onClick={() => void configureWebhook(row)}><Webhook size={13}/>{hook?.status === "active" ? "Rotate secret" : "Enable"}</button>{hook?.status === "active" ? <button className="btn-secondary" type="button" disabled={saving} onClick={() => void disableWebhook(row)}><Trash2 size={13}/>Disable</button> : null}</div> : null}</div>{hook?.status === "active" ? <div className="mt-2 flex items-center gap-2"><code className="min-w-0 flex-1 break-all text-[9px]">{publicWebhookUrl(hook.webhook_path)}</code><button className="icon-button" type="button" onClick={() => copy(publicWebhookUrl(hook.webhook_path), "Webhook URL copied.")} aria-label="Copy webhook URL"><Copy size={12}/></button></div> : null}</div> : null}</div>; })}{!sources.length ? <p className="text-xs text-[var(--admin-muted)]">No source records for this project.</p> : null}</div></div>
       </section>
-      <section className="rounded-3xl bg-[#123a38] p-5 text-white"><div className="flex gap-3"><ShieldCheck size={20} className="text-[#f1de8b]"/><p className="text-xs leading-6 text-white/70">Database passwords and private-Git credentials are control-plane secrets. Hosted applications receive only project-scoped values; they never receive Ithute host, mail, DNS, Docker or other-customer credentials.</p></div></section>
+      <section className="rounded-3xl bg-[#123a38] p-5 text-white"><div className="flex gap-3"><ShieldCheck size={20} className="text-[#f1de8b]"/><p className="text-xs leading-6 text-white/70">Database passwords, private-Git credentials and webhook secrets are control-plane secrets. Hosted applications receive only project-scoped values; they never receive Ithute host, mail, DNS, Docker or other-customer credentials.</p></div></section>
     </div>
   </ControlShell>;
 }
