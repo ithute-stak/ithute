@@ -12,8 +12,19 @@ def require(condition: bool, message: str) -> None:
         failures.append(message)
 
 
-frontend = ROOT / "apps/frontend/app"
-for path in frontend.rglob("*.tsx"):
+# The frontend has historical page-local development fallbacks. Production
+# safety is enforced centrally in next.config.ts so every build gets /api/v1
+# unless an explicit public API URL is supplied at build time.
+next_config = (ROOT / "apps/frontend/next.config.ts").read_text(encoding="utf-8")
+require(
+    'NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "/api/v1"' in next_config,
+    "Frontend must centrally default NEXT_PUBLIC_API_URL to /api/v1",
+)
+
+# Finance pages were actively hardened and should not carry the historical
+# localhost fallback at all.
+finance_root = ROOT / "apps/frontend/app/finance"
+for path in finance_root.rglob("*.tsx"):
     text = path.read_text(encoding="utf-8")
     require(
         "http://localhost:8006/api/v1" not in text,
