@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import re
 import secrets
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_tenant_permission
 from app.core.security import encrypt_secret
 from app.db.session import get_db
-from app.models import HostingDatabase, HostingProject, HostingSource, User
+from app.models import AuditLog, HostingDatabase, HostingProject, HostingSource, User
 
 router = APIRouter(tags=["shared-hosting"])
 
@@ -31,6 +33,7 @@ RUNTIME_CATALOG = [
 
 _DB_IDENT_RE = re.compile(r"^[a-z][a-z0-9_]{1,47}$")
 _GIT_SCHEMES = ("https://", "ssh://", "git@")
+_BRANCH_RE = re.compile(r"^[^\x00-\x20~^:?*\\]+$")
 
 
 class HostingDatabaseCreate(BaseModel):
@@ -57,6 +60,19 @@ def _project(db: Session, tenant_id: UUID, project_id: UUID) -> HostingProject:
     if row is None:
         raise HTTPException(status_code=404, detail="Hosted project not found")
     return row
+
+
+def _audit(db: Session, current: User, tenant_id: UUID, action: str, resource_type: str, resource_id: UUID, metadata: dict | None = None) -> None:
+    db.add(
+        AuditLog(
+            tenant_id=tenant_id,
+            actor_user_id=current.id,
+            action=action,
+            resource_type=resource_type,
+            resource_id=str(resource_id),
+            metadata_json=json.dumps(metadata or {}, sort_keys=True),
+        )
+    )
 
 
 def _db_out(row: HostingDatabase) -> dict:
@@ -100,6 +116,24 @@ def _safe_db_name(value: str) -> str:
     if not _DB_IDENT_RE.fullmatch(name):
         raise HTTPException(status_code=422, detail="Database name must begin with a letter and contain only lowercase letters, numbers and underscores")
     return name
+
+
+def _safe_git_source(repository_url: str, branch: str) -> tuple[str, str]:
+    repository_url = repository_url.strip()
+    branch = branch.strip()
+    if not repository_url.startswith(_GIT_SCHEMES):
+        raise HTTPException(status_code=422, detail="Repository URL must use HTTPS or SSH Git transport")
+    if repository_url.startswith(("https://", "ssh://")):
+        parsed = urlsplit(repository_url)
+        if not parsed.hostname:
+            raise HTTPException(status_code=422, detail="Repository URL must contain a valid host")
+        if parsed.password is not None or (repository_url.startswith("https://") and parsed.username is not None):
+            raise HTTPException(status_code=422, detail="Do not embed Git credentials in the repository URL; use an encrypted deployment credential")
+    elif not re.fullmatch(r"git@[A-Za-z0-9.-]+:[A-Za-z0-9._~/-]+", repository_url):
+        raise HTTPException(status_code=422, detail="Invalid SSH Git repository URL")
+    if not branch or not _BRANCH_RE.fullmatch(branch) or branch.startswith("-") or branch.endswith((".", "/")) or ".." in branch or "//" in branch:
+        raise HTTPException(status_code=422, detail="Invalid Git branch name")
+    return repository_url, branch
 
 
 @router.get("/hosting/runtime-catalog")
@@ -166,6 +200,16 @@ def create_hosting_database(
         created_by_user_id=current.id,
     )
     db.add(row)
+    db.flush()
+    _audit(
+        db,
+        current,
+        tenant_id,
+        "hosting.database.create",
+        "hosting_database",
+        row.id,
+        {"engine": row.engine, "database_name": row.database_name, "project_id": str(row.project_id) if row.project_id else None},
+    )
     db.commit()
     db.refresh(row)
     result = _db_out(row)
@@ -201,21 +245,21 @@ def register_git_source(
 ):
     require_tenant_permission(tenant_id, "hosting.manage", db, current)
     project = _project(db, tenant_id, project_id)
-    repository_url = payload.repository_url.strip()
-    if not repository_url.startswith(_GIT_SCHEMES):
-        raise HTTPException(status_code=422, detail="Repository URL must use HTTPS or SSH Git transport")
+    repository_url, branch = _safe_git_source(payload.repository_url, payload.branch)
     row = HostingSource(
         tenant_id=tenant_id,
         project_id=project.id,
         source_type="git",
         repository_url=repository_url,
-        repository_branch=payload.branch.strip(),
+        repository_branch=branch,
         status="ready",
         created_by_user_id=current.id,
     )
     db.add(row)
+    db.flush()
     project.source_repository = repository_url
-    project.source_branch = payload.branch.strip()
+    project.source_branch = branch
+    _audit(db, current, tenant_id, "hosting.source.git.register", "hosting_source", row.id, {"project_id": str(project.id), "branch": branch})
     db.commit()
     db.refresh(row)
     return _source_out(row)
@@ -232,7 +276,7 @@ def register_zip_source(
     require_tenant_permission(tenant_id, "hosting.manage", db, current)
     project = _project(db, tenant_id, project_id)
     filename = payload.original_filename.strip()
-    if not filename.lower().endswith(".zip") or "/" in filename or "\\" in filename:
+    if not filename.lower().endswith(".zip") or "/" in filename or "\\" in filename or filename in {".", ".."}:
         raise HTTPException(status_code=422, detail="ZIP source filename must be a plain .zip filename")
     object_key = f"hosting/{tenant_id}/{project_id}/{secrets.token_urlsafe(24)}.zip"
     row = HostingSource(
@@ -247,6 +291,8 @@ def register_zip_source(
         created_by_user_id=current.id,
     )
     db.add(row)
+    db.flush()
+    _audit(db, current, tenant_id, "hosting.source.zip.register", "hosting_source", row.id, {"project_id": str(project.id), "filename": filename, "size_bytes": row.size_bytes})
     db.commit()
     db.refresh(row)
     result = _source_out(row)
