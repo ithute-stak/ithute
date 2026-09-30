@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Download, FileBarChart, Search, TrendingUp } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
+import { useFinanceAccess } from "../_components/use-finance-access";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
@@ -17,10 +18,11 @@ const money = (minor = 0) => `M ${(minor / 100).toLocaleString(undefined, { mini
 
 export default function FinanceReportsPage() {
   const now = new Date();
-  const [email, setEmail] = useState(""); const [owner, setOwner] = useState(false); const [aging, setAging] = useState<Aging | null>(null); const [clients, setClients] = useState<Client[]>([]); const [clientId, setClientId] = useState(""); const [statement, setStatement] = useState<Statement | null>(null);
+  const { email, allowed, loading: accessLoading } = useFinanceAccess();
+  const [aging, setAging] = useState<Aging | null>(null); const [clients, setClients] = useState<Client[]>([]); const [clientId, setClientId] = useState(""); const [statement, setStatement] = useState<Statement | null>(null);
   const [year, setYear] = useState(String(now.getFullYear())); const [month, setMonth] = useState(String(now.getMonth() + 1)); const [period, setPeriod] = useState<Period | null>(null); const [trend, setTrend] = useState<TrendRow[]>([]);
 
-  useEffect(() => { void (async () => { const me = await api("/auth/me"); if (!me.ok) return; const body = await me.json(); setEmail(body.email || ""); setOwner(Boolean(body.is_platform_owner)); if (!body.is_platform_owner) return; const [a, c, t] = await Promise.all([api("/finance/reports/aging"), api("/finance/clients?active=true"), api("/finance/reports/trend?months=12")]); if (a.ok) setAging(await a.json()); if (c.ok) setClients((await c.json()).items || []); if (t.ok) setTrend((await t.json()).months || []); await loadPeriod(String(now.getFullYear()), String(now.getMonth() + 1)); })(); }, []);
+  useEffect(() => { if (!allowed) return; void (async () => { const [a, c, t] = await Promise.all([api("/finance/reports/aging"), api("/finance/clients?active=true"), api("/finance/reports/trend?months=12")]); if (a.ok) setAging(await a.json()); if (c.ok) setClients((await c.json()).items || []); if (t.ok) setTrend((await t.json()).months || []); await loadPeriod(String(now.getFullYear()), String(now.getMonth() + 1)); })(); }, [allowed]);
 
   async function loadStatement(id: string) { setClientId(id); setStatement(null); if (!id) return; const r = await api(`/finance/reports/clients/${id}/statement`); if (r.ok) setStatement(await r.json()); }
   async function loadPeriod(y = year, m = month) { const r = await api(`/finance/reports/period?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`); if (r.ok) setPeriod(await r.json()); }
@@ -30,7 +32,7 @@ export default function FinanceReportsPage() {
   const maxTrend = useMemo(() => Math.max(1, ...trend.flatMap((x) => [x.invoiced_minor, x.collected_minor])), [trend]);
 
   return <ControlShell title="Finance reports" subtitle="Accounting periods, revenue trends, aging and customer statements" userEmail={email}>
-    {!owner ? <section className="surface-card p-6">Finance is restricted.</section> : <div className="space-y-4">
+    {accessLoading ? <section className="surface-card p-6">Checking Finance access…</section> : !allowed ? <section className="surface-card p-6">Finance access is required.</section> : <div className="space-y-4">
       <section className="surface-card p-4">
         <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="eyebrow-label">Accounting period</p><h1 className="mt-1 font-black">Monthly finance summary</h1></div><div className="flex gap-2"><select className="input w-36" value={month} onChange={(e) => setMonth(e.target.value)}>{Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{new Date(2026, i, 1).toLocaleString(undefined, { month: "long" })}</option>)}</select><input className="input w-28" type="number" min="2000" max="2100" value={year} onChange={(e) => setYear(e.target.value)} /><button className="btn-secondary" onClick={() => void loadPeriod()}>Load</button></div></div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6"><div className="rounded-2xl border p-4"><p className="text-[10px] font-black uppercase">Invoices</p><p className="mt-2 text-xl font-black">{period?.invoice_count ?? 0}</p></div><div className="rounded-2xl border p-4"><p className="text-[10px] font-black uppercase">Gross invoiced</p><p className="mt-2 text-xl font-black">{money(period?.gross_invoiced_minor)}</p></div><div className="rounded-2xl border p-4"><p className="text-[10px] font-black uppercase">Credits</p><p className="mt-2 text-xl font-black">{money(period?.credits_minor)}</p></div><div className="rounded-2xl border p-4"><p className="text-[10px] font-black uppercase">Net invoiced</p><p className="mt-2 text-xl font-black">{money(period?.net_invoiced_minor)}</p></div><div className="rounded-2xl border p-4"><p className="text-[10px] font-black uppercase">Collected</p><p className="mt-2 text-xl font-black">{money(period?.collected_minor)}</p></div><div className="rounded-2xl border p-4"><p className="text-[10px] font-black uppercase">Outstanding</p><p className="mt-2 text-xl font-black">{money(period?.outstanding_minor)}</p></div></div>
