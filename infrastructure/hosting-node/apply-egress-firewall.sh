@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Apply a deliberately narrow egress policy only to Docker networks created by
-# the Ithute hosting agent (label ithute.hosted=true). This script does not
-# flush or replace the host INPUT/FORWARD firewall and never runs docker prune.
+# Apply a deliberately narrow egress policy only to the reserved CIDR used by
+# Ithute hosted project networks. The source-pool jump exists before any project
+# network/container starts, eliminating a network-creation race. This script
+# never flushes the host INPUT/FORWARD firewall and never runs docker prune.
 
 if [[ ${EUID} -ne 0 ]]; then
   echo "Run as root so DOCKER-USER rules can be managed." >&2
   exit 1
 fi
 
-for binary in docker iptables; do
+for binary in docker iptables python3; do
   command -v "$binary" >/dev/null 2>&1 || { echo "Missing required command: $binary" >&2; exit 1; }
 done
 
@@ -21,6 +22,8 @@ iptables -S DOCKER-USER >/dev/null 2>&1 || {
 }
 
 CHAIN="ITHUTE-HOSTING-EGRESS"
+NETWORK_POOL="${ITHUTE_HOSTING_NETWORK_POOL:-10.240.0.0/12}"
+NETWORK_PREFIX="${ITHUTE_HOSTING_NETWORK_PREFIX:-28}"
 DB_GATEWAY_IP="${ITHUTE_HOSTING_DB_GATEWAY_IP:-$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)}"
 ALLOW_HTTP="${ITHUTE_HOSTING_EGRESS_ALLOW_HTTP:-true}"
 ALLOW_HTTPS="${ITHUTE_HOSTING_EGRESS_ALLOW_HTTPS:-true}"
@@ -33,12 +36,55 @@ if [[ -z "$DB_GATEWAY_IP" ]]; then
   exit 1
 fi
 
-python3 - "$DB_GATEWAY_IP" <<'PY'
+python3 - "$DB_GATEWAY_IP" "$NETWORK_POOL" "$NETWORK_PREFIX" <<'PY'
 import ipaddress, sys
 ip = ipaddress.ip_address(sys.argv[1])
+pool = ipaddress.ip_network(sys.argv[2], strict=True)
+prefix = int(sys.argv[3])
 if not (ip.is_private or ip.is_loopback):
     raise SystemExit("Refusing public ITHUTE_HOSTING_DB_GATEWAY_IP")
+if not isinstance(pool, ipaddress.IPv4Network) or not pool.is_private:
+    raise SystemExit("ITHUTE_HOSTING_NETWORK_POOL must be a private IPv4 CIDR")
+if prefix < pool.prefixlen or prefix > 28:
+    raise SystemExit("ITHUTE_HOSTING_NETWORK_PREFIX must be between the pool prefix and /28")
 PY
+
+# Refuse to reserve a pool already consumed by unrelated Docker networks. This
+# keeps the source CIDR safe to match as "Ithute hosted only" in DOCKER-USER.
+mapfile -t ALL_NETWORKS < <(docker network ls --format '{{.ID}}')
+for network_id in "${ALL_NETWORKS[@]}"; do
+  [[ -n "$network_id" ]] || continue
+  hosted="$(docker network inspect "$network_id" --format '{{index .Labels "ithute.hosted"}}' 2>/dev/null || true)"
+  mapfile -t subnets < <(docker network inspect "$network_id" --format '{{range .IPAM.Config}}{{println .Subnet}}{{end}}' 2>/dev/null || true)
+  for subnet in "${subnets[@]}"; do
+    [[ -n "$subnet" ]] || continue
+    if python3 - "$NETWORK_POOL" "$subnet" <<'PY'
+import ipaddress, sys
+pool = ipaddress.ip_network(sys.argv[1], strict=True)
+try:
+    subnet = ipaddress.ip_network(sys.argv[2], strict=False)
+except ValueError:
+    raise SystemExit(1)
+raise SystemExit(0 if pool.overlaps(subnet) else 1)
+PY
+    then
+      if [[ "$hosted" != "true" ]]; then
+        echo "Non-Ithute Docker network $network_id ($subnet) overlaps reserved pool $NETWORK_POOL" >&2
+        exit 1
+      fi
+      if ! python3 - "$NETWORK_POOL" "$subnet" <<'PY'
+import ipaddress, sys
+pool = ipaddress.ip_network(sys.argv[1], strict=True)
+subnet = ipaddress.ip_network(sys.argv[2], strict=False)
+raise SystemExit(0 if subnet.subnet_of(pool) else 1)
+PY
+      then
+        echo "Hosted network $network_id is not fully contained in reserved pool $NETWORK_POOL" >&2
+        exit 1
+      fi
+    fi
+  done
+done
 
 if ! iptables -S "$CHAIN" >/dev/null 2>&1; then
   iptables -N "$CHAIN"
@@ -48,13 +94,14 @@ iptables -F "$CHAIN"
 # Return traffic from permitted outbound connections.
 iptables -A "$CHAIN" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
-# Project-scoped database access reaches only the host gateway and configured DB ports.
+# Project-scoped database access reaches only the Docker host gateway and the
+# explicitly configured shared DB ports.
 iptables -A "$CHAIN" -d "$DB_GATEWAY_IP/32" -p tcp --dport "$POSTGRES_PORT" -j ACCEPT
 iptables -A "$CHAIN" -d "$DB_GATEWAY_IP/32" -p tcp --dport "$MYSQL_PORT" -j ACCEPT
 
 # Block cloud metadata, loopback, link-local and private east/west access before
-# permitting ordinary Internet web traffic. The database gateway exception above
-# is intentionally evaluated first.
+# permitting ordinary Internet web traffic. The DB gateway exceptions above are
+# intentionally evaluated first.
 for cidr in \
   0.0.0.0/8 \
   10.0.0.0/8 \
@@ -81,23 +128,15 @@ if [[ "$ALLOW_HTTPS" == "true" ]]; then
   iptables -A "$CHAIN" -p tcp --dport 443 -j ACCEPT
 fi
 
-# Everything else from a hosted project network is denied by default. This
-# prevents direct SMTP, SSH, database scanning and arbitrary lateral movement.
+# Everything else from the reserved hosted pool is denied by default. This
+# prevents direct SMTP, SSH, arbitrary database scanning and lateral movement.
 iptables -A "$CHAIN" -j REJECT --reject-with icmp-port-unreachable
 
-mapfile -t NETWORKS < <(docker network ls --filter label=ithute.hosted=true --format '{{.ID}}')
-for network_id in "${NETWORKS[@]}"; do
-  [[ -n "$network_id" ]] || continue
-  subnet="$(docker network inspect "$network_id" --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}')"
-  [[ -n "$subnet" ]] || { echo "Hosted network $network_id has no IPv4 subnet; refusing partial policy." >&2; exit 1; }
-
-  # Remove stale duplicate jumps for this exact source subnet, then insert the
-  # scoped jump before Docker's normal forwarding acceptance.
-  while iptables -C DOCKER-USER -s "$subnet" -j "$CHAIN" 2>/dev/null; do
-    iptables -D DOCKER-USER -s "$subnet" -j "$CHAIN"
-  done
-  iptables -I DOCKER-USER 1 -s "$subnet" -j "$CHAIN"
-  echo "Protected hosted network $network_id ($subnet)"
+# Replace stale Ithute pool jumps with exactly one rule at the top of
+# DOCKER-USER. Unrelated Docker forwarding rules are not flushed or rewritten.
+while iptables -C DOCKER-USER -s "$NETWORK_POOL" -j "$CHAIN" 2>/dev/null; do
+  iptables -D DOCKER-USER -s "$NETWORK_POOL" -j "$CHAIN"
 done
+iptables -I DOCKER-USER 1 -s "$NETWORK_POOL" -j "$CHAIN"
 
-echo "Ithute hosted-workload egress policy active. DB gateway: $DB_GATEWAY_IP"
+echo "Ithute hosted-workload egress policy active for $NETWORK_POOL. DB gateway: $DB_GATEWAY_IP"
