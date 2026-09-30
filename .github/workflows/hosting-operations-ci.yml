@@ -8,6 +8,7 @@ on:
       - "apps/backend/app/api/v1/hosting_project_operations.py"
       - "apps/backend/app/api/v1/hosting_build_settings.py"
       - "apps/backend/app/api/v1/hosting_builds.py"
+      - "apps/backend/app/api/v1/hosting_build_logs.py"
       - "apps/backend/app/api/v1/hosting_uploads.py"
       - "apps/backend/app/api/v1/hosting_metering.py"
       - "apps/backend/app/api/v1/shared_hosting.py"
@@ -16,6 +17,7 @@ on:
       - "apps/backend/app/models/hosting.py"
       - "apps/backend/app/models/hosting_operations.py"
       - "apps/backend/app/models/hosting_builds.py"
+      - "apps/backend/app/models/hosting_build_logs.py"
       - "apps/backend/app/models/shared_hosting.py"
       - "apps/backend/app/models/billing.py"
       - "apps/backend/app/models/__init__.py"
@@ -27,6 +29,7 @@ on:
       - "apps/backend/tests/test_hosting_operations*.py"
       - "apps/backend/tests/test_hosting_project_operations_contract.py"
       - "apps/backend/tests/test_hosting_builds_contract.py"
+      - "apps/backend/tests/test_hosting_build_logs_contract.py"
       - "apps/backend/tests/test_hosting_uploads_contract.py"
       - "apps/backend/tests/test_hosting_metering.py"
       - "apps/backend/tests/test_shared_hosting_contract.py"
@@ -97,6 +100,7 @@ jobs:
           tests/test_hosting_operations_integration.py
           tests/test_hosting_project_operations_contract.py
           tests/test_hosting_builds_contract.py
+          tests/test_hosting_build_logs_contract.py
           tests/test_hosting_uploads_contract.py
           tests/test_hosting_metering.py
           tests/test_shared_hosting_contract.py
