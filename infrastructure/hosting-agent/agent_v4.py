@@ -9,6 +9,7 @@ a dedicated scoped backup root.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import os
 import pathlib
 import signal
@@ -18,6 +19,7 @@ import time
 from typing import Any
 
 import agent_v3 as runtime
+from network_policy import choose_project_subnet, parse_existing_subnets, parse_pool
 
 base = runtime.base
 AGENT_VERSION = "ithute-hosting-agent/4"
@@ -27,6 +29,61 @@ PG_DUMP = os.getenv("ITHUTE_HOSTING_PG_DUMP", "pg_dump")
 PG_RESTORE = os.getenv("ITHUTE_HOSTING_PG_RESTORE", "pg_restore")
 MYSQLDUMP = os.getenv("ITHUTE_HOSTING_MYSQLDUMP", "mysqldump")
 MAX_BACKUP_BYTES = int(os.getenv("ITHUTE_HOSTING_DATABASE_BACKUP_MAX_BYTES", str(20 * 1024 * 1024 * 1024)))
+HOSTED_NETWORK_PREFIX = int(os.getenv("ITHUTE_HOSTING_NETWORK_PREFIX", "28"))
+HOSTED_NETWORK_POOL = parse_pool(os.getenv("ITHUTE_HOSTING_NETWORK_POOL", "10.240.0.0/12"), HOSTED_NETWORK_PREFIX)
+
+
+def _existing_network_subnets() -> list[ipaddress.IPv4Network]:
+    ids = base.docker("network", "ls", "-q").stdout.splitlines()
+    values: list[str] = []
+    for network_id in ids:
+        network_id = network_id.strip()
+        if not network_id:
+            continue
+        inspected = base.docker(
+            "network", "inspect", network_id,
+            "--format", "{{range .IPAM.Config}}{{println .Subnet}}{{end}}",
+            check=False,
+        )
+        if inspected.returncode == 0:
+            values.extend(inspected.stdout.splitlines())
+    return parse_existing_subnets(values)
+
+
+def ensure_hosted_network(name: str, project_id: str) -> None:
+    if base.exists("network", name):
+        existing = base.docker(
+            "network", "inspect", name,
+            "--format", "{{range .IPAM.Config}}{{println .Subnet}}{{end}}",
+        ).stdout.splitlines()
+        parsed = parse_existing_subnets(existing)
+        if len(parsed) != 1 or not parsed[0].subnet_of(HOSTED_NETWORK_POOL):
+            raise RuntimeError(
+                f"Existing project network {name} is outside the reserved Ithute pool {HOSTED_NETWORK_POOL}; "
+                "remove the stopped legacy project network before redeploying"
+            )
+        return
+
+    candidate = choose_project_subnet(
+        HOSTED_NETWORK_POOL,
+        HOSTED_NETWORK_PREFIX,
+        project_id,
+        _existing_network_subnets(),
+    )
+    base.docker(
+        "network", "create",
+        "--driver", "bridge",
+        "--subnet", str(candidate),
+        "--label", "ithute.hosted=true",
+        "--label", f"ithute.project={project_id}",
+        name,
+    )
+
+
+# base.activate resolves ensure_network from the base module globals at runtime.
+# Replacing the module attribute here upgrades every deployment handled by v4
+# without duplicating the mature activation/rollback implementation.
+base.ensure_network = ensure_hosted_network
 
 
 def _safe_storage_path(storage_key: str) -> pathlib.Path:
@@ -236,7 +293,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, handle_signal)
     base.docker("version", "--format", "{{.Server.Version}}")
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
-    base.log(f"starting {AGENT_VERSION}")
+    base.log(f"starting {AGENT_VERSION}; hosted network pool={HOSTED_NETWORK_POOL} /{HOSTED_NETWORK_PREFIX}")
     last_heartbeat = 0.0
     while not base.STOP:
         now = time.monotonic()
