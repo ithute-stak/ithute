@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0037_hosting_database_lifecycle"
+LATEST_MIGRATION_HEAD = "0038_hosting_git_credentials"
 
 
 def test_alembic_has_one_consolidated_head():
