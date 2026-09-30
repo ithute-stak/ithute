@@ -9,6 +9,7 @@ on:
       - "apps/backend/app/api/v1/hosting_build_settings.py"
       - "apps/backend/app/api/v1/hosting_builds.py"
       - "apps/backend/app/api/v1/hosting_build_logs.py"
+      - "apps/backend/app/api/v1/hosting_git_webhooks.py"
       - "apps/backend/app/api/v1/hosting_uploads.py"
       - "apps/backend/app/api/v1/hosting_metering.py"
       - "apps/backend/app/api/v1/shared_hosting.py"
@@ -18,10 +19,12 @@ on:
       - "apps/backend/app/models/hosting_operations.py"
       - "apps/backend/app/models/hosting_builds.py"
       - "apps/backend/app/models/hosting_build_logs.py"
+      - "apps/backend/app/models/hosting_webhooks.py"
       - "apps/backend/app/models/shared_hosting.py"
       - "apps/backend/app/models/billing.py"
       - "apps/backend/app/models/__init__.py"
       - "apps/backend/app/services/hosting_metering.py"
+      - "apps/backend/app/services/hosting_webhooks.py"
       - "apps/backend/app/services/billing.py"
       - "apps/backend/alembic/versions/*hosting*.py"
       - "apps/backend/alembic/versions/*zip*.py"
@@ -30,6 +33,7 @@ on:
       - "apps/backend/tests/test_hosting_project_operations_contract.py"
       - "apps/backend/tests/test_hosting_builds_contract.py"
       - "apps/backend/tests/test_hosting_build_logs_contract.py"
+      - "apps/backend/tests/test_hosting_git_webhooks_contract.py"
       - "apps/backend/tests/test_hosting_uploads_contract.py"
       - "apps/backend/tests/test_hosting_metering.py"
       - "apps/backend/tests/test_shared_hosting_contract.py"
@@ -101,12 +105,13 @@ jobs:
           tests/test_hosting_project_operations_contract.py
           tests/test_hosting_builds_contract.py
           tests/test_hosting_build_logs_contract.py
+          tests/test_hosting_git_webhooks_contract.py
           tests/test_hosting_uploads_contract.py
           tests/test_hosting_metering.py
           tests/test_shared_hosting_contract.py
           tests/test_alembic_single_head.py
 
-      - name: Run ZIP quarantine and builder regressions
+      - name: Run ZIP quarantine, retention and builder regressions
         run: |
           python3 -m unittest discover -s infrastructure/hosting-upload -p 'test_*.py'
           python3 -m unittest discover -s infrastructure/hosting-builder -p 'test_*.py'
@@ -116,7 +121,7 @@ jobs:
           set -euo pipefail
           python3 -m py_compile infrastructure/hosting-agent/agent.py infrastructure/hosting-agent/agent_v3.py
           python3 -m py_compile infrastructure/hosting-builder/builder.py infrastructure/hosting-builder/verified_zip.py
-          python3 -m py_compile infrastructure/hosting-upload/service.py infrastructure/hosting-upload/zip_safety.py
+          python3 -m py_compile infrastructure/hosting-upload/service.py infrastructure/hosting-upload/cleanup.py infrastructure/hosting-upload/zip_safety.py
           grep -Fq 'no-new-privileges:true' infrastructure/hosting-agent/agent.py
           grep -Fq '"--cap-drop"' infrastructure/hosting-agent/agent.py
           grep -Fq '"--read-only"' infrastructure/hosting-agent/agent.py
@@ -141,6 +146,8 @@ jobs:
           grep -Fq 'ALLOW_CUSTOM_DOCKERFILE' infrastructure/hosting-builder/builder.py
           grep -Fq 'materialize_verified_zip' infrastructure/hosting-builder/builder.py
           grep -Fq 'ITHUTE_HOSTING_BUILDER_VERIFIED_ROOT' infrastructure/hosting-builder/builder.py
+          grep -Fq 'emit_build_log' infrastructure/hosting-builder/builder.py
+          grep -Fq '[redacted]' infrastructure/hosting-builder/builder.py
           ! grep -Fq 'extractall' infrastructure/hosting-builder/verified_zip.py
           ! grep -Fq 'ITHUTE_HOSTING_AGENT_TOKEN' infrastructure/hosting-builder/builder.py
           grep -Fq 'inspect_zip' infrastructure/hosting-upload/service.py
@@ -148,4 +155,6 @@ jobs:
           grep -Fq 'max_unpacked_size_bytes' infrastructure/hosting-upload/service.py
           grep -Fq 'stat.S_ISLNK' infrastructure/hosting-upload/zip_safety.py
           grep -Fq 'compression ratio is too high' infrastructure/hosting-upload/zip_safety.py
+          grep -Fq '/hosting/upload/storage/inventory' infrastructure/hosting-upload/cleanup.py
+          grep -Fq 'referenced_paths' infrastructure/hosting-upload/cleanup.py
           ! grep -Fq 'extractall' infrastructure/hosting-upload/service.py
