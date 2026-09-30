@@ -67,6 +67,36 @@ services:
       retries: 5
       start_period: 10s
 
+  cleanup:
+    build:
+      context: ../hosting-upload
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    entrypoint: ["python", "/opt/ithute-upload/cleanup.py"]
+    environment:
+      ITHUTE_API_URL: ${ITHUTE_API_URL}
+      ITHUTE_HOSTING_UPLOAD_SERVICE_TOKEN: ${ITHUTE_HOSTING_UPLOAD_SERVICE_TOKEN}
+      ITHUTE_HOSTING_UPLOAD_QUARANTINE_ROOT: /var/lib/ithute-upload/quarantine
+      ITHUTE_HOSTING_UPLOAD_VERIFIED_ROOT: /var/lib/ithute-upload/verified
+      ITHUTE_HOSTING_CLEANUP_INTERVAL_SECONDS: ${ITHUTE_HOSTING_CLEANUP_INTERVAL_SECONDS:-3600}
+      ITHUTE_HOSTING_QUARANTINE_RETENTION_HOURS: ${ITHUTE_HOSTING_QUARANTINE_RETENTION_HOURS:-24}
+      ITHUTE_HOSTING_ORPHAN_VERIFIED_RETENTION_HOURS: ${ITHUTE_HOSTING_ORPHAN_VERIFIED_RETENTION_HOURS:-168}
+    volumes:
+      - ${ITHUTE_HOSTING_STORAGE_ROOT}/quarantine:/var/lib/ithute-upload/quarantine
+      - ${ITHUTE_HOSTING_STORAGE_ROOT}/verified:/var/lib/ithute-upload/verified
+    networks:
+      - egress_net
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.25
+
   builder:
     build:
       context: ../hosting-builder
