@@ -5,13 +5,16 @@ on:
     paths:
       - "apps/backend/app/api/v1/application_hosting.py"
       - "apps/backend/app/api/v1/hosting_operations.py"
+      - "apps/backend/app/api/v1/shared_hosting.py"
       - "apps/backend/app/api/v1/router.py"
       - "apps/backend/app/models/hosting.py"
       - "apps/backend/app/models/hosting_operations.py"
+      - "apps/backend/app/models/shared_hosting.py"
       - "apps/backend/app/models/__init__.py"
       - "apps/backend/alembic/versions/*hosting*.py"
       - "apps/backend/tests/test_application_hosting.py"
       - "apps/backend/tests/test_hosting_operations*.py"
+      - "apps/backend/tests/test_shared_hosting_contract.py"
       - "apps/backend/tests/conftest.py"
       - "infrastructure/hosting-agent/**"
       - ".github/workflows/hosting-operations-ci.yml"
@@ -73,6 +76,8 @@ jobs:
           tests/test_application_hosting.py
           tests/test_hosting_operations_unit.py
           tests/test_hosting_operations_integration.py
+          tests/test_shared_hosting_contract.py
+          tests/test_alembic_single_head.py
 
       - name: Validate hosting node agent boundary
         run: |
@@ -83,5 +88,9 @@ jobs:
           grep -Fq '"--read-only"' infrastructure/hosting-agent/agent.py
           grep -Fq 'docker("image", "inspect"' infrastructure/hosting-agent/agent.py
           grep -Fq 'Refusing hosted workload that requests public host ports' infrastructure/hosting-agent/agent.py
+          grep -Fq 'PGPASSWORD' infrastructure/hosting-agent/agent.py
+          grep -Fq 'MYSQL_PWD' infrastructure/hosting-agent/agent.py
+          grep -Fq 'ithute-db-gateway:host-gateway' infrastructure/hosting-agent/agent.py
+          ! grep -Fq 'ITHUTE_HOSTING_POSTGRES_ADMIN_DSN' infrastructure/hosting-agent/agent.py
           ! grep -Fq 'docker("pull"' infrastructure/hosting-agent/agent.py
           ! grep -Fq 'git clone' infrastructure/hosting-agent/agent.py
