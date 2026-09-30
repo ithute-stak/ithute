@@ -35,6 +35,7 @@ from app.api.v1 import (
     hosting_build_settings,
     hosting_builds,
     hosting_database_backups,
+    hosting_metering,
     hosting_operations,
     hosting_project_operations,
     hosting_source_credentials,
@@ -119,6 +120,7 @@ api_router.include_router(hosting_project_operations.router)
 api_router.include_router(hosting_database_backups.router)
 api_router.include_router(hosting_build_settings.router)
 api_router.include_router(hosting_builds.router)
+api_router.include_router(hosting_metering.router)
 api_router.include_router(shared_hosting.router)
 api_router.include_router(hosting_source_credentials.router)
 api_router.include_router(hosting_uploads.router)
