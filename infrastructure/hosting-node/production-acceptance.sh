@@ -34,7 +34,7 @@ if [[ -n "${ITHUTE_HOSTING_SMOKE_DOMAIN:-}" ]]; then
   url="https://${ITHUTE_HOSTING_SMOKE_DOMAIN}/"
   status="$(curl --silent --show-error --location --output /dev/null --write-out '%{http_code}' \
     --connect-timeout 10 --max-time 30 "$url")"
-  [[ "$status" =~ ^2|3[0-9][0-9]$ ]] || fail "Public ingress probe returned HTTP $status for $url"
+  [[ "$status" =~ ^[23][0-9]{2}$ ]] || fail "Public ingress probe returned HTTP $status for $url"
   ok "Public ingress probe succeeded for $url (HTTP $status)"
 else
   info "ITHUTE_HOSTING_SMOKE_DOMAIN is unset; public customer-domain ingress probe skipped"
