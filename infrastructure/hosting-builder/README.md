@@ -92,3 +92,18 @@ ghcr.io/ithute-stak/hosted-<project>@sha256:<64-hex-digest>
 ```
 
 The control plane validates the namespace and digest before creating a `HostingDeployment`. Production then applies its independent runtime security checks before promotion.
+
+## Operational prerequisites before production enablement
+
+Before running the builder against real customer repositories, Ithute operations must provide all of the following:
+
+1. a dedicated builder host or equally isolated execution environment;
+2. Docker Buildx/BuildKit with no production-host Docker context configured;
+3. registry credentials restricted to the hosted-image namespace;
+4. a pinned `known_hosts` file for approved SSH Git hosts;
+5. outbound firewall rules that deny production private/admin networks;
+6. disk quotas and scheduled cleanup for the builder work root;
+7. registry retention/garbage-collection policy for superseded build tags;
+8. monitoring for queue latency, build failures, disk pressure and builder heartbeat age.
+
+Do not place the builder token, registry password or customer source credentials in Git, application environment variables exposed to hosted workloads, or production host-agent configuration.
