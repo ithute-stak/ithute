@@ -2,6 +2,7 @@ import smtplib
 import ssl
 from datetime import datetime, timezone
 from email.message import EmailMessage
+from email.utils import make_msgid
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -84,9 +85,9 @@ def send_finance_message(
     subject: str,
     text_body: str,
     html_body: str | None,
-    attachment_filename: str,
-    attachment_data: bytes,
-) -> None:
+    attachment_filename: str | None = None,
+    attachment_data: bytes | None = None,
+) -> dict:
     config = get_finance_sender_configuration(db)
     if config is None:
         raise ValueError("Configure and verify the Finance sending email before sending invoices")
@@ -98,16 +99,23 @@ def send_finance_message(
     msg["From"] = config.sender_email
     msg["To"] = recipient
     msg["Subject"] = subject
+    msg["Message-ID"] = make_msgid(domain=config.sender_email.split("@")[-1])
     msg.set_content(text_body)
     if html_body:
         msg.add_alternative(html_body, subtype="html")
-    msg.add_attachment(attachment_data, maintype="application", subtype="pdf", filename=attachment_filename)
+    if attachment_filename and attachment_data is not None:
+        msg.add_attachment(attachment_data, maintype="application", subtype="pdf", filename=attachment_filename)
 
     smtp = None
+    refused = {}
     try:
         smtp = _smtp_session(config, password)
         smtp.login(config.smtp_username, password)
-        smtp.send_message(msg)
+        refused = smtp.send_message(msg) or {}
+        if recipient in refused:
+            code, response = refused[recipient]
+            raise RuntimeError(f"SMTP rejected recipient {recipient}: {code} {response!r}")
+        return {"provider_message_id": str(msg["Message-ID"]), "accepted": True, "refused": refused}
     finally:
         if smtp is not None:
             try:

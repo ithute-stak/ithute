@@ -24,6 +24,7 @@ from app.api.v1 import (
     external_webmail_smart,
     finance,
     finance_accounting,
+    finance_completion,
     finance_control,
     finance_documents,
     finance_governance,
@@ -97,6 +98,8 @@ api_router.include_router(finance_reports.router)
 api_router.include_router(finance_accounting.router)
 api_router.include_router(finance_control.router)
 api_router.include_router(finance_governance.router)
+api_router.include_router(finance_completion.router)
+api_router.include_router(finance_completion.portal_router)
 api_router.include_router(plan_admin.router)
 api_router.include_router(payments.router)
 api_router.include_router(business.router)
