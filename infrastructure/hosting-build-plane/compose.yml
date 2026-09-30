@@ -1,0 +1,118 @@
+name: ithute-hosting-build-plane
+
+services:
+  edge:
+    image: caddy:2.9-alpine
+    restart: unless-stopped
+    environment:
+      ITHUTE_HOSTING_UPLOAD_HOST: ${ITHUTE_HOSTING_UPLOAD_HOST}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      upload:
+        condition: service_healthy
+    networks:
+      - edge_net
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+
+  upload:
+    build:
+      context: ../hosting-upload
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      ITHUTE_API_URL: ${ITHUTE_API_URL}
+      ITHUTE_HOSTING_UPLOAD_SERVICE_TOKEN: ${ITHUTE_HOSTING_UPLOAD_SERVICE_TOKEN}
+      ITHUTE_HOSTING_UPLOAD_ALLOWED_ORIGIN: ${ITHUTE_HOSTING_UPLOAD_ALLOWED_ORIGIN:-https://ithute.co.ls}
+      ITHUTE_HOSTING_UPLOAD_LISTEN_HOST: 0.0.0.0
+      ITHUTE_HOSTING_UPLOAD_LISTEN_PORT: 8096
+      ITHUTE_HOSTING_UPLOAD_QUARANTINE_ROOT: /var/lib/ithute-upload/quarantine
+      ITHUTE_HOSTING_UPLOAD_VERIFIED_ROOT: /var/lib/ithute-upload/verified
+    volumes:
+      - ${ITHUTE_HOSTING_STORAGE_ROOT}/quarantine:/var/lib/ithute-upload/quarantine
+      - ${ITHUTE_HOSTING_STORAGE_ROOT}/verified:/var/lib/ithute-upload/verified
+    expose:
+      - "8096"
+    networks:
+      - edge_net
+      - egress_net
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8096/healthz', timeout=3).read()"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  builder:
+    build:
+      context: ../hosting-builder
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      ITHUTE_API_URL: ${ITHUTE_API_URL}
+      ITHUTE_HOSTING_BUILDER_TOKEN: ${ITHUTE_HOSTING_BUILDER_TOKEN}
+      ITHUTE_HOSTING_BUILDER_POLL_SECONDS: ${ITHUTE_HOSTING_BUILDER_POLL_SECONDS:-15}
+      ITHUTE_HOSTING_BUILDER_WORK_ROOT: /var/lib/ithute-builder/work
+      ITHUTE_HOSTING_BUILDER_VERIFIED_ROOT: /var/lib/ithute-upload/verified
+      ITHUTE_HOSTING_BUILDER_KNOWN_HOSTS: /etc/ithute-builder/known_hosts
+      ITHUTE_HOSTING_BUILDER_DOCKER: docker
+      ITHUTE_HOSTING_BUILDER_ALLOW_CUSTOM_DOCKERFILE: ${ITHUTE_HOSTING_BUILDER_ALLOW_CUSTOM_DOCKERFILE:-false}
+      HOME: /home/ithute
+      DOCKER_CONFIG: /home/ithute/.docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${ITHUTE_HOSTING_STORAGE_ROOT}/builder-work:/var/lib/ithute-builder/work
+      - ${ITHUTE_HOSTING_STORAGE_ROOT}/verified:/var/lib/ithute-upload/verified:ro
+      - ${ITHUTE_HOSTING_BUILDER_KNOWN_HOSTS_FILE}:/etc/ithute-builder/known_hosts:ro
+      - ${ITHUTE_HOSTING_DOCKER_CONFIG_ROOT}:/home/ithute/.docker:ro
+    group_add:
+      - ${ITHUTE_HOSTING_DOCKER_GID}
+    networks:
+      - egress_net
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 4g
+    cpus: 4.0
+    depends_on:
+      upload:
+        condition: service_healthy
+
+networks:
+  edge_net:
+    driver: bridge
+  egress_net:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
