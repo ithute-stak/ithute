@@ -17,6 +17,7 @@ class HostingDatabaseBackup(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     database_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_databases.id", ondelete="CASCADE"), nullable=False, index=True)
     node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_nodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_backup_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_database_backups.id", ondelete="RESTRICT"), nullable=True, index=True)
     operation: Mapped[str] = mapped_column(String(24), default="backup", nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="queued", nullable=False, index=True)
     storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
