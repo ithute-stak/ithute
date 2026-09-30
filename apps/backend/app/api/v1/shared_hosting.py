@@ -243,6 +243,7 @@ def create_hosting_database(tenant_id: UUID, payload: HostingDatabaseCreate, db:
         database_name=database_name,
         username=username,
         encrypted_password=encrypt_secret(raw_password),
+        pending_encrypted_password=None,
         internal_host=None,
         internal_port=5432 if payload.engine == "postgresql" else 3306,
         storage_mb=payload.storage_mb,
@@ -268,13 +269,13 @@ def rotate_database_password(tenant_id: UUID, database_id: UUID, db: Session = D
     if row.status != "ready" or row.operation != "none":
         raise HTTPException(status_code=409, detail="Database password can be rotated only while the database is ready and idle")
     raw_password = secrets.token_urlsafe(32)
-    row.encrypted_password = encrypt_secret(raw_password)
+    row.pending_encrypted_password = encrypt_secret(raw_password)
     _queue_database_operation(row, "rotate")
     _audit(db, current, tenant_id, "hosting.database.rotate.queue", "hosting_database", row.id)
     db.commit()
     result = _db_out(row)
     result["password"] = raw_password
-    result["credential_warning"] = "This replacement password is shown once. Update application secrets after the rotation job completes."
+    result["credential_warning"] = "This replacement password is shown once. It becomes the active stored credential only after the hosting node confirms the rotation."
     return result
 
 
@@ -327,13 +328,23 @@ def claim_database_operation(x_ithute_hosting_agent: str | None = Header(default
     if row is None:
         db.commit()
         return {"database": None}
+    encrypted_password = row.pending_encrypted_password if row.operation == "rotate" else row.encrypted_password
+    if row.operation == "rotate" and not encrypted_password:
+        row.status = "failed"
+        row.operation = "none"
+        row.failure_message = "Pending rotation credential is missing"
+        row.completed_at = _now()
+        db.commit()
+        raise HTTPException(status_code=500, detail="Database rotation credential could not be prepared")
     try:
-        password = decrypt_secret(row.encrypted_password)
+        password = decrypt_secret(encrypted_password)
     except ValueError as exc:
         row.status = "failed"
         row.operation = "none"
         row.failure_message = "Database credential could not be decrypted"
         row.completed_at = _now()
+        if row.pending_encrypted_password is not None:
+            row.pending_encrypted_password = None
         db.commit()
         raise HTTPException(status_code=500, detail="Database credential could not be prepared") from exc
     row.status = "working"
@@ -373,6 +384,8 @@ def report_database_operation(database_id: UUID, payload: DatabaseAgentStatus, x
         row.operation = "none"
         row.failure_message = (payload.message or "Hosting node reported database operation failure").strip()[:2000]
         row.completed_at = now
+        if operation == "rotate":
+            row.pending_encrypted_password = None
         _audit(db, None, row.tenant_id, f"hosting.database.{operation}.failed", "hosting_database", row.id, {"node_id": str(node.id), "message": row.failure_message})
         db.commit()
         db.refresh(row)
@@ -385,6 +398,19 @@ def report_database_operation(database_id: UUID, payload: DatabaseAgentStatus, x
         db.delete(row)
         db.commit()
         return {"deleted": True, "id": str(resource_id)}
+
+    if operation == "rotate":
+        if row.pending_encrypted_password is None:
+            row.status = "failed"
+            row.operation = "none"
+            row.failure_message = "Hosting node completed rotation but pending credential is missing"
+            row.completed_at = now
+            _audit(db, None, row.tenant_id, "hosting.database.rotate.failed", "hosting_database", row.id, {"node_id": str(node.id), "message": row.failure_message})
+            db.commit()
+            db.refresh(row)
+            return _db_out(row)
+        row.encrypted_password = row.pending_encrypted_password
+        row.pending_encrypted_password = None
 
     row.internal_host = payload.host or row.internal_host
     row.internal_port = payload.port or row.internal_port
