@@ -20,7 +20,9 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-AGENT_VERSION = "ithute-hosting-builder/2"
+from verified_zip import materialize_verified_zip
+
+AGENT_VERSION = "ithute-hosting-builder/3"
 IMAGE_NAME_RE = re.compile(r"^ghcr\.io/ithute-stak/hosted-[a-z0-9]+$")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
@@ -36,6 +38,7 @@ API_URL = required_env("ITHUTE_API_URL").rstrip("/")
 BUILDER_TOKEN = required_env("ITHUTE_HOSTING_BUILDER_TOKEN")
 POLL_SECONDS = max(5, int(os.getenv("ITHUTE_HOSTING_BUILDER_POLL_SECONDS", "15")))
 WORK_ROOT = pathlib.Path(os.getenv("ITHUTE_HOSTING_BUILDER_WORK_ROOT", "/var/lib/ithute-builder/work"))
+VERIFIED_ROOT = pathlib.Path(os.getenv("ITHUTE_HOSTING_BUILDER_VERIFIED_ROOT", "/var/lib/ithute-upload/verified"))
 KNOWN_HOSTS = pathlib.Path(os.getenv("ITHUTE_HOSTING_BUILDER_KNOWN_HOSTS", "/etc/ithute-builder/known_hosts"))
 DOCKER = os.getenv("ITHUTE_HOSTING_BUILDER_DOCKER", "docker")
 ALLOW_CUSTOM_DOCKERFILE = os.getenv("ITHUTE_HOSTING_BUILDER_ALLOW_CUSTOM_DOCKERFILE", "false").lower() == "true"
@@ -206,7 +209,7 @@ def render_managed_dockerfile(root: pathlib.Path, runtime: str, build_command: s
         return "\n".join([
             "FROM nginxinc/nginx-unprivileged:stable-alpine",
             "COPY . /usr/share/nginx/html",
-            "EXPOSE 8080",
+            f"EXPOSE {port}",
             "USER 101:101",
             "",
         ])
@@ -330,12 +333,19 @@ def build_and_push(work: dict[str, Any], root: pathlib.Path) -> tuple[str, str]:
 def process_build(work: dict[str, Any]) -> None:
     build_id = str(work["id"])
     source = work.get("source") or {}
-    if source.get("type") != "git":
-        raise RuntimeError("ZIP builds remain disabled until the quarantine service supplies verified source bytes")
+    source_type = str(source.get("type") or "")
     with tempfile.TemporaryDirectory(prefix=f"ithute-build-{build_id[:8]}-", dir=WORK_ROOT) as temp:
         root = pathlib.Path(temp) / "source"
-        api(f"/hosting/builder/builds/{build_id}/status", {"status": "building", "message": "Source checkout started"})
-        commit = checkout_git(source, root)
+        api(f"/hosting/builder/builds/{build_id}/status", {"status": "building", "message": "Source materialization started"})
+        commit: str | None = None
+        if source_type == "git":
+            commit = checkout_git(source, root)
+        elif source_type == "zip":
+            root = materialize_verified_zip(source, root, VERIFIED_ROOT)
+            validate_checkout(root)
+        else:
+            raise RuntimeError("Unsupported hosting source type")
+
         detected = detect_runtime(root)
         expected = str(work.get("runtime") or "")
         if expected != "dockerfile" and detected != expected:
