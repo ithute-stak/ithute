@@ -3,7 +3,14 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.api.v1.application_hosting import ALLOWED_RUNTIMES, HostingProjectCreate
-from app.api.v1.shared_hosting import GitSourceCreate, HostingDatabaseCreate, ZipSourceRegister, _safe_db_name, runtime_catalog
+from app.api.v1.shared_hosting import (
+    GitSourceCreate,
+    HostingDatabaseCreate,
+    ZipSourceRegister,
+    _safe_db_name,
+    _safe_git_source,
+    runtime_catalog,
+)
 
 
 EXPECTED_RUNTIMES = {"static", "node", "python", "php", "dotnet", "java", "go", "ruby", "rust", "dockerfile"}
@@ -59,3 +66,28 @@ def test_git_contract_has_bounded_branch_and_repository_fields():
     model = GitSourceCreate(repository_url="https://github.com/example/project.git", branch="main")
     assert model.repository_url.endswith("project.git")
     assert model.branch == "main"
+
+
+@pytest.mark.parametrize(
+    ("repository_url", "branch"),
+    [
+        ("https://github.com/example/project.git", "main"),
+        ("ssh://git@github.com/example/project.git", "release/2026"),
+        ("git@github.com:example/project.git", "feature/shared-hosting"),
+    ],
+)
+def test_safe_git_source_accepts_supported_transports(repository_url: str, branch: str):
+    assert _safe_git_source(repository_url, branch) == (repository_url, branch)
+
+
+def test_safe_git_source_rejects_embedded_https_credentials():
+    with pytest.raises(HTTPException) as exc:
+        _safe_git_source("https://user:secret@example.com/project.git", "main")
+    assert exc.value.status_code == 422
+    assert "credentials" in str(exc.value.detail).lower()
+
+
+@pytest.mark.parametrize("branch", ["-main", "bad branch", "release..next", "feature//bad", "main."])
+def test_safe_git_source_rejects_dangerous_branch_names(branch: str):
+    with pytest.raises(HTTPException):
+        _safe_git_source("https://github.com/example/project.git", branch)
