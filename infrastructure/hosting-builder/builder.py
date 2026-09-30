@@ -22,7 +22,7 @@ from typing import Any
 
 from verified_zip import materialize_verified_zip
 
-AGENT_VERSION = "ithute-hosting-builder/3"
+AGENT_VERSION = "ithute-hosting-builder/4"
 IMAGE_NAME_RE = re.compile(r"^ghcr\.io/ithute-stak/hosted-[a-z0-9]+$")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
@@ -73,6 +73,39 @@ def api(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:2000]
         raise RuntimeError(f"Control-plane HTTP {exc.code}: {detail}") from exc
+
+
+def _redact_build_message(message: str, source: dict[str, Any] | None = None) -> str:
+    safe = str(message).replace("\x00", "").strip()[:2000]
+    secrets_to_hide = [BUILDER_TOKEN]
+    credential = (source or {}).get("credential") if isinstance(source, dict) else None
+    if isinstance(credential, dict):
+        secret = str(credential.get("secret") or "")
+        if secret:
+            secrets_to_hide.append(secret)
+    for secret in secrets_to_hide:
+        if secret:
+            safe = safe.replace(secret, "[redacted]")
+    return safe or "Build stage updated"
+
+
+def emit_build_log(build_id: str, stage: str, message: str, *, level: str = "info", source: dict[str, Any] | None = None) -> None:
+    try:
+        api(
+            f"/hosting/builder/builds/{build_id}/logs",
+            {
+                "entries": [
+                    {
+                        "stage": stage,
+                        "level": level,
+                        "message": _redact_build_message(message, source),
+                    }
+                ]
+            },
+        )
+    except Exception as exc:
+        # Diagnostics must never change build success/failure semantics.
+        log(f"build {build_id} log persistence failed: {exc}")
 
 
 def run(args: list[str], *, cwd: pathlib.Path | None = None, env: dict[str, str] | None = None, timeout: int = 900) -> str:
@@ -337,22 +370,28 @@ def process_build(work: dict[str, Any]) -> None:
     with tempfile.TemporaryDirectory(prefix=f"ithute-build-{build_id[:8]}-", dir=WORK_ROOT) as temp:
         root = pathlib.Path(temp) / "source"
         api(f"/hosting/builder/builds/{build_id}/status", {"status": "building", "message": "Source materialization started"})
+        emit_build_log(build_id, "source_materialization", f"Preparing {source_type} source in the isolated builder", source=source)
         commit: str | None = None
         if source_type == "git":
             commit = checkout_git(source, root)
+            emit_build_log(build_id, "source_ready", f"Git source verified at commit {commit[:12]}", source=source)
         elif source_type == "zip":
             root = materialize_verified_zip(source, root, VERIFIED_ROOT)
             validate_checkout(root)
+            emit_build_log(build_id, "source_ready", "Verified ZIP source materialized and revalidated", source=source)
         else:
             raise RuntimeError("Unsupported hosting source type")
 
         detected = detect_runtime(root)
         expected = str(work.get("runtime") or "")
+        emit_build_log(build_id, "runtime_detected", f"Detected runtime {detected}; project expects {expected}", source=source)
         if expected != "dockerfile" and detected != expected:
             raise RuntimeError(f"Runtime mismatch: project expects {expected}, source looks like {detected}")
         if expected == "dockerfile" and detected != "dockerfile":
             raise RuntimeError("Custom Dockerfile runtime requires a repository-root Dockerfile")
+        emit_build_log(build_id, "image_build", "Managed BuildKit image build and registry push started", source=source)
         image_ref, digest = build_and_push(work, root)
+        emit_build_log(build_id, "image_published", f"Immutable image published with digest {digest}", source=source)
         api(
             f"/hosting/builder/builds/{build_id}/status",
             {
@@ -380,8 +419,10 @@ def main() -> int:
                     process_build(work)
                 except Exception as exc:
                     message = str(exc)[:1900]
-                    log(f"build {work.get('id')} failed: {message}")
-                    api(f"/hosting/builder/builds/{work['id']}/status", {"status": "failed", "message": message})
+                    source = work.get("source") if isinstance(work.get("source"), dict) else None
+                    emit_build_log(str(work.get("id")), "failed", message, level="error", source=source)
+                    log(f"build {work.get('id')} failed: {_redact_build_message(message, source)}")
+                    api(f"/hosting/builder/builds/{work['id']}/status", {"status": "failed", "message": _redact_build_message(message, source)})
                 continue
         except Exception as exc:
             log(f"poll failed: {exc}")
