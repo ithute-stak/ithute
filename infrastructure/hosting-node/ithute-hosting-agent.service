@@ -10,14 +10,14 @@ User=ithute-hosting-agent
 Group=ithute-hosting-agent
 SupplementaryGroups=docker
 EnvironmentFile=/etc/ithute-hosting-node/agent.env
-ExecStart=/usr/bin/python3 /opt/ithute-hosting-agent/agent.py
+ExecStart=/usr/bin/python3 /opt/ithute-hosting-agent/agent_v4.py
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=45
 KillSignal=SIGTERM
 
 # The agent must reach Docker, the control plane and node-local DB clients, but
-# it does not need a writable host filesystem beyond ordinary runtime state.
+# it receives writable host filesystem access only for its scoped backup state.
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
@@ -29,6 +29,7 @@ ProtectKernelLogs=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectSystem=strict
+ReadWritePaths=/var/lib/ithute-hosting
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=true
 LockPersonality=true
