@@ -11,6 +11,7 @@ from app.db.session import SessionLocal
 from app.models import FinanceInvoice, FinanceInvoiceItem, FinanceInvoiceSchedule
 from app.services.finance_delivery import send_invoice
 from app.services.finance_invoices import build_default_email_body, build_default_subject, next_invoice_number
+from app.services.finance_reminders import process_due_payment_reminders
 
 _LOCK_ID = 29092026
 _started = False
@@ -142,6 +143,10 @@ def _scheduler_loop() -> None:
     while True:
         try:
             process_due_finance_schedules()
+        except Exception:
+            pass
+        try:
+            process_due_payment_reminders()
         except Exception:
             pass
         time.sleep(3600)
