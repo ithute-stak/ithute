@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { CheckCircle2, KeyRound, Mail, ShieldCheck } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
+import { financeRoleRank, useFinanceAccess } from "../_components/use-finance-access";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
+const API = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 
 type SenderConfig = {
   configured: boolean;
@@ -29,8 +30,8 @@ async function api(path: string, init?: RequestInit) {
 }
 
 export default function FinanceSenderPage() {
-  const [email, setEmail] = useState("");
-  const [owner, setOwner] = useState(false);
+  const { email, allowed, role, loading: accessLoading } = useFinanceAccess();
+  const isAdmin = financeRoleRank(role) >= 4;
   const [config, setConfig] = useState<SenderConfig | null>(null);
   const [senderEmail, setSenderEmail] = useState("");
   const [username, setUsername] = useState("");
@@ -42,19 +43,14 @@ export default function FinanceSenderPage() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
+    if (!allowed || !isAdmin) return;
     void (async () => {
-      const me = await api("/auth/me");
-      if (!me.ok) return;
-      const body = await me.json();
-      setEmail(body.email || "");
-      setOwner(Boolean(body.is_platform_owner));
-      if (!body.is_platform_owner) return;
       const r = await api("/finance/sender");
       if (!r.ok) return;
       const data = (await r.json()) as SenderConfig;
       applyConfig(data);
     })();
-  }, []);
+  }, [allowed, isAdmin]);
 
   function applyConfig(data: SenderConfig) {
     setConfig(data);
@@ -67,6 +63,7 @@ export default function FinanceSenderPage() {
   }
 
   async function save() {
+    if (!isAdmin) return setMessage("Finance Admin access is required.");
     if (!senderEmail.trim() || !host.trim() || !port.trim()) {
       setMessage("Sending email, SMTP host and port are required.");
       return;
@@ -101,6 +98,7 @@ export default function FinanceSenderPage() {
   }
 
   async function verify() {
+    if (!isAdmin) return setMessage("Finance Admin access is required.");
     setBusy(true);
     setMessage("");
     try {
@@ -118,8 +116,10 @@ export default function FinanceSenderPage() {
 
   return (
     <ControlShell title="Finance sender" subtitle="Configure and verify the email account used to send invoices" userEmail={email}>
-      {!owner ? (
-        <section className="surface-card p-6"><h1 className="text-xl font-black">Finance is restricted</h1></section>
+      {accessLoading ? (
+        <section className="surface-card p-6">Checking Finance access…</section>
+      ) : !allowed || !isAdmin ? (
+        <section className="surface-card p-6"><h1 className="text-xl font-black">Finance Admin access is required</h1></section>
       ) : (
         <div className="mx-auto max-w-4xl space-y-4">
           <div className="flex items-center justify-between gap-3">
