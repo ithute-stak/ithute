@@ -36,6 +36,7 @@ from app.api.v1 import (
     hosting_builds,
     hosting_operations,
     hosting_source_credentials,
+    hosting_uploads,
     identity,
     ithute_auth,
     ithute_operating,
@@ -116,6 +117,7 @@ api_router.include_router(hosting_build_settings.router)
 api_router.include_router(hosting_builds.router)
 api_router.include_router(shared_hosting.router)
 api_router.include_router(hosting_source_credentials.router)
+api_router.include_router(hosting_uploads.router)
 api_router.include_router(public_hosting.router)
 api_router.include_router(platform_setup.router)
 api_router.include_router(transactional.router)
