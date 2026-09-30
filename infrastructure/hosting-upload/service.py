@@ -8,7 +8,6 @@ import pathlib
 import tempfile
 import urllib.error
 import urllib.request
-from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from uuid import UUID
@@ -17,6 +16,7 @@ from zip_safety import UnsafeZip, inspect_zip, safe_object_path
 
 API_URL = os.environ["ITHUTE_API_URL"].rstrip("/")
 SERVICE_TOKEN = os.environ["ITHUTE_HOSTING_UPLOAD_SERVICE_TOKEN"].strip()
+ALLOWED_ORIGIN = os.getenv("ITHUTE_HOSTING_UPLOAD_ALLOWED_ORIGIN", "https://ithute.co.ls").strip().rstrip("/")
 LISTEN_HOST = os.getenv("ITHUTE_HOSTING_UPLOAD_LISTEN_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.getenv("ITHUTE_HOSTING_UPLOAD_LISTEN_PORT", "8096"))
 QUARANTINE_ROOT = pathlib.Path(os.getenv("ITHUTE_HOSTING_UPLOAD_QUARANTINE_ROOT", "/var/lib/ithute-upload/quarantine"))
@@ -27,6 +27,8 @@ if not API_URL.startswith("https://") and os.getenv("ITHUTE_HOSTING_ALLOW_HTTP",
     raise RuntimeError("ITHUTE_API_URL must use HTTPS")
 if not SERVICE_TOKEN.startswith("ith_upload_"):
     raise RuntimeError("ITHUTE_HOSTING_UPLOAD_SERVICE_TOKEN is invalid")
+if not ALLOWED_ORIGIN.startswith("https://") and os.getenv("ITHUTE_HOSTING_ALLOW_HTTP", "false").lower() != "true":
+    raise RuntimeError("ITHUTE_HOSTING_UPLOAD_ALLOWED_ORIGIN must use HTTPS")
 
 
 def api(path: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -59,13 +61,33 @@ def fail(source_id: str, message: str) -> None:
 class Handler(BaseHTTPRequestHandler):
     server_version = "IthuteHostingUpload/1"
 
+    def _cors(self) -> None:
+        origin = self.headers.get("Origin", "").rstrip("/")
+        if origin and origin == ALLOWED_ORIGIN:
+            self.send_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
+            self.send_header("Vary", "Origin")
+
     def _json(self, status: int, payload: dict[str, Any]) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self._cors()
         self.end_headers()
         self.wfile.write(body)
+
+    def do_OPTIONS(self) -> None:
+        origin = self.headers.get("Origin", "").rstrip("/")
+        if origin != ALLOWED_ORIGIN:
+            self._json(403, {"detail": "Origin not allowed"})
+            return
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
+        self.send_header("Vary", "Origin")
+        self.send_header("Access-Control-Allow-Methods", "PUT, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.end_headers()
 
     def do_GET(self) -> None:
         if self.path == "/healthz":
@@ -74,6 +96,10 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"detail": "Not found"})
 
     def do_PUT(self) -> None:
+        origin = self.headers.get("Origin", "").rstrip("/")
+        if origin and origin != ALLOWED_ORIGIN:
+            self._json(403, {"detail": "Origin not allowed"})
+            return
         prefix = "/v1/uploads/"
         if not self.path.startswith(prefix):
             self._json(404, {"detail": "Not found"})
