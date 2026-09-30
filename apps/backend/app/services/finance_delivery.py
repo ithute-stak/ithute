@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.models import FinanceInvoice
-from app.services.finance_invoice_v2 import render_invoice_pdf
+from app.services.finance_invoice_multi import render_invoice_pdf
 from app.services.finance_invoices import build_email_html
 from app.services.finance_mail import send_finance_message
 
