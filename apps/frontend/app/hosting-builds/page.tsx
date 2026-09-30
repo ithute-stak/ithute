@@ -14,6 +14,7 @@ type Project = { id: string; name: string; runtime: string; status: string };
 type Source = { id: string; source_type: "git" | "zip"; repository_url?: string | null; repository_branch?: string | null; original_filename?: string | null; status: string };
 type BuildSettings = { project_id: string; runtime: string; build_command?: string | null; start_command?: string | null };
 type Build = { id: string; source_id: string; runtime: string; status: string; source_commit?: string | null; image_ref?: string | null; failure_message?: string | null; created_at?: string | null };
+type BuildLog = { sequence: number; stage: string; level: "info" | "warning" | "error"; message: string; created_at?: string | null };
 
 async function api(path: string, init?: RequestInit) {
   const options: RequestInit = { credentials: "include", ...init, headers: { "Content-Type": "application/json", ...(init?.headers || {}) } };
@@ -43,6 +44,9 @@ export default function HostingBuildsPage() {
   const [buildCommand, setBuildCommand] = useState("");
   const [startCommand, setStartCommand] = useState("");
   const [builds, setBuilds] = useState<Build[]>([]);
+  const [logBuildId, setLogBuildId] = useState("");
+  const [logs, setLogs] = useState<BuildLog[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -50,6 +54,7 @@ export default function HostingBuildsPage() {
   const context = useMemo(() => contexts.find((row) => row.tenant_id === tenantId), [contexts, tenantId]);
   const canManage = Boolean(me?.is_platform_owner || context?.role === "tenant_admin" || context?.role === "reseller_admin" || context?.permissions?.includes("hosting.manage"));
   const selectedProject = projects.find((row) => row.id === projectId);
+  const selectedLogBuild = builds.find((row) => row.id === logBuildId);
 
   async function loadTenant(id: string) {
     if (!id) return;
@@ -61,7 +66,7 @@ export default function HostingBuildsPage() {
   }
 
   async function loadProject(id: string) {
-    if (!tenantId || !id) { setSources([]); setBuilds([]); setSettings(null); return; }
+    if (!tenantId || !id) { setSources([]); setBuilds([]); setSettings(null); setLogBuildId(""); setLogs([]); return; }
     const [sourceResponse, settingsResponse, buildsResponse] = await Promise.all([
       api(`/tenants/${tenantId}/hosting/projects/${id}/sources`),
       api(`/tenants/${tenantId}/hosting/projects/${id}/build-settings`),
@@ -76,7 +81,23 @@ export default function HostingBuildsPage() {
       setBuildCommand(loaded.build_command || "");
       setStartCommand(loaded.start_command || "");
     }
-    setBuilds(buildsResponse.ok ? (await buildsResponse.json()).items || [] : []);
+    const buildRows: Build[] = buildsResponse.ok ? (await buildsResponse.json()).items || [] : [];
+    setBuilds(buildRows);
+    if (logBuildId && !buildRows.some((row) => row.id === logBuildId)) { setLogBuildId(""); setLogs([]); }
+  }
+
+  async function loadBuildLogs(buildId: string) {
+    if (!tenantId || !projectId || !buildId) return;
+    setLogsLoading(true); setError("");
+    const response = await api(`/tenants/${tenantId}/hosting/projects/${projectId}/builds/${buildId}/logs`);
+    if (!response.ok) {
+      setError(await detail(response, "Unable to load build stages."));
+      setLogsLoading(false);
+      return;
+    }
+    setLogs((await response.json()).items || []);
+    setLogBuildId(buildId);
+    setLogsLoading(false);
   }
 
   useEffect(() => {
@@ -131,7 +152,7 @@ export default function HostingBuildsPage() {
 
   return <ControlShell title="Build & Deploy" subtitle="Isolated source builds for shared hosting" userEmail={me?.email}>
     <div className="space-y-5">
-      <PageHeader eyebrow="Shared hosting" title="Build & deploy" description="Build customer Git source away from production, publish an immutable image, then hand it to the hardened hosting-node deployment agent." />
+      <PageHeader eyebrow="Shared hosting" title="Build & deploy" description="Build customer Git or verified ZIP source away from production, publish an immutable image, then hand it to the hardened hosting-node deployment agent." />
 
       <section className="surface-card p-4">
         <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
@@ -157,18 +178,20 @@ export default function HostingBuildsPage() {
 
         <div className="surface-card p-5">
           <div className="flex items-center gap-2"><Rocket size={17}/><h2 className="text-sm font-black">Queue build</h2></div>
-          <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">Only sources in <b>ready</b> state can be built. ZIP remains unavailable until quarantine validation is connected.</p>
+          <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">Only sources in <b>ready</b> state can be built. Git sources are checked out by the isolated builder; ZIP sources must first pass Ithute quarantine and verified-source validation.</p>
           <select className="input mt-4" value={sourceId} onChange={(event) => setSourceId(event.target.value)}><option value="">Select a ready source</option>{sources.filter((row) => row.status === "ready").map((row) => <option key={row.id} value={row.id}>{row.source_type === "git" ? `${row.repository_url} · ${row.repository_branch || "main"}` : row.original_filename}</option>)}</select>
           <button className="btn-primary mt-3" disabled={!canManage || !projectId || !sourceId || saving} onClick={() => void queueBuild()}><Play size={14}/>{saving ? "Working…" : "Build & deploy"}</button>
         </div>
       </section>
 
       <section className="surface-card overflow-hidden">
-        <div className="border-b p-4"><h2 className="text-sm font-black">Build history</h2></div>
-        <div className="space-y-2 p-4">{builds.map((row) => <div key={row.id} className="rounded-xl border p-3 text-xs"><div className="flex flex-wrap items-center justify-between gap-2"><b>{row.runtime} build</b><span>{row.status}</span></div><p className="mt-1 text-[var(--admin-muted)]">{row.source_commit ? `Commit ${row.source_commit.slice(0, 12)}` : "Awaiting source commit"}{row.image_ref ? ` · ${row.image_ref}` : ""}</p>{row.failure_message ? <p className="mt-2 text-red-700">{row.failure_message}</p> : null}</div>)}{!builds.length ? <p className="text-xs text-[var(--admin-muted)]">No builds for this project yet.</p> : null}</div>
+        <div className="border-b p-4"><h2 className="text-sm font-black">Build history</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">Build stages are persisted in bounded control-plane logs, so failed builds remain diagnosable after the isolated worker workspace is deleted.</p></div>
+        <div className="space-y-2 p-4">{builds.map((row) => <div key={row.id} className="rounded-xl border p-3 text-xs"><div className="flex flex-wrap items-center justify-between gap-2"><b>{row.runtime} build</b><span>{row.status}</span></div><p className="mt-1 text-[var(--admin-muted)]">{row.source_commit ? `Commit ${row.source_commit.slice(0, 12)}` : "Awaiting source commit"}{row.image_ref ? ` · ${row.image_ref}` : ""}</p>{row.failure_message ? <p className="mt-2 text-red-700">{row.failure_message}</p> : null}<button className="btn-secondary mt-3" onClick={() => void loadBuildLogs(row.id)} disabled={logsLoading && logBuildId === row.id}>{logsLoading && logBuildId === row.id ? "Loading…" : "View stages"}</button></div>)}{!builds.length ? <p className="text-xs text-[var(--admin-muted)]">No builds for this project yet.</p> : null}</div>
       </section>
 
-      <section className="rounded-3xl bg-[#123a38] p-5 text-white"><div className="flex gap-3"><ShieldCheck size={20} className="text-[#f1de8b]"/><p className="text-xs leading-6 text-white/70">The builder receives source credentials only for the claimed job and never receives production hosting-node credentials. Production accepts only digest-pinned images from the approved Ithute hosting namespace.</p></div></section>
+      {logBuildId ? <section className="surface-card overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-3 border-b p-4"><div><h2 className="text-sm font-black">Build stages</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">{selectedLogBuild?.runtime || "Build"} · {selectedLogBuild?.status || ""} · bounded to 500 persisted entries</p></div><button className="btn-secondary" onClick={() => void loadBuildLogs(logBuildId)}><RefreshCw size={14}/>Refresh stages</button></div><div className="max-h-[28rem] overflow-auto bg-[#0f2423] p-4 font-mono text-[11px] leading-6 text-white/80">{logs.map((row) => <div key={row.sequence} className={row.level === "error" ? "text-red-300" : row.level === "warning" ? "text-amber-200" : ""}><span className="text-white/35">#{row.sequence.toString().padStart(3, "0")}</span> <span className="text-[#f1de8b]">[{row.stage}]</span> {row.message}</div>)}{!logsLoading && !logs.length ? <p className="text-white/45">No persisted build stages yet. Older builds created before stage logging was enabled may have no entries.</p> : null}</div></section> : null}
+
+      <section className="rounded-3xl bg-[#123a38] p-5 text-white"><div className="flex gap-3"><ShieldCheck size={20} className="text-[#f1de8b]"/><p className="text-xs leading-6 text-white/70">The builder receives source credentials only for the claimed job and never receives production hosting-node credentials. Persistent build messages are bounded and source credentials are redacted before diagnostics are sent to the control plane.</p></div></section>
     </div>
   </ControlShell>;
 }
