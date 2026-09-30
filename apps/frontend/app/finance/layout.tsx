@@ -8,6 +8,7 @@ export default function FinanceLayout({ children }: { children: React.ReactNode 
           <Link className="rounded-xl border px-3 py-2 hover:bg-[#eef6f2]" href="/finance">Invoices & automation</Link>
           <Link className="rounded-xl border px-3 py-2 hover:bg-[#eef6f2]" href="/finance/clients">Clients</Link>
           <Link className="rounded-xl border px-3 py-2 hover:bg-[#eef6f2]" href="/finance/collections">Collections & payments</Link>
+          <Link className="rounded-xl border px-3 py-2 hover:bg-[#eef6f2]" href="/finance/reports">Reports & statements</Link>
         </div>
       </div>
       {children}
