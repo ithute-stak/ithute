@@ -47,10 +47,16 @@
 
 .control-shell-content {
   min-height: calc(100vh - 132px);
+  min-width: 0;
 }
 
 .control-shell-content > * {
   animation: control-page-arrive .22s ease-out both;
+  min-width: 0;
+}
+
+.control-shell-content :where(section, article, form, div) {
+  min-width: 0;
 }
 
 @keyframes control-page-arrive {
@@ -144,6 +150,7 @@
  * like one product. Native selects deliberately remain native for reliability. */
 .control-shell-content :where(input, select, textarea):not([type="checkbox"]):not([type="radio"]),
 .control-shell-content .input {
+  max-width: 100%;
   border-color: #d8e2dc;
   background-color: rgba(255,255,255,.98);
   box-shadow: inset 0 1px 1px rgba(23, 50, 40, .02);
@@ -166,6 +173,14 @@
 .control-shell-content table {
   border-collapse: separate;
   border-spacing: 0;
+}
+
+.control-shell-content .data-table-wrap,
+.control-shell-content :where(div, section)[class*="overflow-x-auto"] {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .control-shell-content thead th {
@@ -240,6 +255,83 @@
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* Low-resolution desktop mode. Many customer/reseller offices still use
+ * 1280x720 or 1366x768 displays and integrated GPUs. Preserve functionality
+ * first: reduce decorative GPU work, tighten whitespace, and make wide
+ * operational content scroll rather than forcing the whole page off-screen. */
+@media (min-width: 1024px) and (max-width: 1366px),
+       (min-width: 1024px) and (max-height: 800px) {
+  .control-shell-canvas {
+    background: linear-gradient(180deg, #f8faf9 0, #f4f7f5 100%);
+  }
+
+  .control-shell-canvas::before,
+  .control-shell-content .surface-card:first-child::after,
+  .control-shell-content .metric-card-premium::before {
+    display: none;
+  }
+
+  .control-shell-sidebar,
+  .control-shell-topbar,
+  .control-shell-content .surface-card,
+  .control-shell-content :where(section, article, div)[class*="rounded-"][class*="border"][class*="bg-white"],
+  .control-shell-content .page-header-premium,
+  .control-shell-content .btn-primary,
+  .ithute-dropdown-panel {
+    box-shadow: none;
+  }
+
+  .control-shell-content .surface-card {
+    border-radius: 14px;
+    background: #fff;
+    backdrop-filter: none;
+  }
+
+  .control-shell-stage {
+    padding-top: 12px !important;
+    padding-bottom: 24px !important;
+  }
+
+  .control-shell-content {
+    min-height: calc(100vh - 104px);
+  }
+
+  .control-shell-content .page-header-premium {
+    min-height: 0;
+  }
+
+  .control-shell-content :where(.p-6, .p-5) {
+    padding: 1rem !important;
+  }
+
+  .control-shell-content :where(.gap-6, .gap-5) {
+    gap: 1rem !important;
+  }
+
+  .control-shell-content :where(.space-y-6, .space-y-5) > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 1rem !important;
+  }
+
+  .control-shell-content :where(button, a)[class*="btn-"] {
+    white-space: normal;
+  }
+
+  .control-shell-content table {
+    min-width: 680px;
+  }
+}
+
+@media (max-width: 1023px) {
+  .control-shell-content table {
+    min-width: 640px;
+  }
+
+  .control-shell-content :where(.flex)[class*="justify-between"] {
+    row-gap: .75rem;
+    flex-wrap: wrap;
+  }
+}
+
 @media (max-width: 640px) {
   .control-shell-stage {
     padding-top: 12px !important;
@@ -256,6 +348,14 @@
 
   .control-shell-canvas::before {
     display: none;
+  }
+
+  .control-shell-content table {
+    min-width: 600px;
+  }
+
+  .control-shell-content :where(.p-5, .p-4) {
+    padding: .875rem !important;
   }
 }
 
