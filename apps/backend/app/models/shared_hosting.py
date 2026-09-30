@@ -26,6 +26,7 @@ class HostingDatabase(Base):
     database_name: Mapped[str] = mapped_column(String(63), nullable=False)
     username: Mapped[str] = mapped_column(String(63), nullable=False)
     encrypted_password: Mapped[str] = mapped_column(Text, nullable=False)
+    pending_encrypted_password: Mapped[str | None] = mapped_column(Text, nullable=True)
     internal_host: Mapped[str | None] = mapped_column(String(253), nullable=True)
     internal_port: Mapped[int] = mapped_column(Integer, nullable=False)
     storage_mb: Mapped[int] = mapped_column(Integer, default=1024, nullable=False)
