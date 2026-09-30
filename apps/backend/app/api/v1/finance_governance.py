@@ -17,6 +17,7 @@ from app.services.finance_governance import (
     decide_invoice_approval,
     get_governance_setting,
     governance_out,
+    invoice_approval,
     invoice_requires_approval,
     request_invoice_approval,
 )
@@ -89,6 +90,31 @@ def update_settings(payload: GovernanceUpdate, db: Session = Depends(get_db), cu
     return governance_out(row)
 
 
+@router.get("/approval-candidates")
+def approval_candidates(db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
+    del current
+    invoices = list(db.scalars(
+        select(FinanceInvoice)
+        .where(FinanceInvoice.status.notin_(["paid", "cancelled", "credited"]))
+        .order_by(FinanceInvoice.created_at.desc())
+        .limit(200)
+    ).all())
+    items = []
+    for invoice in invoices:
+        if not invoice_requires_approval(db, invoice):
+            continue
+        approval = invoice_approval(db, invoice.id)
+        items.append({
+            "invoice": {
+                "id": str(invoice.id), "invoice_number": invoice.invoice_number, "client_name": invoice.client_name,
+                "recipient_email": invoice.recipient_email, "total_minor": invoice.total_minor,
+                "status": invoice.status, "due_date": invoice.due_date.isoformat(),
+            },
+            "approval": approval_out(approval, invoice) if approval else None,
+        })
+    return {"items": items, "total": len(items)}
+
+
 @router.get("/approvals")
 def list_approvals(
     status: str | None = Query(default=None, max_length=20),
@@ -100,7 +126,8 @@ def list_approvals(
     if status:
         stmt = stmt.where(FinanceApprovalRequest.status == status.strip().lower())
     rows = list(db.scalars(stmt).all())
-    invoices = {invoice.id: invoice for invoice in db.scalars(select(FinanceInvoice).where(FinanceInvoice.id.in_([row.resource_id for row in rows] or [UUID(int=0)]))).all()}
+    ids = [row.resource_id for row in rows]
+    invoices = {invoice.id: invoice for invoice in db.scalars(select(FinanceInvoice).where(FinanceInvoice.id.in_(ids))).all()} if ids else {}
     return {"items": [approval_out(row, invoices.get(row.resource_id)) for row in rows], "total": len(rows)}
 
 
