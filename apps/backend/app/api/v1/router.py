@@ -49,6 +49,7 @@ from app.api.v1 import (
     platform_setup,
     professional_email,
     public_hosting,
+    reseller_contexts,
     shared_hosting,
     system_owner,
     system_owner_telemetry,
@@ -73,6 +74,7 @@ api_router.include_router(system_owner.router)
 api_router.include_router(system_owner_telemetry.router)
 api_router.include_router(account_verification.router)
 api_router.include_router(identity.router)
+api_router.include_router(reseller_contexts.router)
 api_router.include_router(audit.router)
 api_router.include_router(tenants.router)
 api_router.include_router(domain_onboarding.router)
