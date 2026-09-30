@@ -1,12 +1,16 @@
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.api.v1.application_hosting import ALLOWED_RUNTIMES, HostingProjectCreate
 from app.api.v1.shared_hosting import (
+    DatabaseAgentStatus,
     GitSourceCreate,
     HostingDatabaseCreate,
     ZipSourceRegister,
+    _queue_database_operation,
     _safe_db_name,
     _safe_git_source,
     runtime_catalog,
@@ -55,6 +59,38 @@ def test_database_name_must_begin_with_letter():
     with pytest.raises(HTTPException) as exc:
         _safe_db_name("2026 customer")
     assert exc.value.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("operation", "status"),
+    [
+        ("provision", "queued"),
+        ("rotate", "queued"),
+        ("suspend", "queued"),
+        ("resume", "queued"),
+        ("delete", "deleting"),
+    ],
+)
+def test_database_operation_queue_contract(operation: str, status: str):
+    row = SimpleNamespace(operation="none", status="ready", claimed_at="old", completed_at="old", failure_message="old")
+    _queue_database_operation(row, operation)
+    assert row.operation == operation
+    assert row.status == status
+    assert row.claimed_at is None
+    assert row.completed_at is None
+    assert row.failure_message is None
+
+
+def test_database_operation_queue_rejects_unknown_internal_operation():
+    row = SimpleNamespace(operation="none", status="ready", claimed_at=None, completed_at=None, failure_message=None)
+    with pytest.raises(RuntimeError):
+        _queue_database_operation(row, "destroy-everything")
+
+
+def test_database_agent_status_validates_port_range():
+    assert DatabaseAgentStatus(success=True, host="ithute-db-gateway", port=5432).port == 5432
+    with pytest.raises(ValidationError):
+        DatabaseAgentStatus(success=True, port=70000)
 
 
 def test_zip_contract_rejects_oversized_upload():
