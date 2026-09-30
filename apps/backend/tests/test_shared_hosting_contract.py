@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.api.v1.application_hosting import ALLOWED_RUNTIMES, HostingProjectCreate
+from app.api.v1.hosting_source_credentials import GitCredentialCreate, PrivateGitSourceCreate, _validate_secret
 from app.api.v1.shared_hosting import (
     DatabaseAgentStatus,
     GitSourceCreate,
@@ -127,3 +128,30 @@ def test_safe_git_source_rejects_embedded_https_credentials():
 def test_safe_git_source_rejects_dangerous_branch_names(branch: str):
     with pytest.raises(HTTPException):
         _safe_git_source("https://github.com/example/project.git", branch)
+
+
+def test_https_git_token_must_be_single_line():
+    assert _validate_secret("https_token", "ghp_12345678901234567890") == "ghp_12345678901234567890"
+    with pytest.raises(HTTPException):
+        _validate_secret("https_token", "token-line-one\ntoken-line-two")
+
+
+def test_ssh_git_credential_requires_private_key_envelope():
+    key = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc123abc123\n-----END OPENSSH PRIVATE KEY-----"
+    assert _validate_secret("ssh_key", key) == key
+    with pytest.raises(HTTPException):
+        _validate_secret("ssh_key", "not-a-private-key")
+
+
+def test_private_git_contract_requires_project_credential_id():
+    model = PrivateGitSourceCreate(
+        repository_url="git@github.com:example/private-project.git",
+        branch="main",
+        credential_id="11111111-1111-1111-1111-111111111111",
+    )
+    assert str(model.credential_id) == "11111111-1111-1111-1111-111111111111"
+
+
+def test_git_credential_contract_rejects_unknown_provider():
+    with pytest.raises(ValidationError):
+        GitCredentialCreate(name="Private repo", provider="unknown", auth_type="https_token", secret="123456789012")
