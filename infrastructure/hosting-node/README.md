@@ -50,16 +50,39 @@ Do **not** point `ITHUTE_HOSTING_MYSQL_ADMIN_*` at a MySQL instance that contain
 
 A narrower MySQL privilege broker can be added later, but the safe current production boundary is a dedicated hosted-customer MySQL instance.
 
+## Off-node database backups
+
+Production configuration sets `ITHUTE_HOSTING_BACKUP_REMOTE_REQUIRED=true`. `agent_v4.py` therefore refuses to start unless `ITHUTE_HOSTING_BACKUP_REMOTE` is configured.
+
+The implementation uses `rclone`, so the remote may be S3-compatible object storage, SFTP, another supported cloud store, or another deliberately separated storage system. The actual `rclone.conf` is runtime-only and must never be committed.
+
+A backup is reported **successful** to the control plane only after all of these are true:
+
+1. the engine-native dump completes;
+2. the local file has a valid bounded size and SHA-256;
+3. the file is atomically promoted into `/var/lib/ithute-hosting/database-backups`;
+4. the off-node object is uploaded with immutable-copy semantics;
+5. the remote object size matches the local file;
+6. a SHA-256 sidecar is written beside the remote object.
+
+Restore never trusts the remote store by itself. If the local file is missing or fails the control-plane size/SHA-256 check, the agent deletes the bad local copy, downloads the remote object to a temporary path, atomically promotes it, and **re-checks the exact control-plane size and SHA-256 before running PostgreSQL/MySQL restore**.
+
+This means a fresh replacement node can restore a database whose local backup volume was lost, provided the same control-plane records and off-node object store are available.
+
+Use the remote storage provider's lifecycle/versioning policy for long-term retention. Ithute's application-level backup record remains the source of truth for the expected checksum and size; storage-provider retention is an additional durability layer, not a replacement for application integrity checks.
+
 ## Installation layout
 
 Recommended host paths:
 
 ```text
 /etc/ithute-hosting-node/agent.env                 # mode 0600
+/etc/ithute-hosting-node/rclone.conf               # mode 0600
 /opt/ithute-hosting-agent/agent.py
 /opt/ithute-hosting-agent/agent_v3.py
 /opt/ithute-hosting-agent/agent_v4.py
 /opt/ithute-hosting-agent/network_policy.py
+/opt/ithute-hosting-agent/backup_remote.py
 /var/lib/ithute-hosting/database-backups/
 /etc/systemd/system/ithute-hosting-agent.service
 ```
@@ -71,6 +94,7 @@ Required host utilities depend on enabled engines:
 - Docker Engine / CLI;
 - Python 3.12+;
 - `iptables` and `ss`;
+- `rclone` for required off-node backup replication;
 - PostgreSQL client tools: `psql`, `createdb`, `dropdb`, `pg_dump`, `pg_restore`;
 - MySQL client tools: `mysql`, `mysqldump`.
 
@@ -80,12 +104,14 @@ Required host utilities depend on enabled engines:
 2. Reserve a private Docker CIDR that does not overlap any existing host/VPC/Docker network.
 3. Configure private PostgreSQL/MySQL listeners and authentication.
 4. Bootstrap the PostgreSQL admin role if PostgreSQL is enabled.
-5. Install `agent_v4.py`, its base modules, environment file, and systemd unit.
-6. Run `apply-egress-firewall.sh` before starting customer workloads.
-7. Run `validate-host.sh`; do not proceed unless it passes.
-8. Register/rotate the one-time node token in Ithute and store it only in `agent.env`.
-9. Start `ithute-hosting-agent.service`.
-10. Deploy a disposable test project and database, verify outbound web access, verify RFC1918/metadata/SMTP blocking, test DB provision/rotate/suspend/resume/delete, then test backup + suspended restore.
+5. Configure a separate off-node `rclone` destination and protect `rclone.conf` with mode `0600`.
+6. Install `agent_v4.py`, `backup_remote.py`, its base modules, environment file, and systemd unit.
+7. Run `apply-egress-firewall.sh` before starting customer workloads.
+8. Run `validate-host.sh`; do not proceed unless it passes.
+9. Register/rotate the one-time node token in Ithute and store it only in `agent.env`.
+10. Start `ithute-hosting-agent.service`. With the production template it will fail fast if the required backup remote is absent.
+11. Deploy a disposable test project and database, verify outbound web access, verify RFC1918/metadata/SMTP blocking, test DB provision/rotate/suspend/resume/delete, then test backup + suspended restore.
+12. Delete the disposable node-local backup and repeat restore to prove remote rehydration works before accepting customer workloads.
 
 ## What is still a production validation task
 
@@ -96,5 +122,5 @@ These files make node setup reproducible and fail-closed, but they do not claim 
 - PostgreSQL/MySQL private listeners and authentication;
 - registry/image transfer into the runtime node;
 - Caddy/public ingress from verified domains to healthy private containers;
-- database backup replication off the node and node-loss restore;
+- off-node backup credentials, lifecycle/versioning policy and an actual node-loss/remote-rehydration restore drill;
 - resource pressure and abuse tests.
