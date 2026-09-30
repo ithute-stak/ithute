@@ -16,6 +16,7 @@ from app.api.deps import get_current_user, require_tenant_permission
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
 from app.models import AuditLog, HostingDatabase, HostingNode, HostingNodeAgent, HostingProject, HostingSource, User
+from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
 
 router = APIRouter(tags=["shared-hosting"])
 
@@ -224,6 +225,9 @@ def list_hosting_databases(tenant_id: UUID, db: Session = Depends(get_db), curre
 @router.post("/tenants/{tenant_id}/hosting/databases", status_code=201)
 def create_hosting_database(tenant_id: UUID, payload: HostingDatabaseCreate, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "hosting.manage", db, current)
+    allowed, reason, _ = database_allocation_allowed(db, tenant_id, payload.storage_mb)
+    if not allowed:
+        raise HTTPException(status_code=402, detail=reason)
     project = _project(db, tenant_id, payload.project_id) if payload.project_id else None
     node = _select_database_node(db, project)
     database_name = _safe_db_name(payload.name)
@@ -253,7 +257,7 @@ def create_hosting_database(tenant_id: UUID, payload: HostingDatabaseCreate, db:
     )
     db.add(row)
     db.flush()
-    _audit(db, current, tenant_id, "hosting.database.create", "hosting_database", row.id, {"engine": row.engine, "database_name": row.database_name, "project_id": str(row.project_id) if row.project_id else None, "node_id": str(node.id)})
+    _audit(db, current, tenant_id, "hosting.database.create", "hosting_database", row.id, {"engine": row.engine, "database_name": row.database_name, "project_id": str(row.project_id) if row.project_id else None, "node_id": str(node.id), "storage_mb": row.storage_mb})
     db.commit()
     db.refresh(row)
     result = _db_out(row)
@@ -456,6 +460,9 @@ def register_zip_source(tenant_id: UUID, project_id: UUID, payload: ZipSourceReg
     filename = payload.original_filename.strip()
     if not filename.lower().endswith(".zip") or "/" in filename or "\\" in filename or filename in {".", ".."}:
         raise HTTPException(status_code=422, detail="ZIP source filename must be a plain .zip filename")
+    allowed, reason, _ = source_allocation_allowed(db, tenant_id, payload.size_bytes)
+    if not allowed:
+        raise HTTPException(status_code=402, detail=reason)
     object_key = f"hosting/{tenant_id}/{project_id}/{secrets.token_urlsafe(24)}.zip"
     row = HostingSource(tenant_id=tenant_id, project_id=project.id, source_type="zip", upload_object_key=object_key, original_filename=filename, sha256=payload.sha256.lower() if payload.sha256 else None, size_bytes=payload.size_bytes, status="uploading", created_by_user_id=current.id)
     db.add(row)
