@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, ChevronUp, FileCheck2, FileText, Landmark, LockKeyhole, ReceiptText, Repeat2, Users2, WalletCards } from "lucide-react";
+import { BarChart3, ChevronUp, FileCheck2, FileText, KeyRound, Landmark, LockKeyhole, ReceiptText, Repeat2, Users2, WalletCards } from "lucide-react";
 
 const links = [
   { href: "/finance", label: "Invoices & automation", icon: Repeat2 },
@@ -13,6 +13,7 @@ const links = [
   { href: "/finance/reports", label: "Reports & statements", icon: BarChart3 },
   { href: "/finance/control", label: "Controls & month-end close", icon: LockKeyhole },
   { href: "/finance/governance", label: "Approvals & statements", icon: FileCheck2 },
+  { href: "/finance/access", label: "Access & client portal", icon: KeyRound },
 ];
 
 export function FinanceFab() {
