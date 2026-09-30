@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, ChevronUp, FileText, Landmark, ReceiptText, Repeat2, Users2, WalletCards } from "lucide-react";
+import { BarChart3, ChevronUp, FileText, Landmark, LockKeyhole, ReceiptText, Repeat2, Users2, WalletCards } from "lucide-react";
 
 const links = [
   { href: "/finance", label: "Invoices & automation", icon: Repeat2 },
@@ -11,6 +11,7 @@ const links = [
   { href: "/finance/collections", label: "Collections & payments", icon: WalletCards },
   { href: "/finance/accounting", label: "Accounting & reconciliation", icon: Landmark },
   { href: "/finance/reports", label: "Reports & statements", icon: BarChart3 },
+  { href: "/finance/control", label: "Controls & month-end close", icon: LockKeyhole },
 ];
 
 export function FinanceFab() {
@@ -19,7 +20,7 @@ export function FinanceFab() {
 
   return (
     <details className="group fixed bottom-5 right-5 z-[70]">
-      <div className="mb-2 w-[min(320px,calc(100vw-2.5rem))] overflow-hidden rounded-2xl border border-[#b9d5cb] bg-white/98 p-2 shadow-2xl backdrop-blur">
+      <div className="mb-2 w-[min(340px,calc(100vw-2.5rem))] overflow-hidden rounded-2xl border border-[#b9d5cb] bg-white/98 p-2 shadow-2xl backdrop-blur">
         <div className="px-3 pb-2 pt-1">
           <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#4f776c]">Finance workspace</p>
           <p className="mt-1 text-xs text-[#6c7c78]">Jump between finance tools without using the main navbar.</p>

@@ -5,7 +5,7 @@ from datetime import date, datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, object_session, selectinload
 
-from app.models import FinanceClient, FinanceCreditNote, FinanceInvoice, FinancePayment
+from app.models import FinanceClient, FinanceCreditNote, FinanceInvoice, FinancePayment, FinanceRefund
 from app.services.finance_invoices import invoice_out
 
 
@@ -21,16 +21,40 @@ def client_out(row: FinanceClient) -> dict:
     }
 
 
+def payment_refunded_minor(row: FinancePayment) -> int:
+    session = object_session(row)
+    if session is None or row.id is None:
+        return 0
+    return int(session.scalar(
+        select(func.coalesce(func.sum(FinanceRefund.amount_minor), 0)).where(FinanceRefund.payment_id == row.id)
+    ) or 0)
+
+
 def payment_out(row: FinancePayment) -> dict:
+    refunded = payment_refunded_minor(row)
     return {
         "id": str(row.id), "invoice_id": str(row.invoice_id), "amount_minor": row.amount_minor,
+        "refunded_minor": refunded, "net_amount_minor": max(0, row.amount_minor - refunded),
         "payment_date": row.payment_date.isoformat(), "method": row.method, "reference": row.reference,
         "note": row.note, "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
 
-def paid_minor(invoice: FinanceInvoice) -> int:
+def refunded_minor(invoice: FinanceInvoice) -> int:
+    session = object_session(invoice)
+    if session is None or invoice.id is None:
+        return 0
+    return int(session.scalar(
+        select(func.coalesce(func.sum(FinanceRefund.amount_minor), 0)).where(FinanceRefund.invoice_id == invoice.id)
+    ) or 0)
+
+
+def gross_paid_minor(invoice: FinanceInvoice) -> int:
     return sum(max(0, int(payment.amount_minor)) for payment in invoice.payments)
+
+
+def paid_minor(invoice: FinanceInvoice) -> int:
+    return max(0, gross_paid_minor(invoice) - refunded_minor(invoice))
 
 
 def credited_minor(invoice: FinanceInvoice) -> int:
@@ -56,6 +80,8 @@ def effective_invoice_status(invoice: FinanceInvoice, *, today: date | None = No
 def invoice_financial_out(invoice: FinanceInvoice) -> dict:
     data = invoice_out(invoice)
     paid = paid_minor(invoice)
+    gross_paid = gross_paid_minor(invoice)
+    refunded = refunded_minor(invoice)
     credited = credited_minor(invoice)
     adjusted = max(0, invoice.total_minor - credited)
     items = [
@@ -69,6 +95,8 @@ def invoice_financial_out(invoice: FinanceInvoice) -> dict:
     ]
     data.update({
         "client_id": str(invoice.client_id) if invoice.client_id else None,
+        "gross_paid_minor": gross_paid,
+        "refunded_minor": refunded,
         "paid_minor": paid,
         "credited_minor": credited,
         "adjusted_total_minor": adjusted,
@@ -90,13 +118,16 @@ def _settlement_totals(invoice: FinanceInvoice) -> tuple[int, int]:
     session = object_session(invoice)
     if session is None or invoice.id is None:
         return paid_minor(invoice), credited_minor(invoice)
-    paid = session.scalar(
+    gross_paid = session.scalar(
         select(func.coalesce(func.sum(FinancePayment.amount_minor), 0)).where(FinancePayment.invoice_id == invoice.id)
+    ) or 0
+    refunded = session.scalar(
+        select(func.coalesce(func.sum(FinanceRefund.amount_minor), 0)).where(FinanceRefund.invoice_id == invoice.id)
     ) or 0
     credited = session.scalar(
         select(func.coalesce(func.sum(FinanceCreditNote.amount_minor), 0)).where(FinanceCreditNote.invoice_id == invoice.id)
     ) or 0
-    return int(paid), int(credited)
+    return max(0, int(gross_paid) - int(refunded)), int(credited)
 
 
 def sync_invoice_payment_status(invoice: FinanceInvoice) -> None:
@@ -118,19 +149,24 @@ def dashboard_out(db: Session) -> dict:
     ).all()
     clients = db.scalar(select(func.count(FinanceClient.id)).where(FinanceClient.active.is_(True))) or 0
     today = date.today(); month_start = today.replace(day=1)
-    total_invoiced = collected = credits = outstanding = overdue = month_invoiced = month_collected = overdue_count = 0
+    total_invoiced = collected = credits = refunds = outstanding = overdue = month_invoiced = month_collected = overdue_count = 0
     for invoice in invoices:
         if invoice.status == "cancelled": continue
-        paid = paid_minor(invoice); credited = credited_minor(invoice); adjusted = max(0, invoice.total_minor - credited); balance = max(0, adjusted - paid)
-        total_invoiced += invoice.total_minor; collected += paid; credits += credited; outstanding += balance
+        paid = paid_minor(invoice); credited = credited_minor(invoice); refunded = refunded_minor(invoice); adjusted = max(0, invoice.total_minor - credited); balance = max(0, adjusted - paid)
+        total_invoiced += invoice.total_minor; collected += paid; credits += credited; refunds += refunded; outstanding += balance
         if invoice.created_at and invoice.created_at.date() >= month_start: month_invoiced += invoice.total_minor
         for payment in invoice.payments:
             if payment.payment_date >= month_start: month_collected += payment.amount_minor
         if balance > 0 and invoice.due_date < today and invoice.status not in {"draft", "failed"}:
             overdue += balance; overdue_count += 1
+    month_refunds = int(db.scalar(
+        select(func.coalesce(func.sum(FinanceRefund.amount_minor), 0)).where(FinanceRefund.refund_date >= month_start)
+    ) or 0)
+    month_collected = max(0, month_collected - month_refunds)
     return {
         "active_clients": int(clients), "invoice_count": len(invoices), "total_invoiced_minor": total_invoiced,
-        "collected_minor": collected, "credited_minor": credits, "outstanding_minor": outstanding, "overdue_minor": overdue,
+        "collected_minor": collected, "refunded_minor": refunds, "credited_minor": credits,
+        "outstanding_minor": outstanding, "overdue_minor": overdue,
         "overdue_count": overdue_count, "month_invoiced_minor": month_invoiced, "month_collected_minor": month_collected,
     }
 
