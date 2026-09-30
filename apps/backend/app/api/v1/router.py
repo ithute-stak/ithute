@@ -49,6 +49,7 @@ from app.api.v1 import (
     platform_setup,
     professional_email,
     public_hosting,
+    shared_hosting,
     system_owner,
     system_owner_telemetry,
     tenants,
@@ -106,6 +107,7 @@ api_router.include_router(business.router)
 api_router.include_router(hosting.router)
 api_router.include_router(application_hosting.router)
 api_router.include_router(hosting_operations.router)
+api_router.include_router(shared_hosting.router)
 api_router.include_router(public_hosting.router)
 api_router.include_router(platform_setup.router)
 api_router.include_router(transactional.router)
