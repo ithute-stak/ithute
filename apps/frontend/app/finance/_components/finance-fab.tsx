@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, ChevronUp, FileText, ReceiptText, Repeat2, Users2, WalletCards } from "lucide-react";
+import { BarChart3, ChevronUp, FileText, Landmark, ReceiptText, Repeat2, Users2, WalletCards } from "lucide-react";
 
 const links = [
   { href: "/finance", label: "Invoices & automation", icon: Repeat2 },
   { href: "/finance/documents", label: "Quotations & pro-formas", icon: FileText },
   { href: "/finance/clients", label: "Clients", icon: Users2 },
   { href: "/finance/collections", label: "Collections & payments", icon: WalletCards },
+  { href: "/finance/accounting", label: "Accounting & reconciliation", icon: Landmark },
   { href: "/finance/reports", label: "Reports & statements", icon: BarChart3 },
 ];
 
