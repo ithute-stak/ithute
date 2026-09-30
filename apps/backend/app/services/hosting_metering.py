@@ -49,9 +49,12 @@ def hosting_resource_usage(db: Session, tenant_id: UUID) -> dict[str, int]:
     }
 
 
-def hosting_resource_meter(db: Session, tenant_id: UUID) -> dict:
+def hosting_resource_meter(db: Session, tenant_id: UUID, *, lock_subscription: bool = False) -> dict:
+    subscription_query = select(TenantSubscription).where(TenantSubscription.tenant_id == tenant_id)
+    if lock_subscription:
+        subscription_query = subscription_query.with_for_update()
+    subscription = db.scalar(subscription_query)
     usage = hosting_resource_usage(db, tenant_id)
-    subscription = db.scalar(select(TenantSubscription).where(TenantSubscription.tenant_id == tenant_id))
     if subscription is None:
         return {"usage": usage, "limits": None, "subscription_status": None}
     plan = db.get(BillingPlan, subscription.plan_id)
@@ -66,7 +69,7 @@ def hosting_resource_meter(db: Session, tenant_id: UUID) -> dict:
 
 
 def database_allocation_allowed(db: Session, tenant_id: UUID, requested_storage_mb: int) -> tuple[bool, str, dict]:
-    meter = hosting_resource_meter(db, tenant_id)
+    meter = hosting_resource_meter(db, tenant_id, lock_subscription=True)
     limits = meter.get("limits")
     if limits is None:
         return False, "Organization has no active hosting package", meter
@@ -80,7 +83,7 @@ def database_allocation_allowed(db: Session, tenant_id: UUID, requested_storage_
 
 
 def source_allocation_allowed(db: Session, tenant_id: UUID, requested_bytes: int) -> tuple[bool, str, dict]:
-    meter = hosting_resource_meter(db, tenant_id)
+    meter = hosting_resource_meter(db, tenant_id, lock_subscription=True)
     limits = meter.get("limits")
     if limits is None:
         return False, "Organization has no active hosting package", meter
