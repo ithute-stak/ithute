@@ -3,18 +3,19 @@ from __future__ import annotations
 import json
 import re
 import secrets
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_tenant_permission
-from app.core.security import encrypt_secret
+from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
-from app.models import AuditLog, HostingDatabase, HostingProject, HostingSource, User
+from app.models import AuditLog, HostingDatabase, HostingNode, HostingNodeAgent, HostingProject, HostingSource, User
 
 router = APIRouter(tags=["shared-hosting"])
 
@@ -34,6 +35,7 @@ RUNTIME_CATALOG = [
 _DB_IDENT_RE = re.compile(r"^[a-z][a-z0-9_]{1,47}$")
 _GIT_SCHEMES = ("https://", "ssh://", "git@")
 _BRANCH_RE = re.compile(r"^[^\x00-\x20~^:?*\\]+$")
+_DATABASE_OPERATIONS = {"provision", "rotate", "suspend", "resume", "delete"}
 
 
 class HostingDatabaseCreate(BaseModel):
@@ -42,6 +44,14 @@ class HostingDatabaseCreate(BaseModel):
     project_id: UUID | None = None
     storage_mb: int = Field(default=1024, ge=128, le=102400)
     engine_version: str | None = Field(default=None, max_length=32)
+
+
+class DatabaseAgentStatus(BaseModel):
+    success: bool
+    host: str | None = Field(default=None, max_length=253)
+    port: int | None = Field(default=None, ge=1, le=65535)
+    engine_version: str | None = Field(default=None, max_length=32)
+    message: str | None = Field(default=None, max_length=2000)
 
 
 class GitSourceCreate(BaseModel):
@@ -55,6 +65,10 @@ class ZipSourceRegister(BaseModel):
     sha256: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{64}$")
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def _project(db: Session, tenant_id: UUID, project_id: UUID) -> HostingProject:
     row = db.scalar(select(HostingProject).where(HostingProject.id == project_id, HostingProject.tenant_id == tenant_id))
     if row is None:
@@ -62,11 +76,21 @@ def _project(db: Session, tenant_id: UUID, project_id: UUID) -> HostingProject:
     return row
 
 
-def _audit(db: Session, current: User, tenant_id: UUID, action: str, resource_type: str, resource_id: UUID, metadata: dict | None = None) -> None:
+def _database(db: Session, tenant_id: UUID, database_id: UUID, *, lock: bool = False) -> HostingDatabase:
+    query = select(HostingDatabase).where(HostingDatabase.id == database_id, HostingDatabase.tenant_id == tenant_id)
+    if lock:
+        query = query.with_for_update()
+    row = db.scalar(query)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Hosted database not found")
+    return row
+
+
+def _audit(db: Session, current: User | None, tenant_id: UUID, action: str, resource_type: str, resource_id: UUID, metadata: dict | None = None) -> None:
     db.add(
         AuditLog(
             tenant_id=tenant_id,
-            actor_user_id=current.id,
+            actor_user_id=current.id if current else None,
             action=action,
             resource_type=resource_type,
             resource_id=str(resource_id),
@@ -89,6 +113,10 @@ def _db_out(row: HostingDatabase) -> dict:
         "port": row.internal_port,
         "storage_mb": row.storage_mb,
         "status": row.status,
+        "operation": row.operation,
+        "failure_message": row.failure_message,
+        "claimed_at": row.claimed_at.isoformat() if row.claimed_at else None,
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
@@ -136,6 +164,46 @@ def _safe_git_source(repository_url: str, branch: str) -> tuple[str, str]:
     return repository_url, branch
 
 
+def _select_database_node(db: Session, project: HostingProject | None) -> HostingNode:
+    if project is not None and project.node_id is not None:
+        node = db.get(HostingNode, project.node_id)
+        if node is None or node.status == "offline" or db.get(HostingNodeAgent, node.id) is None:
+            raise HTTPException(status_code=409, detail="The project's hosting node is not available for database provisioning")
+        return node
+    nodes = db.scalars(
+        select(HostingNode)
+        .where(HostingNode.status == "active", HostingNode.accepts_new_projects.is_(True))
+        .order_by(HostingNode.created_at.asc())
+    ).all()
+    for node in nodes:
+        if db.get(HostingNodeAgent, node.id) is not None:
+            return node
+    raise HTTPException(status_code=409, detail="No active hosting node with an agent is available for database provisioning")
+
+
+def _queue_database_operation(row: HostingDatabase, operation: str) -> None:
+    if operation not in _DATABASE_OPERATIONS:
+        raise RuntimeError("Unsupported internal database operation")
+    row.operation = operation
+    row.claimed_at = None
+    row.completed_at = None
+    row.failure_message = None
+    row.status = "deleting" if operation == "delete" else "queued"
+
+
+def _agent_from_token(db: Session, token: str | None) -> tuple[HostingNodeAgent, HostingNode]:
+    raw = (token or "").strip()
+    if not raw or not raw.startswith("ith_host_"):
+        raise HTTPException(status_code=401, detail="Hosting node agent credential required")
+    agent = db.scalar(select(HostingNodeAgent).where(HostingNodeAgent.token_hash == hash_token(raw)))
+    if agent is None:
+        raise HTTPException(status_code=401, detail="Invalid hosting node agent credential")
+    node = db.get(HostingNode, agent.node_id)
+    if node is None or node.status == "offline":
+        raise HTTPException(status_code=403, detail="Hosting node is unavailable")
+    return agent, node
+
+
 @router.get("/hosting/runtime-catalog")
 def runtime_catalog():
     return {
@@ -147,37 +215,19 @@ def runtime_catalog():
 
 
 @router.get("/tenants/{tenant_id}/hosting/databases")
-def list_hosting_databases(
-    tenant_id: UUID,
-    db: Session = Depends(get_db),
-    current: User = Depends(get_current_user),
-):
+def list_hosting_databases(tenant_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "hosting.read", db, current)
-    rows = db.scalars(
-        select(HostingDatabase)
-        .where(HostingDatabase.tenant_id == tenant_id)
-        .order_by(HostingDatabase.created_at.desc())
-    ).all()
+    rows = db.scalars(select(HostingDatabase).where(HostingDatabase.tenant_id == tenant_id).order_by(HostingDatabase.created_at.desc())).all()
     return {"items": [_db_out(row) for row in rows]}
 
 
 @router.post("/tenants/{tenant_id}/hosting/databases", status_code=201)
-def create_hosting_database(
-    tenant_id: UUID,
-    payload: HostingDatabaseCreate,
-    db: Session = Depends(get_db),
-    current: User = Depends(get_current_user),
-):
+def create_hosting_database(tenant_id: UUID, payload: HostingDatabaseCreate, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "hosting.manage", db, current)
     project = _project(db, tenant_id, payload.project_id) if payload.project_id else None
+    node = _select_database_node(db, project)
     database_name = _safe_db_name(payload.name)
-    duplicate = db.scalar(
-        select(HostingDatabase.id).where(
-            HostingDatabase.tenant_id == tenant_id,
-            HostingDatabase.engine == payload.engine,
-            HostingDatabase.database_name == database_name,
-        )
-    )
+    duplicate = db.scalar(select(HostingDatabase.id).where(HostingDatabase.tenant_id == tenant_id, HostingDatabase.engine == payload.engine, HostingDatabase.database_name == database_name))
     if duplicate is not None:
         raise HTTPException(status_code=409, detail="A database with this name and engine already exists")
 
@@ -187,7 +237,7 @@ def create_hosting_database(
     row = HostingDatabase(
         tenant_id=tenant_id,
         project_id=project.id if project else None,
-        node_id=project.node_id if project else None,
+        node_id=node.id,
         engine=payload.engine,
         engine_version=payload.engine_version,
         database_name=database_name,
@@ -196,20 +246,13 @@ def create_hosting_database(
         internal_host=None,
         internal_port=5432 if payload.engine == "postgresql" else 3306,
         storage_mb=payload.storage_mb,
-        status="provisioning",
+        status="queued",
+        operation="provision",
         created_by_user_id=current.id,
     )
     db.add(row)
     db.flush()
-    _audit(
-        db,
-        current,
-        tenant_id,
-        "hosting.database.create",
-        "hosting_database",
-        row.id,
-        {"engine": row.engine, "database_name": row.database_name, "project_id": str(row.project_id) if row.project_id else None},
-    )
+    _audit(db, current, tenant_id, "hosting.database.create", "hosting_database", row.id, {"engine": row.engine, "database_name": row.database_name, "project_id": str(row.project_id) if row.project_id else None, "node_id": str(node.id)})
     db.commit()
     db.refresh(row)
     result = _db_out(row)
@@ -218,43 +261,158 @@ def create_hosting_database(
     return result
 
 
+@router.post("/tenants/{tenant_id}/hosting/databases/{database_id}/rotate-password")
+def rotate_database_password(tenant_id: UUID, database_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    require_tenant_permission(tenant_id, "hosting.manage", db, current)
+    row = _database(db, tenant_id, database_id, lock=True)
+    if row.status != "ready" or row.operation != "none":
+        raise HTTPException(status_code=409, detail="Database password can be rotated only while the database is ready and idle")
+    raw_password = secrets.token_urlsafe(32)
+    row.encrypted_password = encrypt_secret(raw_password)
+    _queue_database_operation(row, "rotate")
+    _audit(db, current, tenant_id, "hosting.database.rotate.queue", "hosting_database", row.id)
+    db.commit()
+    result = _db_out(row)
+    result["password"] = raw_password
+    result["credential_warning"] = "This replacement password is shown once. Update application secrets after the rotation job completes."
+    return result
+
+
+@router.post("/tenants/{tenant_id}/hosting/databases/{database_id}/suspend")
+def suspend_database(tenant_id: UUID, database_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    require_tenant_permission(tenant_id, "hosting.manage", db, current)
+    row = _database(db, tenant_id, database_id, lock=True)
+    if row.status != "ready" or row.operation != "none":
+        raise HTTPException(status_code=409, detail="Only a ready idle database can be suspended")
+    _queue_database_operation(row, "suspend")
+    _audit(db, current, tenant_id, "hosting.database.suspend.queue", "hosting_database", row.id)
+    db.commit()
+    return _db_out(row)
+
+
+@router.post("/tenants/{tenant_id}/hosting/databases/{database_id}/resume")
+def resume_database(tenant_id: UUID, database_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    require_tenant_permission(tenant_id, "hosting.manage", db, current)
+    row = _database(db, tenant_id, database_id, lock=True)
+    if row.status != "suspended" or row.operation != "none":
+        raise HTTPException(status_code=409, detail="Only a suspended idle database can be resumed")
+    _queue_database_operation(row, "resume")
+    _audit(db, current, tenant_id, "hosting.database.resume.queue", "hosting_database", row.id)
+    db.commit()
+    return _db_out(row)
+
+
+@router.delete("/tenants/{tenant_id}/hosting/databases/{database_id}", status_code=202)
+def delete_hosting_database(tenant_id: UUID, database_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    require_tenant_permission(tenant_id, "hosting.manage", db, current)
+    row = _database(db, tenant_id, database_id, lock=True)
+    if row.status in {"queued", "working", "deleting"}:
+        raise HTTPException(status_code=409, detail="Database already has an operation in progress")
+    _queue_database_operation(row, "delete")
+    _audit(db, current, tenant_id, "hosting.database.delete.queue", "hosting_database", row.id)
+    db.commit()
+    return {"accepted": True, "database": _db_out(row)}
+
+
+@router.post("/hosting/agent/databases/claim")
+def claim_database_operation(x_ithute_hosting_agent: str | None = Header(default=None), db: Session = Depends(get_db)):
+    agent, node = _agent_from_token(db, x_ithute_hosting_agent)
+    agent.last_seen_at = _now()
+    row = db.scalar(
+        select(HostingDatabase)
+        .where(HostingDatabase.node_id == node.id, HostingDatabase.operation != "none", HostingDatabase.status.in_(["queued", "deleting"]))
+        .order_by(HostingDatabase.created_at.asc())
+        .with_for_update(skip_locked=True)
+    )
+    if row is None:
+        db.commit()
+        return {"database": None}
+    try:
+        password = decrypt_secret(row.encrypted_password)
+    except ValueError as exc:
+        row.status = "failed"
+        row.operation = "none"
+        row.failure_message = "Database credential could not be decrypted"
+        row.completed_at = _now()
+        db.commit()
+        raise HTTPException(status_code=500, detail="Database credential could not be prepared") from exc
+    row.status = "working"
+    row.claimed_at = _now()
+    operation = row.operation
+    db.commit()
+    return {
+        "database": {
+            "id": str(row.id),
+            "tenant_id": str(row.tenant_id),
+            "project_id": str(row.project_id) if row.project_id else None,
+            "operation": operation,
+            "engine": row.engine,
+            "engine_version": row.engine_version,
+            "database_name": row.database_name,
+            "username": row.username,
+            "password": password,
+            "storage_mb": row.storage_mb,
+            "expected_port": row.internal_port,
+        }
+    }
+
+
+@router.post("/hosting/agent/databases/{database_id}/status")
+def report_database_operation(database_id: UUID, payload: DatabaseAgentStatus, x_ithute_hosting_agent: str | None = Header(default=None), db: Session = Depends(get_db)):
+    agent, node = _agent_from_token(db, x_ithute_hosting_agent)
+    agent.last_seen_at = _now()
+    row = db.scalar(select(HostingDatabase).where(HostingDatabase.id == database_id, HostingDatabase.node_id == node.id).with_for_update())
+    if row is None:
+        raise HTTPException(status_code=404, detail="Database operation not found for this hosting node")
+    if row.status != "working" or row.operation == "none":
+        raise HTTPException(status_code=409, detail="Database does not have a claimed operation")
+    operation = row.operation
+    now = _now()
+    if not payload.success:
+        row.status = "failed"
+        row.operation = "none"
+        row.failure_message = (payload.message or "Hosting node reported database operation failure").strip()[:2000]
+        row.completed_at = now
+        _audit(db, None, row.tenant_id, f"hosting.database.{operation}.failed", "hosting_database", row.id, {"node_id": str(node.id), "message": row.failure_message})
+        db.commit()
+        db.refresh(row)
+        return _db_out(row)
+
+    if operation == "delete":
+        tenant_id = row.tenant_id
+        resource_id = row.id
+        _audit(db, None, tenant_id, "hosting.database.delete.complete", "hosting_database", resource_id, {"node_id": str(node.id)})
+        db.delete(row)
+        db.commit()
+        return {"deleted": True, "id": str(resource_id)}
+
+    row.internal_host = payload.host or row.internal_host
+    row.internal_port = payload.port or row.internal_port
+    row.engine_version = payload.engine_version or row.engine_version
+    row.status = "suspended" if operation == "suspend" else "ready"
+    row.operation = "none"
+    row.failure_message = None
+    row.completed_at = now
+    _audit(db, None, row.tenant_id, f"hosting.database.{operation}.complete", "hosting_database", row.id, {"node_id": str(node.id), "host": row.internal_host, "port": row.internal_port})
+    db.commit()
+    db.refresh(row)
+    return _db_out(row)
+
+
 @router.get("/tenants/{tenant_id}/hosting/projects/{project_id}/sources")
-def list_project_sources(
-    tenant_id: UUID,
-    project_id: UUID,
-    db: Session = Depends(get_db),
-    current: User = Depends(get_current_user),
-):
+def list_project_sources(tenant_id: UUID, project_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "hosting.read", db, current)
     _project(db, tenant_id, project_id)
-    rows = db.scalars(
-        select(HostingSource)
-        .where(HostingSource.tenant_id == tenant_id, HostingSource.project_id == project_id)
-        .order_by(HostingSource.created_at.desc())
-    ).all()
+    rows = db.scalars(select(HostingSource).where(HostingSource.tenant_id == tenant_id, HostingSource.project_id == project_id).order_by(HostingSource.created_at.desc())).all()
     return {"items": [_source_out(row) for row in rows]}
 
 
 @router.post("/tenants/{tenant_id}/hosting/projects/{project_id}/sources/git", status_code=201)
-def register_git_source(
-    tenant_id: UUID,
-    project_id: UUID,
-    payload: GitSourceCreate,
-    db: Session = Depends(get_db),
-    current: User = Depends(get_current_user),
-):
+def register_git_source(tenant_id: UUID, project_id: UUID, payload: GitSourceCreate, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "hosting.manage", db, current)
     project = _project(db, tenant_id, project_id)
     repository_url, branch = _safe_git_source(payload.repository_url, payload.branch)
-    row = HostingSource(
-        tenant_id=tenant_id,
-        project_id=project.id,
-        source_type="git",
-        repository_url=repository_url,
-        repository_branch=branch,
-        status="ready",
-        created_by_user_id=current.id,
-    )
+    row = HostingSource(tenant_id=tenant_id, project_id=project.id, source_type="git", repository_url=repository_url, repository_branch=branch, status="ready", created_by_user_id=current.id)
     db.add(row)
     db.flush()
     project.source_repository = repository_url
@@ -266,30 +424,14 @@ def register_git_source(
 
 
 @router.post("/tenants/{tenant_id}/hosting/projects/{project_id}/sources/zip", status_code=201)
-def register_zip_source(
-    tenant_id: UUID,
-    project_id: UUID,
-    payload: ZipSourceRegister,
-    db: Session = Depends(get_db),
-    current: User = Depends(get_current_user),
-):
+def register_zip_source(tenant_id: UUID, project_id: UUID, payload: ZipSourceRegister, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "hosting.manage", db, current)
     project = _project(db, tenant_id, project_id)
     filename = payload.original_filename.strip()
     if not filename.lower().endswith(".zip") or "/" in filename or "\\" in filename or filename in {".", ".."}:
         raise HTTPException(status_code=422, detail="ZIP source filename must be a plain .zip filename")
     object_key = f"hosting/{tenant_id}/{project_id}/{secrets.token_urlsafe(24)}.zip"
-    row = HostingSource(
-        tenant_id=tenant_id,
-        project_id=project.id,
-        source_type="zip",
-        upload_object_key=object_key,
-        original_filename=filename,
-        sha256=payload.sha256.lower() if payload.sha256 else None,
-        size_bytes=payload.size_bytes,
-        status="uploading",
-        created_by_user_id=current.id,
-    )
+    row = HostingSource(tenant_id=tenant_id, project_id=project.id, source_type="zip", upload_object_key=object_key, original_filename=filename, sha256=payload.sha256.lower() if payload.sha256 else None, size_bytes=payload.size_bytes, status="uploading", created_by_user_id=current.id)
     db.add(row)
     db.flush()
     _audit(db, current, tenant_id, "hosting.source.zip.register", "hosting_source", row.id, {"project_id": str(project.id), "filename": filename, "size_bytes": row.size_bytes})
