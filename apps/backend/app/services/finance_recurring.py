@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import select, text
 
 from app.db.session import SessionLocal
-from app.models import FinanceInvoice, FinanceInvoiceSchedule
+from app.models import FinanceInvoice, FinanceInvoiceItem, FinanceInvoiceSchedule
 from app.services.finance_delivery import send_invoice
 from app.services.finance_invoices import build_default_email_body, build_default_subject, next_invoice_number
 
@@ -78,6 +78,16 @@ def _make_invoice(db, schedule: FinanceInvoiceSchedule, issue_date: date) -> Fin
         created_by_user_id=schedule.created_by_user_id,
     )
     db.add(invoice)
+    db.flush()
+    db.add(FinanceInvoiceItem(
+        invoice_id=invoice.id,
+        position=1,
+        description=schedule.description,
+        details=schedule.details,
+        quantity=schedule.quantity,
+        rate_minor=schedule.rate_minor,
+        tax_minor=schedule.tax_minor,
+    ))
     db.flush()
     return invoice
 

@@ -13,15 +13,17 @@ from app.db.session import get_db
 from app.models import (
     FinanceClient,
     FinanceInvoice,
+    FinanceInvoiceItem,
     FinanceInvoiceSchedule,
     FinancePayment,
     FinanceSenderConfiguration,
     User,
 )
 from app.services.finance_delivery import send_invoice
-from app.services.finance_invoice_v2 import render_invoice_pdf
+from app.services.finance_invoice_multi import render_invoice_pdf
 from app.services.finance_invoices import build_default_email_body, build_default_subject, next_invoice_number
 from app.services.finance_ledger import (
+    adjusted_total_minor,
     client_out,
     dashboard_out,
     invoice_financial_out,
@@ -113,7 +115,11 @@ class FinanceSenderUpdate(BaseModel):
 def _invoice(db: Session, invoice_id: UUID) -> FinanceInvoice:
     invoice = db.scalar(
         select(FinanceInvoice)
-        .options(selectinload(FinanceInvoice.payments))
+        .options(
+            selectinload(FinanceInvoice.payments),
+            selectinload(FinanceInvoice.items),
+            selectinload(FinanceInvoice.credit_notes),
+        )
         .where(FinanceInvoice.id == invoice_id)
     )
     if invoice is None:
@@ -131,9 +137,6 @@ def _client(db: Session, client_id: UUID) -> FinanceClient:
 @router.get("/dashboard")
 def get_finance_dashboard(db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     del current
-    invoices = db.scalars(select(FinanceInvoice).options(selectinload(FinanceInvoice.payments))).all()
-    # Preload payments for dashboard_out's invoice relationship reads without N+1 surprises.
-    del invoices
     return dashboard_out(db)
 
 
@@ -188,7 +191,11 @@ def get_finance_client(client_id: UUID, db: Session = Depends(get_db), current: 
     row = _client(db, client_id)
     invoices = db.scalars(
         select(FinanceInvoice)
-        .options(selectinload(FinanceInvoice.payments))
+        .options(
+            selectinload(FinanceInvoice.payments),
+            selectinload(FinanceInvoice.items),
+            selectinload(FinanceInvoice.credit_notes),
+        )
         .where(FinanceInvoice.client_id == row.id)
         .order_by(FinanceInvoice.created_at.desc())
     ).all()
@@ -317,7 +324,15 @@ def list_finance_invoices(
     current: User = Depends(require_platform_owner),
 ):
     del current
-    stmt = select(FinanceInvoice).options(selectinload(FinanceInvoice.payments)).order_by(FinanceInvoice.created_at.desc())
+    stmt = (
+        select(FinanceInvoice)
+        .options(
+            selectinload(FinanceInvoice.payments),
+            selectinload(FinanceInvoice.items),
+            selectinload(FinanceInvoice.credit_notes),
+        )
+        .order_by(FinanceInvoice.created_at.desc())
+    )
     if q and q.strip():
         term = f"%{q.strip()}%"
         stmt = stmt.where(
@@ -382,11 +397,20 @@ def create_finance_invoice(payload: FinanceInvoiceCreate, db: Session = Depends(
     )
     db.add(invoice)
     try:
+        db.flush()
+        db.add(FinanceInvoiceItem(
+            invoice_id=invoice.id,
+            position=1,
+            description=payload.description.strip(),
+            details=payload.details.strip(),
+            quantity=payload.quantity,
+            rate_minor=payload.rate_minor,
+            tax_minor=payload.tax_minor,
+        ))
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Invoice number collision; please create the invoice again") from exc
-    db.refresh(invoice)
     return invoice_financial_out(_invoice(db, invoice.id))
 
 
@@ -409,8 +433,8 @@ def delete_finance_invoice(invoice_id: UUID, db: Session = Depends(get_db), curr
 def cancel_finance_invoice(invoice_id: UUID, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     del current
     invoice = _invoice(db, invoice_id)
-    if invoice.status == "paid":
-        raise HTTPException(status_code=409, detail="A fully paid invoice cannot be cancelled; use a credit-note workflow instead")
+    if invoice.status in {"paid", "credited"}:
+        raise HTTPException(status_code=409, detail="A settled invoice cannot be cancelled; use the credit-note record and audit trail instead")
     invoice.status = "cancelled"
     invoice.cancelled_at = datetime.now(timezone.utc)
     db.commit()
@@ -439,7 +463,7 @@ def _persist_send_failure(db: Session, invoice_id: UUID, error: Exception) -> No
 def send_finance_invoice(invoice_id: UUID, payload: SendInvoiceRequest, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     del current
     invoice = _invoice(db, invoice_id)
-    if invoice.status in {"paid", "cancelled"}:
+    if invoice.status in {"paid", "cancelled", "credited"}:
         raise HTTPException(status_code=409, detail=f"Invoice is {invoice.status} and cannot be sent")
     if invoice.status == "sent" and not payload.resend:
         raise HTTPException(status_code=409, detail="Invoice has already been sent; explicitly request a resend if required")
@@ -473,9 +497,9 @@ def record_invoice_payment(
     if invoice.status == "cancelled":
         raise HTTPException(status_code=409, detail="Cannot record a payment against a cancelled invoice")
     already_paid = sum(payment.amount_minor for payment in invoice.payments)
-    outstanding = max(0, invoice.total_minor - already_paid)
+    outstanding = max(0, adjusted_total_minor(invoice) - already_paid)
     if outstanding <= 0:
-        raise HTTPException(status_code=409, detail="Invoice is already fully paid")
+        raise HTTPException(status_code=409, detail="Invoice is already fully settled")
     if payload.amount_minor > outstanding:
         raise HTTPException(status_code=422, detail=f"Payment exceeds outstanding balance of {outstanding} minor units")
     payment = FinancePayment(
@@ -489,7 +513,6 @@ def record_invoice_payment(
     )
     db.add(payment)
     db.flush()
-    invoice.payments.append(payment)
     sync_invoice_payment_status(invoice)
     db.commit()
     db.refresh(payment)
