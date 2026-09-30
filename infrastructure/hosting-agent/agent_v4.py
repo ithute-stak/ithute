@@ -86,6 +86,109 @@ def ensure_hosted_network(name: str, project_id: str) -> None:
 base.ensure_network = ensure_hosted_network
 
 
+def _psql_database(database_name: str, sql: str) -> str:
+    args = [
+        base.PSQL,
+        *base.postgres_connection_args(),
+        "--dbname", database_name,
+        "-v", "ON_ERROR_STOP=1",
+        "-Atqc", sql,
+    ]
+    return base.command(args, timeout=60, extra_env=base.postgres_environment()).stdout.strip()
+
+
+def _postgres_database_owner(database_name: str) -> str | None:
+    value = base.psql(
+        "SELECT pg_get_userbyid(datdba) FROM pg_database "
+        f"WHERE datname={base.sql_literal(database_name)}"
+    ).strip()
+    return value or None
+
+
+def postgres_operation_v4(work: dict[str, Any]) -> tuple[str, int, str | None]:
+    """Provision PostgreSQL without requiring a superuser hosting admin.
+
+    The hosting admin owns each database so CREATEDB is sufficient for create/drop.
+    The customer login receives only database CONNECT/TEMP and CREATE/USAGE on the
+    public schema. Objects created by the application remain owned by the customer
+    role; backup/restore SET ROLE to that customer role.
+    """
+    _, operation, _, database_name, username = base.validate_database_work(work)
+    password = str(work["password"])
+
+    if not base.DB_USER_RE.fullmatch(base.POSTGRES_ADMIN_USER):
+        raise RuntimeError("PostgreSQL hosting admin username is not a safe role identifier")
+
+    if operation == "provision":
+        if base.postgres_role_exists(username):
+            base.psql(f"ALTER ROLE {username} LOGIN PASSWORD {base.sql_literal(password)}")
+        else:
+            base.psql(f"CREATE ROLE {username} LOGIN PASSWORD {base.sql_literal(password)}")
+
+        if not base.postgres_database_exists(database_name):
+            base.command(
+                [
+                    base.CREATEDB,
+                    *base.postgres_connection_args(),
+                    f"--maintenance-db={base.POSTGRES_ADMIN_DATABASE}",
+                    database_name,
+                ],
+                timeout=120,
+                extra_env=base.postgres_environment(),
+            )
+        else:
+            owner = _postgres_database_owner(database_name)
+            if owner != base.POSTGRES_ADMIN_USER:
+                raise RuntimeError(
+                    "Existing PostgreSQL database uses legacy customer ownership; "
+                    "migrate its owner to the configured Ithute hosting admin before retrying"
+                )
+
+        # PostgreSQL grants CONNECT/TEMPORARY on a new database to PUBLIC by
+        # default. Revoke that shared-cluster access and grant only this app role.
+        base.psql(
+            f"REVOKE CONNECT, TEMPORARY ON DATABASE {database_name} FROM PUBLIC; "
+            f"GRANT CONNECT, TEMPORARY ON DATABASE {database_name} TO {username}"
+        )
+        _psql_database(
+            database_name,
+            f"REVOKE CREATE ON SCHEMA public FROM PUBLIC; "
+            f"GRANT USAGE, CREATE ON SCHEMA public TO {username}",
+        )
+    elif operation == "rotate":
+        if not base.postgres_role_exists(username):
+            raise RuntimeError("PostgreSQL role no longer exists")
+        base.psql(f"ALTER ROLE {username} LOGIN PASSWORD {base.sql_literal(password)}")
+    elif operation == "suspend":
+        base.psql(f"ALTER ROLE {username} NOLOGIN")
+    elif operation == "resume":
+        base.psql(f"ALTER ROLE {username} LOGIN")
+    elif operation == "delete":
+        owner = _postgres_database_owner(database_name)
+        if owner is not None and owner != base.POSTGRES_ADMIN_USER:
+            raise RuntimeError("Refusing to drop PostgreSQL database not owned by the Ithute hosting admin")
+        base.command(
+            [
+                base.DROPDB,
+                *base.postgres_connection_args(),
+                f"--maintenance-db={base.POSTGRES_ADMIN_DATABASE}",
+                "--if-exists",
+                "--force",
+                database_name,
+            ],
+            timeout=120,
+            extra_env=base.postgres_environment(),
+        )
+        base.psql(f"DROP ROLE IF EXISTS {username}")
+
+    version = base.psql("SHOW server_version") if operation != "delete" else None
+    return base.POSTGRES_APP_HOST, base.POSTGRES_APP_PORT, version
+
+
+# base.process_database resolves postgres_operation from base globals at runtime.
+base.postgres_operation = postgres_operation_v4
+
+
 def _safe_storage_path(storage_key: str) -> pathlib.Path:
     if not storage_key or "\\" in storage_key or "\x00" in storage_key:
         raise RuntimeError("Database backup contains an invalid storage key")
@@ -130,7 +233,7 @@ def report_database_backup(
     )
 
 
-def _validate_work(work: dict[str, Any]) -> tuple[str, str, str, str, pathlib.Path]:
+def _validate_work(work: dict[str, Any]) -> tuple[str, str, str, str, str, pathlib.Path]:
     backup_id = str(work.get("id") or "")
     operation = str(work.get("operation") or "")
     database = work.get("database")
@@ -138,13 +241,14 @@ def _validate_work(work: dict[str, Any]) -> tuple[str, str, str, str, pathlib.Pa
         raise RuntimeError("Database backup job is incomplete")
     engine = str(database.get("engine") or "")
     database_name = str(database.get("database_name") or "")
+    username = str(database.get("username") or "")
     if engine not in {"postgresql", "mysql"}:
         raise RuntimeError("Database backup job has an unsupported engine")
-    if not base.DB_IDENT_RE.fullmatch(database_name):
+    if not base.DB_IDENT_RE.fullmatch(database_name) or not base.DB_USER_RE.fullmatch(username):
         raise RuntimeError("Database backup job contains an invalid database identifier")
     if operation == "restore" and str(database.get("status") or "") != "suspended":
         raise RuntimeError("Database must remain suspended during restore")
-    return backup_id, operation, engine, database_name, _safe_storage_path(str(work.get("storage_key") or ""))
+    return backup_id, operation, engine, database_name, username, _safe_storage_path(str(work.get("storage_key") or ""))
 
 
 def _run_to_file(args: list[str], path: pathlib.Path, *, env: dict[str, str], timeout: int = 3600) -> None:
@@ -163,11 +267,12 @@ def _run_from_file(args: list[str], path: pathlib.Path, *, env: dict[str, str], 
         raise RuntimeError(f"database restore command failed: {detail}")
 
 
-def _postgres_backup(database_name: str, temporary: pathlib.Path) -> None:
+def _postgres_backup(database_name: str, username: str, temporary: pathlib.Path) -> None:
     args = [
         PG_DUMP,
         *base.postgres_connection_args(),
         "--dbname", database_name,
+        "--role", username,
         "--format=custom",
         "--no-owner",
         "--no-privileges",
@@ -178,10 +283,12 @@ def _postgres_backup(database_name: str, temporary: pathlib.Path) -> None:
         raise RuntimeError(f"pg_dump failed: {result.stderr.decode('utf-8', errors='replace')[-2000:]}")
 
 
-def _postgres_restore(database_name: str, backup: pathlib.Path) -> None:
-    owner = base.psql(f"SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname={base.sql_literal(database_name)}").strip()
-    if not base.DB_USER_RE.fullmatch(owner):
-        raise RuntimeError("Could not resolve the PostgreSQL application owner for restore")
+def _postgres_restore(database_name: str, username: str, backup: pathlib.Path) -> None:
+    if not base.postgres_role_exists(username):
+        raise RuntimeError("PostgreSQL application role is unavailable for restore")
+    owner = _postgres_database_owner(database_name)
+    if owner != base.POSTGRES_ADMIN_USER:
+        raise RuntimeError("PostgreSQL restore target is not owned by the Ithute hosting admin")
     args = [
         PG_RESTORE,
         *base.postgres_connection_args(),
@@ -190,7 +297,7 @@ def _postgres_restore(database_name: str, backup: pathlib.Path) -> None:
         "--if-exists",
         "--no-owner",
         "--no-privileges",
-        "--role", owner,
+        "--role", username,
         str(backup),
     ]
     result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={**os.environ, **base.postgres_environment()}, timeout=3600, check=False)
@@ -236,7 +343,7 @@ def _mysql_restore(database_name: str, backup: pathlib.Path) -> None:
 
 
 def process_database_backup(work: dict[str, Any]) -> None:
-    backup_id, operation, engine, database_name, final = _validate_work(work)
+    backup_id, operation, engine, database_name, username, final = _validate_work(work)
     try:
         BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
         final.parent.mkdir(parents=True, exist_ok=True)
@@ -245,7 +352,7 @@ def process_database_backup(work: dict[str, Any]) -> None:
                 temporary = pathlib.Path(handle.name)
             try:
                 if engine == "postgresql":
-                    _postgres_backup(database_name, temporary)
+                    _postgres_backup(database_name, username, temporary)
                 else:
                     _mysql_backup(database_name, temporary)
                 size = temporary.stat().st_size
@@ -270,7 +377,7 @@ def process_database_backup(work: dict[str, Any]) -> None:
         if _sha256(final) != expected_sha:
             raise RuntimeError("Database backup checksum changed before restore")
         if engine == "postgresql":
-            _postgres_restore(database_name, final)
+            _postgres_restore(database_name, username, final)
         else:
             _mysql_restore(database_name, final)
         report_database_backup(backup_id, True)
