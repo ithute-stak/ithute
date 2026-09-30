@@ -5,6 +5,7 @@ on:
     paths:
       - "apps/backend/app/api/v1/application_hosting.py"
       - "apps/backend/app/api/v1/hosting_operations.py"
+      - "apps/backend/app/api/v1/hosting_build_settings.py"
       - "apps/backend/app/api/v1/hosting_builds.py"
       - "apps/backend/app/api/v1/shared_hosting.py"
       - "apps/backend/app/api/v1/hosting_source_credentials.py"
@@ -105,4 +106,7 @@ jobs:
           grep -Fq 'GIT_TERMINAL_PROMPT' infrastructure/hosting-builder/builder.py
           grep -Fq 'StrictHostKeyChecking=yes' infrastructure/hosting-builder/builder.py
           grep -Fq 'Unable to detect a supported runtime' infrastructure/hosting-builder/builder.py
+          grep -Fq 'buildx' infrastructure/hosting-builder/builder.py
+          grep -Fq 'containerimage.digest' infrastructure/hosting-builder/builder.py
+          grep -Fq 'ALLOW_CUSTOM_DOCKERFILE' infrastructure/hosting-builder/builder.py
           ! grep -Fq 'ITHUTE_HOSTING_AGENT_TOKEN' infrastructure/hosting-builder/builder.py
