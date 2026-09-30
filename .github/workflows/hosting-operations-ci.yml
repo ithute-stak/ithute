@@ -21,6 +21,7 @@ on:
       - "apps/backend/tests/test_application_hosting.py"
       - "apps/backend/tests/test_hosting_operations*.py"
       - "apps/backend/tests/test_hosting_builds_contract.py"
+      - "apps/backend/tests/test_hosting_uploads_contract.py"
       - "apps/backend/tests/test_shared_hosting_contract.py"
       - "apps/backend/tests/test_alembic_single_head.py"
       - "apps/backend/tests/conftest.py"
@@ -88,6 +89,7 @@ jobs:
           tests/test_hosting_operations_unit.py
           tests/test_hosting_operations_integration.py
           tests/test_hosting_builds_contract.py
+          tests/test_hosting_uploads_contract.py
           tests/test_shared_hosting_contract.py
           tests/test_alembic_single_head.py
 
