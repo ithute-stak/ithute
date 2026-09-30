@@ -83,7 +83,7 @@ def central_user_from_claims(claims: dict, db: Session) -> User:
             status_code=401,
             detail={
                 "code": "ITHUTE_ACCOUNT_NOT_LINKED",
-                "message": "This !thute account is not linked to a Mailbox DNS user.",
+                "message": "This !thute account is not linked to an Ithute platform user.",
             },
         )
     return user
@@ -124,7 +124,7 @@ def get_current_local_user(
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     if _token_algorithm(token) != ALGORITHM:
-        raise HTTPException(status_code=401, detail="A current Mailbox DNS session is required")
+        raise HTTPException(status_code=401, detail="A current Ithute application session is required")
     return _decode_local_user(token, db)
 
 
@@ -146,21 +146,38 @@ def get_current_user(
 
 def _finance_required_role(request: Request) -> str:
     method = request.method.upper()
-    path = request.url.path
-    if method == "GET":
+    path = request.url.path.rstrip("/")
+
+    if method in {"GET", "HEAD", "OPTIONS"}:
         return "viewer"
     if method == "DELETE":
         return "admin"
-    if "/finance/governance/settings" in path:
+
+    # Configuration and accounting-period controls can change system-wide
+    # financial behavior and are intentionally restricted to Finance admins.
+    admin_prefixes = (
+        "/api/v1/finance/sender",
+        "/api/v1/finance/control/tax-rates",
+        "/api/v1/finance/governance/settings",
+    )
+    if path.startswith(admin_prefixes):
         return "admin"
-    if "/finance/governance/approvals/" in path and path.endswith("/decision"):
-        return "approver"
     if "/finance/control/periods/" in path and (path.endswith("/lock") or path.endswith("/reopen")):
         return "admin"
-    if "/finance/control/tax-rates" in path:
-        return "admin"
-    if "/finance/control/refunds" in path:
+
+    # Financial reversals/adjustments and approval decisions require a second
+    # level of authority above normal clerical posting.
+    approver_paths = (
+        "/api/v1/finance/control/refunds",
+        "/api/v1/finance/completion/delivery-events",
+    )
+    if path.startswith(approver_paths):
         return "approver"
+    if "/finance/governance/approvals/" in path and path.endswith("/decision"):
+        return "approver"
+    if "/finance/invoices/" in path and (path.endswith("/credit-notes") or path.endswith("/cancel")):
+        return "approver"
+
     return "clerk"
 
 
