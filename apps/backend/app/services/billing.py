@@ -23,6 +23,7 @@ from app.models import (
     TenantSubscription,
     UsageSnapshot,
 )
+from app.services.hosting_metering import hosting_resource_usage
 
 DEFAULT_PLANS = (
     {
@@ -41,6 +42,9 @@ DEFAULT_PLANS = (
         "hosting_memory_mb_per_project": 512,
         "hosting_cpu_millicores_per_project": 500,
         "hosting_pids_per_project": 128,
+        "hosting_database_limit": 2,
+        "hosting_database_storage_mb": 1024,
+        "hosting_source_storage_mb": 1024,
         "product_category": "Website & Hosting",
         "description": "Professional starter website, hosting, business email and essential brand setup.",
         "website_pages": 1,
@@ -71,6 +75,9 @@ DEFAULT_PLANS = (
         "hosting_memory_mb_per_project": 768,
         "hosting_cpu_millicores_per_project": 750,
         "hosting_pids_per_project": 192,
+        "hosting_database_limit": 2,
+        "hosting_database_storage_mb": 2 * 1024,
+        "hosting_source_storage_mb": 2 * 1024,
         "product_category": "Website & Hosting",
         "description": "Growing-business website and brand package with professional documents and light monthly content support.",
         "website_pages": 5,
@@ -102,6 +109,9 @@ DEFAULT_PLANS = (
         "hosting_memory_mb_per_project": 1024,
         "hosting_cpu_millicores_per_project": 1000,
         "hosting_pids_per_project": 256,
+        "hosting_database_limit": 6,
+        "hosting_database_storage_mb": 5120,
+        "hosting_source_storage_mb": 5120,
         "product_category": "Website & Hosting",
         "description": "Complete SME website, hosting and corporate identity package with business document templates.",
         "website_pages": 8,
@@ -132,6 +142,9 @@ DEFAULT_PLANS = (
         "hosting_memory_mb_per_project": 1536,
         "hosting_cpu_millicores_per_project": 1500,
         "hosting_pids_per_project": 384,
+        "hosting_database_limit": 10,
+        "hosting_database_storage_mb": 8 * 1024,
+        "hosting_source_storage_mb": 8 * 1024,
         "product_category": "Website & Hosting",
         "description": "Advanced website and managed-system package with full brand identity, company profile and priority support.",
         "website_pages": 12,
@@ -163,6 +176,9 @@ DEFAULT_PLANS = (
         "hosting_memory_mb_per_project": 2048,
         "hosting_cpu_millicores_per_project": 2000,
         "hosting_pids_per_project": 512,
+        "hosting_database_limit": 20,
+        "hosting_database_storage_mb": 10240,
+        "hosting_source_storage_mb": 10240,
         "product_category": "Website & Hosting",
         "description": "Custom digital presence, managed systems, hosting and full corporate branding for larger organizations.",
         "website_pages": 20,
@@ -223,6 +239,7 @@ def tenant_usage(db: Session, tenant_id: UUID) -> dict:
     hosting_storage_mb = db.scalar(
         select(func.coalesce(func.sum(HostingProject.storage_mb), 0)).where(HostingProject.tenant_id == tenant_id)
     ) or 0
+    shared_usage = hosting_resource_usage(db, tenant_id)
     return {
         "mailboxes": int(mailboxes),
         "domains": int(domains),
@@ -230,6 +247,9 @@ def tenant_usage(db: Session, tenant_id: UUID) -> dict:
         "api_keys": int(api_keys),
         "hosted_projects": int(hosted_projects),
         "hosting_storage_bytes": int(hosting_storage_mb) * 1024 * 1024,
+        "hosting_database_count": shared_usage["database_count"],
+        "hosting_database_storage_bytes": shared_usage["database_storage_bytes"],
+        "hosting_source_storage_bytes": shared_usage["source_storage_bytes"],
     }
 
 
@@ -245,6 +265,9 @@ def capture_usage(
         mailboxes=usage["mailboxes"],
         domains=usage["domains"],
         storage_bytes=usage["allocated_storage_bytes"],
+        hosting_database_count=usage["hosting_database_count"],
+        hosting_database_storage_bytes=usage["hosting_database_storage_bytes"],
+        hosting_source_storage_bytes=usage["hosting_source_storage_bytes"],
         period_start=period_start,
         period_end=period_end,
     )
@@ -296,6 +319,9 @@ def _limits(plan: BillingPlan) -> dict:
         "hosting_memory_mb_per_project": plan.hosting_memory_mb_per_project,
         "hosting_cpu_millicores_per_project": plan.hosting_cpu_millicores_per_project,
         "hosting_pids_per_project": plan.hosting_pids_per_project,
+        "hosting_database_count": plan.hosting_database_limit,
+        "hosting_database_storage_bytes": plan.hosting_database_storage_mb * 1024 * 1024,
+        "hosting_source_storage_bytes": plan.hosting_source_storage_mb * 1024 * 1024,
     }
 
 
@@ -334,6 +360,12 @@ def entitlement_decision(
             and usage["hosting_storage_bytes"] + requested_storage_bytes <= limits["hosting_storage_bytes"]
         ),
         "hosting_storage": usage["hosting_storage_bytes"] + requested_storage_bytes <= limits["hosting_storage_bytes"],
+        "hosting_database": (
+            usage["hosting_database_count"] + 1 <= limits["hosting_database_count"]
+            and usage["hosting_database_storage_bytes"] + requested_storage_bytes <= limits["hosting_database_storage_bytes"]
+        ),
+        "hosting_database_storage": usage["hosting_database_storage_bytes"] + requested_storage_bytes <= limits["hosting_database_storage_bytes"],
+        "hosting_source_storage": usage["hosting_source_storage_bytes"] + requested_storage_bytes <= limits["hosting_source_storage_bytes"],
     }
     if resource not in checks:
         raise ValueError(f"Unknown entitlement resource: {resource}")
@@ -565,6 +597,9 @@ def billing_summary(db: Session, tenant_id: UUID) -> dict:
         and usage["api_keys"] <= limits["api_keys"]
         and usage["hosted_projects"] <= limits["hosted_projects"]
         and usage["hosting_storage_bytes"] <= limits["hosting_storage_bytes"]
+        and usage["hosting_database_count"] <= limits["hosting_database_count"]
+        and usage["hosting_database_storage_bytes"] <= limits["hosting_database_storage_bytes"]
+        and usage["hosting_source_storage_bytes"] <= limits["hosting_source_storage_bytes"]
     )
     return {
         "subscription": {
