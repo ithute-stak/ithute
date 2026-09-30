@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Banknote, FileUp, Landmark, Link2, PlusCircle, RefreshCw, WalletCards } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
+import { financeRoleRank, useFinanceAccess } from "../_components/use-finance-access";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "/api/v1";
 const money = (minor = 0) => `M ${(minor / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -41,7 +42,9 @@ function parseAmount(value: string) {
 }
 
 export default function FinanceAccountingPage() {
-  const [email, setEmail] = useState(""); const [owner, setOwner] = useState(false); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
+  const { email, allowed, role, loading: accessLoading } = useFinanceAccess();
+  const canWrite = financeRoleRank(role) >= 2;
+  const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
   const [expenses, setExpenses] = useState<Expense[]>([]); const [bankRows, setBankRows] = useState<BankRow[]>([]); const [clients, setClients] = useState<Client[]>([]); const [links, setLinks] = useState<ServiceLink[]>([]);
   const [start, setStart] = useState(monthStart()); const [end, setEnd] = useState(monthEnd()); const [pnl, setPnl] = useState<Pnl | null>(null);
   const [expense, setExpense] = useState({ expense_date: isoToday(), vendor: "", category: "Operations", description: "", amount: "", tax: "0", payment_method: "bank_transfer", reference: "", recurring: false });
@@ -54,12 +57,13 @@ export default function FinanceAccountingPage() {
     if (e.ok) setExpenses((await e.json()).items || []); if (b.ok) setBankRows((await b.json()).items || []); if (c.ok) setClients((await c.json()).items || []); if (l.ok) setLinks((await l.json()).items || []); if (p.ok) setPnl(await p.json());
   }
 
-  useEffect(() => { void (async () => { const me = await api("/auth/me"); if (!me.ok) return; const body = await me.json(); setEmail(body.email || ""); setOwner(Boolean(body.is_platform_owner)); if (body.is_platform_owner) await load(); })(); }, []);
-  useEffect(() => { if (owner) void (async () => { const r = await api(`/finance/accounting/pnl?start=${start}&end=${end}`); if (r.ok) setPnl(await r.json()); })(); }, [start, end, owner]);
+  useEffect(() => { if (allowed && canWrite) void load(); }, [allowed, canWrite]);
+  useEffect(() => { if (allowed && canWrite) void (async () => { const r = await api(`/finance/accounting/pnl?start=${start}&end=${end}`); if (r.ok) setPnl(await r.json()); })(); }, [start, end, allowed, canWrite]);
 
   const expenseTotal = useMemo(() => expenses.reduce((sum, row) => sum + row.amount_minor + row.tax_minor, 0), [expenses]);
 
   async function addExpense() {
+    if (!canWrite) return setMessage("Finance Clerk access is required.");
     if (!expense.vendor.trim() || !expense.category.trim() || !expense.amount) return setMessage("Vendor, category and amount are required.");
     setBusy(true); setMessage("");
     try {
@@ -69,9 +73,10 @@ export default function FinanceAccountingPage() {
     } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to save expense"); } finally { setBusy(false); }
   }
 
-  async function voidExpense(id: string) { if (!window.confirm("Void this expense? It will stay in the audit history.")) return; setBusy(true); try { const r = await api(`/finance/accounting/expenses/${id}/void`, { method: "PATCH" }); if (!r.ok) throw new Error("Unable to void expense"); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to void expense"); } finally { setBusy(false); } }
+  async function voidExpense(id: string) { if (!canWrite) return setMessage("Finance Clerk access is required."); if (!window.confirm("Void this expense? It will stay in the audit history.")) return; setBusy(true); try { const r = await api(`/finance/accounting/expenses/${id}/void`, { method: "PATCH" }); if (!r.ok) throw new Error("Unable to void expense"); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to void expense"); } finally { setBusy(false); } }
 
   async function importCsv(file: File) {
+    if (!canWrite) return setMessage("Finance Clerk access is required.");
     setBusy(true); setMessage("");
     try {
       const text = await file.text(); const lines = text.split(/\r?\n/).filter((line) => line.trim()); if (lines.length < 2) throw new Error("CSV has no transaction rows.");
@@ -87,14 +92,16 @@ export default function FinanceAccountingPage() {
   }
 
   async function reconcile(row: BankRow) {
+    if (!canWrite) return setMessage("Finance Clerk access is required.");
     const invoice = row.suggestion?.invoice; if (!invoice) return;
     if (!window.confirm(`Reconcile ${money(row.amount_minor)} to ${invoice.invoice_number} — ${invoice.client_name}?`)) return;
     setBusy(true); try { const r = await api(`/finance/accounting/bank/${row.id}/reconcile`, { method: "POST", body: JSON.stringify({ invoice_id: invoice.id }) }); const data = await r.json().catch(() => ({})); if (!r.ok) throw new Error(String(data.detail || "Unable to reconcile")); setMessage(`${invoice.invoice_number} reconciled.`); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to reconcile"); } finally { setBusy(false); }
   }
 
-  async function ignoreBank(id: string) { if (!window.confirm("Ignore this bank transaction for invoice reconciliation?")) return; setBusy(true); try { const r = await api(`/finance/accounting/bank/${id}/ignore`, { method: "PATCH" }); if (!r.ok) throw new Error("Unable to ignore transaction"); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to ignore transaction"); } finally { setBusy(false); } }
+  async function ignoreBank(id: string) { if (!canWrite) return setMessage("Finance Clerk access is required."); if (!window.confirm("Ignore this bank transaction for invoice reconciliation?")) return; setBusy(true); try { const r = await api(`/finance/accounting/bank/${id}/ignore`, { method: "PATCH" }); if (!r.ok) throw new Error("Unable to ignore transaction"); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to ignore transaction"); } finally { setBusy(false); } }
 
   async function addServiceLink() {
+    if (!canWrite) return setMessage("Finance Clerk access is required.");
     if (!service.client_id || !service.source_ref.trim() || !service.service_label.trim() || !service.rate) return setMessage("Client, service reference, label and rate are required.");
     setBusy(true); setMessage("");
     try {
@@ -104,10 +111,10 @@ export default function FinanceAccountingPage() {
     } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to link service"); } finally { setBusy(false); }
   }
 
-  async function toggleLink(id: string) { setBusy(true); try { const r = await api(`/finance/accounting/service-links/${id}/toggle`, { method: "PATCH" }); if (!r.ok) throw new Error("Unable to update service billing"); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to update service billing"); } finally { setBusy(false); } }
+  async function toggleLink(id: string) { if (!canWrite) return setMessage("Finance Clerk access is required."); setBusy(true); try { const r = await api(`/finance/accounting/service-links/${id}/toggle`, { method: "PATCH" }); if (!r.ok) throw new Error("Unable to update service billing"); await load(); } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to update service billing"); } finally { setBusy(false); } }
 
   return <ControlShell title="Finance accounting" subtitle="Bank reconciliation, expenses, management P&L and service-linked billing" userEmail={email}>
-    {!owner ? <section className="surface-card p-6">Finance is restricted.</section> : <div className="space-y-4 pb-20">
+    {accessLoading ? <section className="surface-card p-6">Checking Finance access…</section> : !allowed || !canWrite ? <section className="surface-card p-6">Finance Clerk access or higher is required for accounting operations.</section> : <div className="space-y-4 pb-20">
       {message ? <div className="surface-card px-4 py-3 text-xs font-bold">{message}</div> : null}
       <section className="surface-card p-4">
         <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="eyebrow-label">Management P&amp;L</p><h1 className="mt-1 text-lg font-black">Revenue, expenses and profit</h1><p className="text-[10px] text-[var(--admin-muted)]">Management accrual view based on net issued invoices less posted expenses.</p></div><div className="flex gap-2"><label className="text-[10px] font-bold">From<input className="input mt-1" type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label><label className="text-[10px] font-bold">To<input className="input mt-1" type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></label></div></div>
