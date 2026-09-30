@@ -47,7 +47,7 @@ from app.models.hosting_operations import (
     HostingEnvironmentVariable,
     HostingNodeAgent,
 )
-from app.models.shared_hosting import HostingDatabase, HostingSource
+from app.models.shared_hosting import HostingDatabase, HostingSource, HostingSourceCredential
 from app.models.business import (
     CustomerProfile,
     Notification,
@@ -115,7 +115,7 @@ __all__ = [
     "PlatformMailboxBinding", "PlatformMailOutboundDelivery", "DkimKey", "BillingPlan", "TenantSubscription", "UsageSnapshot", "BillingInvoice",
     "BillingPaymentEvent", "SubscriptionStatus", "InvoiceStatus", "FinanceClient", "FinanceInvoice", "FinanceInvoiceItem", "FinanceInvoiceSchedule", "FinancePayment", "FinanceCreditNote", "FinanceDocument", "FinanceDocumentItem", "FinanceSenderConfiguration", "FinanceExpense", "FinanceBankTransaction", "FinanceServiceBillingLink", "FinanceAccountingPeriod", "FinanceRefund", "FinanceTaxRate", "FinanceApprovalRequest", "FinanceGovernanceSetting", "FinanceRoleGrant", "FinancePortalAccess", "FinanceDeliveryEvent", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject",
     "HOSTING_RUNTIME_MANIFEST_VERSION", "HostingDeployment", "HostingEnvironmentVariable", "HostingNodeAgent",
-    "HostingDatabase", "HostingSource",
+    "HostingDatabase", "HostingSource", "HostingSourceCredential",
     "CustomerProfile", "Notification", "ServiceIncident", "ServiceIncidentImpact", "ServiceIncidentStatus",
     "SupportTicket", "SupportTicketMessage", "SupportTicketPriority", "SupportTicketStatus", "DomainOrder",
     "EmailVerificationToken", "GroupwareCredential", "MailMigrationJob", "MailNode", "MailboxDelegate",
