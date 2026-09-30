@@ -32,13 +32,11 @@ jobs:
             infrastructure/hosting-builder/verified_zip.py
           sh -n infrastructure/hosting-build-plane/bootstrap-host.sh
 
-      - name: Run ZIP quarantine tests
-        working-directory: infrastructure/hosting-upload
-        run: python3 -m unittest -v test_zip_safety.py
-
-      - name: Run verified ZIP builder tests
-        working-directory: infrastructure/hosting-builder
-        run: python3 -m unittest -v test_verified_zip.py
+      - name: Run ZIP quarantine and verified-source tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s infrastructure/hosting-upload -p 'test_*.py'
+          python3 -m unittest discover -s infrastructure/hosting-builder -p 'test_*.py'
 
       - name: Render isolated build-plane topology
         working-directory: infrastructure/hosting-build-plane
