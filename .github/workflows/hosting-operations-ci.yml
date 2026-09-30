@@ -6,6 +6,7 @@ on:
       - "apps/backend/app/api/v1/application_hosting.py"
       - "apps/backend/app/api/v1/hosting_operations.py"
       - "apps/backend/app/api/v1/shared_hosting.py"
+      - "apps/backend/app/api/v1/hosting_source_credentials.py"
       - "apps/backend/app/api/v1/router.py"
       - "apps/backend/app/models/hosting.py"
       - "apps/backend/app/models/hosting_operations.py"
