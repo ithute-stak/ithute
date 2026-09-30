@@ -22,7 +22,14 @@ import { ConfirmDialog, EmptyState, PageHeader, StatusBadge, Toast } from "@/com
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
 
 type Me = { email: string; is_platform_owner: boolean };
-type Membership = { tenant_id: string; tenant_name: string; role: string; status: string };
+type ServiceContext = {
+  tenant_id: string;
+  tenant_name: string;
+  role: string;
+  status: string;
+  access_kind?: "membership" | "reseller_customer" | "platform_owner";
+  permissions?: string[];
+};
 type Domain = {
   id: string;
   ascii_name: string;
@@ -96,7 +103,7 @@ function packagePrice(info: PackageInfo | null) {
 export default function DnsPage() {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
-  const [contexts, setContexts] = useState<Membership[]>([]);
+  const [contexts, setContexts] = useState<ServiceContext[]>([]);
   const [tenantId, setTenantId] = useState("");
   const [domains, setDomains] = useState<Domain[]>([]);
   const [domainId, setDomainId] = useState("");
@@ -120,7 +127,11 @@ export default function DnsPage() {
 
   const selectedContext = useMemo(() => contexts.find((row) => row.tenant_id === tenantId), [contexts, tenantId]);
   const selectedDomain = useMemo(() => domains.find((row) => row.id === domainId), [domains, domainId]);
-  const canManage = Boolean(me?.is_platform_owner || ["tenant_admin", "dns_admin"].includes(selectedContext?.role || ""));
+  const canManage = Boolean(
+    me?.is_platform_owner ||
+    ["tenant_admin", "dns_admin", "reseller_admin"].includes(selectedContext?.role || "") ||
+    selectedContext?.permissions?.includes("dns.manage"),
+  );
   const verified = Boolean(selectedDomain?.status === "verified" && selectedDomain?.ownership_verified_at);
   const rrsets = zone?.rrsets || [];
   const packageInfo = packageContext?.package || null;
@@ -137,21 +148,11 @@ export default function DnsPage() {
         const current: Me = await meResponse.json();
         setMe(current);
 
-        let rows: Membership[] = [];
-        if (current.is_platform_owner) {
-          const response = await api("/tenants");
-          const data = response.ok ? await response.json() : [];
-          rows = data.map((item: { id: string; name: string; status: string }) => ({
-            tenant_id: item.id,
-            tenant_name: item.name,
-            role: "platform_owner",
-            status: item.status,
-          }));
-        } else {
-          const response = await api("/me/memberships");
-          rows = response.ok ? await response.json() : [];
-        }
-        rows = rows.filter((row) => row.status === "active");
+        const contextsResponse = await api("/me/service-contexts");
+        if (!contextsResponse.ok) throw new Error("Unable to load organizations");
+        const rows: ServiceContext[] = ((await contextsResponse.json()).items || []).filter(
+          (row: ServiceContext) => row.status === "active",
+        );
         setContexts(rows);
         const remembered = localStorage.getItem("mailbox_dns_tenant");
         setTenantId(rows.find((row) => row.tenant_id === remembered)?.tenant_id || rows[0]?.tenant_id || "");
@@ -452,7 +453,7 @@ export default function DnsPage() {
           actions={<>
             <select className="input min-w-[190px]" value={tenantId} onChange={(event) => setTenantId(event.target.value)}>
               <option value="">Select organization</option>
-              {contexts.map((row) => <option key={row.tenant_id} value={row.tenant_id}>{row.tenant_name}</option>)}
+              {contexts.map((row) => <option key={row.tenant_id} value={row.tenant_id}>{row.tenant_name}{row.access_kind === "reseller_customer" ? " · reseller customer" : ""}</option>)}
             </select>
             <select className="input min-w-[240px]" value={domainId} onChange={(event) => setDomainId(event.target.value)}>
               <option value="">Select platform domain</option>

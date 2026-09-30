@@ -46,7 +46,13 @@ from app.models.hosting_operations import (
     HostingDeployment,
     HostingEnvironmentVariable,
     HostingNodeAgent,
+    HostingProjectOperation,
 )
+from app.models.hosting_builds import HostingBuild, HostingBuilderAgent
+from app.models.hosting_build_logs import HostingBuildLog
+from app.models.hosting_backups import HostingDatabaseBackup
+from app.models.hosting_webhooks import HostingSourceWebhook, HostingWebhookDelivery
+from app.models.shared_hosting import HostingDatabase, HostingSource, HostingSourceCredential
 from app.models.business import (
     CustomerProfile,
     Notification,
@@ -113,7 +119,8 @@ __all__ = [
     "MailboxStatus", "MailAlias", "DistributionGroup", "DistributionGroupMember", "PlatformMailDomainGrant",
     "PlatformMailboxBinding", "PlatformMailOutboundDelivery", "DkimKey", "BillingPlan", "TenantSubscription", "UsageSnapshot", "BillingInvoice",
     "BillingPaymentEvent", "SubscriptionStatus", "InvoiceStatus", "FinanceClient", "FinanceInvoice", "FinanceInvoiceItem", "FinanceInvoiceSchedule", "FinancePayment", "FinanceCreditNote", "FinanceDocument", "FinanceDocumentItem", "FinanceSenderConfiguration", "FinanceExpense", "FinanceBankTransaction", "FinanceServiceBillingLink", "FinanceAccountingPeriod", "FinanceRefund", "FinanceTaxRate", "FinanceApprovalRequest", "FinanceGovernanceSetting", "FinanceRoleGrant", "FinancePortalAccess", "FinanceDeliveryEvent", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject",
-    "HOSTING_RUNTIME_MANIFEST_VERSION", "HostingDeployment", "HostingEnvironmentVariable", "HostingNodeAgent",
+    "HOSTING_RUNTIME_MANIFEST_VERSION", "HostingDeployment", "HostingEnvironmentVariable", "HostingNodeAgent", "HostingProjectOperation",
+    "HostingBuild", "HostingBuilderAgent", "HostingBuildLog", "HostingDatabaseBackup", "HostingSourceWebhook", "HostingWebhookDelivery", "HostingDatabase", "HostingSource", "HostingSourceCredential",
     "CustomerProfile", "Notification", "ServiceIncident", "ServiceIncidentImpact", "ServiceIncidentStatus",
     "SupportTicket", "SupportTicketMessage", "SupportTicketPriority", "SupportTicketStatus", "DomainOrder",
     "EmailVerificationToken", "GroupwareCredential", "MailMigrationJob", "MailNode", "MailboxDelegate",

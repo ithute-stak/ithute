@@ -13,7 +13,17 @@ from app.core.config import settings
 from app.core.rbac import has_permission
 from app.core.security import ALGORITHM, hash_password, hash_token
 from app.db.session import get_db
-from app.models import ApiKey, FinanceRoleGrant, MembershipStatus, Tenant, TenantMembership, User
+from app.models import (
+    ApiKey,
+    FinanceRoleGrant,
+    MembershipRole,
+    MembershipStatus,
+    ResellerAccount,
+    ResellerCustomer,
+    Tenant,
+    TenantMembership,
+    User,
+)
 from app.services.ithute_auth import (
     IthuteAuthDisabled,
     IthuteAuthUnavailable,
@@ -22,6 +32,20 @@ from app.services.ithute_auth import (
 )
 
 bearer = HTTPBearer(auto_error=False)
+
+# A reseller may operate customer service resources, but reseller delegation is
+# deliberately narrower than becoming an actual member of the customer's
+# organization. Identity administration, API keys, audit history and customer
+# billing mutations remain customer/platform-owner responsibilities.
+RESELLER_DELEGATED_PERMISSIONS = frozenset({
+    "dns.read",
+    "dns.manage",
+    "mail.read",
+    "mail.manage",
+    "hosting.read",
+    "hosting.manage",
+    "billing.read",
+})
 
 
 def _decode_local_user(token: str, db: Session) -> User:
@@ -153,8 +177,6 @@ def _finance_required_role(request: Request) -> str:
     if method == "DELETE":
         return "admin"
 
-    # Configuration and accounting-period controls can change system-wide
-    # financial behavior and are intentionally restricted to Finance admins.
     admin_prefixes = (
         "/api/v1/finance/sender",
         "/api/v1/finance/control/tax-rates",
@@ -165,8 +187,6 @@ def _finance_required_role(request: Request) -> str:
     if "/finance/control/periods/" in path and (path.endswith("/lock") or path.endswith("/reopen")):
         return "admin"
 
-    # Financial reversals/adjustments and approval decisions require a second
-    # level of authority above normal clerical posting.
     approver_paths = (
         "/api/v1/finance/control/refunds",
         "/api/v1/finance/completion/delivery-events",
@@ -223,15 +243,45 @@ def require_tenant_membership(tenant_id: UUID, db: Session, current: User) -> Te
     return membership
 
 
+def _has_reseller_customer_delegation(tenant_id: UUID, permission: str, db: Session, current: User) -> bool:
+    if permission not in RESELLER_DELEGATED_PERMISSIONS:
+        return False
+    rows = db.execute(
+        select(ResellerAccount, TenantMembership)
+        .join(ResellerCustomer, ResellerCustomer.reseller_id == ResellerAccount.id)
+        .join(
+            TenantMembership,
+            (TenantMembership.tenant_id == ResellerAccount.tenant_id)
+            & (TenantMembership.user_id == current.id),
+        )
+        .where(
+            ResellerCustomer.customer_tenant_id == tenant_id,
+            ResellerAccount.status == "active",
+            TenantMembership.status == MembershipStatus.active,
+            TenantMembership.role == MembershipRole.tenant_admin,
+        )
+    ).first()
+    return rows is not None
+
+
 def require_tenant_permission(tenant_id: UUID, permission: str, db: Session, current: User) -> TenantMembership | None:
     if not db.get(Tenant, tenant_id):
         raise HTTPException(status_code=404, detail="Tenant not found")
     if current.is_platform_owner:
         return None
-    membership = require_tenant_membership(tenant_id, db, current)
-    if not has_permission(membership.role, permission):
-        raise HTTPException(status_code=403, detail=f"Permission required: {permission}")
-    return membership
+    membership = db.scalar(
+        select(TenantMembership).where(
+            TenantMembership.tenant_id == tenant_id,
+            TenantMembership.user_id == current.id,
+        )
+    )
+    if membership is not None and membership.status == MembershipStatus.active:
+        if not has_permission(membership.role, permission):
+            raise HTTPException(status_code=403, detail=f"Permission required: {permission}")
+        return membership
+    if _has_reseller_customer_delegation(tenant_id, permission, db, current):
+        return None
+    raise HTTPException(status_code=403, detail="Active tenant membership or authorized reseller delegation required")
 
 
 def authenticate_api_key(raw_key: str, db: Session) -> ApiKey:

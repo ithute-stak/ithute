@@ -4,9 +4,20 @@ import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 
 const PREFIX = "ithute:navigation:";
+const SIDEBAR_KEY = "ithute:sidebar:collapsed";
 
 export function NavigationMemory() {
   const pathname = usePathname();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.localStorage.getItem(SIDEBAR_KEY) === null) {
+      const lowResolutionDesktop =
+        window.innerWidth >= 1024 &&
+        (window.innerWidth <= 1366 || window.innerHeight <= 800);
+      window.localStorage.setItem(SIDEBAR_KEY, String(lowResolutionDesktop));
+    }
+  }, []);
 
   useEffect(() => {
     if (!pathname || typeof window === "undefined") return;

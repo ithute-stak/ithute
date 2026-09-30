@@ -1,0 +1,76 @@
+name: Hosting Build Plane CI
+
+on:
+  pull_request:
+    paths:
+      - "infrastructure/hosting-upload/**"
+      - "infrastructure/hosting-builder/**"
+      - "infrastructure/hosting-build-plane/**"
+      - ".github/workflows/hosting-build-plane-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-build-plane:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Validate Python and shell sources
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            infrastructure/hosting-upload/service.py \
+            infrastructure/hosting-upload/zip_safety.py \
+            infrastructure/hosting-builder/builder.py \
+            infrastructure/hosting-builder/verified_zip.py
+          sh -n infrastructure/hosting-build-plane/bootstrap-host.sh
+
+      - name: Run ZIP quarantine and verified-source tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s infrastructure/hosting-upload -p 'test_*.py'
+          python3 -m unittest discover -s infrastructure/hosting-builder -p 'test_*.py'
+
+      - name: Render isolated build-plane topology
+        working-directory: infrastructure/hosting-build-plane
+        env:
+          ITHUTE_API_URL: https://ithute.example.test
+          ITHUTE_HOSTING_UPLOAD_HOST: upload.example.test
+          ITHUTE_HOSTING_UPLOAD_ALLOWED_ORIGIN: https://ithute.example.test
+          ITHUTE_HOSTING_UPLOAD_SERVICE_TOKEN: ith_upload_ci_only
+          ITHUTE_HOSTING_BUILDER_TOKEN: ith_build_ci_only
+          ITHUTE_HOSTING_STORAGE_ROOT: /tmp/ithute-hosting-build-plane
+          ITHUTE_HOSTING_BUILDER_KNOWN_HOSTS_FILE: /tmp/known_hosts
+          ITHUTE_HOSTING_DOCKER_CONFIG_ROOT: /tmp/docker-config
+          ITHUTE_HOSTING_DOCKER_GID: "999"
+        run: docker compose -f compose.yml config > /tmp/hosting-build-plane.yml
+
+      - name: Validate edge configuration
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e ITHUTE_HOSTING_UPLOAD_HOST=upload.example.test \
+            -v "$PWD/infrastructure/hosting-build-plane/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.9-alpine caddy validate --config /etc/caddy/Caddyfile
+
+      - name: Build upload and builder images
+        run: |
+          set -euo pipefail
+          docker build --pull -t ithute-hosting-upload:ci infrastructure/hosting-upload
+          docker build --pull -t ithute-hosting-builder:ci infrastructure/hosting-builder
+
+      - name: Enforce build-plane separation
+        run: |
+          set -euo pipefail
+          grep -Fq '/var/run/docker.sock:/var/run/docker.sock' infrastructure/hosting-build-plane/compose.yml
+          grep -Fq '/verified:/var/lib/ithute-upload/verified:ro' infrastructure/hosting-build-plane/compose.yml
+          grep -Fq 'no-new-privileges:true' infrastructure/hosting-build-plane/compose.yml
+          ! awk '/^  upload:/{flag=1} /^  builder:/{flag=0} flag' infrastructure/hosting-build-plane/compose.yml | grep -Fq '/var/run/docker.sock'
+          grep -Fq 'refusing to bootstrap the hosting build plane on an application/production host' infrastructure/hosting-build-plane/bootstrap-host.sh

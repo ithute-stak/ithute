@@ -5,15 +5,46 @@ on:
     paths:
       - "apps/backend/app/api/v1/application_hosting.py"
       - "apps/backend/app/api/v1/hosting_operations.py"
+      - "apps/backend/app/api/v1/hosting_project_operations.py"
+      - "apps/backend/app/api/v1/hosting_database_backups.py"
+      - "apps/backend/app/api/v1/hosting_build_settings.py"
+      - "apps/backend/app/api/v1/hosting_builds.py"
+      - "apps/backend/app/api/v1/hosting_build_logs.py"
+      - "apps/backend/app/api/v1/hosting_git_webhooks.py"
+      - "apps/backend/app/api/v1/hosting_uploads.py"
+      - "apps/backend/app/api/v1/hosting_metering.py"
+      - "apps/backend/app/api/v1/shared_hosting.py"
+      - "apps/backend/app/api/v1/hosting_source_credentials.py"
       - "apps/backend/app/api/v1/router.py"
       - "apps/backend/app/models/hosting.py"
       - "apps/backend/app/models/hosting_operations.py"
+      - "apps/backend/app/models/hosting_builds.py"
+      - "apps/backend/app/models/hosting_build_logs.py"
+      - "apps/backend/app/models/hosting_webhooks.py"
+      - "apps/backend/app/models/shared_hosting.py"
+      - "apps/backend/app/models/billing.py"
       - "apps/backend/app/models/__init__.py"
+      - "apps/backend/app/services/hosting_metering.py"
+      - "apps/backend/app/services/hosting_webhooks.py"
+      - "apps/backend/app/services/billing.py"
       - "apps/backend/alembic/versions/*hosting*.py"
+      - "apps/backend/alembic/versions/*zip*.py"
       - "apps/backend/tests/test_application_hosting.py"
       - "apps/backend/tests/test_hosting_operations*.py"
+      - "apps/backend/tests/test_hosting_database_backup_contract.py"
+      - "apps/backend/tests/test_hosting_project_operations_contract.py"
+      - "apps/backend/tests/test_hosting_builds_contract.py"
+      - "apps/backend/tests/test_hosting_build_logs_contract.py"
+      - "apps/backend/tests/test_hosting_git_webhooks_contract.py"
+      - "apps/backend/tests/test_hosting_uploads_contract.py"
+      - "apps/backend/tests/test_hosting_metering.py"
+      - "apps/backend/tests/test_shared_hosting_contract.py"
+      - "apps/backend/tests/test_alembic_single_head.py"
       - "apps/backend/tests/conftest.py"
       - "infrastructure/hosting-agent/**"
+      - "infrastructure/hosting-node/**"
+      - "infrastructure/hosting-builder/**"
+      - "infrastructure/hosting-upload/**"
       - ".github/workflows/hosting-operations-ci.yml"
   workflow_dispatch:
 
@@ -44,6 +75,7 @@ jobs:
       SECRET_KEY: ci-hosting-secret-key-0000000000000000000000000000
       ENVIRONMENT: test
       PLATFORM_MODE: bootstrap
+      ITHUTE_HOSTING_UPLOAD_SERVICE_TOKEN: ith_upload_ci_only_not_for_production
 
     steps:
       - name: Checkout
@@ -73,15 +105,88 @@ jobs:
           tests/test_application_hosting.py
           tests/test_hosting_operations_unit.py
           tests/test_hosting_operations_integration.py
+          tests/test_hosting_database_backup_contract.py
+          tests/test_hosting_project_operations_contract.py
+          tests/test_hosting_builds_contract.py
+          tests/test_hosting_build_logs_contract.py
+          tests/test_hosting_git_webhooks_contract.py
+          tests/test_hosting_uploads_contract.py
+          tests/test_hosting_metering.py
+          tests/test_shared_hosting_contract.py
+          tests/test_alembic_single_head.py
 
-      - name: Validate hosting node agent boundary
+      - name: Run ZIP quarantine, retention, builder, backup-remote and network-policy regressions
+        run: |
+          python3 -m unittest discover -s infrastructure/hosting-upload -p 'test_*.py'
+          python3 -m unittest discover -s infrastructure/hosting-builder -p 'test_*.py'
+          python3 -m unittest discover -s infrastructure/hosting-agent -p 'test_*.py'
+
+      - name: Validate hosting runtime boundaries
         run: |
           set -euo pipefail
-          python3 -m py_compile infrastructure/hosting-agent/agent.py
+          python3 -m py_compile infrastructure/hosting-agent/agent.py infrastructure/hosting-agent/agent_v3.py infrastructure/hosting-agent/agent_v4.py infrastructure/hosting-agent/network_policy.py infrastructure/hosting-agent/backup_remote.py
+          python3 -m py_compile infrastructure/hosting-builder/builder.py infrastructure/hosting-builder/verified_zip.py
+          python3 -m py_compile infrastructure/hosting-upload/service.py infrastructure/hosting-upload/cleanup.py infrastructure/hosting-upload/zip_safety.py
+          bash -n infrastructure/hosting-node/apply-egress-firewall.sh infrastructure/hosting-node/validate-host.sh
           grep -Fq 'no-new-privileges:true' infrastructure/hosting-agent/agent.py
           grep -Fq '"--cap-drop"' infrastructure/hosting-agent/agent.py
           grep -Fq '"--read-only"' infrastructure/hosting-agent/agent.py
           grep -Fq 'docker("image", "inspect"' infrastructure/hosting-agent/agent.py
           grep -Fq 'Refusing hosted workload that requests public host ports' infrastructure/hosting-agent/agent.py
+          grep -Fq 'PGPASSWORD' infrastructure/hosting-agent/agent.py
+          grep -Fq 'MYSQL_PWD' infrastructure/hosting-agent/agent.py
+          grep -Fq 'ithute-db-gateway:host-gateway' infrastructure/hosting-agent/agent.py
+          ! grep -Fq 'ITHUTE_HOSTING_POSTGRES_ADMIN_DSN' infrastructure/hosting-agent/agent.py
           ! grep -Fq 'docker("pull"' infrastructure/hosting-agent/agent.py
           ! grep -Fq 'git clone' infrastructure/hosting-agent/agent.py
+          grep -Fq '/hosting/agent/project-operations/claim' infrastructure/hosting-agent/agent_v3.py
+          grep -Fq 'docker("restart"' infrastructure/hosting-agent/agent_v3.py
+          grep -Fq 'docker("logs"' infrastructure/hosting-agent/agent_v3.py
+          grep -Fq 'uuid.UUID(project_id)' infrastructure/hosting-agent/agent_v3.py
+          ! grep -Fq 'shell=True' infrastructure/hosting-agent/agent_v3.py
+          grep -Fq 'ITHUTE_HOSTING_NETWORK_POOL' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'choose_project_subnet' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'base.ensure_network = ensure_hosted_network' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'base.postgres_operation = postgres_operation_v4' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'REVOKE CONNECT, TEMPORARY ON DATABASE' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'REVOKE CREATE ON SCHEMA public FROM PUBLIC' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq '"--role", username' infrastructure/hosting-agent/agent_v4.py
+          ! grep -Fq 'f"--owner={username}"' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'backup_remote.require_configuration()' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'backup_remote.replicate' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'backup_remote.hydrate' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq '"--immutable"' infrastructure/hosting-agent/backup_remote.py
+          grep -Fq 'ITHUTE_HOSTING_BACKUP_REMOTE_REQUIRED=true' infrastructure/hosting-node/agent.env.example
+          grep -Fq 'ITHUTE_HOSTING_RCLONE_CONFIG=' infrastructure/hosting-node/agent.env.example
+          grep -Fq '10.240.0.0/12' infrastructure/hosting-node/agent.env.example
+          grep -Fq 'ITHUTE-HOSTING-EGRESS' infrastructure/hosting-node/apply-egress-firewall.sh
+          grep -Fq '169.254.0.0/16' infrastructure/hosting-node/apply-egress-firewall.sh
+          grep -Fq 'iptables -I DOCKER-USER 1 -s "$NETWORK_POOL"' infrastructure/hosting-node/apply-egress-firewall.sh
+          grep -Fq 'Before=ithute-hosting-agent.service' infrastructure/hosting-node/ithute-hosting-egress.service
+          grep -Fq 'ExecStart=/opt/ithute-hosting-node/apply-egress-firewall.sh' infrastructure/hosting-node/ithute-hosting-egress.service
+          grep -Fq 'WantedBy=multi-user.target' infrastructure/hosting-node/ithute-hosting-egress.service
+          grep -Fq 'systemctl is-enabled --quiet ithute-hosting-egress.service' infrastructure/hosting-node/validate-host.sh
+          grep -Fq 'systemctl is-active --quiet ithute-hosting-egress.service' infrastructure/hosting-node/validate-host.sh
+          grep -Fq 'ITHUTE_HOSTING_REQUIRE_AGENT_ACTIVE' infrastructure/hosting-node/validate-host.sh
+          grep -Fq 'ExecStart=/usr/bin/python3 /opt/ithute-hosting-agent/agent_v4.py' infrastructure/hosting-node/ithute-hosting-agent.service
+          grep -Fq 'ReadWritePaths=/var/lib/ithute-hosting' infrastructure/hosting-node/ithute-hosting-agent.service
+          grep -Fq 'GIT_TERMINAL_PROMPT' infrastructure/hosting-builder/builder.py
+          grep -Fq 'StrictHostKeyChecking=yes' infrastructure/hosting-builder/builder.py
+          grep -Fq 'Unable to detect a supported runtime' infrastructure/hosting-builder/builder.py
+          grep -Fq 'buildx' infrastructure/hosting-builder/builder.py
+          grep -Fq 'containerimage.digest' infrastructure/hosting-builder/builder.py
+          grep -Fq 'ALLOW_CUSTOM_DOCKERFILE' infrastructure/hosting-builder/builder.py
+          grep -Fq 'materialize_verified_zip' infrastructure/hosting-builder/builder.py
+          grep -Fq 'ITHUTE_HOSTING_BUILDER_VERIFIED_ROOT' infrastructure/hosting-builder/builder.py
+          grep -Fq 'emit_build_log' infrastructure/hosting-builder/builder.py
+          grep -Fq '[redacted]' infrastructure/hosting-builder/builder.py
+          ! grep -Fq 'extractall' infrastructure/hosting-builder/verified_zip.py
+          ! grep -Fq 'ITHUTE_HOSTING_AGENT_TOKEN' infrastructure/hosting-builder/builder.py
+          grep -Fq 'inspect_zip' infrastructure/hosting-upload/service.py
+          grep -Fq 'os.replace' infrastructure/hosting-upload/service.py
+          grep -Fq 'max_unpacked_size_bytes' infrastructure/hosting-upload/service.py
+          grep -Fq 'stat.S_ISLNK' infrastructure/hosting-upload/zip_safety.py
+          grep -Fq 'compression ratio is too high' infrastructure/hosting-upload/zip_safety.py
+          grep -Fq '/hosting/upload/storage/inventory' infrastructure/hosting-upload/cleanup.py
+          grep -Fq 'referenced_paths' infrastructure/hosting-upload/cleanup.py
+          ! grep -Fq 'extractall' infrastructure/hosting-upload/service.py

@@ -29,7 +29,7 @@ from app.services.billing import entitlement_decision, get_subscription
 
 router = APIRouter(tags=["application-hosting"])
 
-ALLOWED_RUNTIMES = {"static", "node", "python", "dotnet"}
+ALLOWED_RUNTIMES = {"static", "node", "python", "php", "dotnet", "java", "go", "ruby", "rust", "dockerfile"}
 HOSTING_RULES = [
     "Hosted projects run in Ithute-managed isolated workloads. Customers do not receive root, host SSH, Docker socket, or privileged-container access.",
     "Every project is limited by its package storage, memory, CPU and process allocation; attempting to bypass those limits is prohibited.",
@@ -67,7 +67,7 @@ class HostingNodeUpdate(BaseModel):
 class HostingProjectCreate(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     slug: str | None = Field(default=None, max_length=100)
-    runtime: str = Field(pattern=r"^(static|node|python|dotnet)$")
+    runtime: str = Field(pattern=r"^(static|node|python|php|dotnet|java|go|ruby|rust|dockerfile)$")
     source_repository: str | None = Field(default=None, max_length=1000)
     source_branch: str = Field(default="main", min_length=1, max_length=160)
     domain_id: UUID | None = None

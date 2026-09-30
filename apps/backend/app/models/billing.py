@@ -45,6 +45,9 @@ class BillingPlan(Base):
     hosting_memory_mb_per_project: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     hosting_cpu_millicores_per_project: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     hosting_pids_per_project: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    hosting_database_limit: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    hosting_database_storage_mb: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    hosting_source_storage_mb: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
     # Commercial deliverables are stored on the package as first-class data so
     # the public catalogue and contracts describe exactly what the customer buys.
@@ -97,6 +100,9 @@ class UsageSnapshot(Base):
     mailboxes: Mapped[int] = mapped_column(Integer, nullable=False)
     domains: Mapped[int] = mapped_column(Integer, nullable=False)
     storage_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    hosting_database_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    hosting_database_storage_bytes: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", nullable=False)
+    hosting_source_storage_bytes: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", nullable=False)
     period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

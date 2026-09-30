@@ -32,7 +32,16 @@ from app.api.v1 import (
     finance_preferences,
     finance_reports,
     hosting,
+    hosting_build_logs,
+    hosting_build_settings,
+    hosting_builds,
+    hosting_database_backups,
+    hosting_git_webhooks,
+    hosting_metering,
     hosting_operations,
+    hosting_project_operations,
+    hosting_source_credentials,
+    hosting_uploads,
     identity,
     ithute_auth,
     ithute_operating,
@@ -49,6 +58,8 @@ from app.api.v1 import (
     platform_setup,
     professional_email,
     public_hosting,
+    reseller_contexts,
+    shared_hosting,
     system_owner,
     system_owner_telemetry,
     tenants,
@@ -72,6 +83,7 @@ api_router.include_router(system_owner.router)
 api_router.include_router(system_owner_telemetry.router)
 api_router.include_router(account_verification.router)
 api_router.include_router(identity.router)
+api_router.include_router(reseller_contexts.router)
 api_router.include_router(audit.router)
 api_router.include_router(tenants.router)
 api_router.include_router(domain_onboarding.router)
@@ -106,6 +118,16 @@ api_router.include_router(business.router)
 api_router.include_router(hosting.router)
 api_router.include_router(application_hosting.router)
 api_router.include_router(hosting_operations.router)
+api_router.include_router(hosting_project_operations.router)
+api_router.include_router(hosting_database_backups.router)
+api_router.include_router(hosting_build_settings.router)
+api_router.include_router(hosting_builds.router)
+api_router.include_router(hosting_build_logs.router)
+api_router.include_router(hosting_git_webhooks.router)
+api_router.include_router(hosting_metering.router)
+api_router.include_router(shared_hosting.router)
+api_router.include_router(hosting_source_credentials.router)
+api_router.include_router(hosting_uploads.router)
 api_router.include_router(public_hosting.router)
 api_router.include_router(platform_setup.router)
 api_router.include_router(transactional.router)

@@ -16,9 +16,19 @@ _CODE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,49}$")
 _SUPPORT_LEVELS = {"standard", "priority", "dedicated"}
 
 
-def _validate_hosting_bundle(*, projects: int, storage_mb: int, memory_mb: int, cpu_millicores: int, pids: int) -> None:
+def _validate_hosting_bundle(
+    *,
+    projects: int,
+    storage_mb: int,
+    memory_mb: int,
+    cpu_millicores: int,
+    pids: int,
+    database_limit: int,
+    database_storage_mb: int,
+    source_storage_mb: int,
+) -> None:
     if projects == 0:
-        if any((storage_mb, memory_mb, cpu_millicores, pids)):
+        if any((storage_mb, memory_mb, cpu_millicores, pids, database_limit, database_storage_mb, source_storage_mb)):
             raise ValueError("A package with no hosted projects must set all application-hosting limits to 0")
         return
     if not 1024 <= storage_mb <= 10240:
@@ -29,6 +39,12 @@ def _validate_hosting_bundle(*, projects: int, storage_mb: int, memory_mb: int, 
         raise ValueError("Application CPU per project must be between 100 and 4000 millicores")
     if not 32 <= pids <= 2048:
         raise ValueError("Application process limit per project must be between 32 and 2048")
+    if not 1 <= database_limit <= 2000:
+        raise ValueError("Hosted database limit must be between 1 and 2000")
+    if not 128 <= database_storage_mb <= 102400:
+        raise ValueError("Hosted database storage must be between 128 MB and 100 GB per organization")
+    if not 128 <= source_storage_mb <= 102400:
+        raise ValueError("Hosted source storage must be between 128 MB and 100 GB per organization")
 
 
 class CommercialFields(BaseModel):
@@ -76,6 +92,9 @@ class PlanCreate(CommercialFields):
     hosting_memory_mb_per_project: int = Field(default=512, ge=0, le=8192)
     hosting_cpu_millicores_per_project: int = Field(default=500, ge=0, le=4000)
     hosting_pids_per_project: int = Field(default=128, ge=0, le=2048)
+    hosting_database_limit: int = Field(default=2, ge=0, le=2000)
+    hosting_database_storage_mb: int = Field(default=1024, ge=0, le=102400)
+    hosting_source_storage_mb: int = Field(default=1024, ge=0, le=102400)
     is_active: bool = True
 
     @field_validator("code")
@@ -107,6 +126,9 @@ class PlanCreate(CommercialFields):
             memory_mb=self.hosting_memory_mb_per_project,
             cpu_millicores=self.hosting_cpu_millicores_per_project,
             pids=self.hosting_pids_per_project,
+            database_limit=self.hosting_database_limit,
+            database_storage_mb=self.hosting_database_storage_mb,
+            source_storage_mb=self.hosting_source_storage_mb,
         )
         return self
 
@@ -123,6 +145,9 @@ class PlanUpdate(BaseModel):
     hosting_memory_mb_per_project: int | None = Field(default=None, ge=0, le=8192)
     hosting_cpu_millicores_per_project: int | None = Field(default=None, ge=0, le=4000)
     hosting_pids_per_project: int | None = Field(default=None, ge=0, le=2048)
+    hosting_database_limit: int | None = Field(default=None, ge=0, le=2000)
+    hosting_database_storage_mb: int | None = Field(default=None, ge=0, le=102400)
+    hosting_source_storage_mb: int | None = Field(default=None, ge=0, le=102400)
     product_category: str | None = Field(default=None, min_length=2, max_length=80)
     description: str | None = Field(default=None, max_length=500)
     website_pages: int | None = Field(default=None, ge=0, le=100)
@@ -172,6 +197,9 @@ def _plan_out(plan: BillingPlan) -> dict:
         "hosting_memory_mb_per_project": plan.hosting_memory_mb_per_project,
         "hosting_cpu_millicores_per_project": plan.hosting_cpu_millicores_per_project,
         "hosting_pids_per_project": plan.hosting_pids_per_project,
+        "hosting_database_limit": plan.hosting_database_limit,
+        "hosting_database_storage_mb": plan.hosting_database_storage_mb,
+        "hosting_source_storage_mb": plan.hosting_source_storage_mb,
         "product_category": plan.product_category,
         "description": plan.description,
         "website_pages": plan.website_pages,
@@ -239,6 +267,9 @@ def create_platform_plan(
             "price_minor": plan.monthly_price_minor,
             "hosted_projects": plan.included_hosted_projects,
             "hosting_storage_mb": plan.hosting_storage_mb,
+            "hosting_database_limit": plan.hosting_database_limit,
+            "hosting_database_storage_mb": plan.hosting_database_storage_mb,
+            "hosting_source_storage_mb": plan.hosting_source_storage_mb,
             "minimum_term_months": plan.minimum_term_months,
         },
     )
@@ -269,6 +300,9 @@ def update_platform_plan(
         "memory_mb": changes.get("hosting_memory_mb_per_project", plan.hosting_memory_mb_per_project),
         "cpu_millicores": changes.get("hosting_cpu_millicores_per_project", plan.hosting_cpu_millicores_per_project),
         "pids": changes.get("hosting_pids_per_project", plan.hosting_pids_per_project),
+        "database_limit": changes.get("hosting_database_limit", plan.hosting_database_limit),
+        "database_storage_mb": changes.get("hosting_database_storage_mb", plan.hosting_database_storage_mb),
+        "source_storage_mb": changes.get("hosting_source_storage_mb", plan.hosting_source_storage_mb),
     }
     try:
         _validate_hosting_bundle(**proposed)

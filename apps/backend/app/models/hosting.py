@@ -54,6 +54,8 @@ class HostingProject(Base):
     runtime: Mapped[str] = mapped_column(String(32), nullable=False)
     source_repository: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     source_branch: Mapped[str] = mapped_column(String(160), default="main", nullable=False)
+    build_command: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    start_command: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     image_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
     container_port: Mapped[int] = mapped_column(Integer, default=8080, nullable=False)
     health_path: Mapped[str] = mapped_column(String(500), default="/", nullable=False)
