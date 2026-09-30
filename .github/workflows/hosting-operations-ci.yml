@@ -115,7 +115,7 @@ jobs:
           tests/test_shared_hosting_contract.py
           tests/test_alembic_single_head.py
 
-      - name: Run ZIP quarantine, retention, builder and network-policy regressions
+      - name: Run ZIP quarantine, retention, builder, backup-remote and network-policy regressions
         run: |
           python3 -m unittest discover -s infrastructure/hosting-upload -p 'test_*.py'
           python3 -m unittest discover -s infrastructure/hosting-builder -p 'test_*.py'
@@ -124,7 +124,7 @@ jobs:
       - name: Validate hosting runtime boundaries
         run: |
           set -euo pipefail
-          python3 -m py_compile infrastructure/hosting-agent/agent.py infrastructure/hosting-agent/agent_v3.py infrastructure/hosting-agent/agent_v4.py infrastructure/hosting-agent/network_policy.py
+          python3 -m py_compile infrastructure/hosting-agent/agent.py infrastructure/hosting-agent/agent_v3.py infrastructure/hosting-agent/agent_v4.py infrastructure/hosting-agent/network_policy.py infrastructure/hosting-agent/backup_remote.py
           python3 -m py_compile infrastructure/hosting-builder/builder.py infrastructure/hosting-builder/verified_zip.py
           python3 -m py_compile infrastructure/hosting-upload/service.py infrastructure/hosting-upload/cleanup.py infrastructure/hosting-upload/zip_safety.py
           bash -n infrastructure/hosting-node/apply-egress-firewall.sh infrastructure/hosting-node/validate-host.sh
@@ -152,6 +152,12 @@ jobs:
           grep -Fq 'REVOKE CREATE ON SCHEMA public FROM PUBLIC' infrastructure/hosting-agent/agent_v4.py
           grep -Fq '"--role", username' infrastructure/hosting-agent/agent_v4.py
           ! grep -Fq 'f"--owner={username}"' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'backup_remote.require_configuration()' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'backup_remote.replicate' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq 'backup_remote.hydrate' infrastructure/hosting-agent/agent_v4.py
+          grep -Fq '"--immutable"' infrastructure/hosting-agent/backup_remote.py
+          grep -Fq 'ITHUTE_HOSTING_BACKUP_REMOTE_REQUIRED=true' infrastructure/hosting-node/agent.env.example
+          grep -Fq 'ITHUTE_HOSTING_RCLONE_CONFIG=' infrastructure/hosting-node/agent.env.example
           grep -Fq '10.240.0.0/12' infrastructure/hosting-node/agent.env.example
           grep -Fq 'ITHUTE-HOSTING-EGRESS' infrastructure/hosting-node/apply-egress-firewall.sh
           grep -Fq '169.254.0.0/16' infrastructure/hosting-node/apply-egress-firewall.sh
