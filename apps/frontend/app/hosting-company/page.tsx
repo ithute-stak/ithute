@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
-import { Boxes, BookOpen, PackageOpen, Rocket, Server } from "lucide-react";
+import { Boxes, BookOpen, Database, PackageOpen, Rocket, Server } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
 
 type Membership = { tenant_id: string; tenant_name: string };
 type Reseller = { status: string; max_customers: number; customer_count: number; discount_bps: number };
-type Customer = { id: string; tenant_id: string; tenant_name: string; status: string };
+type Customer = { id: string; tenant_id: string; name: string; slug: string; status: string };
 type Brand = { brand_name: string; support_email?: string | null; logo_url?: string | null; primary_color?: string | null; custom_hostname?: string | null };
 
 async function api(path: string, init?: RequestInit) {
@@ -89,8 +89,12 @@ export default function HostingCompany() {
       }),
     });
     const body = await response.json().catch(() => ({}));
-    setMsg(response.ok ? `Customer ${body.tenant?.name || "created"} provisioned.` : String(body.detail || "Unable to provision customer"));
+    setMsg(response.ok ? `Customer ${body.tenant_name || "created"} provisioned.` : String(body.detail || "Unable to provision customer"));
     if (response.ok) await load();
+  }
+
+  function manageCustomer(customer: Customer) {
+    localStorage.setItem("mailbox_dns_tenant", customer.tenant_id);
   }
 
   return (
@@ -109,29 +113,35 @@ export default function HostingCompany() {
           </div>
         </section>
 
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <Link href="/hosting" className="surface-card group p-5 transition hover:-translate-y-0.5 hover:border-[#9dbbb0]">
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#edf4f1] text-[#285b55]"><Server size={18} /></span>
             <h2 className="mt-4 text-sm font-black">Application hosting</h2>
-            <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">Allocate websites and simple systems under package-enforced storage, RAM, CPU and PID limits.</p>
+            <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">Allocate websites and systems under package-enforced storage, RAM, CPU and PID limits.</p>
             <p className="mt-3 text-xs font-black text-[#285b55]">Open hosted projects →</p>
+          </Link>
+          <Link href="/hosting-resources" className="surface-card group p-5 transition hover:-translate-y-0.5 hover:border-[#9dbbb0]">
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#edf4f1] text-[#285b55]"><Database size={18} /></span>
+            <h2 className="mt-4 text-sm font-black">Sources & databases</h2>
+            <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">Connect Git and allocate project-scoped PostgreSQL or MySQL resources.</p>
+            <p className="mt-3 text-xs font-black text-[#285b55]">Open resources →</p>
           </Link>
           <Link href="/hosting-operations" className="surface-card group p-5 transition hover:-translate-y-0.5 hover:border-[#9dbbb0]">
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#edf4f1] text-[#285b55]"><Rocket size={18} /></span>
             <h2 className="mt-4 text-sm font-black">Deployments & environment</h2>
-            <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">Queue immutable releases, protect project environment values, inspect health and roll back to a healthy release.</p>
+            <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">Queue immutable releases, protect environment values, inspect health and roll back.</p>
             <p className="mt-3 text-xs font-black text-[#285b55]">Open operations →</p>
           </Link>
           <Link href="/packages" className="surface-card group p-5 transition hover:-translate-y-0.5 hover:border-[#9dbbb0]">
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#edf4f1] text-[#285b55]"><PackageOpen size={18} /></span>
-            <h2 className="mt-4 text-sm font-black">Products, packages & capacity</h2>
-            <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">System owner: manage monthly website, branding and hosting packages and declare safe sellable VPS capacity.</p>
+            <h2 className="mt-4 text-sm font-black">Products & capacity</h2>
+            <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">Manage packages and declare safe sellable VPS capacity.</p>
             <p className="mt-3 text-xs font-black text-[#285b55]">Manage packages →</p>
           </Link>
           <Link href="/hosting-docs" className="surface-card group p-5 transition hover:-translate-y-0.5 hover:border-[#9dbbb0]">
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#edf4f1] text-[#285b55]"><BookOpen size={18} /></span>
             <h2 className="mt-4 text-sm font-black">Hosting rules</h2>
-            <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">Read the mandatory isolation, build, domain, email, resource and prohibited-workload rules.</p>
+            <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">Read isolation, build, domain, email, resource and prohibited-workload rules.</p>
             <p className="mt-3 text-xs font-black text-[#285b55]">Open hosting manual →</p>
           </Link>
         </section>
@@ -180,7 +190,7 @@ export default function HostingCompany() {
         <section className="surface-card overflow-hidden">
           <div className="border-b p-4 font-black">Reseller customers</div>
           <div className="space-y-2 p-4">
-            {customers.map((customer) => <div className="rounded-xl border p-3 text-xs" key={customer.id}><b>{customer.tenant_name}</b><span className="ml-2 text-[var(--admin-muted)]">{customer.status}</span></div>)}
+            {customers.map((customer) => <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 text-xs" key={customer.id}><div><b>{customer.name}</b><span className="ml-2 text-[var(--admin-muted)]">{customer.status}</span><p className="mt-1 text-[10px] text-[var(--admin-muted)]">{customer.slug}</p></div><div className="flex gap-2"><Link href="/hosting" className="btn-secondary" onClick={() => manageCustomer(customer)}>Hosting</Link><Link href="/hosting-resources" className="btn-secondary" onClick={() => manageCustomer(customer)}>Sources & DB</Link></div></div>)}
             {!customers.length ? <p className="text-xs text-[var(--admin-muted)]">No reseller customers yet.</p> : null}
           </div>
         </section>
