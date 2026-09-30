@@ -27,7 +27,11 @@ from app.models.billing import (
 )
 from app.models.finance import (
     FinanceClient,
+    FinanceCreditNote,
+    FinanceDocument,
+    FinanceDocumentItem,
     FinanceInvoice,
+    FinanceInvoiceItem,
     FinanceInvoiceSchedule,
     FinancePayment,
     FinanceSenderConfiguration,
@@ -104,7 +108,7 @@ __all__ = [
     "DomainDnsMode", "DomainEvent", "DomainStatus", "DomainVerificationAttempt", "Mailbox",
     "MailboxStatus", "MailAlias", "DistributionGroup", "DistributionGroupMember", "PlatformMailDomainGrant",
     "PlatformMailboxBinding", "PlatformMailOutboundDelivery", "DkimKey", "BillingPlan", "TenantSubscription", "UsageSnapshot", "BillingInvoice",
-    "BillingPaymentEvent", "SubscriptionStatus", "InvoiceStatus", "FinanceClient", "FinanceInvoice", "FinanceInvoiceSchedule", "FinancePayment", "FinanceSenderConfiguration", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject",
+    "BillingPaymentEvent", "SubscriptionStatus", "InvoiceStatus", "FinanceClient", "FinanceInvoice", "FinanceInvoiceItem", "FinanceInvoiceSchedule", "FinancePayment", "FinanceCreditNote", "FinanceDocument", "FinanceDocumentItem", "FinanceSenderConfiguration", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject",
     "HOSTING_RUNTIME_MANIFEST_VERSION", "HostingDeployment", "HostingEnvironmentVariable", "HostingNodeAgent",
     "CustomerProfile", "Notification", "ServiceIncident", "ServiceIncidentImpact", "ServiceIncidentStatus",
     "SupportTicket", "SupportTicketMessage", "SupportTicketPriority", "SupportTicketStatus", "DomainOrder",
