@@ -93,14 +93,16 @@ jobs:
           tests/test_shared_hosting_contract.py
           tests/test_alembic_single_head.py
 
-      - name: Run ZIP quarantine regressions
-        run: python3 -m unittest discover -s infrastructure/hosting-upload -p 'test_*.py'
+      - name: Run ZIP quarantine and builder regressions
+        run: |
+          python3 -m unittest discover -s infrastructure/hosting-upload -p 'test_*.py'
+          python3 -m unittest discover -s infrastructure/hosting-builder -p 'test_*.py'
 
       - name: Validate hosting runtime boundaries
         run: |
           set -euo pipefail
           python3 -m py_compile infrastructure/hosting-agent/agent.py
-          python3 -m py_compile infrastructure/hosting-builder/builder.py
+          python3 -m py_compile infrastructure/hosting-builder/builder.py infrastructure/hosting-builder/verified_zip.py
           python3 -m py_compile infrastructure/hosting-upload/service.py infrastructure/hosting-upload/zip_safety.py
           grep -Fq 'no-new-privileges:true' infrastructure/hosting-agent/agent.py
           grep -Fq '"--cap-drop"' infrastructure/hosting-agent/agent.py
@@ -119,6 +121,9 @@ jobs:
           grep -Fq 'buildx' infrastructure/hosting-builder/builder.py
           grep -Fq 'containerimage.digest' infrastructure/hosting-builder/builder.py
           grep -Fq 'ALLOW_CUSTOM_DOCKERFILE' infrastructure/hosting-builder/builder.py
+          grep -Fq 'materialize_verified_zip' infrastructure/hosting-builder/builder.py
+          grep -Fq 'ITHUTE_HOSTING_BUILDER_VERIFIED_ROOT' infrastructure/hosting-builder/builder.py
+          ! grep -Fq 'extractall' infrastructure/hosting-builder/verified_zip.py
           ! grep -Fq 'ITHUTE_HOSTING_AGENT_TOKEN' infrastructure/hosting-builder/builder.py
           grep -Fq 'inspect_zip' infrastructure/hosting-upload/service.py
           grep -Fq 'os.replace' infrastructure/hosting-upload/service.py
