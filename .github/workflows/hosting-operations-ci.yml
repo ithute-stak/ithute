@@ -7,6 +7,7 @@ on:
       - "apps/backend/app/api/v1/hosting_operations.py"
       - "apps/backend/app/api/v1/hosting_build_settings.py"
       - "apps/backend/app/api/v1/hosting_builds.py"
+      - "apps/backend/app/api/v1/hosting_uploads.py"
       - "apps/backend/app/api/v1/shared_hosting.py"
       - "apps/backend/app/api/v1/hosting_source_credentials.py"
       - "apps/backend/app/api/v1/router.py"
@@ -16,6 +17,7 @@ on:
       - "apps/backend/app/models/shared_hosting.py"
       - "apps/backend/app/models/__init__.py"
       - "apps/backend/alembic/versions/*hosting*.py"
+      - "apps/backend/alembic/versions/*zip*.py"
       - "apps/backend/tests/test_application_hosting.py"
       - "apps/backend/tests/test_hosting_operations*.py"
       - "apps/backend/tests/test_hosting_builds_contract.py"
@@ -24,6 +26,7 @@ on:
       - "apps/backend/tests/conftest.py"
       - "infrastructure/hosting-agent/**"
       - "infrastructure/hosting-builder/**"
+      - "infrastructure/hosting-upload/**"
       - ".github/workflows/hosting-operations-ci.yml"
   workflow_dispatch:
 
@@ -54,6 +57,7 @@ jobs:
       SECRET_KEY: ci-hosting-secret-key-0000000000000000000000000000
       ENVIRONMENT: test
       PLATFORM_MODE: bootstrap
+      ITHUTE_HOSTING_UPLOAD_SERVICE_TOKEN: ith_upload_ci_only_not_for_production
 
     steps:
       - name: Checkout
@@ -87,11 +91,15 @@ jobs:
           tests/test_shared_hosting_contract.py
           tests/test_alembic_single_head.py
 
+      - name: Run ZIP quarantine regressions
+        run: python3 -m unittest discover -s infrastructure/hosting-upload -p 'test_*.py'
+
       - name: Validate hosting runtime boundaries
         run: |
           set -euo pipefail
           python3 -m py_compile infrastructure/hosting-agent/agent.py
           python3 -m py_compile infrastructure/hosting-builder/builder.py
+          python3 -m py_compile infrastructure/hosting-upload/service.py infrastructure/hosting-upload/zip_safety.py
           grep -Fq 'no-new-privileges:true' infrastructure/hosting-agent/agent.py
           grep -Fq '"--cap-drop"' infrastructure/hosting-agent/agent.py
           grep -Fq '"--read-only"' infrastructure/hosting-agent/agent.py
@@ -110,3 +118,9 @@ jobs:
           grep -Fq 'containerimage.digest' infrastructure/hosting-builder/builder.py
           grep -Fq 'ALLOW_CUSTOM_DOCKERFILE' infrastructure/hosting-builder/builder.py
           ! grep -Fq 'ITHUTE_HOSTING_AGENT_TOKEN' infrastructure/hosting-builder/builder.py
+          grep -Fq 'inspect_zip' infrastructure/hosting-upload/service.py
+          grep -Fq 'os.replace' infrastructure/hosting-upload/service.py
+          grep -Fq 'max_unpacked_size_bytes' infrastructure/hosting-upload/service.py
+          grep -Fq 'stat.S_ISLNK' infrastructure/hosting-upload/zip_safety.py
+          grep -Fq 'compression ratio is too high' infrastructure/hosting-upload/zip_safety.py
+          ! grep -Fq 'extractall' infrastructure/hosting-upload/service.py
