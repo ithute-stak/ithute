@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Database, GitBranch, KeyRound, RefreshCw, ShieldCheck, Upload } from "lucide-react";
+import { Database, GitBranch, KeyRound, PauseCircle, PlayCircle, RefreshCw, RotateCcw, ShieldCheck, Trash2, Upload } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ControlShell } from "@/components/control-shell";
 import { PageHeader } from "@/components/ui-kit";
@@ -22,6 +22,8 @@ type HostingDatabase = {
   port: number;
   storage_mb: number;
   status: string;
+  operation?: string;
+  failure_message?: string | null;
 };
 type Source = {
   id: string;
@@ -138,6 +140,24 @@ export default function HostingResourcesPage() {
     setSaving(false);
   }
 
+  async function databaseAction(row: HostingDatabase, action: "rotate-password" | "suspend" | "resume" | "delete") {
+    if (!tenantId || saving) return;
+    if (action === "delete" && !window.confirm(`Delete database ${row.database_name}? This queues permanent database and user removal on the hosting node.`)) return;
+    setSaving(true); setError(""); setMessage("");
+    const response = await api(`/tenants/${tenantId}/hosting/databases/${row.id}${action === "delete" ? "" : `/${action}`}`, { method: action === "delete" ? "DELETE" : "POST" });
+    if (!response.ok) { setError(await detail(response, `Unable to ${action.replace("-", " ")} database.`)); setSaving(false); return; }
+    if (action === "rotate-password") {
+      const rotated: CreatedDatabase = await response.json();
+      setCreatedDatabase(rotated);
+      setMessage("Password rotation is queued. Save the replacement password now and update the application secret after the database returns to ready.");
+    } else {
+      setCreatedDatabase(null);
+      setMessage(action === "delete" ? "Database deletion is queued." : `Database ${action} is queued.`);
+    }
+    await loadTenant(tenantId);
+    setSaving(false);
+  }
+
   async function registerGit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!tenantId || !projectId) return;
@@ -201,7 +221,7 @@ export default function HostingResourcesPage() {
       </section>
 
       <section className="grid gap-4 xl:grid-cols-2">
-        <div className="surface-card overflow-hidden"><div className="border-b p-4"><h2 className="text-sm font-black">Databases</h2></div><div className="space-y-2 p-4">{databases.map((row) => <div key={row.id} className="rounded-xl border p-3 text-xs"><div className="flex justify-between gap-3"><b>{row.database_name}</b><span>{row.status}</span></div><p className="mt-1 text-[var(--admin-muted)]">{row.engine} · {row.username} · {row.storage_mb} MB</p></div>)}{!databases.length ? <p className="text-xs text-[var(--admin-muted)]">No hosting databases yet.</p> : null}</div></div>
+        <div className="surface-card overflow-hidden"><div className="border-b p-4"><h2 className="text-sm font-black">Databases</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">Provisioning, credential rotation and access changes are executed by the hosting-node agent.</p></div><div className="space-y-2 p-4">{databases.map((row) => <div key={row.id} className="rounded-xl border p-3 text-xs"><div className="flex flex-wrap items-start justify-between gap-3"><div><b>{row.database_name}</b><p className="mt-1 text-[var(--admin-muted)]">{row.engine}{row.engine_version ? ` ${row.engine_version}` : ""} · {row.username} · {row.storage_mb} MB</p>{row.host ? <p className="mt-1 text-[var(--admin-muted)]">{row.host}:{row.port}</p> : null}</div><span className="rounded-full bg-[#f4f7f5] px-2 py-1 text-[9px] font-black uppercase">{row.operation && row.operation !== "none" ? `${row.status} · ${row.operation}` : row.status}</span></div>{row.failure_message ? <p className="mt-2 rounded-lg bg-red-50 p-2 text-red-700">{row.failure_message}</p> : null}{canManage ? <div className="mt-3 flex flex-wrap gap-2">{row.status === "ready" && (!row.operation || row.operation === "none") ? <><button className="btn-secondary" disabled={saving} onClick={() => void databaseAction(row, "rotate-password")}><RotateCcw size={13}/>Rotate password</button><button className="btn-secondary" disabled={saving} onClick={() => void databaseAction(row, "suspend")}><PauseCircle size={13}/>Suspend</button></> : null}{row.status === "suspended" && (!row.operation || row.operation === "none") ? <button className="btn-secondary" disabled={saving} onClick={() => void databaseAction(row, "resume")}><PlayCircle size={13}/>Resume</button> : null}{!["queued","working","deleting"].includes(row.status) ? <button className="btn-secondary" disabled={saving} onClick={() => void databaseAction(row, "delete")}><Trash2 size={13}/>Delete</button> : null}</div> : null}</div>)}{!databases.length ? <p className="text-xs text-[var(--admin-muted)]">No hosting databases yet.</p> : null}</div></div>
         <div className="surface-card overflow-hidden"><div className="border-b p-4"><h2 className="text-sm font-black">Sources for selected project</h2></div><div className="space-y-2 p-4">{sources.map((row) => <div key={row.id} className="rounded-xl border p-3 text-xs"><div className="flex justify-between gap-3"><b>{row.source_type === "git" ? row.repository_url : row.original_filename}</b><span>{row.status}</span></div>{row.repository_branch ? <p className="mt-1 text-[var(--admin-muted)]">Branch: {row.repository_branch}</p> : null}</div>)}{!sources.length ? <p className="text-xs text-[var(--admin-muted)]">No source records for this project.</p> : null}</div></div>
       </section>
 
