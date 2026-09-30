@@ -11,6 +11,7 @@ from app.services.finance_audit import finance_action_exists, log_finance_action
 from app.services.finance_invoice_multi import render_invoice_pdf
 from app.services.finance_ledger import adjusted_total_minor, paid_minor
 from app.services.finance_mail import send_finance_message
+from app.services.finance_preferences import client_reminders_enabled
 
 
 def _reminder_key(invoice: FinanceInvoice, today: date) -> tuple[str, str] | None:
@@ -42,6 +43,8 @@ def process_due_payment_reminders(now: datetime | None = None) -> int:
             .order_by(FinanceInvoice.due_date)
         ).all()
         for invoice in invoices:
+            if not client_reminders_enabled(db, invoice.client_id):
+                continue
             outstanding = max(0, adjusted_total_minor(invoice) - paid_minor(invoice))
             if outstanding <= 0:
                 continue
