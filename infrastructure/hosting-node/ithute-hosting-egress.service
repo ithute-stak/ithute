@@ -1,0 +1,21 @@
+[Unit]
+Description=Ithute Hosting deny-by-default egress firewall
+Documentation=https://github.com/ithute-stak/ithute/tree/main/infrastructure/hosting-node
+Wants=docker.service
+After=network-online.target docker.service
+Before=ithute-hosting-agent.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/ithute-hosting-node/agent.env
+ExecStart=/opt/ithute-hosting-node/apply-egress-firewall.sh
+ExecReload=/opt/ithute-hosting-node/apply-egress-firewall.sh
+RemainAfterExit=yes
+TimeoutStartSec=30
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
