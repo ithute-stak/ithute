@@ -220,6 +220,7 @@ def claim_database_backup(
                 "id": str(database.id),
                 "engine": database.engine,
                 "database_name": database.database_name,
+                "username": database.username,
                 "status": database.status,
             },
         }
