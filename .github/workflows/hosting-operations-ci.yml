@@ -5,6 +5,7 @@ on:
     paths:
       - "apps/backend/app/api/v1/application_hosting.py"
       - "apps/backend/app/api/v1/hosting_operations.py"
+      - "apps/backend/app/api/v1/hosting_project_operations.py"
       - "apps/backend/app/api/v1/hosting_build_settings.py"
       - "apps/backend/app/api/v1/hosting_builds.py"
       - "apps/backend/app/api/v1/hosting_uploads.py"
@@ -20,6 +21,7 @@ on:
       - "apps/backend/alembic/versions/*zip*.py"
       - "apps/backend/tests/test_application_hosting.py"
       - "apps/backend/tests/test_hosting_operations*.py"
+      - "apps/backend/tests/test_hosting_project_operations_contract.py"
       - "apps/backend/tests/test_hosting_builds_contract.py"
       - "apps/backend/tests/test_hosting_uploads_contract.py"
       - "apps/backend/tests/test_shared_hosting_contract.py"
@@ -88,6 +90,7 @@ jobs:
           tests/test_application_hosting.py
           tests/test_hosting_operations_unit.py
           tests/test_hosting_operations_integration.py
+          tests/test_hosting_project_operations_contract.py
           tests/test_hosting_builds_contract.py
           tests/test_hosting_uploads_contract.py
           tests/test_shared_hosting_contract.py
@@ -101,7 +104,7 @@ jobs:
       - name: Validate hosting runtime boundaries
         run: |
           set -euo pipefail
-          python3 -m py_compile infrastructure/hosting-agent/agent.py
+          python3 -m py_compile infrastructure/hosting-agent/agent.py infrastructure/hosting-agent/agent_v3.py
           python3 -m py_compile infrastructure/hosting-builder/builder.py infrastructure/hosting-builder/verified_zip.py
           python3 -m py_compile infrastructure/hosting-upload/service.py infrastructure/hosting-upload/zip_safety.py
           grep -Fq 'no-new-privileges:true' infrastructure/hosting-agent/agent.py
@@ -115,6 +118,11 @@ jobs:
           ! grep -Fq 'ITHUTE_HOSTING_POSTGRES_ADMIN_DSN' infrastructure/hosting-agent/agent.py
           ! grep -Fq 'docker("pull"' infrastructure/hosting-agent/agent.py
           ! grep -Fq 'git clone' infrastructure/hosting-agent/agent.py
+          grep -Fq '/hosting/agent/project-operations/claim' infrastructure/hosting-agent/agent_v3.py
+          grep -Fq 'docker("restart"' infrastructure/hosting-agent/agent_v3.py
+          grep -Fq 'docker("logs"' infrastructure/hosting-agent/agent_v3.py
+          grep -Fq 'uuid.UUID(project_id)' infrastructure/hosting-agent/agent_v3.py
+          ! grep -Fq 'shell=True' infrastructure/hosting-agent/agent_v3.py
           grep -Fq 'GIT_TERMINAL_PROMPT' infrastructure/hosting-builder/builder.py
           grep -Fq 'StrictHostKeyChecking=yes' infrastructure/hosting-builder/builder.py
           grep -Fq 'Unable to detect a supported runtime' infrastructure/hosting-builder/builder.py
