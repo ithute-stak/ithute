@@ -9,6 +9,8 @@ PUBLIC_IPV4="${ITHUTE_PUBLIC_IPV4:-204.12.205.224}"
 MAIL_HOST="${ITHUTE_MAIL_HOST:-mail.ithute.co.ls}"
 REQUIRE_PTR="${ITHUTE_REQUIRE_PTR:-false}"
 REQUIRE_INDEPENDENT_DNS="${ITHUTE_REQUIRE_INDEPENDENT_DNS:-false}"
+HOSTED_TEST_DOMAIN="${ITHUTE_TEST_HOSTED_DOMAIN:-}"
+COMPOSE_FILE="${ITHUTE_COMPOSE_FILE:-compose.production.yml}"
 
 failures=0
 warnings=0
@@ -62,11 +64,7 @@ fi
 
 if command -v dig >/dev/null 2>&1; then
   mx="$(dig +short MX ithute.co.ls | tr '[:upper:]' '[:lower:]')"
-  if grep -Eq "[[:space:]]${MAIL_HOST//./\.}\.?$" <<<"$mx"; then
-    pass "ithute.co.ls MX points to $MAIL_HOST"
-  else
-    fail "ithute.co.ls MX does not point to $MAIL_HOST (got: ${mx:-none})"
-  fi
+  if grep -Eq "[[:space:]]${MAIL_HOST//./\.}\.?$" <<<"$mx"; then pass "ithute.co.ls MX points to $MAIL_HOST"; else fail "ithute.co.ls MX does not point to $MAIL_HOST (got: ${mx:-none})"; fi
 
   spf="$(dig +short TXT ithute.co.ls | tr -d '"')"
   if grep -Fqi 'v=spf1' <<<"$spf"; then pass "SPF record is published"; else fail "SPF record is missing"; fi
@@ -79,24 +77,51 @@ if command -v dig >/dev/null 2>&1; then
   if [[ -z "$ns1_ips" || -z "$ns2_ips" ]]; then
     fail "ns1/ns2 public A records are incomplete"
   elif [[ "$ns1_ips" == "$ns2_ips" ]]; then
-    if [[ "$REQUIRE_INDEPENDENT_DNS" == "true" ]]; then
-      fail "ns1 and ns2 resolve to the same address; independent secondary DNS is required"
-    else
-      warn "ns1 and ns2 resolve to the same address ($ns1_ips). DNS works, but this is not infrastructure redundancy."
-    fi
+    if [[ "$REQUIRE_INDEPENDENT_DNS" == "true" ]]; then fail "ns1 and ns2 resolve to the same address; independent secondary DNS is required"; else warn "ns1 and ns2 resolve to the same address ($ns1_ips). DNS works, but this is not infrastructure redundancy."; fi
   else
     pass "ns1 and ns2 resolve to independent address sets"
   fi
 
   ptr="$(dig +short -x "$PUBLIC_IPV4" | sed 's/\.$//' | tr '[:upper:]' '[:lower:]' | head -n1)"
   expected_ptr="${MAIL_HOST%.}"
-  if [[ "$ptr" == "$expected_ptr" ]]; then
-    pass "PTR/reverse DNS identifies $MAIL_HOST"
-  elif [[ "$REQUIRE_PTR" == "true" ]]; then
-    fail "PTR for $PUBLIC_IPV4 must be $MAIL_HOST (got: ${ptr:-none})"
+  if [[ "$ptr" == "$expected_ptr" ]]; then pass "PTR/reverse DNS identifies $MAIL_HOST"; elif [[ "$REQUIRE_PTR" == "true" ]]; then fail "PTR for $PUBLIC_IPV4 must be $MAIL_HOST (got: ${ptr:-none})"; else warn "PTR for $PUBLIC_IPV4 is '${ptr:-none}', expected '$MAIL_HOST'. This must be corrected by the VPS/IP provider."; fi
+
+  if [[ -n "$HOSTED_TEST_DOMAIN" ]]; then
+    route_ips="$(dig +short A "$HOSTED_TEST_DOMAIN" | sort -u)"
+    if grep -Fxq "$PUBLIC_IPV4" <<<"$route_ips"; then
+      pass "$HOSTED_TEST_DOMAIN has propagated to Ithute edge $PUBLIC_IPV4"
+      check_url "Hosted customer route" "https://$HOSTED_TEST_DOMAIN/"
+    else
+      fail "$HOSTED_TEST_DOMAIN has not propagated to Ithute edge $PUBLIC_IPV4 (got: ${route_ips:-none})"
+    fi
   else
-    warn "PTR for $PUBLIC_IPV4 is '${ptr:-none}', expected '$MAIL_HOST'. This must be corrected by the VPS/IP provider."
+    warn "ITHUTE_TEST_HOSTED_DOMAIN is unset; live customer-domain Caddy/TLS route was not exercised"
   fi
+fi
+
+if command -v docker >/dev/null 2>&1 && [[ -f "$COMPOSE_FILE" ]]; then
+  if docker compose -f "$COMPOSE_FILE" config >/dev/null; then pass "Production Compose renders successfully"; else fail "Production Compose does not render"; fi
+
+  if docker compose -f "$COMPOSE_FILE" port caddy 2019 2>/dev/null | grep -q .; then
+    fail "Caddy admin port 2019 is published to the host; it must remain private"
+  else
+    pass "Caddy admin port 2019 is not host-published"
+  fi
+
+  if docker compose -f "$COMPOSE_FILE" ps --status running caddy 2>/dev/null | grep -q caddy; then
+    if docker compose -f "$COMPOSE_FILE" exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
+      pass "Running Caddy configuration validates"
+    else
+      fail "Running Caddy configuration validation failed"
+    fi
+  else
+    warn "Caddy container is not running in this execution context; runtime config validation was skipped"
+  fi
+
+  rendered="$(docker compose -f "$COMPOSE_FILE" config 2>/dev/null || true)"
+  if grep -q 'caddy_routes' <<<"$rendered"; then pass "Dynamic Caddy route volume is present in production topology"; else fail "Dynamic Caddy route volume is missing from production topology"; fi
+else
+  warn "Docker/production compose unavailable; container-level Caddy checks were not executed"
 fi
 
 printf '\nReadiness result: %d failure(s), %d warning(s).\n' "$failures" "$warnings"
