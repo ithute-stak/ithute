@@ -22,7 +22,10 @@ import {
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
+
 type Command = { label: string; hint: string; href: string; icon: LucideIcon; keywords?: string };
+type Me = { is_platform_owner?: boolean };
 
 const commands: Command[] = [
   { label: "Command centre", hint: "Dashboard and platform overview", href: "/dashboard", icon: LayoutDashboard, keywords: "home overview" },
@@ -45,18 +48,46 @@ const commands: Command[] = [
   { label: "Help centre", hint: "Guides and DNS help", href: "/help", icon: BookOpen, keywords: "docs support guide" },
 ];
 
+const ownerCommand: Command = {
+  label: "Customer applications",
+  hint: "Review, approve or reject new company registrations",
+  href: "/customer-applications",
+  icon: Building2,
+  keywords: "owner signup approval pending customer registration",
+};
+
 export function CommandPalette() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+  const [isPlatformOwner, setIsPlatformOwner] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch(`${API}/auth/me`, { credentials: "include", cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const body = (await response.json().catch(() => ({}))) as Me;
+        if (!cancelled) setIsPlatformOwner(body.is_platform_owner === true);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const availableCommands = useMemo(
+    () => (isPlatformOwner ? [...commands, ownerCommand] : commands),
+    [isPlatformOwner],
+  );
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return commands;
-    return commands.filter((item) => `${item.label} ${item.hint} ${item.keywords || ""}`.toLowerCase().includes(needle));
-  }, [query]);
+    if (!needle) return availableCommands;
+    return availableCommands.filter((item) => `${item.label} ${item.hint} ${item.keywords || ""}`.toLowerCase().includes(needle));
+  }, [availableCommands, query]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -92,7 +123,7 @@ export function CommandPalette() {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[115] flex items-start justify-center bg-black/35 p-3 pt-[10vh] backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-label="Mailbox DNS command palette" onMouseDown={(event) => { if (event.currentTarget === event.target) setOpen(false); }}>
+    <div className="fixed inset-0 z-[115] flex items-start justify-center bg-black/35 p-3 pt-[10vh] backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-label="Ithute command palette" onMouseDown={(event) => { if (event.currentTarget === event.target) setOpen(false); }}>
       <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-[#dfe6e2] bg-white shadow-[0_28px_80px_rgba(17,45,35,.24)]">
         <div className="flex items-center gap-3 border-b border-[#e6ebe8] px-4">
           <Search size={18} className="text-[#718078]"/>
@@ -105,9 +136,9 @@ export function CommandPalette() {
               if (event.key === "ArrowUp") { event.preventDefault(); setActive((value) => Math.max(value - 1, 0)); }
               if (event.key === "Enter") { event.preventDefault(); go(filtered[active]); }
             }}
-            placeholder="Search Mailbox DNS or jump to a module"
+            placeholder="Search Ithute or jump to a module"
             className="h-14 min-w-0 flex-1 border-0 bg-transparent text-[13px] outline-none"
-            aria-label="Search Mailbox DNS"
+            aria-label="Search Ithute"
           />
           <button onClick={() => setOpen(false)} className="grid h-8 w-8 place-items-center rounded-lg text-[#718078] hover:bg-[#f1f5f2]" aria-label="Close command palette"><X size={15}/></button>
         </div>
