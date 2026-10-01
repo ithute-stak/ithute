@@ -35,6 +35,7 @@ const controlAreas = [
   ["Organisation", "Companies, memberships, users and access boundaries.", "/organizations", Building2, ["Profile", "Team", "Roles"]],
   ["Hosting", "Create projects, deploy source, manage environment, inspect runtime and logs.", "/hosting", Server, ["Projects", "Deploy", "Runtime"]],
   ["Domains & DNS", "Verify domains, manage authoritative DNS records and DNS security.", "/domains", Globe2, ["Domains", "Records", "DNSSEC"]],
+  ["Domain registration & renewals", "Submit and track domain registration, renewal and transfer-in requests under your organisation.", "/domain-orders", Globe2, ["Register", "Renew", "Transfer"]],
   ["Connect domain to app", "Route a verified hostname to a running application through Ithute edge with automatic HTTPS.", "/edge-routing", Route, ["Routing", "Caddy", "HTTPS"]],
   ["Databases & backups", "Manage application databases, source resources, database backups and restore operations.", "/hosting-resources", Database, ["PostgreSQL", "MySQL", "Backups"]],
   ["Professional email", "Create mailboxes, use webmail, manage transactional email, delivery and queues.", "/mailboxes", Mail, ["Mailboxes", "Webmail", "SMTP"]],
@@ -154,7 +155,7 @@ export function ControlCentreOverview({
           <article className="rounded-[24px] border border-[#e1e8e4] bg-white p-5 shadow-sm">
             <p className="text-[9px] font-black uppercase tracking-[.14em] text-[#718078]">Quick access</p>
             <div className="mt-4 space-y-2">
-              {[[Route, "Connect domain to app", "/edge-routing"], [Server, "Add-ons & capacity", "/addons"], [Mail, "Open Webmail", "/webmail"], [Headphones, "Support centre", "/support"], [UsersRound, "Team access", "/organizations"], [ShieldCheck, "Security", "/security"]].map(([Icon, label, href]) => {
+              {[[Globe2, "Domain registration & renewals", "/domain-orders"], [Route, "Connect domain to app", "/edge-routing"], [Server, "Add-ons & capacity", "/addons"], [Mail, "Open Webmail", "/webmail"], [Headphones, "Support centre", "/support"], [UsersRound, "Team access", "/organizations"], [ShieldCheck, "Security", "/security"]].map(([Icon, label, href]) => {
                 const ItemIcon = Icon as typeof Mail;
                 return <Link key={String(label)} href={String(href)} className="flex items-center gap-3 rounded-xl border border-[#e7ece9] px-3 py-2.5 text-[11px] font-bold text-[#51675e]"><ItemIcon size={14} /><span className="flex-1">{String(label)}</span><ArrowRight size={12} /></Link>;
               })}
