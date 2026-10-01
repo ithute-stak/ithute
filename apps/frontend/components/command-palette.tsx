@@ -65,6 +65,13 @@ const ownerCommands: Command[] = [
     icon: CircleDollarSign,
     keywords: "owner catalog pricing hosting addons entitlement",
   },
+  {
+    label: "Package lifecycle",
+    hint: "Separate sellable, hidden, legacy and archived hosting plans safely",
+    href: "/package-lifecycle",
+    icon: ShieldCheck,
+    keywords: "owner package state legacy archive retire hidden sellable subscribers",
+  },
 ];
 
 export function CommandPalette() {

@@ -42,8 +42,6 @@ def test_default_public_catalog_is_one_canonical_hosting_family(client):
         1_500_000,
     ]
 
-    # Superseded commercial/creative packages remain available internally for
-    # historical subscriptions but must not compete with the current sales catalog.
     for legacy in ("starter", "grow", "business", "professional", "enterprise"):
         assert legacy not in plans
 

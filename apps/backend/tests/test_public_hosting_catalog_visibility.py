@@ -5,7 +5,7 @@ from sqlalchemy import delete
 from app.models import BillingPlan
 
 
-def _plan(code: str, *, visible: bool) -> BillingPlan:
+def _plan(code: str, *, visible: bool, lifecycle_state: str = "sellable") -> BillingPlan:
     return BillingPlan(
         code=code,
         name=f"Catalog test {code}",
@@ -29,28 +29,32 @@ def _plan(code: str, *, visible: bool) -> BillingPlan:
         featured=False,
         sort_order=9990,
         is_active=True,
+        lifecycle_state=lifecycle_state,
     )
 
 
-def test_public_hosting_pricing_excludes_hidden_legacy_but_keeps_visible_owner_plan(client, db):
+def test_public_hosting_pricing_requires_sellable_lifecycle(client, db):
     suffix = uuid.uuid4().hex[:10]
-    hidden = _plan(f"legacy-hidden-{suffix}", visible=False)
-    visible = _plan(f"owner-visible-{suffix}", visible=True)
-    db.add_all([hidden, visible])
+    hidden = _plan(f"hidden-{suffix}", visible=False)
+    legacy_but_visible = _plan(f"legacy-visible-{suffix}", visible=True, lifecycle_state="legacy")
+    visible = _plan(f"owner-visible-{suffix}", visible=True, lifecycle_state="sellable")
+    db.add_all([hidden, legacy_but_visible, visible])
     db.commit()
 
     try:
-        response = client.get("/api/v1/public/hosting-pricing")
-        assert response.status_code == 200
-        items = response.json()["items"]
-        codes = {item["code"] for item in items}
-        assert hidden.code not in codes
-        assert visible.code in codes
-        returned = next(item for item in items if item["code"] == visible.code)
-        assert returned["annual_price_minor"] == 120000
-        assert returned["included_mailboxes"] == 18
-        assert returned["hosting_storage_mb"] == 2048
-        assert returned["hosting_database_limit"] == 2
+        for endpoint in ("/api/v1/public/hosting-pricing", "/api/v1/public/pricing"):
+            response = client.get(endpoint)
+            assert response.status_code == 200
+            items = response.json()["items"]
+            codes = {item["code"] for item in items}
+            assert hidden.code not in codes
+            assert legacy_but_visible.code not in codes
+            assert visible.code in codes
+            returned = next(item for item in items if item["code"] == visible.code)
+            assert returned["annual_price_minor"] == 120000
+            assert returned["included_mailboxes"] == 18
+            assert returned["hosting_storage_mb"] == 2048
+            assert returned["hosting_database_limit"] == 2
     finally:
-        db.execute(delete(BillingPlan).where(BillingPlan.id.in_([hidden.id, visible.id])))
+        db.execute(delete(BillingPlan).where(BillingPlan.id.in_([hidden.id, legacy_but_visible.id, visible.id])))
         db.commit()
