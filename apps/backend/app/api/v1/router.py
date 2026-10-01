@@ -105,8 +105,11 @@ api_router.include_router(mail_intelligence.router)
 api_router.include_router(mail_operations.router)
 api_router.include_router(backups.router)
 api_router.include_router(operations.router)
-# The hosting catalogue shadows legacy public pricing and package-admin routes
-# with customer-visible filtering, annual/setup pricing and add-on support.
+# Keep one authoritative package-admin contract. It preserves the historical
+# commercial/creative fields while adding annual/setup pricing, visibility,
+# sorting and large hosting quotas. The hosting catalogue remains authoritative
+# for public package discovery and add-on lifecycle endpoints.
+api_router.include_router(plan_admin.router)
 api_router.include_router(hosting_catalog.router)
 api_router.include_router(billing.router)
 api_router.include_router(finance.router)
@@ -119,7 +122,6 @@ api_router.include_router(finance_control.router)
 api_router.include_router(finance_governance.router)
 api_router.include_router(finance_completion.router)
 api_router.include_router(finance_completion.portal_router)
-api_router.include_router(plan_admin.router)
 api_router.include_router(payments.router)
 api_router.include_router(customer_applications.router)
 api_router.include_router(business.router)
