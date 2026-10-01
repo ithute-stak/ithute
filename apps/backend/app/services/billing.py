@@ -31,8 +31,6 @@ DEFAULT_PLANS = (
         "name": "Ithute Start",
         "currency": "LSL",
         "monthly_price_minor": 18_500,
-        # Preserve the original Starter resource capacity. Repricing must not
-        # surprise existing customers by shrinking already-sold entitlements.
         "included_mailboxes": 10,
         "included_domains": 2,
         "included_storage_mb": 50_000,
@@ -99,7 +97,6 @@ DEFAULT_PLANS = (
         "name": "Ithute Business",
         "currency": "LSL",
         "monthly_price_minor": 49_500,
-        # Preserve the original Business resource capacity.
         "included_mailboxes": 50,
         "included_domains": 10,
         "included_storage_mb": 250_000,
@@ -166,7 +163,6 @@ DEFAULT_PLANS = (
         "name": "Ithute Enterprise",
         "currency": "LSL",
         "monthly_price_minor": 150_000,
-        # Preserve the original Enterprise resource capacity.
         "included_mailboxes": 200,
         "included_domains": 50,
         "included_storage_mb": 1_000_000,
@@ -211,34 +207,12 @@ def ensure_default_plans(db: Session) -> None:
 
 
 def tenant_usage(db: Session, tenant_id: UUID) -> dict:
-    mailboxes = db.scalar(
-        select(func.count(Mailbox.id)).where(
-            Mailbox.tenant_id == tenant_id,
-            Mailbox.status != MailboxStatus.archived,
-        )
-    ) or 0
-    domains = db.scalar(
-        select(func.count(Domain.id)).where(
-            Domain.tenant_id == tenant_id,
-            Domain.status != DomainStatus.archived,
-        )
-    ) or 0
-    allocated_storage_bytes = db.scalar(
-        select(func.coalesce(func.sum(Mailbox.quota_bytes), 0)).where(
-            Mailbox.tenant_id == tenant_id,
-            Mailbox.status != MailboxStatus.archived,
-        )
-    ) or 0
-    api_keys = db.scalar(
-        select(func.count(ApiKey.id)).where(
-            ApiKey.tenant_id == tenant_id,
-            ApiKey.revoked_at.is_(None),
-        )
-    ) or 0
+    mailboxes = db.scalar(select(func.count(Mailbox.id)).where(Mailbox.tenant_id == tenant_id, Mailbox.status != MailboxStatus.archived)) or 0
+    domains = db.scalar(select(func.count(Domain.id)).where(Domain.tenant_id == tenant_id, Domain.status != DomainStatus.archived)) or 0
+    allocated_storage_bytes = db.scalar(select(func.coalesce(func.sum(Mailbox.quota_bytes), 0)).where(Mailbox.tenant_id == tenant_id, Mailbox.status != MailboxStatus.archived)) or 0
+    api_keys = db.scalar(select(func.count(ApiKey.id)).where(ApiKey.tenant_id == tenant_id, ApiKey.revoked_at.is_(None))) or 0
     hosted_projects = db.scalar(select(func.count(HostingProject.id)).where(HostingProject.tenant_id == tenant_id)) or 0
-    hosting_storage_mb = db.scalar(
-        select(func.coalesce(func.sum(HostingProject.storage_mb), 0)).where(HostingProject.tenant_id == tenant_id)
-    ) or 0
+    hosting_storage_mb = db.scalar(select(func.coalesce(func.sum(HostingProject.storage_mb), 0)).where(HostingProject.tenant_id == tenant_id)) or 0
     shared_usage = hosting_resource_usage(db, tenant_id)
     return {
         "mailboxes": int(mailboxes),
@@ -253,12 +227,7 @@ def tenant_usage(db: Session, tenant_id: UUID) -> dict:
     }
 
 
-def capture_usage(
-    db: Session,
-    tenant_id: UUID,
-    period_start: datetime | None = None,
-    period_end: datetime | None = None,
-) -> UsageSnapshot:
+def capture_usage(db: Session, tenant_id: UUID, period_start: datetime | None = None, period_end: datetime | None = None) -> UsageSnapshot:
     usage = tenant_usage(db, tenant_id)
     snapshot = UsageSnapshot(
         tenant_id=tenant_id,
@@ -285,14 +254,7 @@ def assign_subscription(db: Session, tenant_id: UUID, plan: BillingPlan, status:
     now = datetime.now(timezone.utc)
     subscription = get_subscription(db, tenant_id)
     if subscription is None:
-        subscription = TenantSubscription(
-            tenant_id=tenant_id,
-            plan_id=plan.id,
-            status=status,
-            current_period_start=now,
-            current_period_end=now + timedelta(days=period_days),
-            provider="manual",
-        )
+        subscription = TenantSubscription(tenant_id=tenant_id, plan_id=plan.id, status=status, current_period_start=now, current_period_end=now + timedelta(days=period_days), provider="manual")
         db.add(subscription)
     else:
         subscription.plan_id = plan.id
@@ -325,13 +287,7 @@ def _limits(plan: BillingPlan) -> dict:
     }
 
 
-def entitlement_decision(
-    db: Session,
-    tenant_id: UUID,
-    resource: str,
-    requested_storage_bytes: int = 0,
-    now: datetime | None = None,
-) -> dict:
+def entitlement_decision(db: Session, tenant_id: UUID, resource: str, requested_storage_bytes: int = 0, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     usage = tenant_usage(db, tenant_id)
     subscription = get_subscription(db, tenant_id)
@@ -340,48 +296,30 @@ def entitlement_decision(
     plan = db.get(BillingPlan, subscription.plan_id)
     if plan is None or not plan.is_active:
         return {"allowed": False, "reason": "Billing plan is unavailable", "usage": usage, "limits": None}
-
     if subscription.status == SubscriptionStatus.canceled:
         return {"allowed": False, "reason": "Subscription is canceled", "usage": usage, "limits": _limits(plan)}
     if subscription.status == SubscriptionStatus.past_due and (subscription.grace_ends_at is None or subscription.grace_ends_at <= now):
         return {"allowed": False, "reason": "Payment grace period has expired", "usage": usage, "limits": _limits(plan)}
     if subscription.status not in {SubscriptionStatus.trialing, SubscriptionStatus.active, SubscriptionStatus.past_due}:
         return {"allowed": False, "reason": "Subscription does not allow new resources", "usage": usage, "limits": _limits(plan)}
-
     limits = _limits(plan)
     checks = {
         "domain": usage["domains"] + 1 <= limits["domains"],
         "mailbox": usage["mailboxes"] + 1 <= limits["mailboxes"] and usage["allocated_storage_bytes"] + requested_storage_bytes <= limits["storage_bytes"],
         "storage": usage["allocated_storage_bytes"] + requested_storage_bytes <= limits["storage_bytes"],
         "api_key": usage["api_keys"] + 1 <= limits["api_keys"],
-        "hosting_project": (
-            limits["hosted_projects"] > 0
-            and usage["hosted_projects"] + 1 <= limits["hosted_projects"]
-            and usage["hosting_storage_bytes"] + requested_storage_bytes <= limits["hosting_storage_bytes"]
-        ),
+        "hosting_project": limits["hosted_projects"] > 0 and usage["hosted_projects"] + 1 <= limits["hosted_projects"] and usage["hosting_storage_bytes"] + requested_storage_bytes <= limits["hosting_storage_bytes"],
         "hosting_storage": usage["hosting_storage_bytes"] + requested_storage_bytes <= limits["hosting_storage_bytes"],
-        "hosting_database": (
-            usage["hosting_database_count"] + 1 <= limits["hosting_database_count"]
-            and usage["hosting_database_storage_bytes"] + requested_storage_bytes <= limits["hosting_database_storage_bytes"]
-        ),
+        "hosting_database": usage["hosting_database_count"] + 1 <= limits["hosting_database_count"] and usage["hosting_database_storage_bytes"] + requested_storage_bytes <= limits["hosting_database_storage_bytes"],
         "hosting_database_storage": usage["hosting_database_storage_bytes"] + requested_storage_bytes <= limits["hosting_database_storage_bytes"],
         "hosting_source_storage": usage["hosting_source_storage_bytes"] + requested_storage_bytes <= limits["hosting_source_storage_bytes"],
     }
     if resource not in checks:
         raise ValueError(f"Unknown entitlement resource: {resource}")
-    return {
-        "allowed": checks[resource],
-        "reason": "within plan" if checks[resource] else f"{resource} entitlement limit reached",
-        "usage": usage,
-        "limits": limits,
-        "subscription_status": subscription.status.value,
-        "grace_ends_at": subscription.grace_ends_at.isoformat() if subscription.grace_ends_at else None,
-    }
+    return {"allowed": checks[resource], "reason": "within plan" if checks[resource] else f"{resource} entitlement limit reached", "usage": usage, "limits": limits, "subscription_status": subscription.status.value, "grace_ends_at": subscription.grace_ends_at.isoformat() if subscription.grace_ends_at else None}
 
 
 def require_entitlement(db: Session, tenant_id: UUID, resource: str, requested_storage_bytes: int = 0) -> None:
-    # Existing phase regression fixtures predate subscriptions. Keep development
-    # non-destructive while production always enforces the billing gate.
     if settings.environment.lower() != "production":
         return
     decision = entitlement_decision(db, tenant_id, resource, requested_storage_bytes=requested_storage_bytes)
@@ -396,34 +334,12 @@ def generate_invoice(db: Session, tenant_id: UUID, due_days: int = 14) -> Billin
     plan = db.get(BillingPlan, subscription.plan_id)
     if plan is None:
         raise ValueError("Subscription billing plan is unavailable")
-
-    existing = db.scalar(
-        select(BillingInvoice).where(
-            BillingInvoice.tenant_id == tenant_id,
-            BillingInvoice.period_start == subscription.current_period_start,
-            BillingInvoice.period_end == subscription.current_period_end,
-            BillingInvoice.status != InvoiceStatus.void,
-        )
-    )
+    existing = db.scalar(select(BillingInvoice).where(BillingInvoice.tenant_id == tenant_id, BillingInvoice.period_start == subscription.current_period_start, BillingInvoice.period_end == subscription.current_period_end, BillingInvoice.status != InvoiceStatus.void))
     if existing is not None:
         return existing
-
     snapshot = capture_usage(db, tenant_id, subscription.current_period_start, subscription.current_period_end)
     now = datetime.now(timezone.utc)
-    invoice = BillingInvoice(
-        tenant_id=tenant_id,
-        subscription_id=subscription.id,
-        usage_snapshot_id=snapshot.id,
-        invoice_number=f"MDNS-{now:%Y%m%d}-{uuid4().hex[:10].upper()}",
-        currency=plan.currency,
-        subtotal_minor=plan.monthly_price_minor,
-        total_minor=plan.monthly_price_minor,
-        status=InvoiceStatus.open,
-        period_start=subscription.current_period_start,
-        period_end=subscription.current_period_end,
-        due_at=now + timedelta(days=due_days),
-        finalized_at=now,
-    )
+    invoice = BillingInvoice(tenant_id=tenant_id, subscription_id=subscription.id, usage_snapshot_id=snapshot.id, invoice_number=f"MDNS-{now:%Y%m%d}-{uuid4().hex[:10].upper()}", currency=plan.currency, subtotal_minor=plan.monthly_price_minor, total_minor=plan.monthly_price_minor, status=InvoiceStatus.open, period_start=subscription.current_period_start, period_end=subscription.current_period_end, due_at=now + timedelta(days=due_days), finalized_at=now)
     db.add(invoice)
     db.commit()
     db.refresh(invoice)
@@ -459,43 +375,19 @@ def verify_webhook_signature(raw_body: bytes, signature: str | None, secret: str
     return hmac.compare_digest(expected, supplied)
 
 
-def process_payment_event(
-    db: Session,
-    provider: str,
-    event_id: str,
-    event_type: str,
-    payload: dict,
-    raw_body: bytes,
-    signature_valid: bool,
-    grace_days: int = 7,
-) -> tuple[BillingPaymentEvent, bool]:
+def process_payment_event(db: Session, provider: str, event_id: str, event_type: str, payload: dict, raw_body: bytes, signature_valid: bool, grace_days: int = 7) -> tuple[BillingPaymentEvent, bool]:
     provider = provider.strip().lower()
     payload_hash = hashlib.sha256(raw_body).hexdigest()
-    existing = db.scalar(
-        select(BillingPaymentEvent).where(
-            BillingPaymentEvent.provider == provider,
-            BillingPaymentEvent.event_id == event_id,
-        )
-    )
+    existing = db.scalar(select(BillingPaymentEvent).where(BillingPaymentEvent.provider == provider, BillingPaymentEvent.event_id == event_id))
     if existing is not None:
         if existing.payload_hash != payload_hash or existing.event_type != event_type:
             raise ValueError("Webhook event_id was reused with different content")
         return existing, True
-
     tenant_id = UUID(str(payload["tenant_id"])) if payload.get("tenant_id") else None
     invoice_id = UUID(str(payload["invoice_id"])) if payload.get("invoice_id") else None
-    event = BillingPaymentEvent(
-        provider=provider,
-        event_id=event_id,
-        event_type=event_type,
-        payload_hash=payload_hash,
-        signature_valid=signature_valid,
-        tenant_id=tenant_id,
-        invoice_id=invoice_id,
-    )
+    event = BillingPaymentEvent(provider=provider, event_id=event_id, event_type=event_type, tenant_id=tenant_id, invoice_id=invoice_id, payload_hash=payload_hash, signature_valid=signature_valid, processed=False)
     db.add(event)
     db.flush()
-
     try:
         if not signature_valid:
             raise ValueError("Invalid webhook signature")
@@ -503,7 +395,6 @@ def process_payment_event(
         subscription = get_subscription(db, tenant_id) if tenant_id else None
         if invoice is not None and tenant_id is not None and invoice.tenant_id != tenant_id:
             raise ValueError("Invoice does not belong to webhook tenant")
-
         if event_type == "invoice.paid":
             if invoice is None:
                 raise ValueError("Invoice not found")
@@ -535,7 +426,6 @@ def process_payment_event(
             subscription.grace_ends_at = None
         else:
             raise ValueError(f"Unsupported billing event type: {event_type}")
-
         event.processed = True
         event.processed_at = datetime.now(timezone.utc)
         event.error_message = None
@@ -551,45 +441,20 @@ def process_payment_event(
 
 
 def invoice_out(invoice: BillingInvoice) -> dict:
-    return {
-        "id": str(invoice.id),
-        "tenant_id": str(invoice.tenant_id),
-        "subscription_id": str(invoice.subscription_id) if invoice.subscription_id else None,
-        "usage_snapshot_id": str(invoice.usage_snapshot_id) if invoice.usage_snapshot_id else None,
-        "invoice_number": invoice.invoice_number,
-        "currency": invoice.currency,
-        "subtotal_minor": invoice.subtotal_minor,
-        "total_minor": invoice.total_minor,
-        "status": invoice.status.value,
-        "period_start": invoice.period_start.isoformat() if invoice.period_start else None,
-        "period_end": invoice.period_end.isoformat() if invoice.period_end else None,
-        "due_at": invoice.due_at.isoformat() if invoice.due_at else None,
-        "paid_at": invoice.paid_at.isoformat() if invoice.paid_at else None,
-        "finalized_at": invoice.finalized_at.isoformat() if invoice.finalized_at else None,
-        "provider_invoice_id": invoice.provider_invoice_id,
-        "created_at": invoice.created_at.isoformat() if invoice.created_at else None,
-    }
+    return {"id": str(invoice.id), "tenant_id": str(invoice.tenant_id), "subscription_id": str(invoice.subscription_id) if invoice.subscription_id else None, "usage_snapshot_id": str(invoice.usage_snapshot_id) if invoice.usage_snapshot_id else None, "invoice_number": invoice.invoice_number, "currency": invoice.currency, "subtotal_minor": invoice.subtotal_minor, "total_minor": invoice.total_minor, "status": invoice.status.value, "period_start": invoice.period_start.isoformat() if invoice.period_start else None, "period_end": invoice.period_end.isoformat() if invoice.period_end else None, "due_at": invoice.due_at.isoformat() if invoice.due_at else None, "paid_at": invoice.paid_at.isoformat() if invoice.paid_at else None, "finalized_at": invoice.finalized_at.isoformat() if invoice.finalized_at else None, "provider_invoice_id": invoice.provider_invoice_id, "created_at": invoice.created_at.isoformat() if invoice.created_at else None}
 
 
 def billing_summary(db: Session, tenant_id: UUID) -> dict:
     usage = tenant_usage(db, tenant_id)
     subscription = get_subscription(db, tenant_id)
     if subscription is None:
-        return {
-            "subscription": None,
-            "usage": usage,
-            "entitlements": None,
-            "within_plan": False,
-        }
-    plan = db.get(BillingPlan, subscription.plan_id)
-    if plan is None:
-        return {
-            "subscription": {"id": str(subscription.id), "status": subscription.status.value},
-            "usage": usage,
-            "entitlements": None,
-            "within_plan": False,
-        }
-    limits = _limits(plan)
+        return {"subscription": None, "usage": usage, "entitlements": None, "within_plan": False}
+    entitlement_plan = db.get(BillingPlan, subscription.plan_id)
+    if entitlement_plan is None:
+        return {"subscription": {"id": str(subscription.id), "status": subscription.status.value}, "usage": usage, "entitlements": None, "within_plan": False}
+    base_plan = db.get(BillingPlan, subscription.base_plan_id or subscription.plan_id) or entitlement_plan
+    pending_plan = db.get(BillingPlan, subscription.pending_plan_id) if subscription.pending_plan_id else None
+    limits = _limits(entitlement_plan)
     within = (
         usage["mailboxes"] <= limits["mailboxes"]
         and usage["domains"] <= limits["domains"]
@@ -605,8 +470,15 @@ def billing_summary(db: Session, tenant_id: UUID) -> dict:
         "subscription": {
             "id": str(subscription.id),
             "status": subscription.status.value,
-            "plan_code": plan.code,
-            "plan_name": plan.name,
+            "plan_code": base_plan.code,
+            "plan_name": base_plan.name,
+            "base_plan_code": base_plan.code,
+            "base_plan_name": base_plan.name,
+            "entitlement_plan_code": entitlement_plan.code,
+            "entitlement_plan_name": entitlement_plan.name,
+            "pending_plan_code": pending_plan.code if pending_plan else None,
+            "pending_plan_name": pending_plan.name if pending_plan else None,
+            "pending_plan_effective_at": subscription.pending_plan_effective_at.isoformat() if subscription.pending_plan_effective_at else None,
             "current_period_start": subscription.current_period_start.isoformat(),
             "current_period_end": subscription.current_period_end.isoformat(),
             "cancel_at_period_end": subscription.cancel_at_period_end,
