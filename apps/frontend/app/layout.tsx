@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AddonLauncher } from "@/components/addon-launcher";
 import { BackgroundRefresh } from "@/components/background-refresh";
 import { BrowserBrandSync } from "@/components/browser-brand-sync";
 import { CommandPalette } from "@/components/command-palette";
@@ -38,6 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <CommandPalette />
           <BackgroundRefresh />
           <PublicOwnerNavigation />
+          <AddonLauncher />
           {children}
         </ToastProvider>
       </body>
