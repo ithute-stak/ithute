@@ -38,6 +38,7 @@ class Tenant(Base):
     slug: Mapped[str] = mapped_column(String(80), unique=True, index=True, nullable=False)
     status: Mapped[TenantStatus] = mapped_column(Enum(TenantStatus), default=TenantStatus.active, nullable=False)
     requested_plan_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    requires_approval: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
