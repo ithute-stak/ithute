@@ -32,9 +32,10 @@ def upgrade():
     op.create_index("ix_tenants_approved_at", "tenants", ["approved_at"])
     op.create_index("ix_tenants_rejected_at", "tenants", ["rejected_at"])
 
-    # Existing tenants and operator-created organizations remain usable. Only
-    # future public applications explicitly opt into approval gating.
-    op.execute("UPDATE tenants SET requires_approval = false WHERE requires_approval IS NULL")
+    # Existing tenants predate customer applications. Preserve their current
+    # access and mark only future public signups as approval-gated.
+    op.execute("UPDATE tenants SET requires_approval = false")
+    op.execute("UPDATE tenants SET approved_at = COALESCE(created_at, now()) WHERE approved_at IS NULL")
 
 
 def downgrade():
