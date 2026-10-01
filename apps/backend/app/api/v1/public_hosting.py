@@ -4,27 +4,37 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models import BillingPlan
-from app.services.billing import ensure_default_plans
 
 router = APIRouter(tags=["public-hosting"])
 
 
 @router.get("/public/hosting-pricing")
 def public_hosting_pricing(db: Session = Depends(get_db)):
-    """Public commercial catalog including creative services and enforced hosting limits."""
-    ensure_default_plans(db)
+    """Compatibility public catalogue backed by the canonical sellable plans.
+
+    Historical plans remain in the database for existing subscriptions, but they
+    are never returned here unless the platform owner explicitly marks them
+    customer-visible again. Effective per-tenant plans are always internal.
+    """
     plans = db.scalars(
         select(BillingPlan)
-        .where(BillingPlan.is_active.is_(True))
-        .order_by(BillingPlan.monthly_price_minor, BillingPlan.name)
+        .where(
+            BillingPlan.is_active.is_(True),
+            BillingPlan.customer_visible.is_(True),
+            ~BillingPlan.code.like("effective-%"),
+        )
+        .order_by(BillingPlan.sort_order, BillingPlan.annual_price_minor, BillingPlan.monthly_price_minor, BillingPlan.name)
     ).all()
     return {
+        "currency": "LSL",
         "items": [
             {
                 "code": plan.code,
                 "name": plan.name,
                 "currency": plan.currency,
                 "monthly_price_minor": plan.monthly_price_minor,
+                "annual_price_minor": plan.annual_price_minor,
+                "setup_fee_minor": plan.setup_fee_minor,
                 "included_mailboxes": plan.included_mailboxes,
                 "included_domains": plan.included_domains,
                 "included_storage_mb": plan.included_storage_mb,
@@ -34,6 +44,9 @@ def public_hosting_pricing(db: Session = Depends(get_db)):
                 "hosting_memory_mb_per_project": plan.hosting_memory_mb_per_project,
                 "hosting_cpu_millicores_per_project": plan.hosting_cpu_millicores_per_project,
                 "hosting_pids_per_project": plan.hosting_pids_per_project,
+                "hosting_database_limit": plan.hosting_database_limit,
+                "hosting_database_storage_mb": plan.hosting_database_storage_mb,
+                "hosting_source_storage_mb": plan.hosting_source_storage_mb,
                 "product_category": plan.product_category,
                 "description": plan.description,
                 "website_pages": plan.website_pages,
@@ -49,7 +62,9 @@ def public_hosting_pricing(db: Session = Depends(get_db)):
                 "support_level": plan.support_level,
                 "minimum_term_months": plan.minimum_term_months,
                 "price_from": plan.price_from,
+                "featured": plan.featured,
+                "sort_order": plan.sort_order,
             }
             for plan in plans
-        ]
+        ],
     }
