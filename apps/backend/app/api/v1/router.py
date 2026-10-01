@@ -9,6 +9,7 @@ from app.api.v1 import (
     business,
     canonical_pricing,
     commercial_ops_v2,
+    corporate_quotations,
     customer_applications,
     deliverability,
     dns,
@@ -122,6 +123,7 @@ api_router.include_router(billing.router)
 api_router.include_router(commercial_ops_v2.router)
 api_router.include_router(finance.router)
 api_router.include_router(finance_documents.router)
+api_router.include_router(corporate_quotations.router)
 api_router.include_router(finance_ops.router)
 api_router.include_router(finance_preferences.router)
 api_router.include_router(finance_reports.router)
