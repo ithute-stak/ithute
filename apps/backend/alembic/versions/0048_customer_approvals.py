@@ -16,6 +16,7 @@ depends_on = None
 
 def upgrade():
     op.add_column("tenants", sa.Column("requested_plan_code", sa.String(length=50), nullable=True))
+    op.add_column("tenants", sa.Column("requires_approval", sa.Boolean(), nullable=False, server_default=sa.false()))
     op.add_column("tenants", sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True))
     op.add_column(
         "tenants",
@@ -31,9 +32,9 @@ def upgrade():
     op.create_index("ix_tenants_approved_at", "tenants", ["approved_at"])
     op.create_index("ix_tenants_rejected_at", "tenants", ["rejected_at"])
 
-    # Existing tenants predate the application-approval workflow. Preserve their
-    # current access by treating them as already approved.
-    op.execute("UPDATE tenants SET approved_at = COALESCE(created_at, now()) WHERE approved_at IS NULL")
+    # Existing tenants and operator-created organizations remain usable. Only
+    # future public applications explicitly opt into approval gating.
+    op.execute("UPDATE tenants SET requires_approval = false WHERE requires_approval IS NULL")
 
 
 def downgrade():
@@ -43,4 +44,5 @@ def downgrade():
     op.drop_column("tenants", "rejected_at")
     op.drop_column("tenants", "approved_by_user_id")
     op.drop_column("tenants", "approved_at")
+    op.drop_column("tenants", "requires_approval")
     op.drop_column("tenants", "requested_plan_code")
