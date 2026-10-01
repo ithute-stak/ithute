@@ -11,17 +11,19 @@ def test_seeded_start_package_is_customer_visible(client):
     response = client.get("/api/v1/public/pricing")
     assert response.status_code == 200, response.text
     items = response.json()["items"]
-    start = next(item for item in items if item["code"] == "start")
+    start = next(item for item in items if item["code"] == "ithute-start")
+    assert start["name"] == "Ithute Start"
     assert start["hosting_storage_mb"] == 2048
     assert start["included_mailboxes"] == 18
     assert start["included_hosted_projects"] == 1
     assert start["hosting_database_limit"] == 2
     assert start["annual_price_minor"] is not None
     assert all(not item["code"].startswith("effective-") for item in items)
+    assert all(item["code"].startswith("ithute-") for item in items)
 
 
 def test_pending_addon_does_not_change_entitlements_but_active_addon_does(db):
-    base = db.scalar(select(BillingPlan).where(BillingPlan.code == "start"))
+    base = db.scalar(select(BillingPlan).where(BillingPlan.code == "ithute-start"))
     addon = db.scalar(select(BillingAddon).where(BillingAddon.code == "extra-mail-10"))
     assert base is not None and addon is not None
 
