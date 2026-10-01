@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -9,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_platform_owner
+from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import get_db
 from app.models import (
@@ -30,8 +33,6 @@ router = APIRouter(tags=["customer-applications"])
 
 
 def _slug(value: str) -> str:
-    import re
-
     return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")[:80]
 
 
@@ -212,7 +213,7 @@ def approve_customer_application(
     tenant.approved_at = now
     tenant.approved_by_user_id = current.id
     subscription = assign_subscription(db, tenant.id, plan, SubscriptionStatus.trialing, period_days=14)
-    membership, applicant = _primary_applicant(db, tenant.id)
+    _membership, applicant = _primary_applicant(db, tenant.id)
     if applicant:
         db.add(
             Notification(
@@ -295,7 +296,7 @@ def reject_customer_application(
             action="customer.application.reject",
             resource_type="tenant",
             resource_id=str(tenant.id),
-            metadata_json=f'{{"reason": {tenant.rejection_reason!r}}}',
+            metadata_json=json.dumps({"reason": tenant.rejection_reason}, sort_keys=True),
         )
     )
     db.commit()
