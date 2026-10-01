@@ -7,6 +7,7 @@ from app.api.v1 import (
     backups,
     billing,
     business,
+    commercial_ops_v2,
     customer_applications,
     deliverability,
     dns,
@@ -112,6 +113,7 @@ api_router.include_router(operations.router)
 api_router.include_router(plan_admin.router)
 api_router.include_router(hosting_catalog.router)
 api_router.include_router(billing.router)
+api_router.include_router(commercial_ops_v2.router)
 api_router.include_router(finance.router)
 api_router.include_router(finance_documents.router)
 api_router.include_router(finance_ops.router)
