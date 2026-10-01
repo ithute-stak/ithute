@@ -35,11 +35,13 @@ const commands: Command[] = [
   { label: "DNS zones", hint: "Authoritative records", href: "/dns", icon: Server, keywords: "records powerdns a mx txt" },
   { label: "DNS security", hint: "DNSSEC and protection", href: "/dns-security", icon: ShieldCheck, keywords: "dnssec security ds" },
   { label: "Edge control centre", hint: "Edge applications, origins and policy state", href: "/edge", icon: ShieldCheck, keywords: "edge waf cdn origin security" },
+  { label: "Domain → App routing", hint: "Point a verified hostname at a public app IP and port through Caddy", href: "/edge-routing", icon: Globe2, keywords: "caddy reverse proxy ip port hostname propagation https" },
   { label: "Mailboxes", hint: "Hosted mail accounts", href: "/mailboxes", icon: Mail, keywords: "mail users inbox" },
   { label: "Webmail", hint: "Open !thute Mail", href: "/webmail", icon: Send, keywords: "email compose inbox gmail" },
   { label: "Transactional email", hint: "SMTP credentials and sending", href: "/transactional-email", icon: Send, keywords: "smtp api sender" },
   { label: "Delivery & queues", hint: "Mail delivery operations", href: "/delivery", icon: Server, keywords: "queue deferred bounce" },
   { label: "Billing", hint: "Subscription and invoices", href: "/billing", icon: CircleDollarSign, keywords: "payment invoice plan" },
+  { label: "Add-ons & capacity", hint: "Add email, domains, apps, storage and databases to your package", href: "/addons", icon: Server, keywords: "upgrade storage email database capacity addon" },
   { label: "Notifications", hint: "Platform alerts", href: "/notifications", icon: Bell, keywords: "alerts bell" },
   { label: "Security", hint: "Account and platform security", href: "/security", icon: ShieldCheck, keywords: "mfa password sessions" },
   { label: "API access", hint: "Automation credentials", href: "/api-access", icon: KeyRound, keywords: "token key" },
@@ -48,13 +50,22 @@ const commands: Command[] = [
   { label: "Help centre", hint: "Guides and DNS help", href: "/help", icon: BookOpen, keywords: "docs support guide" },
 ];
 
-const ownerCommand: Command = {
-  label: "Customer applications",
-  hint: "Review, approve or reject new company registrations",
-  href: "/customer-applications",
-  icon: Building2,
-  keywords: "owner signup approval pending customer registration",
-};
+const ownerCommands: Command[] = [
+  {
+    label: "Customer applications",
+    hint: "Review, approve or reject new company registrations",
+    href: "/customer-applications",
+    icon: Building2,
+    keywords: "owner signup approval pending customer registration",
+  },
+  {
+    label: "Packages & add-ons",
+    hint: "Edit hosting packages, prices, limits and customer capacity requests",
+    href: "/packages",
+    icon: CircleDollarSign,
+    keywords: "owner catalog pricing hosting addons entitlement",
+  },
+];
 
 export function CommandPalette() {
   const router = useRouter();
@@ -73,13 +84,11 @@ export function CommandPalette() {
         if (!cancelled) setIsPlatformOwner(body.is_platform_owner === true);
       })
       .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
   const availableCommands = useMemo(
-    () => (isPlatformOwner ? [...commands, ownerCommand] : commands),
+    () => (isPlatformOwner ? [...commands, ...ownerCommands] : commands),
     [isPlatformOwner],
   );
 
@@ -94,9 +103,7 @@ export function CommandPalette() {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setOpen((value) => !value);
-      } else if (event.key === "Escape") {
-        setOpen(false);
-      }
+      } else if (event.key === "Escape") setOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -146,12 +153,7 @@ export function CommandPalette() {
           {filtered.length ? filtered.map((item, index) => {
             const Icon = item.icon;
             return (
-              <button
-                key={item.href}
-                onMouseEnter={() => setActive(index)}
-                onClick={() => go(item)}
-                className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left ${index === active ? "bg-[#eef4f1]" : "hover:bg-[#f7f9f8]"}`}
-              >
+              <button key={item.href} onMouseEnter={() => setActive(index)} onClick={() => go(item)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left ${index === active ? "bg-[#eef4f1]" : "hover:bg-[#f7f9f8]"}`}>
                 <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-[#24554f] shadow-sm ring-1 ring-[#e4eae6]"><Icon size={16}/></div>
                 <div className="min-w-0 flex-1"><p className="truncate text-[12px] font-black text-[#21342a]">{item.label}</p><p className="mt-0.5 truncate text-[10px] text-[#7b8982]">{item.hint}</p></div>
                 <span className="hidden text-[9px] font-bold text-[#98a39d] sm:block">Enter</span>
@@ -159,10 +161,7 @@ export function CommandPalette() {
             );
           }) : <div className="grid min-h-36 place-items-center p-6 text-center"><div><p className="text-sm font-black text-[#21342a]">No matching destination</p><p className="mt-1 text-[11px] text-[#7b8982]">Try a domain, mailbox, edge, billing, DNS or settings keyword.</p></div></div>}
         </div>
-        <div className="flex items-center justify-between border-t border-[#e6ebe8] bg-[#fafcfb] px-4 py-2 text-[9px] font-bold text-[#8a9690]">
-          <span>↑ ↓ navigate · Enter open · Esc close</span>
-          <span className="ithute-kbd">Ctrl K</span>
-        </div>
+        <div className="flex items-center justify-between border-t border-[#e6ebe8] bg-[#fafcfb] px-4 py-2 text-[9px] font-bold text-[#8a9690]"><span>↑ ↓ navigate · Enter open · Esc close</span><span className="ithute-kbd">Ctrl K</span></div>
       </div>
     </div>
   );
