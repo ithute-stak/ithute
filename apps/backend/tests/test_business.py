@@ -5,10 +5,11 @@ from sqlalchemy import delete, select
 from app.models import AuditLog, CustomerProfile, Notification, SupportTicket, SupportTicketMessage, Tenant, TenantMembership, TenantSubscription, User
 
 PASSWORD = "Phase1-Test-Password!"
+SIGNUP_PASSWORD = "Commercial-Test-Password!"
 
 
-def login(client, email: str) -> None:
-    response = client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORD})
+def login(client, email: str, password: str = PASSWORD) -> None:
+    response = client.post("/api/v1/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200, response.text
 
 
@@ -28,7 +29,7 @@ def test_public_signup_waits_for_owner_approval_before_trial(client, db, platfor
             "company_name": f"Signup Company {uuid.uuid4().hex[:8]}",
             "full_name": "Commercial Signup User",
             "email": email,
-            "password": "Commercial-Test-Password!",
+            "password": SIGNUP_PASSWORD,
             "plan_code": "business",
             "terms_accepted": True,
         },
@@ -48,6 +49,16 @@ def test_public_signup_waits_for_owner_approval_before_trial(client, db, platfor
     assert tenant.approved_at is None
     assert db.scalar(select(TenantSubscription).where(TenantSubscription.tenant_id == tenant.id)) is None
 
+    # Authentication is allowed in test mode, but tenant-service mutations are
+    # blocked centrally until Ithute approves the application.
+    login(client, email, SIGNUP_PASSWORD)
+    blocked = client.patch(
+        f"/api/v1/tenants/{tenant.id}/customer-profile",
+        json={"billing_email": email, "city": "Maseru", "country": "Lesotho"},
+    )
+    assert blocked.status_code == 403, blocked.text
+    assert blocked.json()["detail"]["code"] == "CUSTOMER_APPROVAL_PENDING"
+
     login(client, platform_owner.email)
     approved = client.post(f"/api/v1/platform/customer-applications/{tenant.id}/approve")
     assert approved.status_code == 200, approved.text
@@ -60,6 +71,14 @@ def test_public_signup_waits_for_owner_approval_before_trial(client, db, platfor
     assert tenant.requires_approval is False
     assert tenant.approved_at is not None
     assert db.scalar(select(TenantSubscription).where(TenantSubscription.tenant_id == tenant.id)) is not None
+
+    # The same customer can use the tenant immediately after approval.
+    login(client, email, SIGNUP_PASSWORD)
+    allowed = client.patch(
+        f"/api/v1/tenants/{tenant.id}/customer-profile",
+        json={"billing_email": email, "city": "Maseru", "country": "Lesotho"},
+    )
+    assert allowed.status_code == 200, allowed.text
 
     db.execute(delete(Notification).where(Notification.tenant_id == tenant.id))
     db.execute(delete(CustomerProfile).where(CustomerProfile.tenant_id == tenant.id))
