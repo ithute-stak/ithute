@@ -27,13 +27,25 @@ type PlatformMode = {
   panel_url?: string;
 };
 
-const plans = [
-  ["starter", "Ithute Start", "M185/month"],
-  ["grow", "Ithute Grow", "M295/month"],
-  ["business", "Ithute Business", "M495/month"],
-  ["professional", "Ithute Professional", "M795/month"],
-  ["enterprise", "Ithute Enterprise", "from M1,500/month"],
-] as const;
+type PricingPlan = {
+  code: string;
+  name: string;
+  currency: string;
+  monthly_price_minor: number;
+  annual_price_minor?: number | null;
+  setup_fee_minor?: number;
+  included_mailboxes: number;
+  included_domains: number;
+  included_hosted_projects: number;
+  hosting_storage_mb: number;
+  hosting_database_limit: number;
+  featured?: boolean;
+};
+
+function money(minor?: number | null) {
+  if (minor == null) return "Custom pricing";
+  return `M${(minor / 100).toLocaleString("en-LS", { maximumFractionDigits: 2 })}`;
+}
 
 function BrandMark({ compact = false }: { compact?: boolean }) {
   return (
@@ -48,23 +60,42 @@ function BrandMark({ compact = false }: { compact?: boolean }) {
 }
 
 export default function SignupPage() {
-  const [plan, setPlan] = useState("business");
+  const [plan, setPlan] = useState("");
+  const [plans, setPlans] = useState<PricingPlan[]>([]);
+  const [plansLoading, setPlansLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [created, setCreated] = useState<{ company: string; email: string } | null>(null);
   const [platform, setPlatform] = useState<PlatformMode | null>(null);
 
   useEffect(() => {
-    const p = new URLSearchParams(window.location.search).get("plan");
-    if (p) setPlan(p);
-    void fetch(`${API}/public/platform-mode`, { credentials: "include" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then(setPlatform)
-      .catch(() => setPlatform(null));
+    const requestedPlan = new URLSearchParams(window.location.search).get("plan");
+    void Promise.all([
+      fetch(`${API}/public/platform-mode`, { credentials: "include" })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
+      fetch(`${API}/public/pricing`, { credentials: "include", cache: "no-store" })
+        .then(async (r) => {
+          if (!r.ok) throw new Error("Unable to load packages");
+          return r.json();
+        })
+        .catch(() => ({ items: [] })),
+    ]).then(([mode, pricing]) => {
+      setPlatform(mode);
+      const available = Array.isArray(pricing?.items) ? pricing.items as PricingPlan[] : [];
+      setPlans(available);
+      const requestedExists = requestedPlan && available.some((item) => item.code === requestedPlan);
+      setPlan(requestedExists ? requestedPlan : (available.find((item) => item.featured)?.code || available[0]?.code || ""));
+      setPlansLoading(false);
+    });
   }, []);
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!plan) {
+      setError("No customer package is currently available. Please contact Ithute support.");
+      return;
+    }
     setBusy(true);
     setError("");
     const data = new FormData(e.currentTarget);
@@ -114,7 +145,7 @@ export default function SignupPage() {
             We created the registration for <b className="text-[#29483d]">{created.company}</b> and sent a verification link to <b className="text-[#29483d]">{created.email}</b>. Verify the address before signing in to production services.
           </p>
           <div className="mt-6 rounded-2xl border border-[#e5e9df] bg-[#fffdf4] p-4 text-left text-xs leading-6 text-[#6b6244]">
-            <div className="flex gap-3"><ShieldCheck className="mt-0.5 shrink-0 text-[#8a7632]" size={18} /><span>Your password is never sent by email. Use only the verification link sent by Ithute, then return to the secure sign-in page.</span></div>
+            <div className="flex gap-3"><ShieldCheck className="mt-0.5 shrink-0 text-[#8a7632]" size={18} /><span>Your password is never sent by email. Use only the verification link sent by Ithute, then return to the secure sign-in page. Your selected package starts only after Ithute approves the company application.</span></div>
           </div>
           <div className="mt-7 flex flex-wrap justify-center gap-3">
             <Link href="/login" className="inline-flex items-center gap-2 rounded-xl bg-[#123a38] px-6 py-3 text-sm font-black text-white shadow-lg shadow-[#123a38]/10">Continue to sign in <ArrowRight size={15} /></Link>
@@ -197,14 +228,30 @@ export default function SignupPage() {
             <label><span className="text-xs font-black">Phone number</span><input name="phone" autoComplete="tel" className="input mt-2" placeholder="+266 ..." /></label>
             <label className="sm:col-span-2"><span className="flex items-center gap-2 text-xs font-black"><Mail size={14} className="text-[#56746b]" /> Work email</span><input type="email" name="email" required autoComplete="email" className="input mt-2" placeholder="you@company.co.ls" /></label>
             <label className="sm:col-span-2"><span className="flex items-center gap-2 text-xs font-black"><KeyRound size={14} className="text-[#56746b]" /> Password</span><input type="password" name="password" required minLength={12} autoComplete="new-password" className="input mt-2" placeholder="At least 12 characters" /><span className="mt-1 block text-[9px] leading-4 text-[#819087]">Use a unique password. You can enable multi-factor authentication after sign-in.</span></label>
-            <label className="sm:col-span-2"><span className="text-xs font-black">Package</span><select value={plan} onChange={(e) => setPlan(e.target.value)} className="input mt-2">{plans.map(([code, name, price]) => <option value={code} key={code}>{name} — {price}</option>)}</select><p className="mt-1 text-[9px] leading-4 text-[#718078]">Package limits and creative deliverables are shown on the pricing page. You can review them before continuing.</p></label>
+            <label className="sm:col-span-2">
+              <span className="text-xs font-black">Package</span>
+              <select value={plan} onChange={(e) => setPlan(e.target.value)} disabled={plansLoading || plans.length === 0} className="input mt-2">
+                {plansLoading ? <option value="">Loading current packages…</option> : null}
+                {!plansLoading && plans.length === 0 ? <option value="">No package currently available</option> : null}
+                {plans.map((item) => (
+                  <option value={item.code} key={item.code}>
+                    {item.name} — {item.annual_price_minor != null ? `${money(item.annual_price_minor)}/yr` : `${money(item.monthly_price_minor)}/mo`}
+                  </option>
+                ))}
+              </select>
+              {plans.find((item) => item.code === plan) ? (
+                <p className="mt-2 text-[9px] leading-4 text-[#718078]">
+                  {Math.round((plans.find((item) => item.code === plan)?.hosting_storage_mb || 0) / 1024)} GB app storage · {plans.find((item) => item.code === plan)?.included_mailboxes} mailboxes · {plans.find((item) => item.code === plan)?.included_hosted_projects} website/app{plans.find((item) => item.code === plan)?.included_hosted_projects === 1 ? "" : "s"} · {plans.find((item) => item.code === plan)?.hosting_database_limit} managed databases.
+                </p>
+              ) : <p className="mt-1 text-[9px] leading-4 text-[#718078]">Package availability is controlled by the Ithute owner catalogue.</p>}
+            </label>
 
             <div className="sm:col-span-2 rounded-2xl border border-[#e2e9e5] bg-[#f8faf9] p-4">
               <label className="flex items-start gap-3 text-xs leading-5 text-[#617168]"><input type="checkbox" name="terms" required className="mt-1 h-4 w-4 accent-[#123a38]" /><span>I accept the <Link className="font-black text-[#285b55]" href="/legal#terms">Terms of Service</Link> and <Link className="font-black text-[#285b55]" href="/legal#acceptable-use">Acceptable Use Policy</Link>.</span></label>
             </div>
 
             {error ? <div role="alert" className="sm:col-span-2 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-xs font-bold leading-5 text-red-700"><LockKeyhole size={16} className="mt-0.5 shrink-0" />{error}</div> : null}
-            <button disabled={busy} className="sm:col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#123a38] px-5 text-sm font-black text-white shadow-[0_14px_30px_rgba(18,58,56,.16)] transition hover:-translate-y-0.5 hover:bg-[#285b55] disabled:cursor-wait disabled:translate-y-0 disabled:opacity-60">{busy ? "Creating your secure workspace…" : "Create company account"}{!busy ? <ArrowRight size={16} /> : null}</button>
+            <button disabled={busy || plansLoading || !plan} className="sm:col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#123a38] px-5 text-sm font-black text-white shadow-[0_14px_30px_rgba(18,58,56,.16)] transition hover:-translate-y-0.5 hover:bg-[#285b55] disabled:cursor-wait disabled:translate-y-0 disabled:opacity-60">{busy ? "Creating your secure workspace…" : "Submit company application"}{!busy ? <ArrowRight size={16} /> : null}</button>
           </form>
 
           <div className="mt-6 flex flex-col gap-3 border-t border-[#e8eeea] pt-5 text-xs text-[#718078] sm:flex-row sm:items-center sm:justify-between"><span>Already registered? <Link href="/login" className="font-black text-[#285b55]">Sign in securely</Link></span><Link href="/pricing" className="inline-flex items-center gap-1 font-black text-[#45655b]">Compare packages <ArrowRight size={13} /></Link></div>
