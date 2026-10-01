@@ -8,16 +8,23 @@ from app.models import PlatformConfiguration
 
 
 def effective_platform_mode(db: Session) -> str:
-    """Return the persisted platform mode when setup has already activated it.
+    """Return the effective platform mode used by public onboarding.
 
-    The environment value remains the bootstrap fallback for fresh installs, but once
-    the platform owner has completed setup the database configuration is authoritative.
+    A fresh database may still contain the historical ``bootstrap`` row while the
+    production deployment explicitly declares ``PLATFORM_MODE=domain``.  Treat that
+    exact combination as an already-deployed domain platform.  Any real persisted
+    setup transition (domain_pending/domain_verified/domain_active) remains
+    authoritative, so an in-progress setup is never skipped.
     """
 
-    current = db.scalar(select(PlatformConfiguration).order_by(PlatformConfiguration.created_at.asc()))
-    if current and current.mode:
+    current = db.scalar(
+        select(PlatformConfiguration).order_by(PlatformConfiguration.created_at.asc())
+    )
+    if current and current.mode and current.mode != "bootstrap":
         return current.mode
-    return settings.platform_mode
+    if settings.platform_mode == "domain":
+        return "domain_active"
+    return current.mode if current and current.mode else "bootstrap"
 
 
 def public_signup_enabled(db: Session) -> bool:
