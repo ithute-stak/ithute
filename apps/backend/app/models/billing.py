@@ -32,14 +32,13 @@ class BillingPlan(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="LSL", nullable=False)
     monthly_price_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    annual_price_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    setup_fee_minor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     included_mailboxes: Mapped[int] = mapped_column(Integer, nullable=False)
     included_domains: Mapped[int] = mapped_column(Integer, nullable=False)
     included_storage_mb: Mapped[int] = mapped_column(Integer, nullable=False)
     max_api_keys: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    # Shared application-hosting entitlements. Hosting storage is deliberately
-    # separate from mailbox storage: a website filling its disk allocation must
-    # never consume or redefine the organization's mail quota.
     included_hosted_projects: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     hosting_storage_mb: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     hosting_memory_mb_per_project: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
@@ -49,8 +48,6 @@ class BillingPlan(Base):
     hosting_database_storage_mb: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     hosting_source_storage_mb: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
-    # Commercial deliverables are stored on the package as first-class data so
-    # the public catalogue and contracts describe exactly what the customer buys.
     product_category: Mapped[str] = mapped_column(String(80), default="Website & Hosting", server_default="Website & Hosting", nullable=False)
     description: Mapped[str] = mapped_column(String(500), default="", server_default="", nullable=False)
     website_pages: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
@@ -67,6 +64,9 @@ class BillingPlan(Base):
     minimum_term_months: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
     price_from: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
 
+    customer_visible: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    featured: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
