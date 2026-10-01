@@ -7,7 +7,6 @@ import {
   ArrowRight,
   BadgeCheck,
   Building2,
-  Check,
   Globe2,
   KeyRound,
   LockKeyhole,
