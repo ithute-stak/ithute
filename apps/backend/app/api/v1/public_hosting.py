@@ -10,17 +10,13 @@ router = APIRouter(tags=["public-hosting"])
 
 @router.get("/public/hosting-pricing")
 def public_hosting_pricing(db: Session = Depends(get_db)):
-    """Compatibility public catalogue backed by the canonical sellable plans.
-
-    Historical plans remain in the database for existing subscriptions, but they
-    are never returned here unless the platform owner explicitly marks them
-    customer-visible again. Effective per-tenant plans are always internal.
-    """
+    """Public catalogue backed only by canonical sellable plans."""
     plans = db.scalars(
         select(BillingPlan)
         .where(
             BillingPlan.is_active.is_(True),
             BillingPlan.customer_visible.is_(True),
+            BillingPlan.lifecycle_state == "sellable",
             ~BillingPlan.code.like("effective-%"),
         )
         .order_by(BillingPlan.sort_order, BillingPlan.annual_price_minor, BillingPlan.monthly_price_minor, BillingPlan.name)
@@ -64,6 +60,7 @@ def public_hosting_pricing(db: Session = Depends(get_db)):
                 "price_from": plan.price_from,
                 "featured": plan.featured,
                 "sort_order": plan.sort_order,
+                "lifecycle_state": plan.lifecycle_state,
             }
             for plan in plans
         ],
