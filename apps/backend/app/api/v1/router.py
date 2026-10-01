@@ -36,6 +36,7 @@ from app.api.v1 import (
     hosting_build_logs,
     hosting_build_settings,
     hosting_builds,
+    hosting_catalog,
     hosting_database_backups,
     hosting_git_webhooks,
     hosting_metering,
@@ -102,6 +103,9 @@ api_router.include_router(mail_intelligence.router)
 api_router.include_router(mail_operations.router)
 api_router.include_router(backups.router)
 api_router.include_router(operations.router)
+# The hosting catalogue shadows legacy public pricing and package-admin routes
+# with customer-visible filtering, annual/setup pricing and add-on support.
+api_router.include_router(hosting_catalog.router)
 api_router.include_router(billing.router)
 api_router.include_router(finance.router)
 api_router.include_router(finance_documents.router)
