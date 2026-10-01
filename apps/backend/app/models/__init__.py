@@ -25,6 +25,7 @@ from app.models.billing import (
     TenantSubscription,
     UsageSnapshot,
 )
+from app.models.catalog_extensions import BillingAddon, EdgeRouteDeployment, TenantAddon
 from app.models.finance import (
     FinanceClient,
     FinanceCreditNote,
@@ -118,7 +119,8 @@ __all__ = [
     "DomainDnsMode", "DomainEvent", "DomainStatus", "DomainVerificationAttempt", "Mailbox",
     "MailboxStatus", "MailAlias", "DistributionGroup", "DistributionGroupMember", "PlatformMailDomainGrant",
     "PlatformMailboxBinding", "PlatformMailOutboundDelivery", "DkimKey", "BillingPlan", "TenantSubscription", "UsageSnapshot", "BillingInvoice",
-    "BillingPaymentEvent", "SubscriptionStatus", "InvoiceStatus", "FinanceClient", "FinanceInvoice", "FinanceInvoiceItem", "FinanceInvoiceSchedule", "FinancePayment", "FinanceCreditNote", "FinanceDocument", "FinanceDocumentItem", "FinanceSenderConfiguration", "FinanceExpense", "FinanceBankTransaction", "FinanceServiceBillingLink", "FinanceAccountingPeriod", "FinanceRefund", "FinanceTaxRate", "FinanceApprovalRequest", "FinanceGovernanceSetting", "FinanceRoleGrant", "FinancePortalAccess", "FinanceDeliveryEvent", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject",
+    "BillingPaymentEvent", "SubscriptionStatus", "InvoiceStatus", "BillingAddon", "TenantAddon", "EdgeRouteDeployment",
+    "FinanceClient", "FinanceInvoice", "FinanceInvoiceItem", "FinanceInvoiceSchedule", "FinancePayment", "FinanceCreditNote", "FinanceDocument", "FinanceDocumentItem", "FinanceSenderConfiguration", "FinanceExpense", "FinanceBankTransaction", "FinanceServiceBillingLink", "FinanceAccountingPeriod", "FinanceRefund", "FinanceTaxRate", "FinanceApprovalRequest", "FinanceGovernanceSetting", "FinanceRoleGrant", "FinancePortalAccess", "FinanceDeliveryEvent", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject",
     "HOSTING_RUNTIME_MANIFEST_VERSION", "HostingDeployment", "HostingEnvironmentVariable", "HostingNodeAgent", "HostingProjectOperation",
     "HostingBuild", "HostingBuilderAgent", "HostingBuildLog", "HostingDatabaseBackup", "HostingSourceWebhook", "HostingWebhookDelivery", "HostingDatabase", "HostingSource", "HostingSourceCredential",
     "CustomerProfile", "Notification", "ServiceIncident", "ServiceIncidentImpact", "ServiceIncidentStatus",
