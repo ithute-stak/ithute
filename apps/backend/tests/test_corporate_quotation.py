@@ -1,7 +1,20 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+from app.services import corporate_quotation, finance_documents, finance_invoice_multi, finance_invoice_v2
 from app.services.corporate_quotation import pack_metadata, render_corporate_quote_pdf, unpack_metadata
+
+
+def test_all_finance_pdf_renderers_share_approved_header():
+    paths = [
+        corporate_quotation._HEADER_PATH,
+        finance_documents._HEADER_PATH,
+        finance_invoice_multi._HEADER_PATH,
+        finance_invoice_v2._HEADER_PATH,
+    ]
+    assert all(path == paths[0] for path in paths)
+    assert paths[0].name == "finance_invoice_header.jpg"
+    assert paths[0].is_file()
 
 
 def test_corporate_quote_metadata_round_trip():
