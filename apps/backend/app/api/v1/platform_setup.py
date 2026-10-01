@@ -12,6 +12,7 @@ from app.api.deps import require_platform_owner
 from app.core.config import settings
 from app.db.session import get_db
 from app.models import AuditLog, Domain, PlatformConfiguration, User
+from app.services.platform_mode import effective_platform_mode, public_signup_enabled
 from app.services.platform_setup import (
     PlatformSetupError,
     activate_caddy,
@@ -53,19 +54,22 @@ def _audit(db: Session, current: User, action: str, metadata: dict | None = None
     )
 
 
-def _status(row: PlatformConfiguration | None, *, public: bool = False) -> dict:
-    mode = row.mode if row else "bootstrap"
+def _status(row: PlatformConfiguration | None, *, public: bool = False, effective_mode: str | None = None, signup_enabled: bool | None = None) -> dict:
+    mode = effective_mode or (row.mode if row else "bootstrap")
     active = mode == "domain_active"
     signup_ready = active and bool(settings.system_email_from and settings.system_smtp_host)
     result = {
         "mode": mode,
-        "security_level": row.security_level if row else "bootstrap",
-        "signup_enabled": settings.environment.lower() != "production" or signup_ready,
+        "security_level": "hardened" if active else (row.security_level if row else "bootstrap"),
+        "signup_enabled": (settings.environment.lower() != "production" or signup_ready) if signup_enabled is None else signup_enabled,
         "setup_required": not active,
     }
     if public:
-        if active and row and row.panel_hostname:
-            result["panel_url"] = f"https://{row.panel_hostname}"
+        if active:
+            if row and row.panel_hostname:
+                result["panel_url"] = f"https://{row.panel_hostname}"
+            else:
+                result["panel_url"] = settings.frontend_url.rstrip("/")
         return result
     if row is None:
         return result
@@ -116,7 +120,12 @@ def _status(row: PlatformConfiguration | None, *, public: bool = False) -> dict:
 
 @router.get("/public/platform-mode")
 def public_platform_mode(db: Session = Depends(get_db)):
-    return _status(_configuration(db, create=False), public=True)
+    row = _configuration(db, create=False)
+    mode = effective_platform_mode(db)
+    enabled = public_signup_enabled(db) and bool(settings.system_email_from and settings.system_smtp_host)
+    if settings.environment.lower() != "production":
+        enabled = True
+    return _status(row, public=True, effective_mode=mode, signup_enabled=enabled)
 
 
 @router.get("/platform/setup")

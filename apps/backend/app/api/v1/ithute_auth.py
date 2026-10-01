@@ -31,6 +31,7 @@ router = APIRouter(prefix="/auth/ithute", tags=["auth"])
 _SSO_STATE_COOKIE = "mdns_ithute_oauth_state"
 _SSO_VERIFIER_COOKIE = "mdns_ithute_oauth_verifier"
 _SSO_NONCE_COOKIE = "mdns_ithute_oauth_nonce"
+_SSO_NEXT_COOKIE = "mdns_ithute_oauth_next"
 _SSO_TTL_SECONDS = 600
 
 
@@ -58,7 +59,16 @@ def _cookie_options(request: Request) -> dict:
 
 
 def _redirect_uri() -> str:
+    # Production Caddy intentionally routes ithute.co.ls/api/* to the app API.
     return f"{settings.frontend_url.rstrip('/')}/api/v1/auth/ithute/callback"
+
+
+def _safe_next_path(value: str | None) -> str:
+    """Allow only application-local redirect paths after SSO."""
+    raw = (value or "").strip()
+    if not raw or not raw.startswith("/") or raw.startswith("//") or "\\" in raw:
+        return "/dashboard"
+    return raw[:1024]
 
 
 def _pkce_challenge(verifier: str) -> str:
@@ -80,7 +90,7 @@ def _set_central_session_cookies(
 
 
 @router.get("/login")
-def central_login(request: Request):
+def central_login(request: Request, next: str | None = None):
     if not ithute_auth_enabled():
         raise HTTPException(status_code=503, detail="!thute Auth is not enabled for Mailbox DNS")
 
@@ -88,6 +98,7 @@ def central_login(request: Request):
     verifier = secrets.token_urlsafe(64)
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
+    next_path = _safe_next_path(next)
     params = urlencode(
         {
             "response_type": "code",
@@ -105,6 +116,7 @@ def central_login(request: Request):
     response.set_cookie(_SSO_STATE_COOKIE, state, **temporary)
     response.set_cookie(_SSO_VERIFIER_COOKIE, verifier, **temporary)
     response.set_cookie(_SSO_NONCE_COOKIE, nonce, **temporary)
+    response.set_cookie(_SSO_NEXT_COOKIE, next_path, **temporary)
     return response
 
 
@@ -117,6 +129,7 @@ async def central_callback(
 ):
     expected_state = request.cookies.get(_SSO_STATE_COOKIE) or ""
     verifier = request.cookies.get(_SSO_VERIFIER_COOKIE) or ""
+    next_path = _safe_next_path(request.cookies.get(_SSO_NEXT_COOKIE))
     if not expected_state or not verifier or not hmac.compare_digest(expected_state, state):
         raise HTTPException(status_code=400, detail="Central sign-in state is invalid or expired")
 
@@ -149,7 +162,7 @@ async def central_callback(
         raise HTTPException(status_code=401, detail="Invalid central sign-in session") from exc
     central_user_from_claims(claims, db)
 
-    response = RedirectResponse(f"{settings.frontend_url.rstrip('/')}/dashboard", status_code=303)
+    response = RedirectResponse(f"{settings.frontend_url.rstrip('/')}{next_path}", status_code=303)
     _set_central_session_cookies(
         response,
         request,
@@ -157,7 +170,7 @@ async def central_callback(
         refresh_token=refresh_token,
         expires_in=int(payload.get("expires_in") or 600),
     )
-    for name in (_SSO_STATE_COOKIE, _SSO_VERIFIER_COOKIE, _SSO_NONCE_COOKIE):
+    for name in (_SSO_STATE_COOKIE, _SSO_VERIFIER_COOKIE, _SSO_NONCE_COOKIE, _SSO_NEXT_COOKIE):
         response.delete_cookie(name, path="/")
     return response
 

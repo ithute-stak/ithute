@@ -26,10 +26,15 @@ def test_login_form_renders_friendly_error_without_echoing_password() -> None:
     assert "The email or password is incorrect." in rendered
     assert 'type="password"' in rendered
     assert 'name="password"' in rendered
-    assert 'type="password" name="password" autocomplete="current-password" required>' in rendered
+    assert 'autocomplete="current-password"' in rendered
+    assert "Ithute Digital Solutions" in rendered
+    assert "Protected sign-in" in rendered
+    assert "#123a38" in rendered
+    assert "#d8c56a" in rendered
+    assert "#790d29" not in rendered
 
 
-def test_login_form_html_escapes_identifier_and_error() -> None:
+def test_login_form_preserves_oauth_fields_and_html_escapes_values() -> None:
     rendered = _login_html(
         _fields(),
         identifier='person@example.com"><script>alert(1)</script>',
@@ -39,3 +44,5 @@ def test_login_form_html_escapes_identifier_and_error() -> None:
     assert "<script>" not in rendered
     assert "&lt;script&gt;" in rendered
     assert "&quot;&gt;&lt;script&gt;" in rendered
+    for name in _fields():
+        assert f'name="{name}"' in rendered

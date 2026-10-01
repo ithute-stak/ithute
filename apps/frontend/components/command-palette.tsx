@@ -22,7 +22,10 @@ import {
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
+
 type Command = { label: string; hint: string; href: string; icon: LucideIcon; keywords?: string };
+type Me = { is_platform_owner?: boolean };
 
 const commands: Command[] = [
   { label: "Command centre", hint: "Dashboard and platform overview", href: "/dashboard", icon: LayoutDashboard, keywords: "home overview" },
@@ -32,11 +35,13 @@ const commands: Command[] = [
   { label: "DNS zones", hint: "Authoritative records", href: "/dns", icon: Server, keywords: "records powerdns a mx txt" },
   { label: "DNS security", hint: "DNSSEC and protection", href: "/dns-security", icon: ShieldCheck, keywords: "dnssec security ds" },
   { label: "Edge control centre", hint: "Edge applications, origins and policy state", href: "/edge", icon: ShieldCheck, keywords: "edge waf cdn origin security" },
+  { label: "Domain → App routing", hint: "Point a verified hostname at a public app IP and port through Caddy", href: "/edge-routing", icon: Globe2, keywords: "caddy reverse proxy ip port hostname propagation https" },
   { label: "Mailboxes", hint: "Hosted mail accounts", href: "/mailboxes", icon: Mail, keywords: "mail users inbox" },
   { label: "Webmail", hint: "Open !thute Mail", href: "/webmail", icon: Send, keywords: "email compose inbox gmail" },
   { label: "Transactional email", hint: "SMTP credentials and sending", href: "/transactional-email", icon: Send, keywords: "smtp api sender" },
   { label: "Delivery & queues", hint: "Mail delivery operations", href: "/delivery", icon: Server, keywords: "queue deferred bounce" },
   { label: "Billing", hint: "Subscription and invoices", href: "/billing", icon: CircleDollarSign, keywords: "payment invoice plan" },
+  { label: "Add-ons & capacity", hint: "Add email, domains, apps, storage and databases to your package", href: "/addons", icon: Server, keywords: "upgrade storage email database capacity addon" },
   { label: "Notifications", hint: "Platform alerts", href: "/notifications", icon: Bell, keywords: "alerts bell" },
   { label: "Security", hint: "Account and platform security", href: "/security", icon: ShieldCheck, keywords: "mfa password sessions" },
   { label: "API access", hint: "Automation credentials", href: "/api-access", icon: KeyRound, keywords: "token key" },
@@ -45,27 +50,60 @@ const commands: Command[] = [
   { label: "Help centre", hint: "Guides and DNS help", href: "/help", icon: BookOpen, keywords: "docs support guide" },
 ];
 
+const ownerCommands: Command[] = [
+  {
+    label: "Customer applications",
+    hint: "Review, approve or reject new company registrations",
+    href: "/customer-applications",
+    icon: Building2,
+    keywords: "owner signup approval pending customer registration",
+  },
+  {
+    label: "Packages & add-ons",
+    hint: "Edit hosting packages, prices, limits and customer capacity requests",
+    href: "/packages",
+    icon: CircleDollarSign,
+    keywords: "owner catalog pricing hosting addons entitlement",
+  },
+];
+
 export function CommandPalette() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+  const [isPlatformOwner, setIsPlatformOwner] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch(`${API}/auth/me`, { credentials: "include", cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const body = (await response.json().catch(() => ({}))) as Me;
+        if (!cancelled) setIsPlatformOwner(body.is_platform_owner === true);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+
+  const availableCommands = useMemo(
+    () => (isPlatformOwner ? [...commands, ...ownerCommands] : commands),
+    [isPlatformOwner],
+  );
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return commands;
-    return commands.filter((item) => `${item.label} ${item.hint} ${item.keywords || ""}`.toLowerCase().includes(needle));
-  }, [query]);
+    if (!needle) return availableCommands;
+    return availableCommands.filter((item) => `${item.label} ${item.hint} ${item.keywords || ""}`.toLowerCase().includes(needle));
+  }, [availableCommands, query]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setOpen((value) => !value);
-      } else if (event.key === "Escape") {
-        setOpen(false);
-      }
+      } else if (event.key === "Escape") setOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -92,7 +130,7 @@ export function CommandPalette() {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[115] flex items-start justify-center bg-black/35 p-3 pt-[10vh] backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-label="Mailbox DNS command palette" onMouseDown={(event) => { if (event.currentTarget === event.target) setOpen(false); }}>
+    <div className="fixed inset-0 z-[115] flex items-start justify-center bg-black/35 p-3 pt-[10vh] backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-label="Ithute command palette" onMouseDown={(event) => { if (event.currentTarget === event.target) setOpen(false); }}>
       <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-[#dfe6e2] bg-white shadow-[0_28px_80px_rgba(17,45,35,.24)]">
         <div className="flex items-center gap-3 border-b border-[#e6ebe8] px-4">
           <Search size={18} className="text-[#718078]"/>
@@ -105,9 +143,9 @@ export function CommandPalette() {
               if (event.key === "ArrowUp") { event.preventDefault(); setActive((value) => Math.max(value - 1, 0)); }
               if (event.key === "Enter") { event.preventDefault(); go(filtered[active]); }
             }}
-            placeholder="Search Mailbox DNS or jump to a module"
+            placeholder="Search Ithute or jump to a module"
             className="h-14 min-w-0 flex-1 border-0 bg-transparent text-[13px] outline-none"
-            aria-label="Search Mailbox DNS"
+            aria-label="Search Ithute"
           />
           <button onClick={() => setOpen(false)} className="grid h-8 w-8 place-items-center rounded-lg text-[#718078] hover:bg-[#f1f5f2]" aria-label="Close command palette"><X size={15}/></button>
         </div>
@@ -115,12 +153,7 @@ export function CommandPalette() {
           {filtered.length ? filtered.map((item, index) => {
             const Icon = item.icon;
             return (
-              <button
-                key={item.href}
-                onMouseEnter={() => setActive(index)}
-                onClick={() => go(item)}
-                className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left ${index === active ? "bg-[#eef4f1]" : "hover:bg-[#f7f9f8]"}`}
-              >
+              <button key={item.href} onMouseEnter={() => setActive(index)} onClick={() => go(item)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left ${index === active ? "bg-[#eef4f1]" : "hover:bg-[#f7f9f8]"}`}>
                 <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-[#24554f] shadow-sm ring-1 ring-[#e4eae6]"><Icon size={16}/></div>
                 <div className="min-w-0 flex-1"><p className="truncate text-[12px] font-black text-[#21342a]">{item.label}</p><p className="mt-0.5 truncate text-[10px] text-[#7b8982]">{item.hint}</p></div>
                 <span className="hidden text-[9px] font-bold text-[#98a39d] sm:block">Enter</span>
@@ -128,10 +161,7 @@ export function CommandPalette() {
             );
           }) : <div className="grid min-h-36 place-items-center p-6 text-center"><div><p className="text-sm font-black text-[#21342a]">No matching destination</p><p className="mt-1 text-[11px] text-[#7b8982]">Try a domain, mailbox, edge, billing, DNS or settings keyword.</p></div></div>}
         </div>
-        <div className="flex items-center justify-between border-t border-[#e6ebe8] bg-[#fafcfb] px-4 py-2 text-[9px] font-bold text-[#8a9690]">
-          <span>↑ ↓ navigate · Enter open · Esc close</span>
-          <span className="ithute-kbd">Ctrl K</span>
-        </div>
+        <div className="flex items-center justify-between border-t border-[#e6ebe8] bg-[#fafcfb] px-4 py-2 text-[9px] font-bold text-[#8a9690]"><span>↑ ↓ navigate · Enter open · Esc close</span><span className="ithute-kbd">Ctrl K</span></div>
       </div>
     </div>
   );

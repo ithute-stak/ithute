@@ -1,5 +1,8 @@
 {
   email thekoetlisi@ithute.co.ls
+  # The admin API is reachable only from the private Ithute Docker network;
+  # port 2019 is never published by compose.production.yml.
+  admin 0.0.0.0:2019
   servers {
     protocols h1 h2 h3
   }
@@ -56,6 +59,10 @@ realtime.ithute.co.ls {
   reverse_proxy ithute-realtime:8080
 }
 
-# Public product routes are owned and deployed by their product repositories.
-# They persist in Caddy's data volume and are intentionally not defined here.
+# Public product routes owned by independent product repositories remain in
+# Caddy's data volume for backwards compatibility.
 import /data/product-routes/*.caddy
+
+# Ithute-managed customer edge routes live in a dedicated shared volume. Only
+# the control-plane backend can write these validated snippets.
+import /routes/*.caddy

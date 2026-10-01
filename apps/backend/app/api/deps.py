@@ -22,6 +22,7 @@ from app.models import (
     ResellerCustomer,
     Tenant,
     TenantMembership,
+    TenantStatus,
     User,
 )
 from app.services.ithute_auth import (
@@ -229,9 +230,27 @@ def require_actual_platform_owner(current: User = Depends(get_current_user)) -> 
     return current
 
 
+def _require_tenant_service_ready(tenant: Tenant) -> None:
+    if tenant.status != TenantStatus.active:
+        raise HTTPException(status_code=403, detail="Tenant is suspended")
+    if tenant.rejected_at is not None:
+        raise HTTPException(status_code=403, detail="Customer application was not approved")
+    if tenant.approved_at is None:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "CUSTOMER_APPROVAL_PENDING",
+                "message": "This company application is awaiting Ithute administrator approval.",
+            },
+        )
+
+
 def require_tenant_membership(tenant_id: UUID, db: Session, current: User) -> TenantMembership:
-    if not db.get(Tenant, tenant_id):
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
+    if not current.is_platform_owner:
+        _require_tenant_service_ready(tenant)
     membership = db.scalar(
         select(TenantMembership).where(
             TenantMembership.tenant_id == tenant_id,
@@ -265,10 +284,12 @@ def _has_reseller_customer_delegation(tenant_id: UUID, permission: str, db: Sess
 
 
 def require_tenant_permission(tenant_id: UUID, permission: str, db: Session, current: User) -> TenantMembership | None:
-    if not db.get(Tenant, tenant_id):
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
     if current.is_platform_owner:
         return None
+    _require_tenant_service_ready(tenant)
     membership = db.scalar(
         select(TenantMembership).where(
             TenantMembership.tenant_id == tenant_id,
@@ -289,4 +310,9 @@ def authenticate_api_key(raw_key: str, db: Session) -> ApiKey:
     now = datetime.now(timezone.utc)
     if not key or key.revoked_at is not None or (key.expires_at is not None and key.expires_at <= now):
         raise HTTPException(status_code=401, detail="Invalid or expired API key")
+    if key.tenant_id is not None:
+        tenant = db.get(Tenant, key.tenant_id)
+        if tenant is None:
+            raise HTTPException(status_code=401, detail="Invalid API key tenant")
+        _require_tenant_service_ready(tenant)
     return key

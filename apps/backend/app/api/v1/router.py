@@ -7,12 +7,14 @@ from app.api.v1 import (
     backups,
     billing,
     business,
+    customer_applications,
     deliverability,
     dns,
     dns_phase5,
     domain_onboarding,
     domains,
     edge,
+    edge_routes,
     external_webmail,
     external_webmail_counts,
     external_webmail_events,
@@ -35,6 +37,7 @@ from app.api.v1 import (
     hosting_build_logs,
     hosting_build_settings,
     hosting_builds,
+    hosting_catalog,
     hosting_database_backups,
     hosting_git_webhooks,
     hosting_metering,
@@ -91,6 +94,7 @@ api_router.include_router(domains.router)
 api_router.include_router(dns.router)
 api_router.include_router(dns_phase5.router)
 api_router.include_router(edge.router)
+api_router.include_router(edge_routes.router)
 api_router.include_router(mailboxes.router)
 api_router.include_router(platform_mail.router)
 api_router.include_router(platform_mail_attachments.router)
@@ -101,6 +105,12 @@ api_router.include_router(mail_intelligence.router)
 api_router.include_router(mail_operations.router)
 api_router.include_router(backups.router)
 api_router.include_router(operations.router)
+# Keep one authoritative package-admin contract. It preserves the historical
+# commercial/creative fields while adding annual/setup pricing, visibility,
+# sorting and large hosting quotas. The hosting catalogue remains authoritative
+# for public package discovery and add-on lifecycle endpoints.
+api_router.include_router(plan_admin.router)
+api_router.include_router(hosting_catalog.router)
 api_router.include_router(billing.router)
 api_router.include_router(finance.router)
 api_router.include_router(finance_documents.router)
@@ -112,8 +122,8 @@ api_router.include_router(finance_control.router)
 api_router.include_router(finance_governance.router)
 api_router.include_router(finance_completion.router)
 api_router.include_router(finance_completion.portal_router)
-api_router.include_router(plan_admin.router)
 api_router.include_router(payments.router)
+api_router.include_router(customer_applications.router)
 api_router.include_router(business.router)
 api_router.include_router(hosting.router)
 api_router.include_router(application_hosting.router)

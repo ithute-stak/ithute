@@ -64,6 +64,9 @@ def test_system_owner_creates_full_hosting_package(client, platform_owner, db):
         "hosting_memory_mb_per_project": 1024,
         "hosting_cpu_millicores_per_project": 1000,
         "hosting_pids_per_project": 256,
+        "hosting_database_limit": 2,
+        "hosting_database_storage_mb": 2048,
+        "hosting_source_storage_mb": 2048,
         "is_active": True,
     }
     response = client.post("/api/v1/platform/billing/plans", headers=headers, json=payload)
@@ -73,12 +76,31 @@ def test_system_owner_creates_full_hosting_package(client, platform_owner, db):
     assert created["included_hosted_projects"] == 3
     assert created["included_mailboxes"] == 0
 
-    too_large = {**payload, "code": f"large-{uuid.uuid4().hex[:8]}", "hosting_storage_mb": 11264}
-    rejected = client.post("/api/v1/platform/billing/plans", headers=headers, json=too_large)
+    # Large aggregate organisation quotas are valid commercial products. Actual
+    # workloads are still constrained by per-project limits and hosting-node
+    # allocatable capacity when projects are provisioned.
+    large_payload = {
+        **payload,
+        "code": f"large-{uuid.uuid4().hex[:8]}",
+        "name": "Enterprise Capacity",
+        "hosting_storage_mb": 153600,
+        "hosting_database_storage_mb": 153600,
+        "hosting_source_storage_mb": 153600,
+    }
+    large = client.post("/api/v1/platform/billing/plans", headers=headers, json=large_payload)
+    assert large.status_code == 201, large.text
+    assert large.json()["hosting_storage_mb"] == 153600
+
+    impossible = {
+        **payload,
+        "code": f"invalid-{uuid.uuid4().hex[:8]}",
+        "hosting_storage_mb": 2_000_001,
+    }
+    rejected = client.post("/api/v1/platform/billing/plans", headers=headers, json=impossible)
     assert rejected.status_code == 422
 
-    plan_id = uuid.UUID(created["id"])
-    db.execute(delete(BillingPlan).where(BillingPlan.id == plan_id))
+    plan_ids = [uuid.UUID(created["id"]), uuid.UUID(large.json()["id"])]
+    db.execute(delete(BillingPlan).where(BillingPlan.id.in_(plan_ids)))
     db.commit()
 
 
