@@ -7,6 +7,7 @@ from app.api.v1 import (
     backups,
     billing,
     business,
+    canonical_pricing,
     commercial_ops_v2,
     customer_applications,
     deliverability,
@@ -106,10 +107,13 @@ api_router.include_router(mail_intelligence.router)
 api_router.include_router(mail_operations.router)
 api_router.include_router(backups.router)
 api_router.include_router(operations.router)
+# Canonical pricing is registered before historical catalogue handlers so
+# lifecycle_state is authoritative for public signup/package discovery.
+api_router.include_router(canonical_pricing.router)
 # Keep one authoritative package-admin contract. It preserves the historical
 # commercial/creative fields while adding annual/setup pricing, visibility,
 # sorting and large hosting quotas. The hosting catalogue remains authoritative
-# for public package discovery and add-on lifecycle endpoints.
+# for add-on lifecycle endpoints.
 api_router.include_router(plan_admin.router)
 api_router.include_router(hosting_catalog.router)
 api_router.include_router(billing.router)
