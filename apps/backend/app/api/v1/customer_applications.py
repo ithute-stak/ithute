@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,7 +27,7 @@ from app.models import (
     User,
 )
 from app.services.billing import assign_subscription, ensure_default_plans
-from app.services.signup_security import send_system_email
+from app.services.signup_security import enforce_signup_rate_limit, ensure_public_signup_open, send_system_email
 
 router = APIRouter(tags=["customer-applications"])
 
@@ -89,8 +89,7 @@ def _application_out(db: Session, tenant: Tenant) -> dict:
     }
 
 
-@router.post("/public/customer-applications", status_code=201)
-def create_customer_application(payload: CustomerApplicationCreate, db: Session = Depends(get_db)):
+def _create_application(payload: CustomerApplicationCreate, db: Session) -> dict:
     if not payload.terms_accepted:
         raise HTTPException(status_code=422, detail="Terms of Service and Acceptable Use Policy must be accepted")
 
@@ -162,6 +161,28 @@ def create_customer_application(payload: CustomerApplicationCreate, db: Session 
     }
 
 
+@router.post("/public/customer-applications", status_code=201)
+def create_customer_application(
+    payload: CustomerApplicationCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    # This route is deliberately self-protecting because public registration is
+    # security-sensitive even when mounted outside the legacy signup middleware.
+    ensure_public_signup_open()
+    enforce_signup_rate_limit(request)
+    return _create_application(payload, db)
+
+
+@router.post("/public/signup", status_code=201, include_in_schema=False)
+def legacy_public_signup(payload: CustomerApplicationCreate, db: Session = Depends(get_db)):
+    # This compatibility path is registered before business.py's historical
+    # instant-trial route. The global middleware already applies domain/readiness
+    # checks and rate limiting to /public/signup, so old clients cannot bypass
+    # administrator approval.
+    return _create_application(payload, db)
+
+
 @router.get("/platform/customer-applications")
 def list_customer_applications(
     status_filter: str = Query(default="pending", alias="status", pattern="^(pending|approved|rejected|all)$"),
@@ -189,7 +210,7 @@ def approve_customer_application(
     if tenant is None or tenant.requested_plan_code is None:
         raise HTTPException(status_code=404, detail="Customer application not found")
     if tenant.rejected_at is not None:
-        raise HTTPException(status_code=409, detail="Rejected application must be reopened before approval")
+        raise HTTPException(status_code=409, detail="Rejected applications cannot be approved")
 
     existing_subscription = db.scalar(select(TenantSubscription).where(TenantSubscription.tenant_id == tenant.id))
     if tenant.approved_at is not None:
@@ -209,8 +230,7 @@ def approve_customer_application(
     if existing_subscription is not None:
         raise HTTPException(status_code=409, detail="Pending application already has a subscription")
 
-    now = datetime.now(timezone.utc)
-    tenant.approved_at = now
+    tenant.approved_at = datetime.now(timezone.utc)
     tenant.approved_by_user_id = current.id
     subscription = assign_subscription(db, tenant.id, plan, SubscriptionStatus.trialing, period_days=14)
     _membership, applicant = _primary_applicant(db, tenant.id)
