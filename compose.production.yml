@@ -105,6 +105,9 @@ services:
       BOOTSTRAP_PUBLIC_IP: ${ITHUTE_PUBLIC_IPV4:-204.12.205.224}
       CADDY_ADMIN_URL: http://caddy:2019
       CADDY_RUNTIME_FILE: /platform-runtime/Caddyfile
+      CADDY_BASE_FILE: /caddy-base/Caddyfile
+      CADDY_ROUTES_DIR: /caddy-routes
+      ITHUTE_EDGE_PUBLIC_IPS: ${ITHUTE_PUBLIC_IPV4:-204.12.205.224}
       SECRET_KEY: ${ITHUTE_APP_SECRET_KEY}
       DKIM_ENCRYPTION_KEY: ${ITHUTE_APP_DKIM_ENCRYPTION_KEY}
       DKIM_ENCRYPTION_KEY_ID: ${ITHUTE_APP_DKIM_ENCRYPTION_KEY_ID:-v1}
@@ -150,6 +153,8 @@ services:
       ITHUTE_AUTH_INTERNAL_URL: http://ithute-auth:8080
     volumes:
       - ${ITHUTE_MAIL_ACCOUNTS_DIR:-/home/administrator/ithute-platform-mail/accounts}:/mail-accounts
+      - ./infrastructure/caddy/Caddyfile:/caddy-base/Caddyfile:ro
+      - ithute_caddy_routes:/caddy-routes
     depends_on:
       ithute-app-db:
         condition: service_healthy
@@ -396,6 +401,7 @@ services:
       - ./infrastructure/caddy:/etc/caddy:ro
       - ithute_caddy_data:/data
       - ithute_caddy_config:/config
+      - ithute_caddy_routes:/routes:ro
     networks: [ithute]
 
 networks:
@@ -415,3 +421,4 @@ volumes:
   ithute_bind_cache:
   ithute_caddy_data:
   ithute_caddy_config:
+  ithute_caddy_routes:
