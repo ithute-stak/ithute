@@ -91,6 +91,12 @@ def target_plan_fits_current_usage(db: Session, tenant_id: UUID, target: Billing
 
 def request_plan_change(db: Session, subscription: TenantSubscription, target: BillingPlan, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
+    if subscription.status not in {SubscriptionStatus.active, SubscriptionStatus.trialing}:
+        if subscription.status == SubscriptionStatus.past_due:
+            raise ValueError("Pay the outstanding invoice before changing packages")
+        if subscription.status == SubscriptionStatus.canceled:
+            raise ValueError("Canceled subscriptions cannot change packages; reactivate the subscription first")
+        raise ValueError("Subscription is not eligible for package changes")
     if target.lifecycle_state != "sellable" or not target.is_active or not target.customer_visible:
         raise ValueError("Target package is not available for new plan changes")
 

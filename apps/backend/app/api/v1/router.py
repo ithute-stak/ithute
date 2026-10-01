@@ -14,6 +14,7 @@ from app.api.v1 import (
     dns,
     dns_phase5,
     domain_onboarding,
+    domain_orders,
     domains,
     edge,
     edge_routes,
@@ -93,6 +94,7 @@ api_router.include_router(audit.router)
 api_router.include_router(tenants.router)
 api_router.include_router(domain_onboarding.router)
 api_router.include_router(domains.router)
+api_router.include_router(domain_orders.router)
 api_router.include_router(dns.router)
 api_router.include_router(dns_phase5.router)
 api_router.include_router(edge.router)

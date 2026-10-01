@@ -20,9 +20,11 @@ from app.models import (
     MembershipStatus,
     ResellerAccount,
     ResellerCustomer,
+    SubscriptionStatus,
     Tenant,
     TenantMembership,
     TenantStatus,
+    TenantSubscription,
     User,
 )
 from app.services.ithute_auth import (
@@ -46,6 +48,17 @@ RESELLER_DELEGATED_PERMISSIONS = frozenset({
     "hosting.read",
     "hosting.manage",
     "billing.read",
+})
+
+# Commercial suspension is intentionally applied only to service-changing
+# operations. Customers keep read access plus billing/payment access so they
+# can inspect their account, export data where supported, and recover service
+# without administrator intervention.
+COMMERCIAL_SERVICE_MUTATIONS = frozenset({
+    "dns.manage",
+    "mail.manage",
+    "hosting.manage",
+    "api_keys.manage",
 })
 
 
@@ -245,6 +258,60 @@ def _require_tenant_service_ready(tenant: Tenant) -> None:
         )
 
 
+def _require_commercial_mutation_ready(tenant: Tenant, permission: str, db: Session) -> None:
+    if permission not in COMMERCIAL_SERVICE_MUTATIONS:
+        return
+    subscription = db.scalar(select(TenantSubscription).where(TenantSubscription.tenant_id == tenant.id))
+    if subscription is None:
+        # Existing pre-commercial tenants without a requested package remain
+        # backward compatible. A customer originating from public onboarding
+        # must have an approved subscription before changing service resources.
+        if tenant.requested_plan_code:
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "code": "SUBSCRIPTION_REQUIRED",
+                    "message": "An active Ithute subscription is required before changing service resources.",
+                },
+            )
+        return
+    if subscription.status in {SubscriptionStatus.active, SubscriptionStatus.trialing}:
+        return
+    if subscription.status == SubscriptionStatus.past_due:
+        now = datetime.now(timezone.utc)
+        if subscription.grace_ends_at is not None and subscription.grace_ends_at >= now:
+            return
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "code": "SUBSCRIPTION_GRACE_EXPIRED",
+                "message": "The billing grace period has expired. Pay the outstanding invoice to change hosting, DNS or email services.",
+            },
+        )
+    raise HTTPException(
+        status_code=402,
+        detail={
+            "code": "SUBSCRIPTION_INACTIVE",
+            "message": "The subscription is inactive. Reactivate it from Billing before changing service resources.",
+        },
+    )
+
+
+def _require_api_subscription_ready(tenant: Tenant, db: Session) -> None:
+    subscription = db.scalar(select(TenantSubscription).where(TenantSubscription.tenant_id == tenant.id))
+    if subscription is None:
+        if tenant.requested_plan_code:
+            raise HTTPException(status_code=402, detail="Active subscription required")
+        return
+    if subscription.status in {SubscriptionStatus.active, SubscriptionStatus.trialing}:
+        return
+    if subscription.status == SubscriptionStatus.past_due:
+        now = datetime.now(timezone.utc)
+        if subscription.grace_ends_at is not None and subscription.grace_ends_at >= now:
+            return
+    raise HTTPException(status_code=402, detail="Subscription is not active for API access")
+
+
 def require_tenant_membership(tenant_id: UUID, db: Session, current: User) -> TenantMembership:
     tenant = db.get(Tenant, tenant_id)
     if not tenant:
@@ -299,8 +366,10 @@ def require_tenant_permission(tenant_id: UUID, permission: str, db: Session, cur
     if membership is not None and membership.status == MembershipStatus.active:
         if not has_permission(membership.role, permission):
             raise HTTPException(status_code=403, detail=f"Permission required: {permission}")
+        _require_commercial_mutation_ready(tenant, permission, db)
         return membership
     if _has_reseller_customer_delegation(tenant_id, permission, db, current):
+        _require_commercial_mutation_ready(tenant, permission, db)
         return None
     raise HTTPException(status_code=403, detail="Active tenant membership or authorized reseller delegation required")
 
@@ -315,4 +384,5 @@ def authenticate_api_key(raw_key: str, db: Session) -> ApiKey:
         if tenant is None:
             raise HTTPException(status_code=401, detail="Invalid API key tenant")
         _require_tenant_service_ready(tenant)
+        _require_api_subscription_ready(tenant, db)
     return key
