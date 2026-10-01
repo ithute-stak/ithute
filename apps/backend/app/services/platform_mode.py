@@ -11,8 +11,8 @@ def effective_platform_mode(db: Session) -> str:
     """Return the effective platform mode used by public onboarding.
 
     A fresh database may still contain the historical ``bootstrap`` row while the
-    production deployment explicitly declares ``PLATFORM_MODE=domain``.  Treat that
-    exact combination as an already-deployed domain platform.  Any real persisted
+    production deployment explicitly declares ``PLATFORM_MODE=domain``. Treat that
+    exact combination as an already-deployed domain platform. Any real persisted
     setup transition (domain_pending/domain_verified/domain_active) remains
     authoritative, so an in-progress setup is never skipped.
     """
@@ -31,4 +31,6 @@ def public_signup_enabled(db: Session) -> bool:
     mode = effective_platform_mode(db)
     if mode == "bootstrap":
         return settings.platform_bootstrap_signup_enabled
-    return settings.platform_domain_signup_enabled
+    if mode == "domain_active":
+        return settings.platform_domain_signup_enabled
+    return False
