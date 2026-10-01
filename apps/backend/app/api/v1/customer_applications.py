@@ -66,7 +66,7 @@ def _application_out(db: Session, tenant: Tenant) -> dict:
     _membership, user = _primary_applicant(db, tenant.id)
     if tenant.rejected_at is not None:
         state = "rejected"
-    elif tenant.approved_at is not None:
+    elif tenant.approved_at is not None and not tenant.requires_approval:
         state = "approved"
     else:
         state = "pending"
@@ -113,7 +113,7 @@ def _create_application(payload: CustomerApplicationCreate, db: Session) -> dict
         name=payload.company_name.strip(),
         slug=slug,
         requested_plan_code=plan.code,
-        approved_at=None,
+        requires_approval=True,
         approved_by_user_id=None,
         rejected_at=None,
         rejection_reason=None,
@@ -126,6 +126,13 @@ def _create_application(payload: CustomerApplicationCreate, db: Session) -> dict
     )
     db.add_all([tenant, user])
     db.flush()
+    # Tenant defaults keep operator-created organizations active. Public signup is
+    # the deliberate exception: clear approval after INSERT so the row is
+    # unambiguously pending regardless of ORM/server default behavior.
+    tenant.approved_at = None
+    tenant.requires_approval = True
+    db.flush()
+
     db.add(TenantMembership(tenant_id=tenant.id, user_id=user.id, role=MembershipRole.tenant_admin))
     db.add(CustomerProfile(tenant_id=tenant.id, billing_email=email, phone=payload.phone, country="Lesotho"))
     db.add(
@@ -167,8 +174,6 @@ def create_customer_application(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    # This route is deliberately self-protecting because public registration is
-    # security-sensitive even when mounted outside the legacy signup middleware.
     ensure_public_signup_open()
     enforce_signup_rate_limit(request)
     return _create_application(payload, db)
@@ -176,10 +181,8 @@ def create_customer_application(
 
 @router.post("/public/signup", status_code=201, include_in_schema=False)
 def legacy_public_signup(payload: CustomerApplicationCreate, db: Session = Depends(get_db)):
-    # This compatibility path is registered before business.py's historical
-    # instant-trial route. The global middleware already applies domain/readiness
-    # checks and rate limiting to /public/signup, so old clients cannot bypass
-    # administrator approval.
+    # Registered before the historical instant-trial route. The global middleware
+    # already applies domain/readiness checks and rate limiting to /public/signup.
     return _create_application(payload, db)
 
 
@@ -191,9 +194,9 @@ def list_customer_applications(
 ):
     query = select(Tenant).where(Tenant.requested_plan_code.is_not(None))
     if status_filter == "pending":
-        query = query.where(Tenant.approved_at.is_(None), Tenant.rejected_at.is_(None))
+        query = query.where(Tenant.requires_approval.is_(True), Tenant.rejected_at.is_(None))
     elif status_filter == "approved":
-        query = query.where(Tenant.approved_at.is_not(None), Tenant.rejected_at.is_(None))
+        query = query.where(Tenant.requires_approval.is_(False), Tenant.approved_at.is_not(None), Tenant.rejected_at.is_(None))
     elif status_filter == "rejected":
         query = query.where(Tenant.rejected_at.is_not(None))
     rows = db.scalars(query.order_by(Tenant.created_at.desc()).limit(500)).all()
@@ -213,7 +216,7 @@ def approve_customer_application(
         raise HTTPException(status_code=409, detail="Rejected applications cannot be approved")
 
     existing_subscription = db.scalar(select(TenantSubscription).where(TenantSubscription.tenant_id == tenant.id))
-    if tenant.approved_at is not None:
+    if tenant.approved_at is not None and not tenant.requires_approval:
         if existing_subscription is None:
             raise HTTPException(status_code=409, detail="Approved customer has no subscription; manual repair required")
         return _application_out(db, tenant)
@@ -232,6 +235,7 @@ def approve_customer_application(
 
     tenant.approved_at = datetime.now(timezone.utc)
     tenant.approved_by_user_id = current.id
+    tenant.requires_approval = False
     subscription = assign_subscription(db, tenant.id, plan, SubscriptionStatus.trialing, period_days=14)
     _membership, applicant = _primary_applicant(db, tenant.id)
     if applicant:
@@ -268,8 +272,6 @@ def approve_customer_application(
                 f"Sign in at {settings.frontend_url.rstrip('/')}/login to continue.\n",
             )
         except Exception:
-            # Approval is already committed; email delivery must not roll back the
-            # customer's state. The in-app notification remains available.
             pass
 
     result = _application_out(db, tenant)
@@ -291,9 +293,12 @@ def reject_customer_application(
     tenant = db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update())
     if tenant is None or tenant.requested_plan_code is None:
         raise HTTPException(status_code=404, detail="Customer application not found")
-    if tenant.approved_at is not None:
+    if tenant.approved_at is not None and not tenant.requires_approval:
         raise HTTPException(status_code=409, detail="An approved customer cannot be rejected from the application queue")
 
+    tenant.requires_approval = True
+    tenant.approved_at = None
+    tenant.approved_by_user_id = None
     tenant.rejected_at = datetime.now(timezone.utc)
     tenant.rejection_reason = payload.reason.strip()
     _membership, applicant = _primary_applicant(db, tenant.id)
