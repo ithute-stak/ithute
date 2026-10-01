@@ -1,7 +1,7 @@
 """commercial operations v2
 
 Revision ID: 0051_commercial_ops_v2
-Revises: 0050_tenant_effective_plan
+Revises: 0050_effective_plan
 """
 
 from alembic import op
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "0051_commercial_ops_v2"
-down_revision = "0050_tenant_effective_plan"
+down_revision = "0050_effective_plan"
 branch_labels = None
 depends_on = None
 
