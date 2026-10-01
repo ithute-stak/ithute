@@ -12,36 +12,55 @@ def login(client, email: str):
     assert response.status_code == 200, response.text
 
 
-def test_default_monthly_commercial_catalog(client):
+def test_default_public_catalog_is_one_canonical_hosting_family(client):
     response = client.get("/api/v1/public/hosting-pricing")
     assert response.status_code == 200, response.text
     plans = {item["code"]: item for item in response.json()["items"]}
 
-    assert [plans[code]["monthly_price_minor"] for code in ("starter", "grow", "business", "professional", "enterprise")] == [
-        18_500,
-        29_500,
-        49_500,
-        79_500,
-        150_000,
+    canonical = (
+        "ithute-start",
+        "ithute-grow",
+        "ithute-business",
+        "ithute-professional",
+        "ithute-enterprise",
+        "ithute-ultimate",
+    )
+    assert [plans[code]["monthly_price_minor"] for code in canonical] == [
+        7_000,
+        14_000,
+        24_000,
+        42_000,
+        75_000,
+        125_000,
     ]
-    assert plans["starter"]["name"] == "Ithute Start"
-    assert plans["starter"]["minimum_term_months"] == 12
-    assert plans["starter"]["includes_website_design"] is True
-    assert plans["starter"]["includes_logo_design"] is True
-    assert plans["starter"]["includes_page_headers_footers"] is True
-    assert plans["business"]["includes_company_profile"] is True
-    assert plans["business"]["includes_business_templates"] is True
-    assert plans["professional"]["support_level"] == "priority"
-    assert plans["enterprise"]["price_from"] is True
-    assert plans["enterprise"]["support_level"] == "dedicated"
+    assert [plans[code]["annual_price_minor"] for code in canonical] == [
+        84_000,
+        168_000,
+        288_000,
+        504_000,
+        900_000,
+        1_500_000,
+    ]
 
-    # Repricing must not shrink the original three packages' hosting capacity.
-    assert plans["starter"]["included_mailboxes"] == 10
-    assert plans["starter"]["hosting_storage_mb"] == 1024
-    assert plans["business"]["included_hosted_projects"] == 3
-    assert plans["business"]["hosting_storage_mb"] == 5120
-    assert plans["enterprise"]["included_hosted_projects"] == 10
-    assert plans["enterprise"]["hosting_storage_mb"] == 10240
+    for legacy in ("starter", "grow", "business", "professional", "enterprise"):
+        assert legacy not in plans
+
+    start = plans["ithute-start"]
+    assert start["name"] == "Ithute Start"
+    assert start["included_mailboxes"] == 18
+    assert start["included_hosted_projects"] == 1
+    assert start["hosting_storage_mb"] == 2048
+    assert start["hosting_database_limit"] == 2
+    assert start["setup_fee_minor"] == 10_000
+
+    business = plans["ithute-business"]
+    assert business["featured"] is True
+    assert business["support_level"] == "priority"
+
+    enterprise = plans["ithute-enterprise"]
+    assert enterprise["included_mailboxes"] == 500
+    assert enterprise["included_hosted_projects"] == 30
+    assert enterprise["support_level"] == "dedicated"
 
 
 def test_platform_owner_can_create_publish_and_update_package(client, db, platform_owner):
