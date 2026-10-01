@@ -44,6 +44,12 @@ type MigrationJob = {
   completed_at?: string | null;
   created_at?: string | null;
 };
+type MigrationStep = {
+  phase: Phase;
+  title: string;
+  copy: string;
+  enabled: boolean;
+};
 
 async function external(path: string, init?: RequestInit) {
   return fetch(`${API}/webmail/external${path}`, {
@@ -119,7 +125,7 @@ export default function MailMigrationPage() {
           else setError(latest.error || "Migration stopped. Correct the source connection and resume safely.");
           void load();
         }
-      } catch { /* temporary polling failures do not cancel server-side work */ }
+      } catch { /* polling failures do not cancel the server-side migration */ }
     }, 2500);
     return () => window.clearInterval(timer);
   }, [job, load]);
@@ -180,11 +186,16 @@ export default function MailMigrationPage() {
     finally { setResuming(false); }
   }
 
-  const active = job && ["queued", "running"].includes(job.status);
+  const active = !!job && ["queued", "running"].includes(job.status);
   const progress = useMemo(() => !job?.folders_total ? 0 : Math.min(100, Math.round((job.folders_done / job.folders_total) * 100)), [job]);
-  const initialDone = readiness?.cutover?.initial_done || history.some((item) => item.phase === "initial" && ["completed", "partial"].includes(item.status));
-  const finalClean = readiness?.cutover?.final_clean || history.some((item) => item.phase === "final" && item.status === "completed");
+  const initialDone = Boolean(readiness?.cutover?.initial_done) || history.some((item) => item.phase === "initial" && ["completed", "partial"].includes(item.status));
+  const finalClean = Boolean(readiness?.cutover?.final_clean) || history.some((item) => item.phase === "final" && item.status === "completed");
   const retry = history.find((item) => ["failed", "partial"].includes(item.status));
+  const migrationSteps: MigrationStep[] = [
+    { phase: "initial", title: "Initial historical copy", copy: "Copy all existing mail now while the old provider remains live.", enabled: !initialDone },
+    { phase: "delta", title: "Sync new arrivals", copy: "Run again before DNS cutover. Already copied messages are skipped automatically.", enabled: initialDone && !finalClean },
+    { phase: "final", title: "Final sync & verify", copy: "After MX points to Ithute, copy the last messages that reached the old provider. A clean final run completes the cutover.", enabled: initialDone && !finalClean },
+  ];
 
   return (
     <main className="min-h-screen bg-[#f6f8f7] text-slate-900">
@@ -205,7 +216,7 @@ export default function MailMigrationPage() {
 
           <div className="grid gap-5 p-5 sm:p-7 lg:grid-cols-[1fr_360px]">
             <div className="space-y-5">
-              {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-800"><div className="flex gap-2"><TriangleAlert size={18} className="mt-0.5 shrink-0"/><span>{error}</span></div>{retry && readiness?.source ? <button disabled={resuming || !!active} onClick={() => void resumeJob(retry)} className="mt-3 rounded-xl bg-rose-800 px-4 py-2 text-xs font-black text-white disabled:opacity-50">{resuming ? "Resuming…" : `Resume ${phaseName(retry.phase)}`}</button> : null}</div> : null}
+              {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-800"><div className="flex gap-2"><TriangleAlert size={18} className="mt-0.5 shrink-0"/><span>{error}</span></div>{retry && readiness?.source ? <button disabled={resuming || active} onClick={() => void resumeJob(retry)} className="mt-3 rounded-xl bg-rose-800 px-4 py-2 text-xs font-black text-white disabled:opacity-50">{resuming ? "Resuming…" : `Resume ${phaseName(retry.phase)}`}</button> : null}</div> : null}
               {notice ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-900">{notice}</div> : null}
 
               {loading ? <div className="flex items-center gap-2 py-8 text-sm text-slate-500"><Loader2 size={17} className="animate-spin"/>Checking mailbox migration readiness…</div> : readiness?.source ? (
@@ -214,18 +225,14 @@ export default function MailMigrationPage() {
                 <form onSubmit={connectSource} className="rounded-2xl border border-slate-200 p-5">
                   <h2 className="font-black">1. Connect the old mailbox</h2><p className="mt-1 text-xs leading-5 text-slate-500">Use the mailbox password or provider app password. Google and Microsoft accounts may require an app password or provider-authorized credential.</p>
                   <label className="mt-4 block text-xs font-black text-slate-700">Old email address</label>
-                  <div className="mt-1.5 flex gap-2"><input required type="email" value={email} onChange={(e)=>{setEmail(e.target.value);setDetection(null);}} onBlur={()=>void detect()} placeholder="name@oldprovider.com" className="h-12 min-w-0 flex-1 rounded-xl border border-slate-200 px-4 text-sm outline-none focus:border-emerald-700"/><button type="button" disabled={detecting || !email.includes("@")} onClick={()=>void detect()} className="rounded-xl border border-slate-200 px-4 text-xs font-black disabled:opacity-50">{detecting ? <Loader2 size={15} className="animate-spin"/> : "Detect"}</button></div>
+                  <div className="mt-1.5 flex gap-2"><input required type="email" value={email} onChange={(event)=>{setEmail(event.target.value);setDetection(null);}} onBlur={()=>void detect()} placeholder="name@oldprovider.com" className="h-12 min-w-0 flex-1 rounded-xl border border-slate-200 px-4 text-sm outline-none focus:border-emerald-700"/><button type="button" disabled={detecting || !email.includes("@")} onClick={()=>void detect()} className="rounded-xl border border-slate-200 px-4 text-xs font-black disabled:opacity-50">{detecting ? <Loader2 size={15} className="animate-spin"/> : "Detect"}</button></div>
                   {detection ? <p className="mt-2 text-xs text-slate-600">Detected: <b>{detection.provider.name}</b>{detection.provider.help_text ? ` — ${detection.provider.help_text}` : ""}</p> : null}
-                  <label className="mt-4 block text-xs font-black text-slate-700">Mailbox / app password</label><input required type="password" value={password} onChange={(e)=>setPassword(e.target.value)} className="mt-1.5 h-12 w-full rounded-xl border border-slate-200 px-4 text-sm outline-none focus:border-emerald-700"/>
+                  <label className="mt-4 block text-xs font-black text-slate-700">Mailbox / app password</label><input required type="password" value={password} onChange={(event)=>setPassword(event.target.value)} className="mt-1.5 h-12 w-full rounded-xl border border-slate-200 px-4 text-sm outline-none focus:border-emerald-700"/>
                   <button disabled={connecting} className="mt-4 inline-flex h-11 items-center gap-2 rounded-xl bg-[#123a38] px-5 text-xs font-black text-white disabled:opacity-50">{connecting ? <Loader2 size={15} className="animate-spin"/> : <Mail size={15}/>}Connect source mailbox</button>
                 </form>
               )}
 
-              {readiness?.source && readiness.destination ? <div className="space-y-3"><h2 className="text-lg font-black">Migration & cutover</h2>{[
-                ["initial" as Phase, "Initial historical copy", "Copy all existing mail now while the old provider remains live.", !initialDone],
-                ["delta" as Phase, "Sync new arrivals", "Run again before DNS cutover. Already copied messages are skipped automatically.", initialDone && !finalClean],
-                ["final" as Phase, "Final sync & verify", "After MX points to Ithute, copy the last messages that reached the old provider. A clean final run completes the cutover.", initialDone && !finalClean],
-              ].map(([phase, title, copy, enabled], index) => <article key={phase} className="rounded-2xl border border-slate-200 bg-white p-4"><div className="flex items-start gap-3"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-black ${(phase === "initial" && initialDone) || (phase === "final" && finalClean) ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>{(phase === "initial" && initialDone) || (phase === "final" && finalClean) ? <CheckCircle2 size={17}/> : index + 1}</span><div className="flex-1"><p className="font-black">{title}</p><p className="mt-1 text-xs leading-5 text-slate-500">{copy}</p><button disabled={!enabled || !!active || starting !== null} onClick={()=>void runPhase(phase)} className="mt-3 inline-flex h-10 items-center gap-2 rounded-xl bg-[#123a38] px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-35">{starting === phase ? <Loader2 size={14} className="animate-spin"/> : <RefreshCw size={14}/>}Run {phase === "initial" ? "initial copy" : phase === "delta" ? "new-mail sync" : "final sync"}</button></div></div></article>)}</div> : null}
+              {readiness?.source && readiness.destination ? <div className="space-y-3"><h2 className="text-lg font-black">Migration & cutover</h2>{migrationSteps.map((step, index) => <article key={step.phase} className="rounded-2xl border border-slate-200 bg-white p-4"><div className="flex items-start gap-3"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-black ${(step.phase === "initial" && initialDone) || (step.phase === "final" && finalClean) ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}`}>{(step.phase === "initial" && initialDone) || (step.phase === "final" && finalClean) ? <CheckCircle2 size={17}/> : index + 1}</span><div className="flex-1"><p className="font-black">{step.title}</p><p className="mt-1 text-xs leading-5 text-slate-500">{step.copy}</p><button disabled={!step.enabled || active || starting !== null} onClick={()=>void runPhase(step.phase)} className="mt-3 inline-flex h-10 items-center gap-2 rounded-xl bg-[#123a38] px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-35">{starting === step.phase ? <Loader2 size={14} className="animate-spin"/> : <RefreshCw size={14}/>}Run {step.phase === "initial" ? "initial copy" : step.phase === "delta" ? "new-mail sync" : "final sync"}</button></div></div></article>)}</div> : null}
 
               {job ? <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="flex items-center justify-between gap-4"><div><p className="text-xs font-black uppercase tracking-[.1em] text-slate-500">Current / latest run</p><h3 className="mt-1 font-black">{phaseName(job.phase)} · {job.status}</h3></div>{active ? <Loader2 className="animate-spin text-emerald-700" size={20}/> : job.status === "completed" ? <CheckCircle2 className="text-emerald-700" size={20}/> : null}</div><div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full bg-emerald-700 transition-all" style={{width:`${progress}%`}}/></div><div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs"><div className="rounded-xl bg-white p-3"><b className="block text-base">{job.folders_done}/{job.folders_total || "—"}</b>folders</div><div className="rounded-xl bg-white p-3"><b className="block text-base">{job.messages_copied.toLocaleString()}</b>new messages</div><div className="rounded-xl bg-white p-3"><b className="block text-base">{prettyBytes(job.bytes_copied)}</b>copied</div></div></section> : null}
             </div>
