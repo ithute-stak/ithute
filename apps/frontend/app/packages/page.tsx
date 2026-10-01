@@ -1,416 +1,74 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Archive, BadgeDollarSign, Boxes, CheckCircle2, Cpu, HardDrive, Palette, Pencil, Plus, RefreshCw, Server } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { BadgeCheck, Boxes, Check, Database, HardDrive, Mail, Pencil, Plus, RefreshCw, Server, X } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
-import { PageHeader } from "@/components/ui-kit";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
 
-const PRODUCT_CATEGORIES = [
-  "Website & Hosting",
-  "Professional Email",
-  "Application/System Hosting",
-  "Logo Design",
-  "Branding & Corporate Identity",
-  "Company Profiles",
-  "Business Documents & Templates",
-  "Domains & DNS",
-  "Custom Digital Services",
-];
-
 type Plan = {
-  id: string;
-  code: string;
-  name: string;
-  currency: string;
-  monthly_price_minor: number;
-  included_mailboxes: number;
-  included_domains: number;
-  included_storage_mb: number;
-  max_api_keys: number;
-  included_hosted_projects: number;
-  hosting_storage_mb: number;
-  hosting_memory_mb_per_project: number;
-  hosting_cpu_millicores_per_project: number;
-  hosting_pids_per_project: number;
-  product_category: string;
-  description: string;
-  website_pages: number;
-  includes_website_design: boolean;
-  includes_logo_design: boolean;
-  includes_brand_guide: boolean;
-  includes_company_profile: boolean;
-  includes_letterhead: boolean;
-  includes_page_headers_footers: boolean;
-  includes_business_templates: boolean;
-  included_revisions: number;
-  content_updates_per_month: number;
-  support_level: string;
-  minimum_term_months: number;
-  price_from: boolean;
-  is_active: boolean;
+  id:string; code:string; name:string; description:string; currency:string;
+  monthly_price_minor:number; annual_price_minor?:number|null; setup_fee_minor:number;
+  included_mailboxes:number; included_domains:number; included_storage_mb:number; max_api_keys:number;
+  included_hosted_projects:number; hosting_storage_mb:number; hosting_memory_mb_per_project:number;
+  hosting_cpu_millicores_per_project:number; hosting_pids_per_project:number;
+  hosting_database_limit:number; hosting_database_storage_mb:number; hosting_source_storage_mb:number;
+  product_category:string; support_level:string; minimum_term_months:number; price_from:boolean;
+  customer_visible:boolean; featured:boolean; sort_order:number; is_active:boolean;
 };
+type Addon = {id:string;code:string;name:string;description:string;monthly_price_minor:number;annual_price_minor?:number|null;setup_fee_minor:number;resource_key:string;amount_per_quantity:number;unit_label:string;max_quantity:number;customer_visible:boolean;is_active:boolean;sort_order:number};
+type RequestRow = Addon & {assignment_id:string;tenant_id:string;quantity:number;status:string;requested_at?:string|null;activated_at?:string|null};
 
-type Draft = {
-  code: string;
-  name: string;
-  monthlyPrice: string;
-  mailboxes: string;
-  domains: string;
-  mailStorageGb: string;
-  apiKeys: string;
-  hostedProjects: string;
-  hostingStorageGb: string;
-  memoryMb: string;
-  cpuMillicores: string;
-  pids: string;
-  productCategory: string;
-  description: string;
-  websitePages: string;
-  includesWebsiteDesign: boolean;
-  includesLogoDesign: boolean;
-  includesBrandGuide: boolean;
-  includesCompanyProfile: boolean;
-  includesLetterhead: boolean;
-  includesPageHeadersFooters: boolean;
-  includesBusinessTemplates: boolean;
-  includedRevisions: string;
-  contentUpdatesPerMonth: string;
-  supportLevel: string;
-  minimumTermMonths: string;
-  priceFrom: boolean;
+type PlanDraft = {
+  code:string;name:string;description:string;monthly:string;annual:string;setup:string;mailboxes:string;domains:string;mailStorage:string;apiKeys:string;
+  projects:string;appStorage:string;ram:string;cpu:string;pids:string;databases:string;dbStorage:string;sourceStorage:string;
+  support:string;term:string;visible:boolean;featured:boolean;active:boolean;sort:string;
 };
+type AddonDraft = {code:string;name:string;description:string;monthly:string;annual:string;setup:string;resource:string;amount:string;unit:string;max:string;visible:boolean;active:boolean;sort:string};
 
-type Node = {
-  id: string;
-  name: string;
-  hostname: string;
-  public_ip?: string | null;
-  status: string;
-  accepts_new_projects: boolean;
-  allocatable: { storage_mb: number; memory_mb: number; cpu_millicores: number };
-  allocated: { storage_mb: number; memory_mb: number; cpu_millicores: number; projects: number };
-  available: { storage_mb: number; memory_mb: number; cpu_millicores: number };
-};
+const blankPlan:PlanDraft={code:"",name:"",description:"",monthly:"70",annual:"840",setup:"100",mailboxes:"18",domains:"1",mailStorage:"36",apiKeys:"3",projects:"1",appStorage:"2",ram:"512",cpu:"500",pids:"128",databases:"2",dbStorage:"2",sourceStorage:"2",support:"standard",term:"12",visible:true,featured:false,active:true,sort:"100"};
+const blankAddon:AddonDraft={code:"",name:"",description:"",monthly:"50",annual:"500",setup:"0",resource:"mailboxes",amount:"10",unit:"mailboxes",max:"100",visible:true,active:true,sort:"100"};
+const resourceOptions=[
+  ["mailboxes","Professional mailboxes"],["domains","Managed domains"],["mail_storage_mb","Mailbox storage (MB)"],["api_keys","API keys"],
+  ["hosted_projects","Hosted websites/apps"],["hosting_storage_mb","Application storage (MB)"],["database_count","Managed databases"],
+  ["database_storage_mb","Database storage (MB)"],["source_storage_mb","Git/ZIP source storage (MB)"],
+] as const;
 
-const blankDraft: Draft = {
-  code: "",
-  name: "",
-  monthlyPrice: "",
-  mailboxes: "10",
-  domains: "1",
-  mailStorageGb: "25",
-  apiKeys: "3",
-  hostedProjects: "1",
-  hostingStorageGb: "1",
-  memoryMb: "512",
-  cpuMillicores: "500",
-  pids: "128",
-  productCategory: "Website & Hosting",
-  description: "",
-  websitePages: "1",
-  includesWebsiteDesign: true,
-  includesLogoDesign: false,
-  includesBrandGuide: false,
-  includesCompanyProfile: false,
-  includesLetterhead: false,
-  includesPageHeadersFooters: true,
-  includesBusinessTemplates: false,
-  includedRevisions: "1",
-  contentUpdatesPerMonth: "0",
-  supportLevel: "standard",
-  minimumTermMonths: "12",
-  priceFrom: false,
-};
+const money=(minor?:number|null)=>minor==null?"—":`M ${(minor/100).toLocaleString(undefined,{maximumFractionDigits:2})}`;
+const gb=(mb:number)=>`${Math.round(mb/102.4)/10} GB`;
+const minor=(value:string)=>Math.max(0,Math.round((Number(value)||0)*100));
+const mb=(value:string)=>Math.max(0,Math.round((Number(value)||0)*1024));
 
-function draftFrom(plan: Plan): Draft {
-  return {
-    code: plan.code,
-    name: plan.name,
-    monthlyPrice: (plan.monthly_price_minor / 100).toString(),
-    mailboxes: plan.included_mailboxes.toString(),
-    domains: plan.included_domains.toString(),
-    mailStorageGb: (plan.included_storage_mb / 1024).toString(),
-    apiKeys: plan.max_api_keys.toString(),
-    hostedProjects: plan.included_hosted_projects.toString(),
-    hostingStorageGb: (plan.hosting_storage_mb / 1024).toString(),
-    memoryMb: plan.hosting_memory_mb_per_project.toString(),
-    cpuMillicores: plan.hosting_cpu_millicores_per_project.toString(),
-    pids: plan.hosting_pids_per_project.toString(),
-    productCategory: plan.product_category,
-    description: plan.description,
-    websitePages: plan.website_pages.toString(),
-    includesWebsiteDesign: plan.includes_website_design,
-    includesLogoDesign: plan.includes_logo_design,
-    includesBrandGuide: plan.includes_brand_guide,
-    includesCompanyProfile: plan.includes_company_profile,
-    includesLetterhead: plan.includes_letterhead,
-    includesPageHeadersFooters: plan.includes_page_headers_footers,
-    includesBusinessTemplates: plan.includes_business_templates,
-    includedRevisions: plan.included_revisions.toString(),
-    contentUpdatesPerMonth: plan.content_updates_per_month.toString(),
-    supportLevel: plan.support_level,
-    minimumTermMonths: plan.minimum_term_months.toString(),
-    priceFrom: plan.price_from,
-  };
-}
+function planDraft(plan:Plan):PlanDraft{return {code:plan.code,name:plan.name,description:plan.description||"",monthly:String(plan.monthly_price_minor/100),annual:plan.annual_price_minor==null?"":String(plan.annual_price_minor/100),setup:String(plan.setup_fee_minor/100),mailboxes:String(plan.included_mailboxes),domains:String(plan.included_domains),mailStorage:String(plan.included_storage_mb/1024),apiKeys:String(plan.max_api_keys),projects:String(plan.included_hosted_projects),appStorage:String(plan.hosting_storage_mb/1024),ram:String(plan.hosting_memory_mb_per_project),cpu:String(plan.hosting_cpu_millicores_per_project),pids:String(plan.hosting_pids_per_project),databases:String(plan.hosting_database_limit),dbStorage:String(plan.hosting_database_storage_mb/1024),sourceStorage:String(plan.hosting_source_storage_mb/1024),support:plan.support_level,term:String(plan.minimum_term_months),visible:plan.customer_visible,featured:plan.featured,active:plan.is_active,sort:String(plan.sort_order)};}
+function addonDraft(addon:Addon):AddonDraft{return {code:addon.code,name:addon.name,description:addon.description||"",monthly:String(addon.monthly_price_minor/100),annual:addon.annual_price_minor==null?"":String(addon.annual_price_minor/100),setup:String(addon.setup_fee_minor/100),resource:addon.resource_key,amount:String(addon.amount_per_quantity),unit:addon.unit_label,max:String(addon.max_quantity),visible:addon.customer_visible,active:addon.is_active,sort:String(addon.sort_order)};}
 
-function formatPrice(plan: Plan) {
-  return `${plan.price_from ? "From " : ""}M ${(plan.monthly_price_minor / 100).toLocaleString()}`;
-}
+export default function PackagesPage(){
+  const[plans,setPlans]=useState<Plan[]>([]);const[addons,setAddons]=useState<Addon[]>([]);const[requests,setRequests]=useState<RequestRow[]>([]);
+  const[plan,setPlan]=useState<PlanDraft>(blankPlan);const[addon,setAddon]=useState<AddonDraft>(blankAddon);const[planId,setPlanId]=useState<string|null>(null);const[addonId,setAddonId]=useState<string|null>(null);
+  const[loading,setLoading]=useState(true);const[busy,setBusy]=useState("");const[error,setError]=useState("");const[message,setMessage]=useState("");const[tab,setTab]=useState<"packages"|"addons"|"requests">("packages");
 
-function packageHighlights(plan: Plan) {
-  const rows: string[] = [];
-  if (plan.includes_website_design) rows.push(`${plan.website_pages || "Custom"} website page${plan.website_pages === 1 ? "" : "s"}`);
-  if (plan.includes_logo_design) rows.push("Logo");
-  if (plan.includes_brand_guide) rows.push("Brand guide");
-  if (plan.includes_company_profile) rows.push("Company profile");
-  if (plan.includes_letterhead) rows.push("Letterhead");
-  if (plan.includes_page_headers_footers) rows.push("Headers & footers");
-  if (plan.includes_business_templates) rows.push("Business templates");
-  return rows;
-}
+  const load=useCallback(async()=>{setLoading(true);setError("");try{const[p,a,r]=await Promise.all([fetch(`${API}/platform/billing/plans`,{credentials:"include",cache:"no-store"}),fetch(`${API}/platform/billing/addons`,{credentials:"include",cache:"no-store"}),fetch(`${API}/platform/billing/addon-requests?status=all`,{credentials:"include",cache:"no-store"})]);if(!p.ok)throw new Error(p.status===403?"Platform owner access is required.":"Unable to load package catalogue.");setPlans((await p.json()).items||[]);if(a.ok)setAddons((await a.json()).items||[]);if(r.ok)setRequests((await r.json()).items||[])}catch(cause){setError(cause instanceof Error?cause.message:"Unable to load catalogue.")}finally{setLoading(false)}},[]);
+  useEffect(()=>{void load()},[load]);
+  const pending=useMemo(()=>requests.filter(row=>row.status==="pending").length,[requests]);
 
-export default function PackagesPage() {
-  const [plans, setPlans] = useState<Plan[]>([]);
-  const [nodes, setNodes] = useState<Node[]>([]);
-  const [draft, setDraft] = useState<Draft>(blankDraft);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  async function savePlan(event:FormEvent){event.preventDefault();setBusy("plan");setError("");setMessage("");const payload={...(planId?{}:{code:plan.code.trim().toLowerCase(),currency:"LSL"}),name:plan.name.trim(),description:plan.description.trim(),monthly_price_minor:minor(plan.monthly),annual_price_minor:plan.annual.trim()?minor(plan.annual):null,setup_fee_minor:minor(plan.setup),included_mailboxes:Number(plan.mailboxes),included_domains:Number(plan.domains),included_storage_mb:mb(plan.mailStorage),max_api_keys:Number(plan.apiKeys),included_hosted_projects:Number(plan.projects),hosting_storage_mb:mb(plan.appStorage),hosting_memory_mb_per_project:Number(plan.ram),hosting_cpu_millicores_per_project:Number(plan.cpu),hosting_pids_per_project:Number(plan.pids),hosting_database_limit:Number(plan.databases),hosting_database_storage_mb:mb(plan.dbStorage),hosting_source_storage_mb:mb(plan.sourceStorage),product_category:"Website & Application Hosting",support_level:plan.support,minimum_term_months:Number(plan.term),price_from:false,customer_visible:plan.visible,featured:plan.featured,sort_order:Number(plan.sort),is_active:plan.active};try{const response=await fetch(planId?`${API}/platform/billing/plans/${planId}`:`${API}/platform/billing/plans`,{method:planId?"PATCH":"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(typeof body.detail==="string"?body.detail:"Unable to save package.");setMessage(`${body.name} saved. Customer pricing and enforced limits use these values.`);setPlanId(null);setPlan(blankPlan);await load()}catch(cause){setError(cause instanceof Error?cause.message:"Unable to save package.")}finally{setBusy("")}}
 
-  const editing = useMemo(() => plans.find((plan) => plan.id === editingId) || null, [plans, editingId]);
+  async function saveAddon(event:FormEvent){event.preventDefault();setBusy("addon");setError("");setMessage("");const payload={...(addonId?{}:{code:addon.code.trim().toLowerCase(),resource_key:addon.resource}),name:addon.name.trim(),description:addon.description.trim(),monthly_price_minor:minor(addon.monthly),annual_price_minor:addon.annual.trim()?minor(addon.annual):null,setup_fee_minor:minor(addon.setup),amount_per_quantity:Number(addon.amount),unit_label:addon.unit.trim(),max_quantity:Number(addon.max),customer_visible:addon.visible,is_active:addon.active,sort_order:Number(addon.sort)};try{const response=await fetch(addonId?`${API}/platform/billing/addons/${addonId}`:`${API}/platform/billing/addons`,{method:addonId?"PATCH":"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(typeof body.detail==="string"?body.detail:"Unable to save add-on.");setMessage(`${body.name} saved. Active customer assignments are recalculated automatically.`);setAddonId(null);setAddon(blankAddon);await load()}catch(cause){setError(cause instanceof Error?cause.message:"Unable to save add-on.")}finally{setBusy("")}}
 
-  async function load() {
-    setLoading(true);
-    setError("");
-    try {
-      const [plansResponse, nodesResponse] = await Promise.all([
-        fetch(`${API}/platform/billing/plans`, { credentials: "include", cache: "no-store" }),
-        fetch(`${API}/platform/hosting/nodes`, { credentials: "include", cache: "no-store" }),
-      ]);
-      if (!plansResponse.ok) throw new Error(plansResponse.status === 403 ? "Only the system owner can manage packages." : "Unable to load packages.");
-      const plansBody = await plansResponse.json();
-      setPlans(plansBody.items || []);
-      if (nodesResponse.ok) setNodes((await nodesResponse.json()).items || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load packages.");
-    } finally {
-      setLoading(false);
-    }
-  }
+  async function decide(row:RequestRow,action:"activate"|"cancel"){setBusy(row.assignment_id);setError("");setMessage("");try{const response=await fetch(`${API}/platform/billing/addon-requests/${row.assignment_id}/${action}`,{method:"POST",credentials:"include"});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(typeof body.detail==="string"?body.detail:`Unable to ${action} add-on.`);setMessage(action==="activate"?"Add-on activated and the customer's enforced capacity has been increased.":"Add-on canceled and effective capacity has been recalculated.");await load()}catch(cause){setError(cause instanceof Error?cause.message:"Unable to update add-on request.")}finally{setBusy("")}}
 
-  useEffect(() => { void load(); }, []);
+  return <ControlShell title="Packages & add-ons" subtitle="Owner-controlled hosting catalogue, capacity upgrades and customer entitlement requests."><div className="space-y-5">
+    <section className="relative overflow-hidden rounded-[28px] bg-[#123a38] p-6 text-white shadow-[0_22px_60px_rgba(18,58,56,.18)] sm:p-7"><div className="absolute -right-20 -top-24 h-64 w-64 rounded-full bg-[#d8c56a]/10 blur-2xl"/><div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between"><div><div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[.06] px-3 py-2 text-[9px] font-black uppercase tracking-[.13em] text-[#d8c56a]"><Boxes size={13}/> Commercial control</div><h1 className="mt-4 text-3xl font-black tracking-[-.045em]">Hosting packages you control.</h1><p className="mt-3 max-w-3xl text-sm leading-7 text-white/65">Change prices and limits, publish new packages, create reusable add-ons and approve customer capacity increases. The same values shown to customers are enforced by the platform.</p></div><button onClick={()=>void load()} disabled={loading} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-xs font-black"><RefreshCw size={14} className={loading?"animate-spin":""}/>Refresh</button></div></section>
 
-  function edit(plan: Plan) {
-    setEditingId(plan.id);
-    setDraft(draftFrom(plan));
-    setMessage("");
-    setError("");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
+    <div className="flex flex-wrap gap-2 rounded-2xl border border-[#dfe7e2] bg-white p-2">{(["packages","addons","requests"] as const).map(value=><button key={value} onClick={()=>setTab(value)} className={`rounded-xl px-4 py-2.5 text-xs font-black capitalize ${tab===value?"bg-[#123a38] text-white":"text-[#587068] hover:bg-[#f3f7f5]"}`}>{value}{value==="requests"&&pending?` (${pending})`:""}</button>)}</div>
+    {message?<div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-xs font-bold text-emerald-800">{message}</div>:null}{error?<div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-xs font-bold text-red-700">{error}</div>:null}
 
-  function createNew() {
-    setEditingId(null);
-    setDraft(blankDraft);
-    setMessage("");
-    setError("");
-  }
+    {tab==="packages"?<><section className="grid gap-4 xl:grid-cols-2">{plans.map(item=><article key={item.id} className={`rounded-[24px] border bg-white p-5 shadow-sm ${item.featured?"border-[#d8c56a]":"border-[#dfe7e2]"}`}><div className="flex items-start justify-between gap-3"><div><div className="flex flex-wrap gap-2"><span className="rounded-full bg-[#edf4f1] px-2.5 py-1 text-[9px] font-black uppercase text-[#285b55]">{item.code}</span>{item.featured?<span className="rounded-full bg-[#fff8d8] px-2.5 py-1 text-[9px] font-black uppercase text-[#806b1c]">Featured</span>:null}{!item.customer_visible?<span className="rounded-full bg-slate-100 px-2.5 py-1 text-[9px] font-black uppercase text-slate-600">Hidden</span>:null}</div><h2 className="mt-3 text-xl font-black text-[#20342a]">{item.name}</h2><p className="mt-1 text-[11px] leading-5 text-[#718078]">{item.description}</p></div><button onClick={()=>{setPlanId(item.id);setPlan(planDraft(item));window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"})}} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[#dce5e0] text-[#285b55]"><Pencil size={15}/></button></div><div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4"><div><p className="text-[9px] font-black uppercase text-[#8a9891]">Annual</p><p className="mt-1 text-sm font-black">{money(item.annual_price_minor)}</p></div><div><p className="text-[9px] font-black uppercase text-[#8a9891]">Setup</p><p className="mt-1 text-sm font-black">{money(item.setup_fee_minor)}</p></div><div><p className="text-[9px] font-black uppercase text-[#8a9891]">Apps</p><p className="mt-1 text-sm font-black">{item.included_hosted_projects}</p></div><div><p className="text-[9px] font-black uppercase text-[#8a9891]">Storage</p><p className="mt-1 text-sm font-black">{gb(item.hosting_storage_mb)}</p></div><div><p className="text-[9px] font-black uppercase text-[#8a9891]">Email</p><p className="mt-1 text-sm font-black">{item.included_mailboxes}</p></div><div><p className="text-[9px] font-black uppercase text-[#8a9891]">Databases</p><p className="mt-1 text-sm font-black">{item.hosting_database_limit}</p></div><div><p className="text-[9px] font-black uppercase text-[#8a9891]">RAM/app</p><p className="mt-1 text-sm font-black">{item.hosting_memory_mb_per_project} MB</p></div><div><p className="text-[9px] font-black uppercase text-[#8a9891]">Support</p><p className="mt-1 text-sm font-black capitalize">{item.support_level}</p></div></div></article>)}</section>
+    <form onSubmit={savePlan} className="rounded-[26px] border border-[#dfe7e2] bg-white p-5 shadow-sm sm:p-6"><div className="flex items-center justify-between"><div><p className="text-[10px] font-black uppercase tracking-[.12em] text-[#718078]">{planId?"Edit package":"New package"}</p><h2 className="mt-1 text-xl font-black">{planId?plan.name||"Package":"Create another hosting package"}</h2></div>{planId?<button type="button" onClick={()=>{setPlanId(null);setPlan(blankPlan)}} className="grid h-9 w-9 place-items-center rounded-xl border"><X size={14}/></button>:null}</div><div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">{[["name","Package name"],["code","Package code"],["annual","Annual price (M)"],["monthly","Monthly price (M)"],["setup","Setup fee (M)"],["mailboxes","Professional email accounts"],["domains","Managed domains"],["mailStorage","Mailbox storage (GB)"],["projects","Hosted websites/apps"],["appStorage","Application storage (GB)"],["databases","Managed databases"],["dbStorage","Database storage (GB)"],["sourceStorage","Git/ZIP storage (GB)"],["ram","RAM per app (MB)"],["cpu","CPU per app (millicores)"],["pids","PID limit per app"],["apiKeys","API keys"],["term","Minimum term (months)"],["sort","Sort order"]].map(([key,label])=><label key={key} className="text-[10px] font-black uppercase tracking-[.08em] text-[#657870]">{label}<input disabled={key==="code"&&Boolean(planId)} value={plan[key as keyof PlanDraft] as string} onChange={event=>setPlan(value=>({...value,[key]:event.target.value}))} required={!["monthly"].includes(key)} type={["name","code"].includes(key)?"text":"number"} min={["name","code"].includes(key)?undefined:0} step={["annual","monthly","setup"].includes(key)?"0.01":"1"} className="mt-1.5 min-h-11 w-full rounded-xl border border-[#d8e2dd] px-3 text-xs font-semibold normal-case tracking-normal outline-none focus:border-[#285b55]"/></label>)}</div><label className="mt-4 block text-[10px] font-black uppercase tracking-[.08em] text-[#657870]">Description<textarea rows={3} value={plan.description} onChange={event=>setPlan(value=>({...value,description:event.target.value}))} className="mt-1.5 w-full rounded-xl border border-[#d8e2dd] p-3 text-xs font-semibold normal-case tracking-normal outline-none focus:border-[#285b55]"/></label><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><label className="text-xs font-bold">Support<select value={plan.support} onChange={event=>setPlan(value=>({...value,support:event.target.value}))} className="mt-1 w-full rounded-xl border p-3"><option>standard</option><option>priority</option><option>dedicated</option></select></label>{[["visible","Visible to customers"],["featured","Featured package"],["active","Active package"]].map(([key,label])=><label key={key} className="flex items-center gap-2 rounded-xl border border-[#e1e8e4] p-3 text-xs font-bold"><input type="checkbox" checked={Boolean(plan[key as keyof PlanDraft])} onChange={event=>setPlan(value=>({...value,[key]:event.target.checked}))}/>{label}</label>)}</div><button disabled={busy==="plan"} className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#123a38] px-5 text-xs font-black text-white"><Check size={14}/>{busy==="plan"?"Saving…":planId?"Save package":"Create package"}</button></form></>:null}
 
-  async function save() {
-    setSaving(true);
-    setMessage("");
-    setError("");
-    const hostedProjects = Number(draft.hostedProjects);
-    const payload = {
-      ...(editingId ? {} : { code: draft.code.trim().toLowerCase(), currency: "LSL", is_active: true }),
-      name: draft.name.trim(),
-      monthly_price_minor: Math.round(Number(draft.monthlyPrice) * 100),
-      included_mailboxes: Number(draft.mailboxes),
-      included_domains: Number(draft.domains),
-      included_storage_mb: Math.round(Number(draft.mailStorageGb) * 1024),
-      max_api_keys: Number(draft.apiKeys),
-      included_hosted_projects: hostedProjects,
-      hosting_storage_mb: hostedProjects > 0 ? Math.round(Number(draft.hostingStorageGb) * 1024) : 0,
-      hosting_memory_mb_per_project: hostedProjects > 0 ? Number(draft.memoryMb) : 0,
-      hosting_cpu_millicores_per_project: hostedProjects > 0 ? Number(draft.cpuMillicores) : 0,
-      hosting_pids_per_project: hostedProjects > 0 ? Number(draft.pids) : 0,
-      product_category: draft.productCategory,
-      description: draft.description.trim(),
-      website_pages: Number(draft.websitePages),
-      includes_website_design: draft.includesWebsiteDesign,
-      includes_logo_design: draft.includesLogoDesign,
-      includes_brand_guide: draft.includesBrandGuide,
-      includes_company_profile: draft.includesCompanyProfile,
-      includes_letterhead: draft.includesLetterhead,
-      includes_page_headers_footers: draft.includesPageHeadersFooters,
-      includes_business_templates: draft.includesBusinessTemplates,
-      included_revisions: Number(draft.includedRevisions),
-      content_updates_per_month: Number(draft.contentUpdatesPerMonth),
-      support_level: draft.supportLevel,
-      minimum_term_months: Number(draft.minimumTermMonths),
-      price_from: draft.priceFrom,
-    };
-    try {
-      const response = await fetch(editingId ? `${API}/platform/billing/plans/${editingId}` : `${API}/platform/billing/plans`, {
-        method: editingId ? "PATCH" : "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : "Unable to save package.");
-      setMessage(editingId ? "Package updated. Commercial deliverables and resource entitlements now use the new values." : "Package created and published to the pricing catalog.");
-      await load();
-      if (!editingId) createNew();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to save package.");
-    } finally {
-      setSaving(false);
-    }
-  }
+    {tab==="addons"?<><section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{addons.map(item=><article key={item.id} className="rounded-[24px] border border-[#dfe7e2] bg-white p-5 shadow-sm"><div className="flex items-start justify-between"><span className="grid h-10 w-10 place-items-center rounded-xl bg-[#edf4f1] text-[#285b55]">{item.resource_key.includes("mail")?<Mail size={17}/>:item.resource_key.includes("database")?<Database size={17}/>:item.resource_key.includes("storage")?<HardDrive size={17}/>:<Server size={17}/>}</span><button onClick={()=>{setAddonId(item.id);setAddon(addonDraft(item))}} className="grid h-9 w-9 place-items-center rounded-xl border"><Pencil size={14}/></button></div><h3 className="mt-4 text-base font-black">{item.name}</h3><p className="mt-1 text-[10px] leading-5 text-[#718078]">{item.description}</p><div className="mt-4 flex items-end justify-between rounded-2xl bg-[#f8faf9] p-3"><div><p className="text-[9px] font-black uppercase text-[#8a9891]">Annual</p><p className="text-base font-black">{money(item.annual_price_minor)}</p></div><div className="text-right"><p className="text-[9px] font-black uppercase text-[#8a9891]">Increase</p><p className="text-xs font-black">+{item.amount_per_quantity.toLocaleString()} {item.unit_label}</p></div></div><div className="mt-3 flex gap-2 text-[9px] font-black uppercase"><span className={`rounded-full px-2 py-1 ${item.is_active?"bg-emerald-50 text-emerald-700":"bg-red-50 text-red-700"}`}>{item.is_active?"Active":"Inactive"}</span><span className={`rounded-full px-2 py-1 ${item.customer_visible?"bg-[#edf4f1] text-[#285b55]":"bg-slate-100 text-slate-600"}`}>{item.customer_visible?"Customer visible":"Hidden"}</span></div></article>)}</section>
+    <form onSubmit={saveAddon} className="rounded-[26px] border border-[#dfe7e2] bg-white p-5 sm:p-6"><div className="flex items-center justify-between"><div><p className="text-[10px] font-black uppercase tracking-[.12em] text-[#718078]">{addonId?"Edit add-on":"New add-on"}</p><h2 className="mt-1 text-xl font-black">Reusable capacity upgrade</h2></div>{addonId?<button type="button" onClick={()=>{setAddonId(null);setAddon(blankAddon)}} className="grid h-9 w-9 place-items-center rounded-xl border"><X size={14}/></button>:null}</div><div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">{[["name","Add-on name"],["code","Code"],["annual","Annual price (M)"],["monthly","Monthly price (M)"],["setup","Setup fee (M)"],["amount","Capacity per quantity"],["unit","Unit label"],["max","Maximum quantity"],["sort","Sort order"]].map(([key,label])=><label key={key} className="text-[10px] font-black uppercase tracking-[.08em] text-[#657870]">{label}<input disabled={key==="code"&&Boolean(addonId)} value={addon[key as keyof AddonDraft] as string} onChange={event=>setAddon(value=>({...value,[key]:event.target.value}))} type={["name","code","unit"].includes(key)?"text":"number"} min={["name","code","unit"].includes(key)?undefined:0} step={["annual","monthly","setup"].includes(key)?"0.01":"1"} required className="mt-1.5 min-h-11 w-full rounded-xl border border-[#d8e2dd] px-3 text-xs font-semibold normal-case tracking-normal outline-none"/></label>)}<label className="text-[10px] font-black uppercase tracking-[.08em] text-[#657870]">Resource<select disabled={Boolean(addonId)} value={addon.resource} onChange={event=>setAddon(value=>({...value,resource:event.target.value}))} className="mt-1.5 min-h-11 w-full rounded-xl border border-[#d8e2dd] px-3 text-xs font-semibold normal-case tracking-normal">{resourceOptions.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label></div><label className="mt-4 block text-[10px] font-black uppercase tracking-[.08em] text-[#657870]">Description<textarea rows={2} value={addon.description} onChange={event=>setAddon(value=>({...value,description:event.target.value}))} className="mt-1.5 w-full rounded-xl border p-3 text-xs font-semibold normal-case tracking-normal"/></label><div className="mt-4 flex flex-wrap gap-3">{[["visible","Customer visible"],["active","Active"]].map(([key,label])=><label key={key} className="flex items-center gap-2 rounded-xl border p-3 text-xs font-bold"><input type="checkbox" checked={Boolean(addon[key as keyof AddonDraft])} onChange={event=>setAddon(value=>({...value,[key]:event.target.checked}))}/>{label}</label>)}</div><button disabled={busy==="addon"} className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#123a38] px-5 text-xs font-black text-white"><Plus size={14}/>{busy==="addon"?"Saving…":addonId?"Save add-on":"Create add-on"}</button></form></>:null}
 
-  async function toggle(plan: Plan) {
-    setMessage("");
-    setError("");
-    try {
-      const response = await fetch(`${API}/platform/billing/plans/${plan.id}`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ is_active: !plan.is_active }),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.detail || "Unable to change package status.");
-      setMessage(body.is_active ? `${body.name} is active and visible on pricing.` : `${body.name} has been deactivated.`);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to change package status.");
-    }
-  }
-
-  async function createNode(form: HTMLFormElement) {
-    const data = new FormData(form);
-    setMessage("");
-    setError("");
-    const payload = {
-      name: String(data.get("node_name") || ""),
-      hostname: String(data.get("node_hostname") || ""),
-      public_ip: String(data.get("node_ip") || "") || null,
-      allocatable_storage_mb: Math.round(Number(data.get("node_storage_gb")) * 1024),
-      allocatable_memory_mb: Number(data.get("node_memory_mb")),
-      allocatable_cpu_millicores: Math.round(Number(data.get("node_cpu_cores")) * 1000),
-      accepts_new_projects: true,
-    };
-    const response = await fetch(`${API}/platform/hosting/nodes`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      setError(typeof body.detail === "string" ? body.detail : "Unable to register hosting capacity.");
-      return;
-    }
-    form.reset();
-    setMessage("Hosting node capacity registered. New projects can now be allocated without consuming reserved platform headroom.");
-    await load();
-  }
-
-  const resourceFields: { key: keyof Pick<Draft, "name" | "code" | "monthlyPrice" | "hostedProjects" | "hostingStorageGb" | "memoryMb" | "cpuMillicores" | "pids" | "domains" | "mailboxes" | "mailStorageGb" | "apiKeys">; label: string; helper: string; type?: string }[] = [
-    { key: "name", label: "Package name", helper: "Customer-facing name, e.g. Ithute Business" },
-    { key: "code", label: "Package code", helper: editing ? "Code is permanent after creation." : "Lowercase identifier, e.g. business-hosting" },
-    { key: "monthlyPrice", label: "Monthly price (M)", helper: "Maloti charged per month", type: "number" },
-    { key: "hostedProjects", label: "Hosted projects", helper: "Websites or simple systems this organization may host", type: "number" },
-    { key: "hostingStorageGb", label: "App storage (GB)", helper: "Total application storage pool. Commercial packages are limited to 1–10 GB.", type: "number" },
-    { key: "memoryMb", label: "RAM per project (MB)", helper: "Hard memory ceiling for each hosted workload", type: "number" },
-    { key: "cpuMillicores", label: "CPU per project (millicores)", helper: "1000 millicores = 1 CPU core", type: "number" },
-    { key: "pids", label: "Processes per project", helper: "Maximum process/PID count for each workload", type: "number" },
-    { key: "domains", label: "Hosted domains", helper: "Maximum customer domains under this subscription", type: "number" },
-    { key: "mailboxes", label: "Included mailboxes", helper: "Professional email accounts included in the subscription", type: "number" },
-    { key: "mailStorageGb", label: "Mail storage (GB)", helper: "Separate mailbox quota pool; never shared with app storage", type: "number" },
-    { key: "apiKeys", label: "API keys", helper: "Maximum active integration credentials", type: "number" },
-  ];
-
-  const creativeToggles: { key: keyof Pick<Draft, "includesWebsiteDesign" | "includesLogoDesign" | "includesBrandGuide" | "includesCompanyProfile" | "includesLetterhead" | "includesPageHeadersFooters" | "includesBusinessTemplates">; label: string }[] = [
-    { key: "includesWebsiteDesign", label: "Website design" },
-    { key: "includesLogoDesign", label: "Logo design / setup" },
-    { key: "includesBrandGuide", label: "Brand identity guide" },
-    { key: "includesCompanyProfile", label: "Company profile" },
-    { key: "includesLetterhead", label: "Letterhead" },
-    { key: "includesPageHeadersFooters", label: "Page headers & footers" },
-    { key: "includesBusinessTemplates", label: "Invoice / quotation / document templates" },
-  ];
-
-  return <ControlShell title="Packages & pricing" subtitle="Create website, branding, document, hosting, email and DNS packages">
-    <div className="space-y-5">
-      <PageHeader eyebrow="Ithute commercial catalog" title="Product & package control centre" description="Define the monthly price, creative deliverables and hard hosting entitlements in one product. The public pricing page reads directly from this catalogue." />
-
-      <section className="grid gap-4 xl:grid-cols-[1.2fr_.8fr]">
-        <div className="surface-card p-4 sm:p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div><p className="text-xs font-black text-[var(--admin-ink)]">{editing ? `Edit ${editing.name}` : "Create a commercial package"}</p><p className="mt-1 text-[10px] text-[var(--admin-muted)]">Creative services and technical capacity are sold together but tracked separately.</p></div>
-            <button className="btn-secondary" onClick={createNew}><Plus size={14}/>New package</button>
-          </div>
-
-          <div className="mt-5 rounded-2xl border border-[#e0e6e2] bg-[#fafbfa] p-4">
-            <div className="flex items-center gap-2"><BadgeDollarSign size={16} className="text-[#285b55]"/><h2 className="text-xs font-black">Commercial identity</h2></div>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <label className="block"><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">Product category</span><select className="input mt-1.5 w-full" value={draft.productCategory} onChange={(event) => setDraft((current) => ({ ...current, productCategory: event.target.value }))}>{PRODUCT_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></label>
-              <label className="block"><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">Support level</span><select className="input mt-1.5 w-full" value={draft.supportLevel} onChange={(event) => setDraft((current) => ({ ...current, supportLevel: event.target.value }))}><option value="standard">Standard</option><option value="priority">Priority</option><option value="dedicated">Dedicated</option></select></label>
-              <label className="block sm:col-span-2"><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">Customer-facing description</span><textarea className="input mt-1.5 min-h-24 w-full resize-y" maxLength={500} value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} placeholder="What the customer receives and who this package is for"/></label>
-              <label className="block"><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">Minimum term (months)</span><input className="input mt-1.5 w-full" type="number" min="0" max="36" value={draft.minimumTermMonths} onChange={(event) => setDraft((current) => ({ ...current, minimumTermMonths: event.target.value }))}/><span className="mt-1 block text-[9px] text-[#8a9790]">Use 12 months when the package includes initial creative build work.</span></label>
-              <label className="flex items-center gap-3 rounded-xl border border-[#dce4df] bg-white px-3 py-3 text-xs font-bold"><input type="checkbox" checked={draft.priceFrom} onChange={(event) => setDraft((current) => ({ ...current, priceFrom: event.target.checked }))}/>Display price as “From”</label>
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            {resourceFields.map((field) => <label key={field.key} className="block"><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">{field.label}</span><input disabled={field.key === "code" && Boolean(editing)} type={field.type || "text"} min={field.type === "number" ? 0 : undefined} max={field.key === "hostingStorageGb" ? 10 : undefined} step={field.key === "monthlyPrice" || field.key === "hostingStorageGb" || field.key === "mailStorageGb" ? "0.01" : "1"} value={draft[field.key]} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} className="mt-1.5 w-full rounded-xl border border-[#dce4df] bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#2b605a] disabled:bg-[#f2f4f3]"/><span className="mt-1 block text-[9px] leading-4 text-[#8a9790]">{field.helper}</span></label>)}
-          </div>
-
-          <div className="mt-5 rounded-2xl border border-[#e0e6e2] bg-[#fafbfa] p-4">
-            <div className="flex items-center gap-2"><Palette size={16} className="text-[#285b55]"/><h2 className="text-xs font-black">Creative & document deliverables</h2></div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{creativeToggles.map((item) => <label key={item.key} className="flex items-center gap-3 rounded-xl border border-[#dce4df] bg-white px-3 py-3 text-[11px] font-bold"><input type="checkbox" checked={draft[item.key]} onChange={(event) => setDraft((current) => ({ ...current, [item.key]: event.target.checked }))}/>{item.label}</label>)}</div>
-            <div className="mt-4 grid gap-4 sm:grid-cols-4">
-              <label><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">Website pages</span><input className="input mt-1.5 w-full" type="number" min="0" max="100" value={draft.websitePages} onChange={(event) => setDraft((current) => ({ ...current, websitePages: event.target.value }))}/></label>
-              <label><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">Initial revisions</span><input className="input mt-1.5 w-full" type="number" min="0" max="100" value={draft.includedRevisions} onChange={(event) => setDraft((current) => ({ ...current, includedRevisions: event.target.value }))}/></label>
-              <label><span className="text-[10px] font-black uppercase tracking-[.08em] text-[#617168]">Content updates / month</span><input className="input mt-1.5 w-full" type="number" min="0" max="100" value={draft.contentUpdatesPerMonth} onChange={(event) => setDraft((current) => ({ ...current, contentUpdatesPerMonth: event.target.value }))}/></label>
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[9px] leading-4 text-amber-900"><b>Keep scope bounded.</b><br/>Revisions and monthly updates prevent “unlimited design” from being implied by a low monthly price.</div>
-            </div>
-          </div>
-
-          {message ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">{message}</div> : null}
-          {error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700">{error}</div> : null}
-          <button onClick={() => void save()} disabled={saving || !draft.name || (!editing && !draft.code)} className="btn-primary mt-5 disabled:opacity-50"><CheckCircle2 size={14}/>{saving ? "Saving…" : editing ? "Save package changes" : "Create & publish package"}</button>
-        </div>
-
-        <div className="space-y-4">
-          <div className="surface-card p-4 sm:p-5"><div className="flex items-start gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-[#eef4f1] text-[#285b55]"><BadgeDollarSign size={18}/></div><div><h2 className="text-sm font-black text-[var(--admin-ink)]">Monthly commercial model</h2><p className="mt-1 text-[10px] leading-5 text-[var(--admin-muted)]">The starter package is positioned at M185/month. When creative build work is included, use a defined minimum term and revision allowance so the recurring price remains sustainable.</p></div></div><div className="mt-4 rounded-xl border border-[#e2e6e3] p-3 text-[10px] leading-5"><b>Recommended ladder</b><br/>Start M185 · Grow M295 · Business M495 · Professional M795 · Enterprise from M1,500.</div></div>
-          <div className="surface-card p-4 sm:p-5"><div className="flex items-start gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-[#eef4f1] text-[#285b55]"><Server size={18}/></div><div><h2 className="text-sm font-black text-[var(--admin-ink)]">Shared VPS protection</h2><p className="mt-1 text-[10px] leading-5 text-[var(--admin-muted)]">Creative services do not change runtime isolation. Every hosted project is constrained by storage, RAM, CPU and process limits and is allocated only from capacity marked as sellable.</p></div></div><div className="mt-4 space-y-3 text-[10px] leading-5 text-[#617168]"><p><b className="text-[#263a31]">Application storage</b> — separate from mailbox storage.</p><p><b className="text-[#263a31]">RAM + CPU</b> — per-project ceilings protect other customers.</p><p><b className="text-[#263a31]">No root VPS access</b> — managed hosting never exposes host SSH or Docker socket access.</p></div><a href="/hosting-docs" className="mt-5 inline-flex text-xs font-black text-[#285b55]">Read mandatory hosting rules →</a></div>
-        </div>
-      </section>
-
-      <section className="surface-card p-4 sm:p-5">
-        <div className="flex items-center justify-between gap-3"><div><h2 className="text-sm font-black text-[var(--admin-ink)]">Published product catalogue</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">These cards feed the public monthly pricing page. Existing subscriptions must be moved before a package can be deactivated.</p></div><button className="icon-button" onClick={() => void load()} aria-label="Refresh packages"><RefreshCw size={15}/></button></div>
-        {loading ? <p className="mt-6 text-xs text-[var(--admin-muted)]">Loading packages…</p> : <div className="mt-5 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">{plans.map((plan) => <article key={plan.id} className={`rounded-2xl border p-4 ${plan.is_active ? "border-[#dce5e0] bg-white" : "border-[#e4e5e4] bg-[#f5f6f5] opacity-75"}`}><div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-2"><Boxes size={16} className="text-[#285b55]"/><h3 className="text-sm font-black text-[#21342a]">{plan.name}</h3></div><p className="mt-1 text-[9px] font-bold uppercase tracking-[.08em] text-[#8a9790]">{plan.code} · {plan.product_category} · {plan.is_active ? "Active" : "Inactive"}</p></div><p className="text-right text-lg font-black text-[#123a38]">{formatPrice(plan)}<span className="block text-[9px] text-[#819087]">/ month</span></p></div><p className="mt-3 text-[10px] leading-5 text-[#718078]">{plan.description}</p><div className="mt-3 flex flex-wrap gap-1.5">{packageHighlights(plan).map((item) => <span key={item} className="rounded-full bg-[#edf4f1] px-2 py-1 text-[8px] font-bold text-[#285b55]">{item}</span>)}</div><div className="mt-4 grid grid-cols-2 gap-2 text-[10px]"><div className="rounded-xl bg-[#f4f7f5] p-2.5"><b>{plan.included_hosted_projects}</b><br/>projects</div><div className="rounded-xl bg-[#f4f7f5] p-2.5"><b>{(plan.hosting_storage_mb / 1024).toFixed(plan.hosting_storage_mb % 1024 ? 1 : 0)} GB</b><br/>app storage</div><div className="rounded-xl bg-[#f4f7f5] p-2.5"><b>{plan.included_domains}</b><br/>domains</div><div className="rounded-xl bg-[#f4f7f5] p-2.5"><b>{plan.included_mailboxes}</b><br/>mailboxes</div></div><div className="mt-3 text-[9px] text-[#718078]">{plan.minimum_term_months ? `${plan.minimum_term_months}-month minimum term` : "No minimum term"} · <span className="capitalize">{plan.support_level}</span> support · {plan.included_revisions} initial revisions</div><div className="mt-4 flex flex-wrap gap-2"><button className="btn-secondary" onClick={() => edit(plan)}><Pencil size={13}/>Edit</button><button className="btn-secondary" onClick={() => void toggle(plan)}><Archive size={13}/>{plan.is_active ? "Deactivate" : "Activate"}</button></div></article>)}</div>}
-      </section>
-
-      <section className="surface-card p-4 sm:p-5">
-        <div className="flex items-start gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-[#eef4f1] text-[#285b55]"><Server size={18}/></div><div><h2 className="text-sm font-black text-[var(--admin-ink)]">Sellable hosting-node capacity</h2><p className="mt-1 text-[10px] leading-5 text-[var(--admin-muted)]">Register only the part of a VPS that may be sold. Leave deliberate headroom for Ithute, mail, DNS, databases and the operating system.</p></div></div>
-        <form className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-6" onSubmit={(event) => { event.preventDefault(); void createNode(event.currentTarget); }}>
-          <input className="input" name="node_name" placeholder="Node name" required />
-          <input className="input" name="node_hostname" placeholder="server.example.com" required />
-          <input className="input" name="node_ip" placeholder="Public IP (optional)" />
-          <input className="input" name="node_storage_gb" type="number" min="1" step="1" placeholder="Sellable GB" required />
-          <input className="input" name="node_memory_mb" type="number" min="512" step="128" placeholder="Sellable RAM MB" required />
-          <div className="flex gap-2"><input className="input min-w-0" name="node_cpu_cores" type="number" min="0.5" step="0.1" placeholder="CPU cores" required /><button className="btn-primary shrink-0" type="submit"><Plus size={14}/></button></div>
-        </form>
-        <div className="mt-5 grid gap-3 lg:grid-cols-2">{nodes.map((node) => <article key={node.id} className="rounded-2xl border border-[#dce5e0] bg-white p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black">{node.name}</p><p className="text-[9px] text-[var(--admin-muted)]">{node.hostname} · {node.status}</p></div><span className="rounded-full bg-emerald-50 px-2 py-1 text-[9px] font-black text-emerald-700">{node.allocated.projects} projects</span></div><div className="mt-3 grid grid-cols-3 gap-2 text-[9px]"><div className="rounded-xl bg-[#f4f7f5] p-2"><HardDrive size={13}/><b className="mt-1 block">{(node.available.storage_mb / 1024).toFixed(1)} GB</b>storage free</div><div className="rounded-xl bg-[#f4f7f5] p-2"><Server size={13}/><b className="mt-1 block">{node.available.memory_mb} MB</b>RAM free</div><div className="rounded-xl bg-[#f4f7f5] p-2"><Cpu size={13}/><b className="mt-1 block">{(node.available.cpu_millicores / 1000).toFixed(2)}</b>CPU free</div></div></article>)}{!nodes.length ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900"><b>No sellable hosting capacity is registered yet.</b> Packages may be published, but customer projects cannot be allocated until the system owner registers safe VPS headroom here.</div> : null}</div>
-      </section>
-    </div>
-  </ControlShell>;
+    {tab==="requests"?<section className="rounded-[24px] border border-[#dfe7e2] bg-white p-5"><div className="flex items-center justify-between"><div><h2 className="text-xl font-black">Customer add-on requests</h2><p className="mt-1 text-[10px] text-[#718078]">Activation immediately recalculates and enforces the customer's effective package.</p></div><span className="rounded-full bg-amber-50 px-3 py-1.5 text-[10px] font-black text-amber-700">{pending} pending</span></div><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[850px] text-left text-xs"><thead><tr className="border-b text-[9px] font-black uppercase tracking-[.08em] text-[#829087]"><th className="p-3">Tenant</th><th className="p-3">Add-on</th><th className="p-3">Qty</th><th className="p-3">Status</th><th className="p-3">Price</th><th className="p-3 text-right">Actions</th></tr></thead><tbody>{requests.map(row=><tr key={row.assignment_id} className="border-b border-[#edf1ef]"><td className="p-3 font-mono text-[10px]">{row.tenant_id}</td><td className="p-3 font-black">{row.name}</td><td className="p-3">{row.quantity}</td><td className="p-3 capitalize">{row.status}</td><td className="p-3">{money(row.annual_price_minor)} / yr</td><td className="p-3"><div className="flex justify-end gap-2">{row.status!=="active"?<button disabled={busy===row.assignment_id} onClick={()=>void decide(row,"activate")} className="inline-flex items-center gap-1 rounded-lg bg-[#123a38] px-3 py-2 text-[10px] font-black text-white"><BadgeCheck size={12}/>Activate</button>:null}{row.status!=="canceled"?<button disabled={busy===row.assignment_id} onClick={()=>void decide(row,"cancel")} className="rounded-lg border border-red-200 px-3 py-2 text-[10px] font-black text-red-700">Cancel</button>:null}</div></td></tr>)}</tbody></table></div></section>:null}
+  </div></ControlShell>;
 }
