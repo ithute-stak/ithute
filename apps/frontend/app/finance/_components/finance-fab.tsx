@@ -8,6 +8,7 @@ import { financeRoleRank, useFinanceAccess } from "./use-finance-access";
 const links = [
   { href: "/finance", label: "Invoices & automation", icon: Repeat2, minRank: 1 },
   { href: "/finance/documents", label: "Quotations & pro-formas", icon: FileText, minRank: 1 },
+  { href: "/finance/quotations", label: "Corporate iMail quotations", icon: FileText, minRank: 4 },
   { href: "/finance/clients", label: "Clients", icon: Users2, minRank: 1 },
   { href: "/finance/collections", label: "Collections & payments", icon: WalletCards, minRank: 1 },
   { href: "/finance/accounting", label: "Accounting & reconciliation", icon: Landmark, minRank: 2 },
