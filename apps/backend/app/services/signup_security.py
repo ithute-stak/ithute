@@ -7,24 +7,31 @@ from redis import Redis
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models import PlatformConfiguration
+from app.services.platform_mode import effective_platform_mode, public_signup_enabled
 
 
 def ensure_public_signup_open() -> None:
-    """Keep customer signup closed until the platform owns a verified domain.
+    """Keep customer signup closed until the production domain is authoritative.
 
-    Bootstrap access is intentionally platform-owner only.  This removes the
-    need for a third-party CAPTCHA while avoiding an exposed signup surface on
-    the raw server IP.
+    ``PLATFORM_MODE=domain`` is the explicit production declaration. Persisted
+    domain_pending/domain_verified states remain authoritative, while a stale
+    bootstrap row from an older deployment no longer keeps a domain deployment
+    closed forever.
     """
     if settings.environment.lower() != "production":
         return
     with SessionLocal() as db:
-        row = db.get(PlatformConfiguration, 1)
-        if row is None or row.mode != "domain_active":
-            raise HTTPException(status_code=503, detail="Customer signup opens after the platform domain is activated")
+        mode = effective_platform_mode(db)
+        if mode != "domain_active" or not public_signup_enabled(db):
+            raise HTTPException(
+                status_code=503,
+                detail="Customer signup opens after the platform domain is activated",
+            )
     if not settings.system_email_from or not settings.system_smtp_host:
-        raise HTTPException(status_code=503, detail="Customer signup is waiting for system email delivery configuration")
+        raise HTTPException(
+            status_code=503,
+            detail="Customer signup is waiting for system email delivery configuration",
+        )
 
 
 def enforce_signup_rate_limit(request: Request) -> None:
