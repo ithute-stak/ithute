@@ -14,16 +14,23 @@ branch_labels = None
 depends_on = None
 
 
+# These codes are intentionally namespaced. Earlier commercial catalogues use
+# codes such as grow/business/professional/enterprise and may already have live
+# subscriptions. A migration must never rewrite an existing customer's package
+# contract just because Ithute launches a new hosting catalogue.
 PACKAGES = (
     # code, name, annual LSL minor, setup, mailboxes, domains, mail MB, API keys,
     # projects, app MB, RAM/project, CPU millicores, PIDs, DBs, DB MB, source MB, support, sort
-    ("start", "Ithute Start", 84000, 10000, 18, 1, 36864, 3, 1, 2048, 512, 500, 128, 2, 2048, 2048, "standard", 10),
-    ("grow", "Ithute Grow", 168000, 10000, 50, 3, 102400, 5, 3, 8192, 768, 750, 192, 5, 8192, 8192, "standard", 20),
-    ("business", "Ithute Business", 288000, 10000, 100, 10, 204800, 10, 8, 20480, 1024, 1000, 256, 10, 20480, 20480, "priority", 30),
-    ("professional", "Ithute Professional", 504000, 15000, 200, 20, 409600, 20, 15, 40960, 1536, 1500, 384, 20, 40960, 40960, "priority", 40),
-    ("enterprise", "Ithute Enterprise", 900000, 25000, 500, 40, 1024000, 50, 30, 81920, 2048, 2000, 512, 40, 81920, 81920, "dedicated", 50),
-    ("ultimate", "Ithute Ultimate", 1500000, 50000, 1000, 80, 2048000, 100, 50, 153600, 3072, 3000, 768, 80, 153600, 153600, "dedicated", 60),
+    ("ithute-start", "Ithute Start", 84000, 10000, 18, 1, 36864, 3, 1, 2048, 512, 500, 128, 2, 2048, 2048, "standard", 10),
+    ("ithute-grow", "Ithute Grow", 168000, 10000, 50, 3, 102400, 5, 3, 8192, 768, 750, 192, 5, 8192, 8192, "standard", 20),
+    ("ithute-business", "Ithute Business", 288000, 10000, 100, 10, 204800, 10, 8, 20480, 1024, 1000, 256, 10, 20480, 20480, "priority", 30),
+    ("ithute-professional", "Ithute Professional", 504000, 15000, 200, 20, 409600, 20, 15, 40960, 1536, 1500, 384, 20, 40960, 40960, "priority", 40),
+    ("ithute-enterprise", "Ithute Enterprise", 900000, 25000, 500, 40, 1024000, 50, 30, 81920, 2048, 2000, 512, 40, 81920, 81920, "dedicated", 50),
+    ("ithute-ultimate", "Ithute Ultimate", 1500000, 50000, 1000, 80, 2048000, 100, 50, 153600, 3072, 3000, 768, 80, 153600, 153600, "dedicated", 60),
 )
+
+PACKAGE_CODES = tuple(row[0] for row in PACKAGES)
+LEGACY_CODES = ("starter", "grow", "business", "professional", "enterprise")
 
 
 def upgrade():
@@ -95,8 +102,14 @@ def upgrade():
     op.create_index("ix_edge_route_deployments_status", "edge_route_deployments", ["status"])
 
     bind = op.get_bind()
-    # Hide historical starter alias so the public catalogue has one clear minimum package.
-    bind.execute(sa.text("UPDATE billing_plans SET customer_visible = false WHERE code = 'starter'"))
+
+    # Keep historical rows and subscriptions untouched. They remain available to
+    # existing tenants through their subscription IDs, but are hidden from the
+    # new /public/pricing catalogue so new customers see one coherent product family.
+    bind.execute(
+        sa.text("UPDATE billing_plans SET customer_visible = false WHERE code = ANY(:codes)"),
+        {"codes": list(LEGACY_CODES)},
+    )
 
     for row in PACKAGES:
         (
@@ -123,29 +136,7 @@ def upgrade():
                 :source_storage, 'Website & Application Hosting', :description,
                 :support, 12, false, true, true, :featured, :sort_order
             )
-            ON CONFLICT (code) DO UPDATE SET
-                name = EXCLUDED.name,
-                annual_price_minor = EXCLUDED.annual_price_minor,
-                setup_fee_minor = EXCLUDED.setup_fee_minor,
-                included_mailboxes = EXCLUDED.included_mailboxes,
-                included_domains = EXCLUDED.included_domains,
-                included_storage_mb = EXCLUDED.included_storage_mb,
-                max_api_keys = EXCLUDED.max_api_keys,
-                included_hosted_projects = EXCLUDED.included_hosted_projects,
-                hosting_storage_mb = EXCLUDED.hosting_storage_mb,
-                hosting_memory_mb_per_project = EXCLUDED.hosting_memory_mb_per_project,
-                hosting_cpu_millicores_per_project = EXCLUDED.hosting_cpu_millicores_per_project,
-                hosting_pids_per_project = EXCLUDED.hosting_pids_per_project,
-                hosting_database_limit = EXCLUDED.hosting_database_limit,
-                hosting_database_storage_mb = EXCLUDED.hosting_database_storage_mb,
-                hosting_source_storage_mb = EXCLUDED.hosting_source_storage_mb,
-                product_category = EXCLUDED.product_category,
-                description = EXCLUDED.description,
-                support_level = EXCLUDED.support_level,
-                customer_visible = true,
-                featured = EXCLUDED.featured,
-                sort_order = EXCLUDED.sort_order,
-                is_active = true
+            ON CONFLICT (code) DO NOTHING
         """), {
             "code": code,
             "name": name,
@@ -166,7 +157,7 @@ def upgrade():
             "source_storage": source_storage,
             "description": f"{name} managed hosting with professional email, DNS, HTTPS, Git/ZIP deployment, logs and database backups.",
             "support": support,
-            "featured": code == "business",
+            "featured": code == "ithute-business",
             "sort_order": sort_order,
         })
 
@@ -198,6 +189,11 @@ def upgrade():
 
 
 def downgrade():
+    bind = op.get_bind()
+    bind.execute(
+        sa.text("DELETE FROM billing_plans WHERE code = ANY(:codes)"),
+        {"codes": list(PACKAGE_CODES)},
+    )
     op.drop_index("ix_edge_route_deployments_status", table_name="edge_route_deployments")
     op.drop_index("ix_edge_route_deployments_application_id", table_name="edge_route_deployments")
     op.drop_table("edge_route_deployments")
