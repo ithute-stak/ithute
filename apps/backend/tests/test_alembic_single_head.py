@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0051_commercial_ops_v2"
+LATEST_MIGRATION_HEAD = "0052_catalog_lifecycle"
 
 
 def test_alembic_has_one_consolidated_head():
