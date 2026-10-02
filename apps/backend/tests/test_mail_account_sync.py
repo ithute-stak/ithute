@@ -38,6 +38,40 @@ def test_sync_replaces_only_matching_account_and_preserves_external_accounts(tmp
     assert account_file.stat().st_mode & 0o777 == 0o600
 
 
+
+
+def test_sync_preserves_account_file_inode_for_dms_runtime_watcher(tmp_path: Path, monkeypatch):
+    account_file = tmp_path / "postfix-accounts.cf"
+    account_file.write_text(
+        "info@ithute.co.ls|{SHA512-CRYPT}$6$old$hash\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAIL_ACCOUNTS_FILE", str(account_file))
+    before_inode = account_file.stat().st_ino
+
+    mailbox = _mailbox("info@ithute.co.ls", "{SHA512-CRYPT}$6$new$hash")
+    assert sync_mailbox(mailbox) is True
+
+    assert account_file.stat().st_ino == before_inode
+    assert "info@ithute.co.ls|{SHA512-CRYPT}$6$new$hash" in account_file.read_text(encoding="utf-8")
+
+
+def test_forwarding_revision_preserves_account_file_inode(tmp_path: Path, monkeypatch):
+    account_file = tmp_path / "postfix-accounts.cf"
+    account_file.write_text(
+        "bda-reg12345@ithute.co.ls|{SHA512-CRYPT}$6$current$hash\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAIL_ACCOUNTS_FILE", str(account_file))
+    _enable_forwarding_runtime(tmp_path)
+    before_inode = account_file.stat().st_ino
+
+    mailbox = _mailbox("bda-reg12345@ithute.co.ls", "{SHA512-CRYPT}$6$current$hash")
+    assert sync_mailbox_forwarding(mailbox, "business@gmail.com") is True
+
+    assert account_file.stat().st_ino == before_inode
+
+
 def test_sync_removes_suspended_account(tmp_path: Path, monkeypatch):
     account_file = tmp_path / "postfix-accounts.cf"
     account_file.write_text(

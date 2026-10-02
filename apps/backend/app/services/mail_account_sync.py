@@ -66,6 +66,25 @@ def _atomic_write(path: Path, payload: str, *, prefix: str) -> None:
             os.unlink(temporary)
 
 
+def _write_monitored_accounts_file(path: Path, payload: str) -> None:
+    """Update Docker Mailserver's watched account file without replacing its inode.
+
+    The production mail stack exposes postfix-accounts.cf to DMS through a
+    symlink. DMS watches that resolved file for changes. Replacing the target
+    with os.replace changes the inode outside DMS's watched config directory,
+    so password/create updates can be written successfully while Dovecot keeps
+    using a stale generated userdb. Writing in place keeps the watched inode
+    stable and produces the write/close event DMS expects.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(path, 0o600)
+
+
 def _validate_account(address: str, password_hash: str) -> tuple[str, str]:
     clean_address = address.strip().lower()
     clean_hash = password_hash.strip()
@@ -111,7 +130,7 @@ def _write_account(address: str, password_hash: str, *, active: bool) -> bool:
             payload = "\n".join(kept)
             if payload:
                 payload += "\n"
-            _atomic_write(path, payload, prefix=".postfix-accounts.")
+            _write_monitored_accounts_file(path, payload)
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
         return True
     except OSError as exc:
@@ -187,7 +206,7 @@ def sync_mailbox_forwarding(mailbox: Mailbox, destination: str | None) -> bool:
             account_payload = "\n".join(account_lines)
             if account_payload:
                 account_payload += "\n"
-            _atomic_write(accounts_path, account_payload, prefix=".postfix-accounts.")
+            _write_monitored_accounts_file(accounts_path, account_payload)
 
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
         return True
