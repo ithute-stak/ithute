@@ -261,11 +261,12 @@ export function MailCompose({ address, compose, setCompose, loading, minimized, 
     await webmail("/follow-ups", { method: "POST", body: JSON.stringify({ recipient, subject: compose.subject, remind_at: remind.toISOString(), source_key: sender?.key || "hosted", scheduled_mail_id: scheduledMailId }) });
   }
 
-  async function scheduleMessage(date: Date, undoSeconds = 0) {
+  async function scheduleMessage(date: Date | null, undoSeconds = 0, delaySeconds = 0) {
     setActionBusy(true); setActionError(""); setSendMenuOpen(false);
     try {
       const body = payload();
-      const response = await webmail("/scheduled", { method: "POST", body: JSON.stringify({ connected_account_id: sender?.type === "connected" ? sender.key : null, to: body.to, cc: body.cc, bcc: body.bcc, subject: body.subject, body_text: body.body_text, body_html: body.body_html, attachments: body.attachments, scheduled_at: date.toISOString() }) });
+      const schedule = delaySeconds > 0 ? { delay_seconds: delaySeconds } : { scheduled_at: date?.toISOString() };
+      const response = await webmail("/scheduled", { method: "POST", body: JSON.stringify({ connected_account_id: sender?.type === "connected" ? sender.key : null, to: body.to, cc: body.cc, bcc: body.bcc, subject: body.subject, body_text: body.body_text, body_html: body.body_html, attachments: body.attachments, ...schedule }) });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Unable to schedule message");
       const job = await response.json();
       await createFollowUp(String(job.id || ""));
@@ -318,8 +319,9 @@ export function MailCompose({ address, compose, setCompose, loading, minimized, 
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const undoAt = new Date(Date.now() + 25_000);
-    void scheduleMessage(undoAt, 20);
+    // Use a server-relative delay for Undo Send so client/server clock skew
+    // can never make a normal Send look like an invalid scheduled message.
+    void scheduleMessage(null, 20, 25);
   }
 
   if (undoJob) return <div className={`fixed z-[90] ${expanded ? "inset-0 flex items-center justify-center bg-black/30 p-4" : "bottom-4 right-4"}`}><div className="w-[min(94vw,460px)] rounded-2xl border border-emerald-200 bg-white p-5 shadow-2xl"><div className="flex items-start gap-3"><span className="grid h-10 w-10 place-items-center rounded-full bg-emerald-100 text-emerald-700"><Send size={18} /></span><div className="min-w-0 flex-1"><p className="font-bold text-slate-900">Message queued</p><p className="mt-1 text-sm text-slate-500">Sending in about {undoJob.seconds} seconds. You can undo before it leaves the mailbox.</p></div></div><div className="mt-4 flex justify-end gap-2"><button type="button" disabled={actionBusy} onClick={() => void undoSend()} className="rounded-xl bg-[#174ea6] px-4 py-2 text-sm font-bold text-white disabled:opacity-50"><Undo2 size={15} className="mr-1.5 inline" />Undo send</button></div>{actionError ? <p className="mt-3 text-xs font-semibold text-red-600">{actionError}</p> : null}</div></div>;
