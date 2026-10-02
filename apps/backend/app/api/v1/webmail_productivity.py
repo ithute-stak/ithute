@@ -67,7 +67,8 @@ class ScheduleIn(BaseModel):
     body_text: str = Field(default="", max_length=2_000_000)
     body_html: str = Field(default="", max_length=2_000_000)
     attachments: list[ScheduledAttachment] = Field(default_factory=list, max_length=20)
-    scheduled_at: datetime
+    scheduled_at: datetime | None = None
+    delay_seconds: int | None = Field(default=None, ge=16, le=300)
 
 
 def _owner(token: str | None, db: Session) -> tuple[Mailbox, str]:
@@ -320,13 +321,20 @@ def list_scheduled(token: Annotated[str | None, Cookie(alias=HOSTED_COOKIE)] = N
 def schedule_message(payload: ScheduleIn, token: Annotated[str | None, Cookie(alias=HOSTED_COOKIE)] = None, db: Session = Depends(get_db)):
     mailbox, password = _owner(token, db)
     now = datetime.now(timezone.utc)
-    scheduled_at = payload.scheduled_at
-    if scheduled_at.tzinfo is None:
-        raise HTTPException(status_code=422, detail="scheduled_at must include a timezone")
-    if scheduled_at <= now + timedelta(seconds=15):
-        raise HTTPException(status_code=422, detail="Schedule mail at least 15 seconds in the future")
-    if scheduled_at > now + timedelta(days=365):
-        raise HTTPException(status_code=422, detail="Scheduled mail cannot be more than one year in the future")
+    if payload.delay_seconds is not None:
+        if payload.scheduled_at is not None:
+            raise HTTPException(status_code=422, detail="Use either scheduled_at or delay_seconds, not both")
+        scheduled_at = now + timedelta(seconds=payload.delay_seconds)
+    else:
+        scheduled_at = payload.scheduled_at
+        if scheduled_at is None:
+            raise HTTPException(status_code=422, detail="scheduled_at or delay_seconds is required")
+        if scheduled_at.tzinfo is None:
+            raise HTTPException(status_code=422, detail="scheduled_at must include a timezone")
+        if scheduled_at <= now + timedelta(seconds=15):
+            raise HTTPException(status_code=422, detail="Schedule mail at least 15 seconds in the future")
+        if scheduled_at > now + timedelta(days=365):
+            raise HTTPException(status_code=422, detail="Scheduled mail cannot be more than one year in the future")
 
     account = None
     if payload.connected_account_id:
