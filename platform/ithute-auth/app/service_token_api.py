@@ -77,6 +77,18 @@ def issue_service_token(
             scope=normalized_scope,
         )
 
+    if not config.allow_legacy_service_secrets:
+        record_audit(
+            db,
+            event_type="legacy_service_token_denied",
+            success=False,
+            client_id=payload.client_id,
+            request=request,
+            details={"reason": "legacy service authentication disabled"},
+        )
+        db.commit()
+        raise HTTPException(status_code=401, detail="managed service credentials required")
+
     # Compatibility bridge for existing first-party integrations. New platform
     # clients must be stored in managed_service_clients; these legacy tokens
     # intentionally do not carry the service_auth=managed claim required by
