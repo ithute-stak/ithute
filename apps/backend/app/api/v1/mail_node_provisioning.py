@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_platform_owner
@@ -46,12 +47,18 @@ def provision_node(
         raise HTTPException(status_code=409, detail="Mail node provisioner is not configured")
     if payload.tenant_id is not None and db.get(Tenant, payload.tenant_id) is None:
         raise HTTPException(status_code=404, detail="Dedicated tenant not found")
+    name = payload.name.strip()
+    hostname = payload.hostname.strip().lower().rstrip(".")
+    if "." not in hostname or any(ch.isspace() for ch in hostname):
+        raise HTTPException(status_code=422, detail="Mail node hostname must be a fully-qualified hostname")
+    if db.scalar(select(MailNode).where(or_(MailNode.name == name, MailNode.hostname == hostname))):
+        raise HTTPException(status_code=409, detail="A mail node with this name or hostname already exists")
 
     node = MailNode(
-        name=payload.name.strip(),
+        name=name,
         role="combined",
         region=payload.region.strip().lower(),
-        hostname=payload.hostname.strip().lower().rstrip("."),
+        hostname=hostname,
         tenant_id=payload.tenant_id,
         storage_path="/srv/ithute-mail/data/mail-data",
         capabilities_json='["mail","storage"]',
@@ -139,5 +146,5 @@ def provision_node(
         "provider_instance_id": node.provider_instance_id,
         "hostname": node.hostname,
         "public_ip": node.public_ip,
-        "message": "Provisioning accepted. The node becomes active only after its agent reports SMTP, IMAP and TLS ready.",
+        "message": "Provisioning accepted. The node becomes active only after its agent reports SMTP, IMAP, TLS and off-node backup ready.",
     }
