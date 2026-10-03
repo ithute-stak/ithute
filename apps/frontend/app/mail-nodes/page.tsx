@@ -64,6 +64,7 @@ export default function MailNodesPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [agentToken, setAgentToken] = useState<{node:string;token:string}|null>(null);
 
   const active = useMemo(() => nodes.filter((node) => node.status === "active").length, [nodes]);
   const healthy = useMemo(() => nodes.filter((node) => node.healthy).length, [nodes]);
@@ -157,6 +158,19 @@ export default function MailNodesPage() {
     setMessage(`${node.name} set to ${status}.`);
     await loadNodes();
   }
+  async function generateAgentToken(node: MailNode) {
+    setMessage("");
+    setError("");
+    const response = await api(`/platform/mail-nodes/${node.id}/agent-token`, { method: "POST" });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      setError(body.detail || "Unable to generate agent credential.");
+      return;
+    }
+    const body = await response.json();
+    setAgentToken({ node: node.name, token: body.token });
+  }
+
 
   return (
     <ControlShell title="Mail nodes" subtitle="Distributed email infrastructure and storage nodes" userEmail={me?.email}>
@@ -259,6 +273,7 @@ export default function MailNodesPage() {
                           <p className="mt-1 text-[10px] text-[#819087]">Capabilities: {node.capabilities.join(", ") || "none"} · Agent: {node.agent_version || "not connected"}</p>
                         </div>
                         <div className="flex flex-wrap gap-2">
+                          <button className="btn-secondary text-[10px]" onClick={() => void generateAgentToken(node)}>Agent token</button>
                           {node.status !== "active" ? <button className="btn-secondary text-[10px]" onClick={() => void updateStatus(node, "active")}>Activate</button> : null}
                           {node.status !== "maintenance" ? <button className="btn-secondary text-[10px]" onClick={() => void updateStatus(node, "maintenance")}><Wrench size={12} /> Maintenance</button> : null}
                           {node.status !== "disabled" ? <button className="rounded-lg border border-red-200 px-3 py-2 text-[10px] font-bold text-red-700" onClick={() => void updateStatus(node, "disabled")}>Disable</button> : null}
@@ -282,6 +297,26 @@ export default function MailNodesPage() {
               </div>
             </div>
           </section>
+        ) : null}
+        {agentToken ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+            <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-2xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-black text-[#21342a]">Mail node agent credential</p>
+                  <p className="mt-1 text-[11px] text-[#718078]">{agentToken.node}</p>
+                </div>
+                <button onClick={() => setAgentToken(null)} className="text-xl text-[#718078]">×</button>
+              </div>
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[10px] leading-5 text-amber-800">
+                This token is shown once. Store it only in <code>/etc/ithute-mail-node/agent.env</code> on the target VPS.
+              </div>
+              <pre className="mt-3 overflow-x-auto rounded-xl bg-[#123a38] p-4 text-[11px] text-white">{`ITHUTE_MAIL_AGENT_TOKEN=${agentToken.token}`}</pre>
+              <div className="mt-4 flex justify-end">
+                <button className="btn-primary" onClick={() => setAgentToken(null)}>I have stored it</button>
+              </div>
+            </div>
+          </div>
         ) : null}
       </div>
     </ControlShell>
