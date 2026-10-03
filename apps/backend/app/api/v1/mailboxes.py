@@ -115,6 +115,9 @@ def recommend_mail_node(
             or_(MailNode.tenant_id.is_(None), MailNode.tenant_id == tenant_id),
             MailNode.total_storage_bytes.is_not(None),
             MailNode.used_storage_bytes.is_not(None),
+            MailNode.smtp_ready.is_(True),
+            MailNode.imap_ready.is_(True),
+            MailNode.tls_ready.is_(True),
         )
     ).all()
 
