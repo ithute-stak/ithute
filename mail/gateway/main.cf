@@ -1,0 +1,26 @@
+compatibility_level = 3.6
+myhostname = mx-gateway.ithute.co.ls
+myorigin = $myhostname
+mydestination =
+inet_interfaces = all
+inet_protocols = all
+
+# Ithute is an inbound relay only for domains and recipients emitted by the
+# control plane. Unknown domains/recipients are rejected before queueing.
+relay_domains = texthash:/routing/relay-domains.cf
+relay_recipient_maps = texthash:/routing/relay-recipients.cf
+transport_maps = texthash:/routing/transport.cf
+virtual_alias_maps = texthash:/routing/virtual-aliases.cf
+
+smtpd_relay_restrictions = permit_mynetworks, reject_unauth_destination
+smtpd_recipient_restrictions = reject_unauth_pipelining, reject_unlisted_recipient, permit_mynetworks, reject_unauth_destination
+smtpd_helo_required = yes
+disable_vrfy_command = yes
+
+smtp_tls_security_level = may
+smtpd_tls_security_level = may
+smtp_tls_loglevel = 1
+
+message_size_limit = 52428800
+recipient_delimiter = +
+maillog_file = /dev/stdout
