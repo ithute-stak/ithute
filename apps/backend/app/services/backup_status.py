@@ -36,6 +36,7 @@ def backup_operational_status() -> dict:
     root = _root()
     last_run = _read_json(root / "last-run.json")
     health = _read_json(root / "health.json")
+    offsite = _read_json(root / "offsite.json")
     now = datetime.now(timezone.utc)
     reasons: list[str] = []
 
@@ -58,6 +59,19 @@ def backup_operational_status() -> dict:
     elif last_run is not None:
         reasons.append("latest successful backup timestamp is invalid")
 
+    offsite_age_seconds = None
+    if offsite is not None:
+        offsite_checked = _parse_time(offsite.get("checked_at"))
+        if offsite_checked:
+            offsite_age_seconds = max(0, int((now - offsite_checked).total_seconds()))
+        if settings.backup_require_offsite:
+            if not offsite.get("healthy", False):
+                reasons.append("required off-site backup verification failed")
+            elif offsite_age_seconds is None or offsite_age_seconds > settings.backup_offsite_max_age_seconds:
+                reasons.append("required off-site backup verification is stale")
+    elif settings.backup_require_offsite:
+        reasons.append("required off-site backup metadata is unavailable")
+
     healthy = not reasons
     severity = "ok" if healthy else "critical"
     return {
@@ -67,6 +81,10 @@ def backup_operational_status() -> dict:
         "operator_action": None if healthy else "Inspect backup-scheduler logs, repository access, and run the documented restore drill before clearing the alert.",
         "last_run": last_run,
         "repository_health": health,
+        "offsite": offsite,
+        "offsite_required": settings.backup_require_offsite,
+        "offsite_age_seconds": offsite_age_seconds,
+        "offsite_max_age_seconds": settings.backup_offsite_max_age_seconds,
         "last_success_age_seconds": age_seconds,
         "max_age_seconds": settings.backup_max_age_seconds,
         "checked_at": now.isoformat(),
