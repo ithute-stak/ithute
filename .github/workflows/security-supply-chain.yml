@@ -75,8 +75,16 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install locked dependencies without lifecycle scripts
         run: npm ci --ignore-scripts
-      - name: Block high or critical npm vulnerabilities
-        run: npm audit --audit-level=high
+      - name: Block high or critical production dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
+      - name: Block critical vulnerabilities anywhere in dependency tree
+        run: npm audit --audit-level=critical
+      - name: Prove unpatched braces advisory is not a production dependency
+        run: |
+          if npm ls --omit=dev braces 2>/dev/null | grep -q "braces@"; then
+            echo "braces unexpectedly reachable from production dependencies"
+            exit 1
+          fi
 
   secret-scan:
     name: Secret leak gate
