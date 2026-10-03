@@ -31,6 +31,7 @@ def _hostname_for_address(db: Session, address: str) -> str | None:
         select(MailNode).where(
             MailNode.id == mailbox.mail_node_id,
             MailNode.status == "active",
+            (MailNode.tenant_id.is_(None)) | (MailNode.tenant_id == mailbox.tenant_id),
         )
     )
     return node.hostname if node is not None else None
