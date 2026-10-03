@@ -26,7 +26,7 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from .account import AuthContext, authenticated_context
+from .account import AuthContext, authenticated_context, sensitive_context
 from .config import Settings, get_settings
 from .db import get_db
 from .models import Application, AuthSession, PasskeyCredential, User, WebAuthnChallenge, utcnow
@@ -208,7 +208,7 @@ def remove_passkey(
     passkey_id: uuid.UUID,
     payload: PasskeyRemoveRequest,
     request: Request,
-    context: AuthContext = Depends(authenticated_context),
+    context: AuthContext = Depends(sensitive_context),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> None:
