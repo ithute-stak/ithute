@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     mail_hostname: str = "mail.phase8.test"
     mail_public_ip: str | None = None
     mail_tls_mode: str = "selfsigned"
+    mail_mta_sts_enabled: bool = True
+    mail_mta_sts_mode: str = "testing"
+    mail_mta_sts_max_age_seconds: int = 604800
+    mail_tls_report_address: str | None = None
     mail_data_path: str = "/srv/vmail"
     mail_ops_url: str = "http://postfix:9080"
     mail_ops_token: str = "development-mail-ops-token-change-me"
@@ -169,6 +173,14 @@ class Settings(BaseSettings):
             raise ValueError("COOKIE_SAMESITE must be lax, strict, or none")
         if self.mail_tls_mode not in {"selfsigned", "acme", "external"}:
             raise ValueError("MAIL_TLS_MODE must be selfsigned, acme, or external")
+        if self.mail_mta_sts_mode not in {"testing", "enforce"}:
+            raise ValueError("MAIL_MTA_STS_MODE must be testing or enforce")
+        if not 86400 <= self.mail_mta_sts_max_age_seconds <= 31557600:
+            raise ValueError("MAIL_MTA_STS_MAX_AGE_SECONDS must be between 86400 and 31557600")
+        if self.mail_tls_report_address:
+            self.mail_tls_report_address = self.mail_tls_report_address.strip().lower()
+            if "@" not in self.mail_tls_report_address:
+                raise ValueError("MAIL_TLS_REPORT_ADDRESS must be an email address")
         if not self.mail_data_path.startswith("/"):
             raise ValueError("MAIL_DATA_PATH must be absolute")
         if not self.recovery_ops_url.startswith(("http://", "https://")) or len(self.recovery_ops_token) < 24:
