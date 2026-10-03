@@ -195,6 +195,8 @@ class MailNode(Base):
     region: Mapped[str] = mapped_column(String(80), default="lesotho", nullable=False)
     public_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     hostname: Mapped[str] = mapped_column(String(253), nullable=False)
+    provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    provider_instance_id: Mapped[str | None] = mapped_column(String(180), nullable=True, index=True)
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="SET NULL"), index=True, nullable=True)
     ssh_port: Mapped[int] = mapped_column(Integer, default=22, nullable=False)
     ssh_user: Mapped[str | None] = mapped_column(String(80), nullable=True)
