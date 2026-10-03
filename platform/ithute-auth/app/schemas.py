@@ -117,6 +117,9 @@ class DeviceResponse(BaseModel):
     platform: str
     label: str | None
     active: bool
+    trusted: bool = False
+    last_seen_at: datetime | None = None
+    last_ip_address: str | None = None
 
 
 class PasswordChangeRequest(BaseModel):
@@ -169,11 +172,23 @@ class SessionResponse(BaseModel):
     client_id: str
     ip_address: str | None
     user_agent: str | None
+    assurance_level: int = 1
+    auth_method: str = "password"
+    risk_level: str = "low"
+    last_step_up_at: datetime | None = None
     created_at: datetime
     last_seen_at: datetime
     expires_at: datetime
     revoked_at: datetime | None
     current: bool = False
+
+
+class StepUpResponse(BaseModel):
+    access_token: str
+    token_type: str = "Bearer"
+    expires_in: int
+    assurance_level: int = 3
+    auth_method: str = "passkey"
 
 
 class AuditEventResponse(BaseModel):
