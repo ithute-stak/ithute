@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     rspamd_redis_url: str = "redis://rspamd-redis:6379/0"
     backup_status_dir: str = "/backup-status/status"
     backup_max_age_seconds: int = 93600
+    backup_require_offsite: bool = False
+    backup_offsite_max_age_seconds: int = 10800
     prometheus_url: str = "http://prometheus:9090"
     prometheus_timeout_seconds: float = 5.0
     operations_slo_target: float = 0.999
@@ -157,6 +159,8 @@ class Settings(BaseSettings):
             raise ValueError("BACKUP_STATUS_DIR must be an absolute path")
         if not 3600 <= self.backup_max_age_seconds <= 604800:
             raise ValueError("BACKUP_MAX_AGE_SECONDS must be between 3600 and 604800")
+        if not 900 <= self.backup_offsite_max_age_seconds <= 86400:
+            raise ValueError("BACKUP_OFFSITE_MAX_AGE_SECONDS must be between 900 and 86400")
         if not self.prometheus_url.startswith(("http://", "https://")):
             raise ValueError("PROMETHEUS_URL must be an HTTP(S) URL")
         if not 0.5 <= self.prometheus_timeout_seconds <= 30:
