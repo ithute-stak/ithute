@@ -18,6 +18,7 @@ from app.models import AuditLog, MailNode, MailNodeAgent, MailNodeOperation, Mai
 from app.models.mail import Mailbox, MailboxStorageType
 from app.services.mail_node_commands import queue_mailbox_sync
 from app.services.mail_routing_sync import sync_mail_routing
+from app.services.security_approvals import SecurityApprovalError, consume_security_approval
 
 router = APIRouter(tags=["mail-node-operations"])
 
@@ -31,6 +32,7 @@ class OperationResult(BaseModel):
 class FailoverRequest(BaseModel):
     target_node_id: UUID
     snapshot_id: UUID
+    approval_id: UUID | None = None
 
 
 def _now() -> datetime:
@@ -186,6 +188,24 @@ def queue_mail_node_failover(
     if db.get(MailNodeAgent, target.id) is None:
         raise HTTPException(status_code=409, detail="Failover target does not have an agent credential")
 
+    if settings.security_dual_control_enabled:
+        if payload.approval_id is None:
+            raise HTTPException(status_code=409, detail="Approved two-person security change is required for failover")
+        try:
+            consume_security_approval(
+                db,
+                approval_id=payload.approval_id,
+                action="mail_node.failover",
+                resource_type="mail_node",
+                resource_id=str(source.id),
+                payload_match={
+                    "target_node_id": str(target.id),
+                    "snapshot_id": str(snapshot.id),
+                },
+            )
+        except SecurityApprovalError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     operation = MailNodeOperation(
         node_id=target.id,
         target_node_id=target.id,
@@ -209,7 +229,7 @@ def queue_mail_node_failover(
         action="mail_node.failover.queue",
         resource_type="mail_node",
         resource_id=str(source.id),
-        metadata_json=json.dumps({"target_node_id": str(target.id), "snapshot_id": str(snapshot.id)}),
+        metadata_json=json.dumps({"target_node_id": str(target.id), "snapshot_id": str(snapshot.id), "approval_id": str(payload.approval_id) if payload.approval_id else None}),
     ))
     db.commit()
     db.refresh(operation)

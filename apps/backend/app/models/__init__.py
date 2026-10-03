@@ -17,6 +17,7 @@ from app.models.mail import DistributionGroup, DistributionGroupMember, MailAlia
 from app.models.platform_mail import PlatformMailDomainGrant, PlatformMailboxBinding, PlatformMailOutboundDelivery
 from app.models.deliverability import DkimKey
 from app.models.domain_health import DomainHealthMonitorState
+from app.models.security_governance import SecurityApprovalRequest
 from app.models.billing import (
     BillingInvoice,
     BillingPaymentEvent,
@@ -122,7 +123,7 @@ from app.models.webmail_rules import MailboxRule
 __all__ = [
     "ApiKey", "AuditLog", "Invitation", "MembershipRole", "MembershipStatus", "Tenant",
     "TenantMembership", "TenantStatus", "User", "UserRole", "UserSession", "PasswordResetToken", "Domain",
-    "DomainDnsMode", "DomainEvent", "DomainStatus", "DomainVerificationAttempt", "DomainHealthMonitorState", "Mailbox",
+    "DomainDnsMode", "DomainEvent", "DomainStatus", "DomainVerificationAttempt", "DomainHealthMonitorState", "SecurityApprovalRequest", "Mailbox",
     "MailboxStatus", "MailboxStorageType", "MailAlias", "DistributionGroup", "DistributionGroupMember", "PlatformMailDomainGrant",
     "PlatformMailboxBinding", "PlatformMailOutboundDelivery", "DkimKey", "BillingPlan", "TenantSubscription", "UsageSnapshot", "BillingInvoice",
     "BillingPaymentEvent", "SubscriptionStatus", "InvoiceStatus", "BillingAddon", "TenantAddon", "EdgeRouteDeployment",

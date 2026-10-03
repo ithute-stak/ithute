@@ -55,7 +55,9 @@ backup_one() {
       --file "$partial"; then
     mv "$partial" "$output"
     bytes="$(wc -c < "$output" | tr -d ' ')"
-    printf '%s|%s|%s\n' "$label" "$output" "$bytes"
+    checksum="$(sha256sum "$output" | awk '{print $1}')"
+    printf '%s  %s\n' "$checksum" "$(basename "$output")" > "${output}.sha256"
+    printf '%s|%s|%s|%s\n' "$label" "$output" "$bytes" "$checksum"
     return 0
   fi
   rm -f "$partial"
@@ -88,11 +90,11 @@ run_cycle() {
     printf '  "failed_databases": %s,\n' "$(json_string "$failed")"
     printf '  "databases": ['
     first=1
-    while IFS='|' read -r label file bytes; do
+    while IFS='|' read -r label file bytes checksum; do
       [ -n "$label" ] || continue
       if [ "$first" -eq 0 ]; then printf ','; fi
       first=0
-      printf '\n    {"name": %s, "file": %s, "bytes": %s}' "$(json_string "$label")" "$(json_string "$file")" "$bytes"
+      printf '\n    {"name": %s, "file": %s, "bytes": %s, "sha256": %s}' "$(json_string "$label")" "$(json_string "$file")" "$bytes" "$(json_string "$checksum")"
     done < "$manifest"
     if [ "$first" -eq 0 ]; then printf '\n  '; fi
     printf ']\n'
@@ -101,7 +103,7 @@ run_cycle() {
   mv "$tmp" "$STATUS_DIR/last-run.json"
   rm -f "$manifest"
 
-  find "$BACKUP_ROOT" -type f -name '*.dump' -mtime "+$RETENTION_DAYS" -delete || true
+  find "$BACKUP_ROOT" -type f \( -name '*.dump' -o -name '*.dump.sha256' \) -mtime "+$RETENTION_DAYS" -delete || true
 
   if [ "$status" = "success" ]; then
     write_health true "All Ithute PostgreSQL control-plane databases were backed up successfully."

@@ -59,6 +59,15 @@ run_drill() {
       record_result failed "No usable ${label} backup exists." "$started_at" "$(iso_now)" "$run_id"
       return 1
     fi
+    checksum_file="${dump}.sha256"
+    if [ ! -s "$checksum_file" ]; then
+      record_result failed "Missing checksum for ${label} backup." "$started_at" "$(iso_now)" "$run_id"
+      return 1
+    fi
+    if ! (cd "$BACKUP_ROOT" && sha256sum -c "$(basename "$checksum_file")" >/dev/null 2>&1); then
+      record_result failed "Checksum verification failed for ${label} backup." "$started_at" "$(iso_now)" "$run_id"
+      return 1
+    fi
     db="drill_${label}"
     PGPASSWORD="$DRILL_PASSWORD" dropdb --if-exists -h "$DRILL_HOST" -U "$DRILL_USER" "$db" >/dev/null 2>&1 || true
     if ! PGPASSWORD="$DRILL_PASSWORD" createdb -h "$DRILL_HOST" -U "$DRILL_USER" "$db"; then
