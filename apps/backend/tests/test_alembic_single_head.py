@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0056_mail_node_tenant_scope"
+LATEST_MIGRATION_HEAD = "0057_mail_node_readiness"
 
 
 def test_alembic_has_one_consolidated_head():
