@@ -15,12 +15,14 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.db.session import engine
 from app.services.auth_security import request_is_https, trusted_proxy_peer
+from app.services.audit_integrity import install_audit_integrity
 from app.services.mail_account_sync import install_mailbox_runtime_sync
 from app.services.mail_events import publish_mail_event
 from app.services.metrics import HTTP_LATENCY, HTTP_REQUESTS, READINESS, normalized_route
 from app.services.signup_security import enforce_signup_rate_limit, ensure_public_signup_open
 from app.services.webmail import WebmailError, session_credentials
 
+install_audit_integrity()
 install_mailbox_runtime_sync()
 
 app = FastAPI(title=settings.app_name, version="0.6.0", docs_url="/docs", redoc_url="/redoc")
