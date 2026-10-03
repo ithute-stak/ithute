@@ -368,6 +368,10 @@ def _mail_node_json(row: MailNode) -> dict:
         "tls_ready": row.tls_ready,
         "tls_not_after": row.tls_not_after.isoformat() if row.tls_not_after else None,
         "readiness_error": row.readiness_error,
+        "backup_ready": row.backup_ready,
+        "backup_error": row.backup_error,
+        "backup_interval_hours": row.backup_interval_hours,
+        "backup_retention_count": row.backup_retention_count,
     }
 
 
