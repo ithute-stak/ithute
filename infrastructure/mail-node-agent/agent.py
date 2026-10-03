@@ -59,6 +59,11 @@ if not AGENT_TOKEN.startswith("ith_mail_"):
     raise RuntimeError("ITHUTE_MAIL_AGENT_TOKEN is not a mail-node credential")
 if not ACCOUNTS_FILE.is_absolute() or not QUOTAS_FILE.is_absolute() or not STORAGE_PATH.is_absolute():
     raise RuntimeError("Mail account, quota and storage paths must be absolute")
+unsafe_storage_paths = {Path("/"), Path("/srv"), Path("/var"), Path("/home"), Path("/opt"), Path("/etc")}
+if STORAGE_PATH.resolve() in unsafe_storage_paths or len(STORAGE_PATH.resolve().parts) < 4:
+    raise RuntimeError("ITHUTE_MAIL_STORAGE_PATH is too broad for safe backup/restore")
+if BACKUP_ROOT.resolve() in {Path("/"), Path("/var"), Path("/srv"), Path("/home")} or len(BACKUP_ROOT.resolve().parts) < 4:
+    raise RuntimeError("ITHUTE_MAIL_BACKUP_ROOT is too broad")
 if ACCOUNTS_FILE.parent != QUOTAS_FILE.parent:
     raise RuntimeError("ITHUTE_MAIL_ACCOUNTS_FILE and ITHUTE_MAIL_QUOTAS_FILE must share the DMS config directory")
 if not BACKUP_ROOT.is_absolute():
