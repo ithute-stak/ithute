@@ -4,10 +4,13 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, BeforeValidator, EmailStr, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import get_db
+from app.models import MailNode
+from app.models.mail import Mailbox, MailboxStatus, MailboxStorageType
 from app.services.mailboxes import normalize_destination
 from app.services.security_audit import record_webmail_security_event
 from app.services.security_controls import SecurityControlUnavailable, clear_webmail_login_failures, record_webmail_login_failure, webmail_login_allowed
@@ -165,6 +168,38 @@ def _safe_attachment_name(filename: str) -> str:
     return value[:180]
 
 
+def _mailbox_transport(db: Session, address: str) -> dict:
+    mailbox = db.scalar(
+        select(Mailbox).where(
+            Mailbox.address == address.lower(),
+            Mailbox.status == MailboxStatus.active,
+        )
+    )
+    if mailbox is None or mailbox.storage_type != MailboxStorageType.external:
+        return {
+            "imap_host": settings.webmail_imap_host,
+            "imap_port": settings.webmail_imap_port,
+            "smtp_host": settings.webmail_smtp_host,
+            "smtp_port": settings.webmail_smtp_port,
+        }
+    if mailbox.mail_node_id is None:
+        raise HTTPException(status_code=503, detail="Mailbox storage node is not assigned")
+    node = db.scalar(
+        select(MailNode).where(
+            MailNode.id == mailbox.mail_node_id,
+            MailNode.status == "active",
+        )
+    )
+    if node is None:
+        raise HTTPException(status_code=503, detail="Mailbox storage node is unavailable")
+    return {
+        "imap_host": node.hostname,
+        "imap_port": 993,
+        "smtp_host": node.hostname,
+        "smtp_port": 587,
+    }
+
+
 @router.post("/session")
 def login(payload: WebmailLogin, request: Request, response: Response, db: Session = Depends(get_db)):
     address = payload.address
@@ -176,8 +211,9 @@ def login(payload: WebmailLogin, request: Request, response: Response, db: Sessi
     if not allowed:
         _security_event(db, request, address, "security.webmail.login.blocked", "rate_limited", retry_after)
         raise HTTPException(status_code=429, detail="Too many mailbox login attempts. Try again later.", headers={"Retry-After": str(retry_after)})
+    transport = _mailbox_transport(db, address)
     try:
-        token = create_session(address, payload.password)
+        token = create_session(address, payload.password, **transport)
     except WebmailError as exc:
         try:
             _, locked = record_webmail_login_failure(address, client_ip)
