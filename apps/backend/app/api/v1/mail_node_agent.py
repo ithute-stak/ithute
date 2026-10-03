@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
-from app.models import AuditLog, MailNode, MailNodeAgent, MailNodeCommand, User
+from app.models import AuditLog, MailNode, MailNodeAgent, MailNodeCommand, MailNodeOperation, MailNodeSnapshot, User
 
 router = APIRouter(tags=["mail-node-agent"])
 
@@ -28,6 +28,8 @@ class AgentHeartbeat(BaseModel):
     tls_ready: bool = False
     tls_not_after: datetime | None = None
     readiness_error: str | None = Field(default=None, max_length=2000)
+    backup_ready: bool = False
+    backup_error: str | None = Field(default=None, max_length=2000)
 
 
 class AgentCommandStatus(BaseModel):
@@ -118,6 +120,48 @@ def mail_node_agent_status(
     }
 
 
+def _queue_scheduled_backup_if_due(db: Session, agent: MailNodeAgent, node: MailNode) -> None:
+    if node.status != "active" or not node.backup_ready:
+        return
+    pending = db.scalar(
+        select(MailNodeOperation).where(
+            MailNodeOperation.node_id == node.id,
+            MailNodeOperation.operation == "backup",
+            MailNodeOperation.status.in_(("queued", "claimed")),
+        )
+    )
+    if pending is not None:
+        return
+    latest = db.scalar(
+        select(MailNodeSnapshot)
+        .where(
+            MailNodeSnapshot.node_id == node.id,
+            MailNodeSnapshot.status.in_(("ready", "creating")),
+        )
+        .order_by(MailNodeSnapshot.created_at.desc())
+    )
+    now = _now()
+    interval = max(1, min(int(node.backup_interval_hours or 24), 168))
+    if latest is not None and latest.created_at and now - latest.created_at < timedelta(hours=interval):
+        return
+
+    snapshot = MailNodeSnapshot(
+        node_id=node.id,
+        tenant_id=node.tenant_id,
+        snapshot_key=f"{node.id.hex}-{now.strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}",
+        status="creating",
+    )
+    db.add(snapshot)
+    db.flush()
+    db.add(MailNodeOperation(
+        node_id=node.id,
+        tenant_id=node.tenant_id,
+        operation="backup",
+        payload_json=json.dumps({"snapshot_id": str(snapshot.id), "snapshot_key": snapshot.snapshot_key}),
+        requested_by_user_id=agent.rotated_by_user_id,
+    ))
+
+
 @router.post("/mail-node-agent/heartbeat")
 def mail_node_agent_heartbeat(
     payload: AgentHeartbeat,
@@ -139,8 +183,11 @@ def mail_node_agent_heartbeat(
     node.tls_ready = payload.tls_ready
     node.tls_not_after = payload.tls_not_after
     node.readiness_error = payload.readiness_error
-    if node.status == "provisioning" and payload.smtp_ready and payload.imap_ready and payload.tls_ready:
+    node.backup_ready = payload.backup_ready
+    node.backup_error = payload.backup_error
+    if node.status == "provisioning" and payload.smtp_ready and payload.imap_ready and payload.tls_ready and payload.backup_ready:
         node.status = "active"
+    _queue_scheduled_backup_if_due(db, agent, node)
     db.commit()
     return {"ok": True, "node_id": str(node.id), "status": node.status}
 
