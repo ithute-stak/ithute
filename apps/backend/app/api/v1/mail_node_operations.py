@@ -91,6 +91,15 @@ def create_mail_node_backup(
         raise HTTPException(status_code=409, detail="Mail node must be active with a fresh heartbeat and reachable off-node backup before backup can be requested")
     if db.get(MailNodeAgent, node.id) is None:
         raise HTTPException(status_code=409, detail="Mail node does not have an agent credential")
+    pending = db.scalar(
+        select(MailNodeOperation).where(
+            MailNodeOperation.node_id == node.id,
+            MailNodeOperation.operation == "backup",
+            MailNodeOperation.status.in_(("queued", "claimed")),
+        )
+    )
+    if pending is not None:
+        raise HTTPException(status_code=409, detail="A mail-node backup is already in progress")
 
     snapshot = MailNodeSnapshot(
         node_id=node.id,
