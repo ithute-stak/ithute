@@ -83,8 +83,12 @@ def create_mail_node_backup(
     node = db.get(MailNode, node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="Mail node not found")
-    if node.status != "active":
-        raise HTTPException(status_code=409, detail="Mail node must be active before a backup can be requested")
+    fresh = bool(
+        node.last_heartbeat_at
+        and (_now() - node.last_heartbeat_at).total_seconds() <= settings.mail_node_stale_seconds
+    )
+    if node.status != "active" or not fresh or not node.backup_ready:
+        raise HTTPException(status_code=409, detail="Mail node must be active with a fresh heartbeat and reachable off-node backup before backup can be requested")
     if db.get(MailNodeAgent, node.id) is None:
         raise HTTPException(status_code=409, detail="Mail node does not have an agent credential")
 
