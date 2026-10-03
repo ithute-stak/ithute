@@ -25,9 +25,14 @@ docker compose version >/dev/null 2>&1 || {
   exit 2
 }
 command -v python3 >/dev/null 2>&1 || {
-  echo "Python 3 is required." >&2
+  echo "Python 3.10 or newer is required." >&2
   exit 2
 }
+python3 - <<'PY'
+import sys
+if sys.version_info < (3, 10):
+    raise SystemExit("Python 3.10 or newer is required")
+PY
 command -v rclone >/dev/null 2>&1 || {
   echo "rclone is required for mandatory off-node backups." >&2
   exit 2
