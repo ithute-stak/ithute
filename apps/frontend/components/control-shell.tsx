@@ -102,6 +102,7 @@ const navigation: NavGroup[] = [
     children: [
       { label: "IDS Auth & Push", href: "/ithute-platform", icon: ShieldCheck },
       { label: "Security", href: "/security", icon: ShieldCheck },
+      { label: "Security approvals", href: "/security-approvals", icon: ShieldCheck },
       { label: "API access", href: "/api-access", icon: KeyRound },
       { label: "Audit & activity", href: "/audit", icon: Activity },
       { label: "Team access", href: "/organizations", icon: UsersRound },
