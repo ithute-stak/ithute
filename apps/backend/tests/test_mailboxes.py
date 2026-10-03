@@ -319,6 +319,7 @@ def test_mail_node_recommendation_prefers_healthy_dedicated_capacity(client, db,
         smtp_ready=True,
         imap_ready=True,
         tls_ready=True,
+        backup_ready=True,
         weight=500,
     )
     dedicated = MailNode(
@@ -334,6 +335,7 @@ def test_mail_node_recommendation_prefers_healthy_dedicated_capacity(client, db,
         smtp_ready=True,
         imap_ready=True,
         tls_ready=True,
+        backup_ready=True,
         weight=100,
     )
     db.add_all([shared, dedicated])
@@ -434,6 +436,7 @@ def test_controlled_failover_switches_mailbox_only_after_restore_completes(clien
         smtp_ready=True,
         imap_ready=True,
         tls_ready=True,
+        backup_ready=True,
     )
     db.add_all([source, target])
     db.commit()
