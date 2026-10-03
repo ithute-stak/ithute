@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, CheckCircle2, HardDrive, Plus, RefreshCw, Server, ShieldCheck, Wrench, type LucideIcon } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, HardDrive, MailCheck as MailRouteIcon, Plus, RefreshCw, Server, ShieldCheck, Wrench, type LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ControlShell } from "@/components/control-shell";
 
@@ -65,6 +65,7 @@ export default function MailNodesPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [agentToken, setAgentToken] = useState<{node:string;token:string}|null>(null);
+  const [routing, setRouting] = useState<{relay_domains:number;relay_recipients:number;transport_routes:number;virtual_aliases:number}|null>(null);
 
   const active = useMemo(() => nodes.filter((node) => node.status === "active").length, [nodes]);
   const healthy = useMemo(() => nodes.filter((node) => node.healthy).length, [nodes]);
@@ -74,7 +75,7 @@ export default function MailNodesPage() {
   async function loadNodes() {
     setLoading(true);
     setError("");
-    const response = await api("/platform/mail-nodes");
+    const [response, routingResponse] = await Promise.all([api("/platform/mail-nodes"), api("/platform/mail-routing")]);
     if (!response.ok) {
       setError(response.status === 403 ? "Platform owner access is required." : "Unable to load mail nodes.");
       setLoading(false);
@@ -82,6 +83,7 @@ export default function MailNodesPage() {
     }
     const payload = await response.json();
     setNodes(payload.items || []);
+    if (routingResponse.ok) setRouting(await routingResponse.json());
     setLoading(false);
   }
 
@@ -171,6 +173,25 @@ export default function MailNodesPage() {
     setAgentToken({ node: node.name, token: body.token });
   }
 
+  async function reconcileRouting() {
+    setMessage("");
+    setError("");
+    const response = await api("/platform/mail-routing/reconcile", { method: "POST" });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      setError(body.detail || "Unable to reconcile mail routing.");
+      return;
+    }
+    const body = await response.json();
+    setRouting({
+      relay_domains: body.relay_domains,
+      relay_recipients: body.relay_recipients,
+      transport_routes: body.transport,
+      virtual_aliases: body.virtual_aliases,
+    });
+    setMessage("SMTP routing maps reconciled from the current mailbox placement.");
+  }
+
 
   return (
     <ControlShell title="Mail nodes" subtitle="Distributed email infrastructure and storage nodes" userEmail={me?.email}>
@@ -187,9 +208,14 @@ export default function MailNodesPage() {
                 SSH metadata is stored for bootstrap planning only; Ithute does not store an SSH password here.
               </p>
             </div>
-            <button className="btn-secondary" onClick={() => void loadNodes()} disabled={loading}>
-              <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button className="btn-secondary" onClick={() => void reconcileRouting()}>
+                <ShieldCheck size={14} /> Reconcile routing
+              </button>
+              <button className="btn-secondary" onClick={() => void loadNodes()} disabled={loading}>
+                <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
+              </button>
+            </div>
           </div>
         </section>
 
@@ -204,11 +230,12 @@ export default function MailNodesPage() {
           </div>
         ) : null}
 
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <Metric icon={Server} label="Registered nodes" value={String(nodes.length)} />
           <Metric icon={Activity} label="Healthy heartbeat" value={`${healthy} / ${active}`} />
           <Metric icon={HardDrive} label="Reported capacity" value={storage(total || null)} />
           <Metric icon={ShieldCheck} label="Reported free" value={storage(total ? Math.max(0, total - used) : null)} />
+          <Metric icon={MailRouteIcon} label="SMTP routes" value={routing ? String(routing.transport_routes) : "—"} />
         </section>
 
         {me?.is_platform_owner ? (
