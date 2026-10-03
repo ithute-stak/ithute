@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
 
@@ -299,6 +300,54 @@ def test_distributed_routing_maps_internal_and_external_mailboxes(client, db, te
 
     cleanup(db, domain)
     db.execute(delete(MailNode).where(MailNode.id == uuid.UUID(node_id)))
+    db.commit()
+
+
+def test_mail_node_recommendation_prefers_healthy_dedicated_capacity(client, db, tenant_admin, platform_owner):
+    user, tenant, _ = tenant_admin
+    platform_headers = login(client, platform_owner.email)
+
+    shared = MailNode(
+        name=f"shared-{uuid.uuid4().hex[:8]}",
+        role="combined",
+        region="lesotho",
+        hostname=f"shared-{uuid.uuid4().hex[:8]}.example.com",
+        status="active",
+        total_storage_bytes=500 * 1024**3,
+        used_storage_bytes=100 * 1024**3,
+        last_heartbeat_at=datetime.now(timezone.utc),
+        weight=500,
+    )
+    dedicated = MailNode(
+        name=f"dedicated-{uuid.uuid4().hex[:8]}",
+        role="combined",
+        region="lesotho",
+        hostname=f"dedicated-{uuid.uuid4().hex[:8]}.example.com",
+        tenant_id=tenant.id,
+        status="active",
+        total_storage_bytes=300 * 1024**3,
+        used_storage_bytes=50 * 1024**3,
+        last_heartbeat_at=datetime.now(timezone.utc),
+        weight=100,
+    )
+    db.add_all([shared, dedicated])
+    db.commit()
+    db.refresh(shared)
+    db.refresh(dedicated)
+
+    headers = login(client, user.email)
+    response = client.get(
+        f"/api/v1/tenants/{tenant.id}/mail-nodes/recommend",
+        headers=headers,
+        params={"quota_bytes": 200 * 1024**3},
+    )
+    assert response.status_code == 200, response.text
+    recommended = response.json()["recommended"]
+    assert recommended is not None
+    assert recommended["id"] == str(dedicated.id)
+    assert recommended["scope"] == "dedicated"
+
+    db.execute(delete(MailNode).where(MailNode.id.in_([shared.id, dedicated.id])))
     db.commit()
 
 
