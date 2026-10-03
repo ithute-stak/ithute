@@ -28,6 +28,11 @@ type MailNode = {
   used_storage_bytes?: number | null;
   free_storage_bytes?: number | null;
   agent_version?: string | null;
+  smtp_ready: boolean;
+  imap_ready: boolean;
+  tls_ready: boolean;
+  tls_not_after?: string | null;
+  readiness_error?: string | null;
 };
 
 async function api(path: string, init?: RequestInit) {
@@ -311,6 +316,12 @@ export default function MailNodesPage() {
                           <p className="mt-1 text-[10px] text-[#819087]">Scope: {node.tenant_id ? `Dedicated · ${tenants.find(t=>t.id===node.tenant_id)?.name || node.tenant_id}` : "Shared"} · Role: {node.role}</p>
                           <p className="mt-1 text-[10px] text-[#819087]">Storage: {node.storage_path} · SSH: {node.ssh_user || "not set"}@{node.hostname}:{node.ssh_port}</p>
                           <p className="mt-1 text-[10px] text-[#819087]">Capabilities: {node.capabilities.join(", ") || "none"} · Agent: {node.agent_version || "not connected"}</p>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            <span className={`status-badge ${node.smtp_ready?"status-verified":"status-suspended"}`}>SMTP {node.smtp_ready?"ready":"not ready"}</span>
+                            <span className={`status-badge ${node.imap_ready?"status-verified":"status-suspended"}`}>IMAP {node.imap_ready?"ready":"not ready"}</span>
+                            <span className={`status-badge ${node.tls_ready?"status-verified":"status-suspended"}`}>TLS {node.tls_ready?"valid":"not ready"}</span>
+                          </div>
+                          {node.readiness_error?<p className="mt-2 text-[10px] font-semibold text-amber-700">{node.readiness_error}</p>:null}
                         </div>
                         <div className="flex flex-wrap gap-2">
                           <button className="btn-secondary text-[10px]" onClick={() => void generateAgentToken(node)}>Agent token</button>
@@ -319,10 +330,11 @@ export default function MailNodesPage() {
                           {node.status !== "disabled" ? <button className="rounded-lg border border-red-200 px-3 py-2 text-[10px] font-bold text-red-700" onClick={() => void updateStatus(node, "disabled")}>Disable</button> : null}
                         </div>
                       </div>
-                      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                         <MiniStat label="Capacity" value={storage(node.total_storage_bytes)} />
                         <MiniStat label="Used" value={storage(node.used_storage_bytes)} />
                         <MiniStat label="Last heartbeat" value={heartbeat(node.last_heartbeat_at)} />
+                        <MiniStat label="TLS expires" value={heartbeat(node.tls_not_after)} />
                       </div>
                       {pct !== null ? (
                         <div className="mt-3">
