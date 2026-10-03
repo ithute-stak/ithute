@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 
 from app.core.config import settings
+from app.services.secret_provider import resolve_secret
 
 
 class MailNodeProvisionerError(RuntimeError):
@@ -10,7 +11,10 @@ class MailNodeProvisionerError(RuntimeError):
 
 
 def provisioner_configured() -> bool:
-    return bool(settings.mail_node_provisioner_url and settings.mail_node_provisioner_token)
+    return bool(
+        settings.mail_node_provisioner_url
+        and (settings.mail_node_provisioner_token_ref or settings.mail_node_provisioner_token)
+    )
 
 
 def provision_mail_node(payload: dict) -> dict:
@@ -21,7 +25,11 @@ def provision_mail_node(payload: dict) -> dict:
             settings.mail_node_provisioner_url or "",
             json=payload,
             headers={
-                "Authorization": f"Bearer {settings.mail_node_provisioner_token}",
+                "Authorization": "Bearer " + resolve_secret(
+                    settings.mail_node_provisioner_token_ref,
+                    settings.mail_node_provisioner_token,
+                    name="mail node provisioner token",
+                ),
                 "Accept": "application/json",
                 "Content-Type": "application/json",
             },
