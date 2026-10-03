@@ -83,8 +83,10 @@ class Settings(BaseSettings):
 
     transactional_smtp_host: str = "postfix"
     transactional_smtp_port: int = 587
-    transactional_smtp_verify_tls: bool = False
+    transactional_smtp_verify_tls: bool = True
     transactional_default_daily_limit: int = 1000
+    transactional_tenant_per_minute_limit: int = 120
+    transactional_api_key_per_minute_limit: int = 60
     transactional_tenant_daily_limit: int = 10000
     transactional_max_recipients: int = 100
 
@@ -99,6 +101,12 @@ class Settings(BaseSettings):
     mail_node_provisioner_token: str | None = None
     mail_node_provisioner_timeout_seconds: float = 60.0
     mail_node_control_plane_url: str = "https://ithute.co.ls"
+    mail_mta_sts_enabled: bool = True
+    mail_mta_sts_mode: str = "enforce"
+    mail_mta_sts_max_age_seconds: int = 604800
+    mail_mta_sts_policy_id: str = "20261003"
+    mail_tls_reporting_address: str = "tls-reports@ithute.co.ls"
+    dkim_rotation_days: int = 90
 
     domain_verification_min_interval_seconds: int = 10
     domain_verification_max_attempts_per_hour: int = 20
@@ -177,6 +185,18 @@ class Settings(BaseSettings):
             raise ValueError("COOKIE_SAMESITE must be lax, strict, or none")
         if self.mail_tls_mode not in {"selfsigned", "acme", "external"}:
             raise ValueError("MAIL_TLS_MODE must be selfsigned, acme, or external")
+        if self.mail_mta_sts_mode not in {"testing", "enforce"}:
+            raise ValueError("MAIL_MTA_STS_MODE must be testing or enforce")
+        if not 86400 <= self.mail_mta_sts_max_age_seconds <= 31557600:
+            raise ValueError("MAIL_MTA_STS_MAX_AGE_SECONDS must be between 1 day and 1 year")
+        if not 7 <= self.dkim_rotation_days <= 365:
+            raise ValueError("DKIM_ROTATION_DAYS must be between 7 and 365")
+        if not 1 <= self.transactional_tenant_per_minute_limit <= 100000:
+            raise ValueError("TRANSACTIONAL_TENANT_PER_MINUTE_LIMIT is invalid")
+        if not 1 <= self.transactional_api_key_per_minute_limit <= self.transactional_tenant_per_minute_limit:
+            raise ValueError("TRANSACTIONAL_API_KEY_PER_MINUTE_LIMIT is invalid")
+        if self.environment.lower() == "production" and not self.transactional_smtp_verify_tls:
+            raise ValueError("TRANSACTIONAL_SMTP_VERIFY_TLS must be enabled in production")
         if not self.mail_data_path.startswith("/"):
             raise ValueError("MAIL_DATA_PATH must be absolute")
         if not self.recovery_ops_url.startswith(("http://", "https://")) or len(self.recovery_ops_token) < 24:
