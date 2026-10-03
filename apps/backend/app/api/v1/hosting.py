@@ -361,6 +361,11 @@ def _mail_node_json(row: MailNode) -> dict:
         "used_storage_bytes": used,
         "free_storage_bytes": free,
         "agent_version": row.agent_version,
+        "smtp_ready": row.smtp_ready,
+        "imap_ready": row.imap_ready,
+        "tls_ready": row.tls_ready,
+        "tls_not_after": row.tls_not_after.isoformat() if row.tls_not_after else None,
+        "readiness_error": row.readiness_error,
     }
 
 
