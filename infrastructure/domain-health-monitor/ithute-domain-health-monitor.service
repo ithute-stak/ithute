@@ -1,0 +1,9 @@
+[Unit]
+Description=Ithute domain mail health monitor
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/ithute
+ExecStart=/opt/ithute/infrastructure/domain-health-monitor/run.sh
