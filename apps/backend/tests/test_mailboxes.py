@@ -316,6 +316,9 @@ def test_mail_node_recommendation_prefers_healthy_dedicated_capacity(client, db,
         total_storage_bytes=500 * 1024**3,
         used_storage_bytes=100 * 1024**3,
         last_heartbeat_at=datetime.now(timezone.utc),
+        smtp_ready=True,
+        imap_ready=True,
+        tls_ready=True,
         weight=500,
     )
     dedicated = MailNode(
@@ -328,6 +331,9 @@ def test_mail_node_recommendation_prefers_healthy_dedicated_capacity(client, db,
         total_storage_bytes=300 * 1024**3,
         used_storage_bytes=50 * 1024**3,
         last_heartbeat_at=datetime.now(timezone.utc),
+        smtp_ready=True,
+        imap_ready=True,
+        tls_ready=True,
         weight=100,
     )
     db.add_all([shared, dedicated])
