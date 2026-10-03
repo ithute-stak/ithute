@@ -3,6 +3,7 @@ import urllib.error
 import urllib.request
 
 from app.core.config import settings
+from app.services.secret_provider import resolve_secret
 
 
 class MailOpsError(RuntimeError):
@@ -13,7 +14,13 @@ def _request(path: str, method: str = "GET") -> dict:
     req = urllib.request.Request(
         f"{settings.mail_ops_url.rstrip('/')}{path}",
         method=method,
-        headers={"X-Mail-Ops-Token": settings.mail_ops_token},
+        headers={
+            "X-Mail-Ops-Token": resolve_secret(
+                settings.mail_ops_token_ref,
+                settings.mail_ops_token,
+                name="mail operations token",
+            )
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=settings.mail_ops_timeout_seconds) as response:
