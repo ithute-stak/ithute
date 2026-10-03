@@ -291,6 +291,7 @@ def create_snapshot(snapshot_key: str) -> dict[str, Any]:
     remote_uri = _remote_uri(snapshot_key)
     if remote_uri:
         _run(_rclone_args("copyto", str(archive), remote_uri))
+        archive.unlink(missing_ok=True)
     elif BACKUP_REMOTE_REQUIRED:
         raise RuntimeError("Off-node backup remote is not configured")
 
