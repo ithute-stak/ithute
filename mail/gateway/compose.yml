@@ -1,0 +1,29 @@
+name: ithute-mail-gateway
+
+services:
+  gateway:
+    build:
+      context: .
+    image: ithute-mail-gateway:local
+    container_name: ithute-mail-gateway
+    hostname: mx-gateway.ithute.co.ls
+    restart: unless-stopped
+    ports:
+      # Staging-safe default. Move public TCP/25 here only during the controlled
+      # MX gateway cutover after routing tests pass.
+      - "${ITHUTE_GATEWAY_SMTP_BIND:-2525}:25"
+    volumes:
+      - ../routing:/routing:ro
+    healthcheck:
+      test: ["CMD-SHELL", "postfix status >/dev/null 2>&1 && test -f /routing/.ready"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ithute-platform
+
+networks:
+  ithute-platform:
+    external: true
+    name: ithute_ithute
