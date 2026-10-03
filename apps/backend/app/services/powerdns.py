@@ -9,6 +9,7 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from app.core.config import settings
+from app.services.secret_provider import resolve_secret
 
 
 class PowerDNSError(RuntimeError):
@@ -47,7 +48,11 @@ class PowerDNSClient:
     def __init__(self) -> None:
         self.base = settings.powerdns_api_url.rstrip("/")
         self.server_id = quote(settings.powerdns_server_id, safe="")
-        self.api_key = settings.powerdns_api_key
+        self.api_key = resolve_secret(
+            settings.powerdns_api_key_ref,
+            settings.powerdns_api_key,
+            name="PowerDNS API key",
+        )
         self.timeout = settings.powerdns_api_timeout_seconds
 
     def _request(self, method: str, path: str, payload: dict | None = None, ok: tuple[int, ...] = (200,)) -> PowerDNSResult:
