@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     backup_max_age_seconds: int = 93600
     backup_require_offsite: bool = False
     backup_offsite_max_age_seconds: int = 10800
+    security_dual_control_enabled: bool = False
+    security_approval_ttl_minutes: int = 30
     prometheus_url: str = "http://prometheus:9090"
     prometheus_timeout_seconds: float = 5.0
     operations_slo_target: float = 0.999
@@ -161,6 +163,8 @@ class Settings(BaseSettings):
             raise ValueError("BACKUP_MAX_AGE_SECONDS must be between 3600 and 604800")
         if not 900 <= self.backup_offsite_max_age_seconds <= 86400:
             raise ValueError("BACKUP_OFFSITE_MAX_AGE_SECONDS must be between 900 and 86400")
+        if not 5 <= self.security_approval_ttl_minutes <= 240:
+            raise ValueError("SECURITY_APPROVAL_TTL_MINUTES must be between 5 and 240")
         if not self.prometheus_url.startswith(("http://", "https://")):
             raise ValueError("PROMETHEUS_URL must be an HTTP(S) URL")
         if not 0.5 <= self.prometheus_timeout_seconds <= 30:
