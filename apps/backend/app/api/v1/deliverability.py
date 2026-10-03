@@ -50,6 +50,9 @@ def _audit(db: Session, tenant_id: UUID, current: User, action: str, resource_id
 
 
 def _key_json(domain: Domain, key: DkimKey) -> dict:
+    now = datetime.now(timezone.utc)
+    created = key.created_at
+    age_days = max(0, (now - created).days) if created else 0
     return {
         "id": str(key.id),
         "selector": key.selector,
@@ -59,6 +62,9 @@ def _key_json(domain: Domain, key: DkimKey) -> dict:
         "dns_value": f"v=DKIM1; k=rsa; p={key.public_key_b64}",
         "created_at": key.created_at,
         "rotated_at": key.rotated_at,
+        "age_days": age_days,
+        "rotation_recommended": bool(key.active and age_days >= settings.dkim_rotation_days),
+        "rotation_target_days": settings.dkim_rotation_days,
     }
 
 
@@ -156,7 +162,19 @@ def records(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), cur
     key = _active_key(db, tenant_id, domain.id)
     if not key:
         raise HTTPException(status_code=409, detail="Generate an active DKIM key first")
-    return {"domain": domain.ascii_name, "mail_hostname": settings.mail_hostname, "records": recommended_records(domain.ascii_name, settings.mail_hostname, key.selector, key.public_key_b64)}
+    return {
+        "domain": domain.ascii_name,
+        "mail_hostname": settings.mail_hostname,
+        "records": recommended_records(
+            domain.ascii_name,
+            settings.mail_hostname,
+            key.selector,
+            key.public_key_b64,
+            mta_sts_id=settings.mail_mta_sts_policy_id if settings.mail_mta_sts_enabled else None,
+            mta_sts_ip=settings.bootstrap_public_ip if settings.mail_mta_sts_enabled else None,
+            tls_report_address=settings.mail_tls_reporting_address or None,
+        ),
+    }
 
 
 @router.get("/infrastructure-readiness")
@@ -176,7 +194,28 @@ def readiness(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), c
     infrastructure_result = infrastructure_readiness(settings.mail_hostname, settings.mail_public_ip)
     if not key:
         return {"ready": False, "checks": {"mx": False, "spf": False, "dkim": False, "dmarc": False}, "infrastructure": infrastructure_result, "detail": "Generate an active DKIM key first"}
-    result = deliverability_readiness(domain.ascii_name, settings.mail_hostname, key.selector, key.public_key_b64)
-    result.update({"domain": domain.ascii_name, "mail_hostname": settings.mail_hostname, "selector": key.selector, "infrastructure": infrastructure_result})
+    result = deliverability_readiness(
+        domain.ascii_name,
+        settings.mail_hostname,
+        key.selector,
+        key.public_key_b64,
+        mta_sts_id=settings.mail_mta_sts_policy_id if settings.mail_mta_sts_enabled else None,
+        mta_sts_ip=settings.bootstrap_public_ip if settings.mail_mta_sts_enabled else None,
+        tls_report_address=settings.mail_tls_reporting_address or None,
+    )
+    result.update({
+        "domain": domain.ascii_name,
+        "mail_hostname": settings.mail_hostname,
+        "selector": key.selector,
+        "infrastructure": infrastructure_result,
+        "dkim": _key_json(domain, key),
+        "mta_sts": {
+            "enabled": settings.mail_mta_sts_enabled,
+            "mode": settings.mail_mta_sts_mode,
+            "max_age": settings.mail_mta_sts_max_age_seconds,
+            "policy_id": settings.mail_mta_sts_policy_id,
+        },
+        "tls_reporting_address": settings.mail_tls_reporting_address,
+    })
     result["ready"] = bool(result["ready"] and infrastructure_result["ready"])
     return result
