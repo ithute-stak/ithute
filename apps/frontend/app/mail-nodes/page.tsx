@@ -17,6 +17,8 @@ type MailNode = {
   region: string;
   hostname: string;
   public_ip?: string | null;
+  provider?: string | null;
+  provider_instance_id?: string | null;
   tenant_id?: string | null;
   ssh_port: number;
   ssh_user?: string | null;
@@ -75,6 +77,8 @@ export default function MailNodesPage() {
   const [error, setError] = useState("");
   const [agentToken, setAgentToken] = useState<{node:string;token:string}|null>(null);
   const [routing, setRouting] = useState<{relay_domains:number;relay_recipients:number;transport_routes:number;virtual_aliases:number}|null>(null);
+  const [provisionerConfigured, setProvisionerConfigured] = useState(false);
+  const [provisionMode, setProvisionMode] = useState<"manual"|"automatic">("manual");
   const [failoverSource, setFailoverSource] = useState<MailNode|null>(null);
   const [snapshots, setSnapshots] = useState<MailNodeSnapshot[]>([]);
   const [selectedSnapshot, setSelectedSnapshot] = useState("");
@@ -88,7 +92,7 @@ export default function MailNodesPage() {
   async function loadNodes() {
     setLoading(true);
     setError("");
-    const [response, routingResponse, tenantsResponse] = await Promise.all([api("/platform/mail-nodes"), api("/platform/mail-routing"), api("/tenants")]);
+    const [response, routingResponse, tenantsResponse, provisionerResponse] = await Promise.all([api("/platform/mail-nodes"), api("/platform/mail-routing"), api("/tenants"), api("/platform/mail-node-provisioner")]);
     if (!response.ok) {
       setError(response.status === 403 ? "Platform owner access is required." : "Unable to load mail nodes.");
       setLoading(false);
@@ -98,6 +102,7 @@ export default function MailNodesPage() {
     setNodes(payload.items || []);
     if (routingResponse.ok) setRouting(await routingResponse.json());
     if (tenantsResponse.ok) setTenants(await tenantsResponse.json());
+    if (provisionerResponse.ok) setProvisionerConfigured(Boolean((await provisionerResponse.json()).configured));
     setLoading(false);
   }
 
@@ -132,9 +137,18 @@ export default function MailNodesPage() {
     const form = event.currentTarget;
     const data = new FormData(form);
     const capabilities = ["mail", "storage"];
-    const response = await api("/platform/mail-nodes", {
+    const automatic = provisionMode === "automatic";
+    const response = await api(automatic ? "/platform/mail-nodes/provision" : "/platform/mail-nodes", {
       method: "POST",
-      body: JSON.stringify({
+      body: JSON.stringify(automatic ? {
+        name: data.get("name"),
+        region: data.get("region"),
+        hostname: data.get("hostname"),
+        tenant_id: data.get("tenant_id") || null,
+        storage_gb: Number(data.get("storage_gb") || 200),
+        memory_mb: Number(data.get("memory_mb") || 4096),
+        cpu_cores: Number(data.get("cpu_cores") || 2),
+      } : {
         name: data.get("name"),
         role: data.get("role"),
         region: data.get("region"),
@@ -143,7 +157,7 @@ export default function MailNodesPage() {
         tenant_id: data.get("tenant_id") || null,
         ssh_port: Number(data.get("ssh_port") || 22),
         ssh_user: data.get("ssh_user") || null,
-        storage_path: data.get("storage_path") || "/srv/ithute-mail",
+        storage_path: data.get("storage_path") || "/srv/ithute-mail/data/mail-data",
         capabilities,
         weight: Number(data.get("weight") || 100),
       }),
@@ -155,7 +169,7 @@ export default function MailNodesPage() {
       return;
     }
     form.reset();
-    setMessage("Mail node registered. Install the Ithute node agent in Phase 3 to begin live heartbeat and capacity reporting.");
+    setMessage(automatic ? "Mail node provisioning accepted. It will become active after its agent reports SMTP, IMAP and TLS ready." : "Mail node registered. Install the Ithute node bundle and connect its agent.");
     await loadNodes();
     setSaving(false);
   }
@@ -313,8 +327,9 @@ export default function MailNodesPage() {
           <section className="grid gap-4 xl:grid-cols-[390px_1fr]">
             <form onSubmit={createNode} className="rounded-2xl border border-[#e1e7e3] bg-white p-4 shadow-sm">
               <div className="flex items-center gap-2 font-black text-[#21342a]"><Plus size={15} /> Register VPS / mail node</div>
-              <p className="mt-1 text-[10px] leading-4 text-[#819087]">This creates the node record. Agent installation and remote provisioning follow in Phase 3.</p>
+              <p className="mt-1 text-[10px] leading-4 text-[#819087]">Register an existing server or let Ithute hand the request to your configured infrastructure provisioner.</p>
               <div className="mt-4 space-y-3">
+                {provisionerConfigured ? <div className="grid grid-cols-2 gap-2 rounded-xl bg-[#f5f8f6] p-1.5"><button type="button" onClick={()=>setProvisionMode("manual")} className={`rounded-lg px-3 py-2 text-[10px] font-black ${provisionMode==="manual"?"bg-white shadow-sm text-[#123a38]":"text-[#718078]"}`}>Existing VPS</button><button type="button" onClick={()=>setProvisionMode("automatic")} className={`rounded-lg px-3 py-2 text-[10px] font-black ${provisionMode==="automatic"?"bg-white shadow-sm text-[#123a38]":"text-[#718078]"}`}>Provision automatically</button></div> : null}
                 <input name="name" className="input" placeholder="Node name, e.g. GlobalIT Mail VPS" required />
                 <div className="grid grid-cols-2 gap-2">
                   <select name="role" className="input" defaultValue="combined">
@@ -325,7 +340,7 @@ export default function MailNodesPage() {
                   <input name="region" className="input" defaultValue="lesotho" placeholder="Region" required />
                 </div>
                 <input name="hostname" className="input" placeholder="mail01.example.com or VPS hostname" required />
-                <input name="public_ip" className="input" placeholder="Public IP (optional)" />
+                {provisionMode==="manual" ? <input name="public_ip" className="input" placeholder="Public IP (optional)" /> : <div className="grid grid-cols-3 gap-2"><input name="storage_gb" type="number" min="20" defaultValue="200" className="input" placeholder="Storage GB"/><input name="memory_mb" type="number" min="2048" defaultValue="4096" className="input" placeholder="RAM MB"/><input name="cpu_cores" type="number" min="1" defaultValue="2" className="input" placeholder="CPU"/></div>}
                 <label className="block">
                   <span className="label">Node scope</span>
                   <select name="tenant_id" className="input" defaultValue="">
@@ -333,20 +348,22 @@ export default function MailNodesPage() {
                     {tenants.filter(t=>t.status==="active").map(t=><option key={t.id} value={t.id}>Dedicated · {t.name}</option>)}
                   </select>
                 </label>
-                <div className="grid grid-cols-[1fr_110px] gap-2">
-                  <input name="ssh_user" className="input" placeholder="SSH user, e.g. root" />
-                  <input name="ssh_port" type="number" min="1" max="65535" defaultValue="22" className="input" aria-label="SSH port" />
-                </div>
-                <input name="storage_path" className="input" defaultValue="/srv/ithute-mail" placeholder="/srv/ithute-mail" required />
-                <label className="block">
-                  <span className="label">Placement weight</span>
-                  <input name="weight" type="number" min="0" max="1000" defaultValue="100" className="input" />
-                </label>
+                {provisionMode==="manual" ? <>
+                  <div className="grid grid-cols-[1fr_110px] gap-2">
+                    <input name="ssh_user" className="input" placeholder="SSH user, e.g. root" />
+                    <input name="ssh_port" type="number" min="1" max="65535" defaultValue="22" className="input" aria-label="SSH port" />
+                  </div>
+                  <input name="storage_path" className="input" defaultValue="/srv/ithute-mail/data/mail-data" placeholder="/srv/ithute-mail/data/mail-data" required />
+                  <label className="block">
+                    <span className="label">Placement weight</span>
+                    <input name="weight" type="number" min="0" max="1000" defaultValue="100" className="input" />
+                  </label>
+                </> : null}
                 <div className="rounded-xl border border-[#dfe8e3] bg-[#f7faf8] px-3 py-2 text-[10px] leading-4 text-[#66776e]">
-                  Credentials are intentionally not stored in this phase. The next phase will bootstrap the Ithute Node Agent and switch normal management to authenticated agent calls.
+                  {provisionMode==="automatic" ? "The provisioner receives a one-time scoped agent token and bootstrap profile. Ithute never stores a provider root password." : "SSH metadata is for bootstrap/reference only. Routine management uses the scoped Ithute Mail Node Agent credential."}
                 </div>
                 <button className="btn-primary w-full" disabled={saving}>
-                  <Plus size={14} /> {saving ? "Registering..." : "Register node"}
+                  <Plus size={14} /> {saving ? (provisionMode==="automatic"?"Provisioning...":"Registering...") : (provisionMode==="automatic"?"Provision node":"Register node")}
                 </button>
               </div>
             </form>
@@ -373,7 +390,7 @@ export default function MailNodesPage() {
                               {node.healthy ? "healthy" : node.status === "active" ? "awaiting heartbeat" : node.status}
                             </span>
                           </div>
-                          <p className="mt-1 text-[10px] text-[#718078]">{node.hostname}{node.public_ip ? ` · ${node.public_ip}` : ""} · {node.region}</p>
+                          <p className="mt-1 text-[10px] text-[#718078]">{node.hostname}{node.public_ip ? ` · ${node.public_ip}` : ""} · {node.region}{node.provider ? ` · ${node.provider}` : ""}</p>
                           <p className="mt-1 text-[10px] text-[#819087]">Scope: {node.tenant_id ? `Dedicated · ${tenants.find(t=>t.id===node.tenant_id)?.name || node.tenant_id}` : "Shared"} · Role: {node.role}</p>
                           <p className="mt-1 text-[10px] text-[#819087]">Storage: {node.storage_path} · SSH: {node.ssh_user || "not set"}@{node.hostname}:{node.ssh_port}</p>
                           <p className="mt-1 text-[10px] text-[#819087]">Capabilities: {node.capabilities.join(", ") || "none"} · Agent: {node.agent_version || "not connected"}</p>
