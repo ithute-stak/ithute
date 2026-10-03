@@ -18,6 +18,7 @@ import ssl
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -150,7 +151,11 @@ def _imap_tls_ready() -> tuple[bool, str | None, str | None]:
         with socket.create_connection((MAIL_HOSTNAME, 993), timeout=5) as raw:
             with context.wrap_socket(raw, server_hostname=MAIL_HOSTNAME) as tls:
                 certificate = tls.getpeercert()
-                return True, certificate.get("notAfter"), None
+                raw_not_after = certificate.get("notAfter")
+                not_after = None
+                if raw_not_after:
+                    not_after = datetime.fromtimestamp(ssl.cert_time_to_seconds(raw_not_after), tz=timezone.utc).isoformat()
+                return True, not_after, None
     except Exception as exc:
         return False, None, str(exc)[:500]
 
