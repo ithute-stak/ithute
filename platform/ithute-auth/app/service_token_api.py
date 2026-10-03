@@ -55,6 +55,7 @@ def issue_service_token(
         token = create_managed_service_token(
             settings=config,
             client_id=managed.client_id,
+            credential_id=credential.id,
             audience=payload.audience,
             scope=normalized_scope,
         )
@@ -77,7 +78,19 @@ def issue_service_token(
             scope=normalized_scope,
         )
 
-    # Compatibility bridge for existing first-party integrations. New platform
+    if not config.allow_legacy_service_secrets:
+        record_audit(
+            db,
+            event_type="legacy_service_token_denied",
+            success=False,
+            client_id=payload.client_id,
+            request=request,
+            details={"reason": "legacy service secrets disabled"},
+        )
+        db.commit()
+        raise HTTPException(status_code=401, detail="managed service credentials required")
+
+    # Compatibility bridge for explicitly enabled legacy integrations. New platform
     # clients must be stored in managed_service_clients; these legacy tokens
     # intentionally do not carry the service_auth=managed claim required by
     # new privileged platform APIs.
