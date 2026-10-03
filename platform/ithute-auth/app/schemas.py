@@ -113,10 +113,16 @@ class DeviceRequest(BaseModel):
 
 
 class DeviceResponse(BaseModel):
+    id: str | None = None
     device_key: str
     platform: str
     label: str | None
     active: bool
+    trusted: bool = False
+    trusted_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    last_seen_ip: str | None = None
+    risk_score: int = 0
 
 
 class PasswordChangeRequest(BaseModel):
@@ -174,6 +180,11 @@ class SessionResponse(BaseModel):
     expires_at: datetime
     revoked_at: datetime | None
     current: bool = False
+    auth_method: str = "password"
+    risk_score: int = 0
+    risk_reasons: list[str] = []
+    step_up_at: datetime | None = None
+    device_id: str | None = None
 
 
 class AuditEventResponse(BaseModel):

@@ -50,6 +50,7 @@ from .security import (
     verify_password,
 )
 from .security_service import client_ip, login_rate_limited, record_audit, verify_second_factor
+from .zero_trust import initialize_device
 
 
 bearer = HTTPBearer(auto_error=False)
@@ -66,7 +67,7 @@ app.add_middleware(
     allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-Ithute-Device-Key"],
 )
 
 # Keep authentication behavior in portal.py and apply the presentation layer
@@ -455,30 +456,32 @@ def me(user: Annotated[User, Depends(current_user)]) -> UserResponse:
 
 @app.post("/v1/devices", response_model=DeviceResponse)
 def register_device(
+    request: Request,
     payload: DeviceRequest,
     user: Annotated[User, Depends(current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DeviceResponse:
-    device = db.scalar(select(Device).where(Device.user_id == user.id, Device.device_key == payload.device_key))
-    if device is None:
-        device = Device(
-            user_id=user.id,
-            device_key=payload.device_key,
-            platform=payload.platform,
-            label=payload.label,
-        )
-        db.add(device)
-    else:
-        device.platform = payload.platform
-        device.label = payload.label
-        device.is_active = True
-        device.last_seen_at = utcnow()
+    device = initialize_device(
+        db,
+        user=user,
+        device_key=payload.device_key,
+        platform=payload.platform,
+        label=payload.label,
+        request=request,
+    )
     db.commit()
+    db.refresh(device)
     return DeviceResponse(
+        id=str(device.id),
         device_key=device.device_key,
         platform=device.platform,
         label=device.label,
         active=device.is_active,
+        trusted=device.trusted_at is not None and device.revoked_at is None,
+        trusted_at=device.trusted_at,
+        last_seen_at=device.last_seen_at,
+        last_seen_ip=device.last_seen_ip,
+        risk_score=device.risk_score,
     )
 
 
@@ -491,4 +494,5 @@ def revoke_device(
     device = db.scalar(select(Device).where(Device.user_id == user.id, Device.device_key == device_key))
     if device is not None:
         device.is_active = False
+        device.revoked_at = utcnow()
         db.commit()

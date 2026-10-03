@@ -104,7 +104,7 @@ def _require_csrf(request: Request, submitted: str, settings: Settings) -> None:
 def _set_sso_cookie(response, user: User, settings: Settings) -> None:
     response.set_cookie(
         settings.browser_cookie_name,
-        create_browser_session_token(settings=settings, user_id=user.id, security_version=user.security_version),
+        create_browser_session_token(settings=settings, user_id=user.id, security_version=user.security_version, auth_method="passkey"),
         max_age=settings.browser_session_hours * 3600,
         httponly=True,
         secure=settings.browser_cookie_secure,
@@ -258,7 +258,8 @@ def portal_remove_passkey(passkey_id: uuid.UUID, request: Request, password: str
 
 @router.get("/account/passkey-login", response_class=HTMLResponse)
 def portal_passkey_login_page(request: Request, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
-    if _cookie_user(request,db,settings) is not None: return RedirectResponse("/account",status_code=303)
+    step_up = request.query_params.get("step_up") == "1"
+    if _cookie_user(request,db,settings) is not None and not step_up: return RedirectResponse("/account",status_code=303)
     js=_webauthn_js()+"""
 async function signInPasskey(){try{message('Waiting for your passkey…');const s=await fetch('/account/passkey-login/options',{method:'POST'});const d=await s.json();if(!s.ok)throw new Error(d.detail||'Could not start sign-in');const c=await navigator.credentials.get({publicKey:requestOptions(d.options)});if(!c)throw new Error('No passkey was selected');const v=await fetch('/account/passkey-login/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({challenge_id:d.challenge_id,credential:authenticationJSON(c)})});const r=await v.json();if(!v.ok)throw new Error(r.detail||'Passkey sign-in failed');location.href='/account';}catch(err){message(err.message||String(err),true);}}
 """
