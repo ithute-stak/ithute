@@ -60,6 +60,11 @@ jobs:
       RECOVERY_OPS_TOKEN: ci-production-readiness-recovery-token-000000000000
       SECURITY_DUAL_CONTROL_ENABLED: "true"
       SECURITY_APPROVAL_TTL_MINUTES: "30"
+      BOOTSTRAP_PUBLIC_IP: 204.12.205.224
+      MAIL_PUBLIC_IP: 204.12.205.224
+      POWERDNS_API_KEY: readiness-powerdns-token-6e4f2398c5a17d20
+      MAIL_OPS_TOKEN: readiness-mail-ops-token-b6391fd406e72845
+      MAIL_NODE_TOKEN: readiness-mail-node-token-24a7d1f95c80e362
 
     steps:
       - name: Checkout
