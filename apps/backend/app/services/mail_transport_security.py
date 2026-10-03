@@ -31,9 +31,7 @@ def mta_sts_policy_id(domain: str) -> str:
 def transport_security_records(domain: str) -> list[dict]:
     domain = domain.rstrip(".").lower()
     records: list[dict] = []
-    if not settings.mail_mta_sts_enabled:
-        return records
-    if settings.bootstrap_public_ip:
+    if settings.mail_mta_sts_enabled and settings.bootstrap_public_ip:
         records.append(
             {
                 "name": policy_hostname(domain),
@@ -42,14 +40,14 @@ def transport_security_records(domain: str) -> list[dict]:
                 "purpose": "mta-sts-host",
             }
         )
-    records.append(
-        {
-            "name": f"_mta-sts.{domain}",
-            "type": "TXT",
-            "value": f"v=STSv1; id={mta_sts_policy_id(domain)}",
-            "purpose": "mta-sts",
-        }
-    )
+        records.append(
+            {
+                "name": f"_mta-sts.{domain}",
+                "type": "TXT",
+                "value": f"v=STSv1; id={mta_sts_policy_id(domain)}",
+                "purpose": "mta-sts",
+            }
+        )
     if settings.mail_tls_report_address:
         records.append(
             {
