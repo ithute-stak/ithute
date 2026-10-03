@@ -116,6 +116,7 @@ class MailNodeStatusUpdate(BaseModel):
 class MailNodeBackupPolicyUpdate(BaseModel):
     interval_hours: int = Field(default=24, ge=1, le=168)
     retention_count: int = Field(default=7, ge=1, le=100)
+    immutability_days: int = Field(default=7, ge=1, le=365)
 
 
 def _slug(value: str) -> str:
@@ -377,6 +378,7 @@ def _mail_node_json(row: MailNode) -> dict:
         "backup_error": row.backup_error,
         "backup_interval_hours": row.backup_interval_hours,
         "backup_retention_count": row.backup_retention_count,
+        "backup_immutability_days": row.backup_immutability_days,
     }
 
 
@@ -439,6 +441,7 @@ def update_mail_node_backup_policy(
         raise HTTPException(status_code=404, detail="Mail node not found")
     row.backup_interval_hours = payload.interval_hours
     row.backup_retention_count = payload.retention_count
+    row.backup_immutability_days = payload.immutability_days
     db.add(AuditLog(
         actor_user_id=current.id,
         tenant_id=row.tenant_id,
@@ -448,6 +451,7 @@ def update_mail_node_backup_policy(
         metadata_json=json.dumps({
             "interval_hours": row.backup_interval_hours,
             "retention_count": row.backup_retention_count,
+            "immutability_days": row.backup_immutability_days,
         }),
     ))
     db.commit()
