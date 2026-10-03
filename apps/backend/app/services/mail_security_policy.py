@@ -71,3 +71,18 @@ def activate_mta_sts_route(domain_id: UUID, domain: str) -> None:
     finally:
         if os.path.exists(temp_path):
             os.unlink(temp_path)
+
+
+def mta_sts_route_status(domain_id: UUID, domain: str) -> dict:
+    target = _route_path(domain_id)
+    expected = render_mta_sts_route(domain)
+    try:
+        configured = target.is_file() and target.read_text(encoding="utf-8") == expected
+    except OSError:
+        configured = False
+    return {
+        "configured": configured,
+        "hostname": f"mta-sts.{domain.strip().lower().rstrip('.')}",
+        "policy": mta_sts_policy(domain),
+        "route_file": str(target),
+    }
