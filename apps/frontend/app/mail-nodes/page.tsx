@@ -237,11 +237,7 @@ export default function MailNodesPage() {
     setSelectedSnapshot(ready[0]?.id || "");
     const target = nodes.find(candidate =>
       candidate.id !== node.id &&
-      candidate.status === "active" &&
-      candidate.smtp_ready &&
-      candidate.imap_ready &&
-      candidate.tls_ready &&
-      candidate.backup_ready &&
+      candidate.healthy &&
       (!candidate.tenant_id || candidate.tenant_id === node.tenant_id)
     );
     setSelectedTarget(target?.id || "");
@@ -464,7 +460,7 @@ export default function MailNodesPage() {
                 <label className="block"><span className="label">Healthy target node</span>
                   <select className="input" value={selectedTarget} onChange={e=>setSelectedTarget(e.target.value)}>
                     <option value="">Select target</option>
-                    {nodes.filter(node=>node.id!==failoverSource.id&&node.status==="active"&&node.smtp_ready&&node.imap_ready&&node.tls_ready&&node.backup_ready&&(!node.tenant_id||node.tenant_id===failoverSource.tenant_id)).map(node=><option key={node.id} value={node.id}>{node.name} · {node.region} · {storage(node.free_storage_bytes)}</option>)}
+                    {nodes.filter(node=>node.id!==failoverSource.id&&node.healthy&&(!node.tenant_id||node.tenant_id===failoverSource.tenant_id)).map(node=><option key={node.id} value={node.id}>{node.name} · {node.region} · {storage(node.free_storage_bytes)}</option>)}
                   </select>
                 </label>
                 {!snapshots.length?<p className="text-[10px] font-semibold text-amber-700">Create and complete an off-node backup before failover.</p>:null}
