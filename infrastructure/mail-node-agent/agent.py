@@ -174,12 +174,23 @@ def _imap_tls_ready() -> tuple[bool, str | None, str | None]:
         return False, None, str(exc)[:500]
 
 
+def _backup_remote_ready() -> tuple[bool, str | None]:
+    if not BACKUP_REMOTE:
+        return False, "Off-node backup remote is not configured"
+    try:
+        _run(_rclone_args("lsf", BACKUP_REMOTE, "--max-depth", "1"), timeout=20)
+        return True, None
+    except Exception as exc:
+        return False, str(exc)[:500]
+
+
 def heartbeat() -> None:
     STORAGE_PATH.mkdir(parents=True, exist_ok=True)
     usage = shutil.disk_usage(STORAGE_PATH)
     smtp_ready = _tcp_ready(25) and _tcp_ready(587)
     imap_ready = _tcp_ready(993)
     tls_ready, tls_not_after, tls_error = _imap_tls_ready() if imap_ready else (False, None, "IMAPS port 993 is not reachable")
+    backup_ready, backup_error = _backup_remote_ready()
     readiness_error = None
     if not smtp_ready:
         readiness_error = "SMTP ports 25/587 are not both reachable"
@@ -198,6 +209,8 @@ def heartbeat() -> None:
         "tls_ready": tls_ready,
         "tls_not_after": tls_not_after,
         "readiness_error": readiness_error,
+        "backup_ready": backup_ready,
+        "backup_error": backup_error,
     })
 
 
