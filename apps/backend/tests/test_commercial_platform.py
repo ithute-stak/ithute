@@ -2,7 +2,7 @@ import uuid
 
 from sqlalchemy import delete
 
-from app.models import EmailVerificationToken, MailNode, MailNodeAgent, ResellerAccount, WhiteLabelBrand
+from app.models import EmailVerificationToken, MailNode, MailNodeAgent, MailNodeOperation, MailNodeSnapshot, ResellerAccount, WhiteLabelBrand
 
 PASSWORD = "Phase1-Test-Password!"
 
@@ -143,6 +143,68 @@ def test_mail_node_agent_reports_service_readiness(client, db, platform_owner):
     db.commit()
 
 
+def test_mail_node_backup_operation_round_trip(client, db, platform_owner):
+    login(client, platform_owner.email)
+    name = f"backup-mail-{uuid.uuid4().hex[:8]}"
+    created = client.post(
+        "/api/v1/platform/mail-nodes",
+        json={
+            "name": name,
+            "role": "combined",
+            "region": "lesotho",
+            "hostname": f"{name}.example.com",
+            "storage_path": "/srv/ithute-mail",
+            "capabilities": ["mail", "storage"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    node_id = created.json()["id"]
+
+    credential = client.post(f"/api/v1/platform/mail-nodes/{node_id}/agent-token")
+    assert credential.status_code == 200, credential.text
+    token = credential.json()["token"]
+
+    queued = client.post(f"/api/v1/platform/mail-nodes/{node_id}/backup")
+    assert queued.status_code == 202, queued.text
+    snapshot_id = queued.json()["snapshot_id"]
+
+    claimed = client.post(
+        "/api/v1/mail-node-agent/operations/claim",
+        headers={"X-Ithute-Mail-Agent": token},
+        json={},
+    )
+    assert claimed.status_code == 200, claimed.text
+    operation = claimed.json()["operation"]
+    assert operation["operation"] == "backup"
+
+    completed = client.post(
+        f"/api/v1/mail-node-agent/operations/{operation['id']}/status",
+        headers={"X-Ithute-Mail-Agent": token},
+        json={
+            "status": "completed",
+            "result": {
+                "remote_uri": "remote:ithute-mail-backups/test.tar.gz",
+                "size_bytes": 12345,
+                "checksum_sha256": "a" * 64,
+            },
+        },
+    )
+    assert completed.status_code == 200, completed.text
+
+    snapshots = client.get(f"/api/v1/platform/mail-nodes/{node_id}/snapshots")
+    assert snapshots.status_code == 200, snapshots.text
+    snapshot = next(item for item in snapshots.json()["items"] if item["id"] == snapshot_id)
+    assert snapshot["status"] == "ready"
+    assert snapshot["size_bytes"] == 12345
+    assert snapshot["checksum_sha256"] == "a" * 64
+
+    db.execute(delete(MailNodeOperation).where(MailNodeOperation.node_id == uuid.UUID(node_id)))
+    db.execute(delete(MailNodeSnapshot).where(MailNodeSnapshot.node_id == uuid.UUID(node_id)))
+    db.execute(delete(MailNodeAgent).where(MailNodeAgent.node_id == uuid.UUID(node_id)))
+    db.execute(delete(MailNode).where(MailNode.id == uuid.UUID(node_id)))
+    db.commit()
+
+
 def test_professional_and_hosting_routes_are_registered(client):
     routes = set(client.app.openapi().get("paths", {}))
     required = {
@@ -161,5 +223,11 @@ def test_professional_and_hosting_routes_are_registered(client):
         "/api/v1/mail-node-agent/commands/claim",
         "/api/v1/platform/mail-routing",
         "/api/v1/platform/mail-routing/reconcile",
+        "/api/v1/platform/mail-nodes/{node_id}/backup",
+        "/api/v1/platform/mail-nodes/{node_id}/snapshots",
+        "/api/v1/platform/mail-nodes/{source_node_id}/failover",
+        "/api/v1/platform/mail-node-operations",
+        "/api/v1/mail-node-agent/operations/claim",
+        "/api/v1/mail-node-agent/operations/{operation_id}/status",
     }
     assert not (required - routes)
