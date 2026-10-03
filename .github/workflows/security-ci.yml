@@ -147,7 +147,7 @@ jobs:
             dir:/workspace -o spdx-json=/workspace/ithute-sbom.spdx.json
           test -s ithute-sbom.spdx.json
       - name: Upload SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ithute-sbom-${{ github.sha }}
           path: ithute-sbom.spdx.json
