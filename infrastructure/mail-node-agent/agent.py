@@ -33,6 +33,7 @@ def required_env(name: str, default: str | None = None) -> str:
 API_URL = required_env("ITHUTE_API_URL").rstrip("/")
 AGENT_TOKEN = required_env("ITHUTE_MAIL_AGENT_TOKEN")
 ACCOUNTS_FILE = Path(required_env("ITHUTE_MAIL_ACCOUNTS_FILE", "/tmp/docker-mailserver/postfix-accounts.cf"))
+QUOTAS_FILE = Path(required_env("ITHUTE_MAIL_QUOTAS_FILE", "/tmp/docker-mailserver/dovecot-quotas.cf"))
 STORAGE_PATH = Path(required_env("ITHUTE_MAIL_STORAGE_PATH", "/srv/ithute-mail"))
 POLL_SECONDS = max(5, int(os.getenv("ITHUTE_MAIL_POLL_SECONDS", "10")))
 HEARTBEAT_SECONDS = max(15, int(os.getenv("ITHUTE_MAIL_HEARTBEAT_SECONDS", "60")))
@@ -42,8 +43,10 @@ if not API_URL.startswith("https://") and not ALLOW_HTTP:
     raise RuntimeError("ITHUTE_API_URL must use HTTPS unless ITHUTE_MAIL_ALLOW_HTTP=true")
 if not AGENT_TOKEN.startswith("ith_mail_"):
     raise RuntimeError("ITHUTE_MAIL_AGENT_TOKEN is not a mail-node credential")
-if not ACCOUNTS_FILE.is_absolute() or not STORAGE_PATH.is_absolute():
-    raise RuntimeError("Mail account and storage paths must be absolute")
+if not ACCOUNTS_FILE.is_absolute() or not QUOTAS_FILE.is_absolute() or not STORAGE_PATH.is_absolute():
+    raise RuntimeError("Mail account, quota and storage paths must be absolute")
+if ACCOUNTS_FILE.parent != QUOTAS_FILE.parent:
+    raise RuntimeError("ITHUTE_MAIL_ACCOUNTS_FILE and ITHUTE_MAIL_QUOTAS_FILE must share the DMS config directory")
 
 
 def log(message: str) -> None:
@@ -82,28 +85,51 @@ def _validate_account(address: str, password_hash: str) -> tuple[str, str]:
     return clean_address, clean_hash
 
 
-def write_account(address: str, password_hash: str, active: bool) -> None:
+def _write_in_place(path: Path, payload: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(path, 0o600)
+
+
+def write_account(address: str, password_hash: str, quota_bytes: int, active: bool) -> None:
     clean_address, clean_hash = _validate_account(address, password_hash)
+    if quota_bytes <= 0:
+        raise RuntimeError("Mailbox quota must be greater than zero")
+
     ACCOUNTS_FILE.parent.mkdir(parents=True, exist_ok=True)
     lock_path = ACCOUNTS_FILE.parent / ".ithute-mail-agent.lock"
     with lock_path.open("a+", encoding="utf-8") as lock_handle:
         fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
-        existing = ACCOUNTS_FILE.read_text(encoding="utf-8").splitlines() if ACCOUNTS_FILE.exists() else []
-        kept = []
-        for line in existing:
+
+        existing_accounts = ACCOUNTS_FILE.read_text(encoding="utf-8").splitlines() if ACCOUNTS_FILE.exists() else []
+        account_lines = []
+        for line in existing_accounts:
             candidate = line.split("|", 1)[0].strip().lower() if "|" in line else ""
             if candidate != clean_address:
-                kept.append(line)
+                account_lines.append(line)
         if active:
-            kept.append(f"{clean_address}|{clean_hash}")
-        payload = "\n".join(kept)
-        if payload:
-            payload += "\n"
-        with ACCOUNTS_FILE.open("w", encoding="utf-8") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(ACCOUNTS_FILE, 0o600)
+            account_lines.append(f"{clean_address}|{clean_hash}")
+        account_payload = "\n".join(account_lines)
+        if account_payload:
+            account_payload += "\n"
+
+        existing_quotas = QUOTAS_FILE.read_text(encoding="utf-8").splitlines() if QUOTAS_FILE.exists() else []
+        quota_lines = []
+        for line in existing_quotas:
+            candidate = line.split(":", 1)[0].strip().lower() if ":" in line else ""
+            if candidate != clean_address:
+                quota_lines.append(line)
+        if active:
+            quota_lines.append(f"{clean_address}:{quota_bytes}")
+        quota_payload = "\n".join(quota_lines)
+        if quota_payload:
+            quota_payload += "\n"
+
+        _write_in_place(ACCOUNTS_FILE, account_payload)
+        _write_in_place(QUOTAS_FILE, quota_payload)
         fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
@@ -125,8 +151,9 @@ def process(command: dict[str, Any]) -> None:
         raise RuntimeError("Unsupported mail-node command")
     address = str(payload.get("address") or "")
     password_hash = str(payload.get("password_hash") or "")
+    quota_bytes = int(payload.get("quota_bytes") or 0)
     status = str(payload.get("status") or "")
-    write_account(address, password_hash, active=status == "active")
+    write_account(address, password_hash, quota_bytes, active=status == "active")
     api(f"/mail-node-agent/commands/{command_id}/status", {"status": "completed"})
 
 
