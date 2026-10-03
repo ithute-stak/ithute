@@ -2,7 +2,7 @@ import uuid
 
 from sqlalchemy import delete
 
-from app.models import EmailVerificationToken, MailNode, ResellerAccount, WhiteLabelBrand
+from app.models import EmailVerificationToken, MailNode, MailNodeAgent, ResellerAccount, WhiteLabelBrand
 
 PASSWORD = "Phase1-Test-Password!"
 
@@ -94,6 +94,55 @@ def test_platform_owner_can_manage_mail_nodes(client, db, platform_owner):
     db.commit()
 
 
+def test_mail_node_agent_reports_service_readiness(client, db, platform_owner):
+    login(client, platform_owner.email)
+    name = f"ready-mail-{uuid.uuid4().hex[:8]}"
+    created = client.post(
+        "/api/v1/platform/mail-nodes",
+        json={
+            "name": name,
+            "role": "combined",
+            "region": "lesotho",
+            "hostname": f"{name}.example.com",
+            "storage_path": "/srv/ithute-mail",
+            "capabilities": ["mail", "storage"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    node_id = created.json()["id"]
+
+    credential = client.post(f"/api/v1/platform/mail-nodes/{node_id}/agent-token")
+    assert credential.status_code == 200, credential.text
+    token = credential.json()["token"]
+
+    heartbeat = client.post(
+        "/api/v1/mail-node-agent/heartbeat",
+        headers={"X-Ithute-Mail-Agent": token},
+        json={
+            "version": "ithute-mail-agent/test",
+            "total_storage_bytes": 500 * 1024**3,
+            "used_storage_bytes": 100 * 1024**3,
+            "capabilities": ["mail", "storage"],
+            "smtp_ready": True,
+            "imap_ready": True,
+            "tls_ready": True,
+            "tls_not_after": "2027-10-03T00:00:00+00:00",
+        },
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+
+    listed = client.get("/api/v1/platform/mail-nodes")
+    row = next(item for item in listed.json()["items"] if item["id"] == node_id)
+    assert row["smtp_ready"] is True
+    assert row["imap_ready"] is True
+    assert row["tls_ready"] is True
+    assert row["free_storage_bytes"] == 400 * 1024**3
+
+    db.execute(delete(MailNodeAgent).where(MailNodeAgent.node_id == uuid.UUID(node_id)))
+    db.execute(delete(MailNode).where(MailNode.id == uuid.UUID(node_id)))
+    db.commit()
+
+
 def test_professional_and_hosting_routes_are_registered(client):
     routes = set(client.app.openapi().get("paths", {}))
     required = {
@@ -106,5 +155,11 @@ def test_professional_and_hosting_routes_are_registered(client):
         "/api/v1/platform/mail-nodes",
         "/api/v1/platform/mail-nodes/{node_id}/status",
         "/api/v1/mail-nodes/{node_id}/heartbeat",
+        "/api/v1/platform/mail-nodes/{node_id}/agent-token",
+        "/api/v1/platform/mail-nodes/{node_id}/agent",
+        "/api/v1/mail-node-agent/heartbeat",
+        "/api/v1/mail-node-agent/commands/claim",
+        "/api/v1/platform/mail-routing",
+        "/api/v1/platform/mail-routing/reconcile",
     }
     assert not (required - routes)
