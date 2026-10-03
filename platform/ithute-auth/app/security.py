@@ -133,6 +133,9 @@ def create_access_token(
     session_id: uuid.UUID,
     email: str | None,
     phone: str | None,
+    assurance_level: int = 1,
+    auth_method: str = "password",
+    risk_level: str = "low",
 ) -> str:
     issued_at = utcnow()
     payload: dict[str, Any] = {
@@ -146,6 +149,9 @@ def create_access_token(
         "email": email,
         "phone_number": phone,
         "is_platform_admin": is_system_owner(settings, email),
+        "aal": max(1, min(int(assurance_level), 3)),
+        "amr": [auth_method],
+        "risk": risk_level,
         "token_use": "access",
     }
     return _encode(settings, payload)
