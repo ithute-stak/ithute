@@ -10,6 +10,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
 type Me = { email: string; is_platform_owner: boolean };
 type Tenant = { id:string; name:string; slug:string; status:string };
 type MailNodeSnapshot = {id:string;snapshot_key:string;remote_uri?:string|null;size_bytes?:number|null;checksum_sha256?:string|null;status:string;created_at?:string|null;completed_at?:string|null};
+type MailNodeOperation = {id:string;node_id:string;target_node_id?:string|null;operation:string;status:string;failure_message?:string|null;created_at?:string|null;completed_at?:string|null};
 type MailNode = {
   id: string;
   name: string;
@@ -74,6 +75,7 @@ export default function MailNodesPage() {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
   const [nodes, setNodes] = useState<MailNode[]>([]);
+  const [operations, setOperations] = useState<MailNodeOperation[]>([]);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -96,7 +98,7 @@ export default function MailNodesPage() {
   async function loadNodes() {
     setLoading(true);
     setError("");
-    const [response, routingResponse, tenantsResponse, provisionerResponse] = await Promise.all([api("/platform/mail-nodes"), api("/platform/mail-routing"), api("/tenants"), api("/platform/mail-node-provisioner")]);
+    const [response, routingResponse, tenantsResponse, provisionerResponse, operationsResponse] = await Promise.all([api("/platform/mail-nodes"), api("/platform/mail-routing"), api("/tenants"), api("/platform/mail-node-provisioner"), api("/platform/mail-node-operations")]);
     if (!response.ok) {
       setError(response.status === 403 ? "Platform owner access is required." : "Unable to load mail nodes.");
       setLoading(false);
@@ -107,6 +109,7 @@ export default function MailNodesPage() {
     if (routingResponse.ok) setRouting(await routingResponse.json());
     if (tenantsResponse.ok) setTenants(await tenantsResponse.json());
     if (provisionerResponse.ok) setProvisionerConfigured(Boolean((await provisionerResponse.json()).configured));
+    if (operationsResponse.ok) setOperations((await operationsResponse.json()).items || []);
     setLoading(false);
   }
 
@@ -417,11 +420,12 @@ export default function MailNodesPage() {
                           {node.status !== "disabled" ? <button className="rounded-lg border border-red-200 px-3 py-2 text-[10px] font-bold text-red-700" onClick={() => void updateStatus(node, "disabled")}>Disable</button> : null}
                         </div>
                       </div>
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
                         <MiniStat label="Capacity" value={storage(node.total_storage_bytes)} />
                         <MiniStat label="Used" value={storage(node.used_storage_bytes)} />
                         <MiniStat label="Last heartbeat" value={heartbeat(node.last_heartbeat_at)} />
                         <MiniStat label="TLS expires" value={heartbeat(node.tls_not_after)} />
+                        <MiniStat label="Backup policy" value={`${node.backup_interval_hours}h · keep ${node.backup_retention_count}`} />
                       </div>
                       {pct !== null ? (
                         <div className="mt-3">
@@ -472,6 +476,27 @@ export default function MailNodesPage() {
             </div>
           </div>
         ) : null}
+        <section className="rounded-2xl border border-[#e1e7e3] bg-white p-4 shadow-sm">
+          <div className="mb-3">
+            <p className="text-sm font-black text-[#21342a]">Recent infrastructure operations</p>
+            <p className="text-[10px] text-[#819087]">Backups, retention cleanup and controlled failovers</p>
+          </div>
+          <div className="space-y-2">
+            {operations.slice(0,12).map(operation=>{
+              const node=nodes.find(item=>item.id===operation.node_id);
+              return <div key={operation.id} className="flex flex-col gap-2 rounded-xl border border-[#e5ebe7] px-3 py-2.5 sm:flex-row sm:items-center">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-black text-[#21342a]">{operation.operation.replaceAll("_"," ")}</p>
+                  <p className="mt-0.5 truncate text-[9px] text-[#819087]">{node?.name || operation.node_id} · {operation.created_at ? heartbeat(operation.created_at) : "queued"}</p>
+                  {operation.failure_message?<p className="mt-1 text-[9px] font-semibold text-red-700">{operation.failure_message}</p>:null}
+                </div>
+                <span className={`status-badge ${operation.status==="completed"?"status-verified":operation.status==="failed"?"status-archived":"status-suspended"}`}>{operation.status}</span>
+              </div>
+            })}
+            {!operations.length?<p className="py-5 text-center text-[10px] text-[#819087]">No mail-node operations yet.</p>:null}
+          </div>
+        </section>
+
         {agentToken ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
             <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-2xl">
