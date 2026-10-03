@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, CheckCircle2, HardDrive, Plus, RefreshCw, Server, ShieldCheck, Wrench } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, HardDrive, Plus, RefreshCw, Server, ShieldCheck, Wrench, type LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ControlShell } from "@/components/control-shell";
 
@@ -288,7 +288,7 @@ export default function MailNodesPage() {
   );
 }
 
-function Metric({ icon: Icon, label, value }: { icon: typeof Server; label: string; value: string }) {
+function Metric({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
   return <div className="rounded-2xl border border-[#e1e7e3] bg-white p-4 shadow-sm"><div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.08em] text-[#819087]"><Icon size={14} />{label}</div><p className="mt-2 text-xl font-black text-[#21342a]">{value}</p></div>;
 }
 
