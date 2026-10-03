@@ -36,6 +36,10 @@ type MailNode = {
   tls_ready: boolean;
   tls_not_after?: string | null;
   readiness_error?: string | null;
+  backup_ready: boolean;
+  backup_error?: string | null;
+  backup_interval_hours: number;
+  backup_retention_count: number;
 };
 
 async function api(path: string, init?: RequestInit) {
@@ -234,6 +238,7 @@ export default function MailNodesPage() {
       candidate.smtp_ready &&
       candidate.imap_ready &&
       candidate.tls_ready &&
+      candidate.backup_ready &&
       (!candidate.tenant_id || candidate.tenant_id === node.tenant_id)
     );
     setSelectedTarget(target?.id || "");
@@ -398,8 +403,10 @@ export default function MailNodesPage() {
                             <span className={`status-badge ${node.smtp_ready?"status-verified":"status-suspended"}`}>SMTP {node.smtp_ready?"ready":"not ready"}</span>
                             <span className={`status-badge ${node.imap_ready?"status-verified":"status-suspended"}`}>IMAP {node.imap_ready?"ready":"not ready"}</span>
                             <span className={`status-badge ${node.tls_ready?"status-verified":"status-suspended"}`}>TLS {node.tls_ready?"valid":"not ready"}</span>
+                            <span className={`status-badge ${node.backup_ready?"status-verified":"status-suspended"}`}>Backup {node.backup_ready?"ready":"not ready"}</span>
                           </div>
                           {node.readiness_error?<p className="mt-2 text-[10px] font-semibold text-amber-700">{node.readiness_error}</p>:null}
+                          {node.backup_error?<p className="mt-1 text-[10px] font-semibold text-amber-700">{node.backup_error}</p>:null}
                         </div>
                         <div className="flex flex-wrap gap-2">
                           <button className="btn-secondary text-[10px]" onClick={() => void backupNode(node)}>Backup now</button>
@@ -453,7 +460,7 @@ export default function MailNodesPage() {
                 <label className="block"><span className="label">Healthy target node</span>
                   <select className="input" value={selectedTarget} onChange={e=>setSelectedTarget(e.target.value)}>
                     <option value="">Select target</option>
-                    {nodes.filter(node=>node.id!==failoverSource.id&&node.status==="active"&&node.smtp_ready&&node.imap_ready&&node.tls_ready&&(!node.tenant_id||node.tenant_id===failoverSource.tenant_id)).map(node=><option key={node.id} value={node.id}>{node.name} · {node.region} · {storage(node.free_storage_bytes)}</option>)}
+                    {nodes.filter(node=>node.id!==failoverSource.id&&node.status==="active"&&node.smtp_ready&&node.imap_ready&&node.tls_ready&&node.backup_ready&&(!node.tenant_id||node.tenant_id===failoverSource.tenant_id)).map(node=><option key={node.id} value={node.id}>{node.name} · {node.region} · {storage(node.free_storage_bytes)}</option>)}
                   </select>
                 </label>
                 {!snapshots.length?<p className="text-[10px] font-semibold text-amber-700">Create and complete an off-node backup before failover.</p>:null}
