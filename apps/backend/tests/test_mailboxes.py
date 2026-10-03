@@ -75,6 +75,8 @@ def test_mailbox_lifecycle_alias_and_group(client, db, tenant_admin):
     mailbox = created.json()
     assert mailbox["address"] == f"alice@{domain.ascii_name}"
     assert mailbox["status"] == "active"
+    assert mailbox["storage_type"] == "internal"
+    assert mailbox["mail_node_id"] is None
 
     suspended = client.post(f"/api/v1/tenants/{tenant.id}/mailboxes/{mailbox['id']}/suspend", headers=headers)
     assert suspended.status_code == 200 and suspended.json()["status"] == "suspended"
@@ -123,6 +125,27 @@ def test_mailbox_lifecycle_alias_and_group(client, db, tenant_admin):
 
     archived = client.delete(f"/api/v1/tenants/{tenant.id}/mailboxes/{mailbox['id']}", headers=headers)
     assert archived.status_code == 200 and archived.json()["status"] == "archived"
+    cleanup(db, domain)
+
+
+def test_external_mailbox_requires_registered_node(client, db, tenant_admin):
+    user, tenant, _ = tenant_admin
+    headers = login(client, user.email)
+    domain = make_domain(db, user, tenant)
+
+    response = client.post(
+        f"/api/v1/tenants/{tenant.id}/mailboxes",
+        headers=headers,
+        json={
+            "domain_id": str(domain.id),
+            "local_part": "external",
+            "password": "StrongMailbox1!",
+            "quota_bytes": 1073741824,
+            "storage_type": "external",
+        },
+    )
+    assert response.status_code == 422
+    assert "mail node" in response.json()["detail"].lower()
     cleanup(db, domain)
 
 
