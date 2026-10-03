@@ -112,6 +112,7 @@ const navigation: NavGroup[] = [
     label: "Operations",
     icon: Activity,
     children: [
+      { label: "Security operations", href: "/security-operations", icon: ShieldCheck },
       { label: "Mail nodes", href: "/mail-nodes", icon: Server },
       { label: "Status centre", href: "/status", icon: Activity },
       { label: "Help & DNS guide", href: "/help", icon: BookOpen },
