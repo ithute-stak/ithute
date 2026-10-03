@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -101,11 +101,13 @@ def create_mail_node_backup(
     if pending is not None:
         raise HTTPException(status_code=409, detail="A mail-node backup is already in progress")
 
+    now = _now()
     snapshot = MailNodeSnapshot(
         node_id=node.id,
         tenant_id=node.tenant_id,
-        snapshot_key=f"{node.id.hex}-{_now().strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}",
+        snapshot_key=f"{node.id.hex}-{now.strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}",
         status="creating",
+        immutable_until=now + timedelta(days=max(1, min(int(node.backup_immutability_days or 7), 365))),
     )
     db.add(snapshot)
     db.flush()
@@ -154,6 +156,7 @@ def list_mail_node_snapshots(
                 "remote_uri": row.remote_uri,
                 "size_bytes": row.size_bytes,
                 "checksum_sha256": row.checksum_sha256,
+                "immutable_until": row.immutable_until.isoformat() if row.immutable_until else None,
                 "status": row.status,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
                 "completed_at": row.completed_at.isoformat() if row.completed_at else None,
@@ -263,8 +266,11 @@ def _queue_snapshot_retention(db: Session, agent: MailNodeAgent, node: MailNode)
         .where(MailNodeSnapshot.node_id == node.id, MailNodeSnapshot.status == "ready")
         .order_by(MailNodeSnapshot.created_at.desc())
     ).all()
+    now = _now()
     for snapshot in ready[keep:]:
         if not snapshot.remote_uri:
+            continue
+        if snapshot.immutable_until is not None and snapshot.immutable_until > now:
             continue
         pending = db.scalar(
             select(MailNodeOperation).where(
