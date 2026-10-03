@@ -11,6 +11,8 @@ from app.models.deliverability import DkimKey
 from app.models.domains import Domain, DomainDnsMode, DomainStatus
 from app.services.deliverability import generate_dkim_material, recommended_records
 from app.services.dkim_sync import sync_active_dkim_keys
+from app.services.caddy_routes import CaddyRouteError
+from app.services.mail_security_policy import activate_mta_sts_route
 from app.services.powerdns import PowerDNSClient, PowerDNSError, validate_record
 
 
@@ -143,6 +145,9 @@ def reconcile_mail_dns(
             settings.mail_hostname,
             key.selector,
             key.public_key_b64,
+            mta_sts_id=settings.mail_mta_sts_policy_id if settings.mail_mta_sts_enabled else None,
+            mta_sts_ip=settings.bootstrap_public_ip if settings.mail_mta_sts_enabled else None,
+            tls_report_address=settings.mail_tls_reporting_address or None,
         )
         published: list[dict] = []
         for record in desired:
@@ -184,6 +189,14 @@ def reconcile_mail_dns(
         dns.rectify_zone(domain.ascii_name)
     except (PowerDNSError, ValueError) as exc:
         raise MailDNSReconcileError(f"PowerDNS mail record reconciliation failed: {exc}") from exc
+
+    if settings.mail_mta_sts_enabled:
+        try:
+            activate_mta_sts_route(domain.id, domain.ascii_name)
+        except CaddyRouteError as exc:
+            raise MailDNSReconcileError(
+                "Mail DNS was published, but the HTTPS MTA-STS policy route could not be activated"
+            ) from exc
 
     return MailDNSReconcileResult(
         domain=domain.ascii_name,
