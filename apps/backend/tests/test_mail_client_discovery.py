@@ -54,6 +54,18 @@ def test_autodiscover_parser_and_response(monkeypatch):
     assert ("LoginName", "person@example.co.ls") in values
 
 
+def test_discovery_can_publish_external_mail_node_hostname():
+    root = ET.fromstring(thunderbird_autoconfig("person@example.co.ls", "mail-node-01.example.co.ls"))
+    incoming = next(server for server in root.iter("incomingServer") if server.attrib["type"] == "imap")
+    outgoing = next(server for server in root.iter("outgoingServer") if server.attrib["type"] == "smtp")
+    assert incoming.findtext("hostname") == "mail-node-01.example.co.ls"
+    assert outgoing.findtext("hostname") == "mail-node-01.example.co.ls"
+
+    outlook = ET.fromstring(outlook_autodiscover("person@example.co.ls", "mail-node-01.example.co.ls"))
+    servers = [node.text for node in outlook.iter() if _local_name(node.tag) == "Server"]
+    assert servers == ["mail-node-01.example.co.ls", "mail-node-01.example.co.ls"]
+
+
 def test_autodiscover_rejects_malformed_xml():
     with pytest.raises(ValueError, match="Malformed"):
         autodiscover_email_address(b"<Autodiscover>")
