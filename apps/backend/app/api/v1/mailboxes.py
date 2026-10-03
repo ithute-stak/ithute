@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_tenant_permission
 from app.db.session import get_db
-from app.models import AuditLog, User
+from app.models import AuditLog, MailNode, User
 from app.models.domains import Domain, DomainStatus
-from app.models.mail import DistributionGroup, DistributionGroupMember, MailAlias, Mailbox, MailboxStatus
+from app.models.mail import DistributionGroup, DistributionGroupMember, MailAlias, Mailbox, MailboxStatus, MailboxStorageType
 from app.services.billing import require_entitlement
 from app.services.mailboxes import hash_mailbox_password, mailbox_address, normalize_destination, normalize_local_part, utcnow
 
@@ -24,6 +24,8 @@ class MailboxCreate(BaseModel):
     password: str
     display_name: str | None = Field(default=None, max_length=150)
     quota_bytes: int = Field(default=5 * 1024**3, ge=100 * 1024**2, le=10 * 1024**4)
+    storage_type: MailboxStorageType = MailboxStorageType.internal
+    mail_node_id: UUID | None = None
 
 
 class MailboxUpdate(BaseModel):
@@ -87,7 +89,37 @@ def _mailbox_json(item: Mailbox) -> dict:
         "id": str(item.id), "tenant_id": str(item.tenant_id), "domain_id": str(item.domain_id),
         "local_part": item.local_part, "address": item.address, "display_name": item.display_name,
         "quota_bytes": item.quota_bytes, "status": item.status.value,
+        "storage_type": item.storage_type.value,
+        "mail_node_id": str(item.mail_node_id) if item.mail_node_id else None,
+        "storage_path": item.storage_path,
         "password_changed_at": item.password_changed_at, "created_at": item.created_at, "updated_at": item.updated_at,
+    }
+
+
+@router.get("/mail-nodes")
+def list_available_mail_nodes(
+    tenant_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    _permission(tenant_id, "mail.read", db, current)
+    rows = db.scalars(
+        select(MailNode)
+        .where(MailNode.status == "active", MailNode.role.in_(("imap", "combined")))
+        .order_by(MailNode.region, MailNode.name)
+    ).all()
+    return {
+        "items": [
+            {
+                "id": str(row.id),
+                "name": row.name,
+                "role": row.role,
+                "region": row.region,
+                "hostname": row.hostname,
+                "status": row.status,
+            }
+            for row in rows
+        ]
     }
 
 
@@ -107,9 +139,25 @@ def create_mailbox(tenant_id: UUID, payload: MailboxCreate, db: Session = Depend
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if db.scalar(select(Mailbox).where(Mailbox.address == address)) or db.scalar(select(DistributionGroup).where(DistributionGroup.address == address)):
         raise HTTPException(status_code=409, detail="Address is already in use")
+    mail_node_id = None
+    if payload.storage_type == MailboxStorageType.external:
+        if payload.mail_node_id is None:
+            raise HTTPException(status_code=422, detail="External storage requires a mail node")
+        node = db.scalar(
+            select(MailNode).where(
+                MailNode.id == payload.mail_node_id,
+                MailNode.status == "active",
+                MailNode.role.in_(("imap", "combined")),
+            )
+        )
+        if node is None:
+            raise HTTPException(status_code=409, detail="Selected mail node is unavailable")
+        mail_node_id = node.id
+
     item = Mailbox(
         tenant_id=tenant_id, domain_id=domain.id, local_part=local, address=address,
         display_name=payload.display_name, password_hash=password_hash, quota_bytes=payload.quota_bytes,
+        storage_type=payload.storage_type, mail_node_id=mail_node_id,
         created_by_user_id=current.id,
     )
     db.add(item)
@@ -118,7 +166,19 @@ def create_mailbox(tenant_id: UUID, payload: MailboxCreate, db: Session = Depend
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Mailbox address already exists") from exc
-    _audit(db, tenant_id, current, "mailbox.create", "mailbox", str(item.id), {"address": address})
+    _audit(
+        db,
+        tenant_id,
+        current,
+        "mailbox.create",
+        "mailbox",
+        str(item.id),
+        {
+            "address": address,
+            "storage_type": item.storage_type.value,
+            "mail_node_id": str(item.mail_node_id) if item.mail_node_id else None,
+        },
+    )
     db.commit()
     db.refresh(item)
     return _mailbox_json(item)
