@@ -13,6 +13,7 @@ from app.models import AuditLog, MailNode, User
 from app.models.domains import Domain, DomainStatus
 from app.models.mail import DistributionGroup, DistributionGroupMember, MailAlias, Mailbox, MailboxStatus, MailboxStorageType
 from app.services.billing import require_entitlement
+from app.services.mail_node_commands import queue_mailbox_sync
 from app.services.mailboxes import hash_mailbox_password, mailbox_address, normalize_destination, normalize_local_part, utcnow
 
 router = APIRouter(prefix="/tenants/{tenant_id}", tags=["mailboxes"])
@@ -166,6 +167,7 @@ def create_mailbox(tenant_id: UUID, payload: MailboxCreate, db: Session = Depend
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Mailbox address already exists") from exc
+    queue_mailbox_sync(db, item)
     _audit(
         db,
         tenant_id,
@@ -221,6 +223,7 @@ def update_mailbox(tenant_id: UUID, mailbox_id: UUID, payload: MailboxUpdate, db
             except ValueError as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
         item.quota_bytes = payload.quota_bytes
+    queue_mailbox_sync(db, item)
     _audit(db, tenant_id, current, "mailbox.update", "mailbox", str(item.id))
     db.commit()
     db.refresh(item)
@@ -238,6 +241,7 @@ def change_mailbox_password(tenant_id: UUID, mailbox_id: UUID, payload: Password
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     item.password_changed_at = utcnow()
+    queue_mailbox_sync(db, item)
     _audit(db, tenant_id, current, "mailbox.password_change", "mailbox", str(item.id))
     db.commit()
     return {"id": str(item.id), "password_changed_at": item.password_changed_at}
@@ -250,6 +254,7 @@ def suspend_mailbox(tenant_id: UUID, mailbox_id: UUID, db: Session = Depends(get
     if item.status == MailboxStatus.archived:
         raise HTTPException(status_code=409, detail="Archived mailbox cannot be suspended")
     item.status = MailboxStatus.suspended
+    queue_mailbox_sync(db, item)
     _audit(db, tenant_id, current, "mailbox.suspend", "mailbox", str(item.id))
     db.commit()
     db.refresh(item)
@@ -263,6 +268,7 @@ def restore_mailbox(tenant_id: UUID, mailbox_id: UUID, db: Session = Depends(get
     if item.status == MailboxStatus.archived:
         raise HTTPException(status_code=409, detail="Archived mailbox cannot be restored")
     item.status = MailboxStatus.active
+    queue_mailbox_sync(db, item)
     _audit(db, tenant_id, current, "mailbox.restore", "mailbox", str(item.id))
     db.commit()
     db.refresh(item)
@@ -274,6 +280,7 @@ def archive_mailbox(tenant_id: UUID, mailbox_id: UUID, db: Session = Depends(get
     _permission(tenant_id, "mail.manage", db, current)
     item = _mailbox(db, tenant_id, mailbox_id)
     item.status = MailboxStatus.archived
+    queue_mailbox_sync(db, item)
     _audit(db, tenant_id, current, "mailbox.archive", "mailbox", str(item.id))
     db.commit()
     db.refresh(item)
