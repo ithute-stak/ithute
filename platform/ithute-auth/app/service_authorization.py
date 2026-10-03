@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import uuid
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from .config import Settings, get_settings
 from .db import get_db
-from .managed_service_models import ManagedServiceClient
+from .managed_service_models import ManagedServiceClient, ManagedServiceCredential
 from .models import utcnow
 from .security import decode_access_token
 from .service_clients import decode_capabilities
@@ -48,8 +49,13 @@ def require_managed_service_scope(required_scope: str, *, audience: str = "ithut
         client_id = claims.get("azp")
         subject = claims.get("sub")
         scope_claim = claims.get("scope", "")
+        credential_id_claim = claims.get("credential_id")
         if token_audience != audience or not isinstance(client_id, str) or subject != f"service:{client_id}":
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid service token")
+        try:
+            credential_id = uuid.UUID(str(credential_id_claim))
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="managed credential binding required") from None
         scopes = frozenset(part for part in str(scope_claim).split(" ") if part)
         if required_scope not in scopes:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="service scope required")
@@ -61,6 +67,16 @@ def require_managed_service_scope(required_scope: str, *, audience: str = "ithut
         now = utcnow()
         if client is None or not client.is_active or (client.expires_at is not None and client.expires_at <= now):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="service client unavailable")
+        credential = db.scalar(
+            select(ManagedServiceCredential).where(
+                ManagedServiceCredential.id == credential_id,
+                ManagedServiceCredential.service_client_id == client.id,
+                ManagedServiceCredential.revoked_at.is_(None),
+            )
+        )
+        if credential is None or (credential.expires_at is not None and credential.expires_at <= now):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="service credential revoked")
+
         allowed_scopes = set(decode_capabilities(client.allowed_scopes_json))
         allowed_audiences = set(decode_capabilities(client.allowed_audiences_json))
         if required_scope not in allowed_scopes or audience not in allowed_audiences:

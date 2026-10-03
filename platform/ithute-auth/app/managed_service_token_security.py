@@ -13,6 +13,7 @@ def create_managed_service_token(
     *,
     settings: Settings,
     client_id: str,
+    credential_id: uuid.UUID,
     audience: str,
     scope: str,
 ) -> str:
@@ -29,6 +30,7 @@ def create_managed_service_token(
         "scope": scope,
         "token_use": "service",
         "service_auth": "managed",
+        "credential_id": str(credential_id),
         "jti": str(uuid.uuid4()),
         "iat": int(issued_at.timestamp()),
         "nbf": int(issued_at.timestamp()),
