@@ -1,6 +1,8 @@
+import uuid
+
 from sqlalchemy import delete
 
-from app.models import EmailVerificationToken, ResellerAccount, WhiteLabelBrand
+from app.models import EmailVerificationToken, MailNode, ResellerAccount, WhiteLabelBrand
 
 PASSWORD = "Phase1-Test-Password!"
 
@@ -53,6 +55,45 @@ def test_platform_owner_can_enable_reseller_and_tenant_can_brand(client, db, pla
         db.commit()
 
 
+def test_platform_owner_can_manage_mail_nodes(client, db, platform_owner):
+    login(client, platform_owner.email)
+    name = f"phase2-mail-{uuid.uuid4().hex[:8]}"
+    created = client.post(
+        "/api/v1/platform/mail-nodes",
+        json={
+            "name": name,
+            "role": "combined",
+            "region": "lesotho",
+            "hostname": f"{name}.example.com",
+            "public_ip": "192.0.2.15",
+            "ssh_port": 22,
+            "ssh_user": "root",
+            "storage_path": "/srv/ithute-mail",
+            "capabilities": ["mail", "storage"],
+            "weight": 100,
+        },
+    )
+    assert created.status_code == 201, created.text
+    node = created.json()
+    assert node["storage_path"] == "/srv/ithute-mail"
+    assert node["ssh_port"] == 22
+    assert set(node["capabilities"]) == {"mail", "storage"}
+
+    listed = client.get("/api/v1/platform/mail-nodes")
+    assert listed.status_code == 200
+    assert any(item["id"] == node["id"] for item in listed.json()["items"])
+
+    maintenance = client.patch(
+        f"/api/v1/platform/mail-nodes/{node['id']}/status",
+        json={"status": "maintenance"},
+    )
+    assert maintenance.status_code == 200
+    assert maintenance.json()["status"] == "maintenance"
+
+    db.execute(delete(MailNode).where(MailNode.id == uuid.UUID(node["id"])))
+    db.commit()
+
+
 def test_professional_and_hosting_routes_are_registered(client):
     routes = set(client.app.openapi().get("paths", {}))
     required = {
@@ -63,5 +104,7 @@ def test_professional_and_hosting_routes_are_registered(client):
         "/api/v1/tenants/{tenant_id}/registrar/register",
         "/api/v1/tenants/{tenant_id}/groupware/credentials",
         "/api/v1/platform/mail-nodes",
+        "/api/v1/platform/mail-nodes/{node_id}/status",
+        "/api/v1/mail-nodes/{node_id}/heartbeat",
     }
     assert not (required - routes)
