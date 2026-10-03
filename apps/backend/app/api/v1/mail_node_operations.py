@@ -18,6 +18,7 @@ from app.models import AuditLog, MailNode, MailNodeAgent, MailNodeOperation, Mai
 from app.models.mail import Mailbox, MailboxStorageType
 from app.services.mail_node_commands import queue_mailbox_sync
 from app.services.mail_routing_sync import sync_mail_routing
+from app.services.security_approvals import consume_dual_control, request_dual_control
 
 router = APIRouter(tags=["mail-node-operations"])
 
@@ -31,6 +32,7 @@ class OperationResult(BaseModel):
 class FailoverRequest(BaseModel):
     target_node_id: UUID
     snapshot_id: UUID
+    approval_id: UUID | None = None
 
 
 def _now() -> datetime:
@@ -188,6 +190,37 @@ def queue_mail_node_failover(
         raise HTTPException(status_code=409, detail="Failover target belongs to a different tenant")
     if db.get(MailNodeAgent, target.id) is None:
         raise HTTPException(status_code=409, detail="Failover target does not have an agent credential")
+
+    approval_payload = {
+        "target_node_id": str(target.id),
+        "snapshot_id": str(snapshot.id),
+    }
+    if payload.approval_id is None:
+        approval = request_dual_control(
+            db,
+            current=current,
+            action="mail_node.failover",
+            resource_type="mail_node",
+            resource_id=str(source.id),
+            payload=approval_payload,
+            tenant_id=source.tenant_id,
+        )
+        return {
+            "requires_approval": True,
+            "approval_id": str(approval.id),
+            "approval_status": approval.status,
+            "expires_at": approval.expires_at.isoformat(),
+        }
+
+    consume_dual_control(
+        db,
+        current=current,
+        approval_id=payload.approval_id,
+        action="mail_node.failover",
+        resource_type="mail_node",
+        resource_id=str(source.id),
+        payload=approval_payload,
+    )
 
     operation = MailNodeOperation(
         node_id=target.id,
