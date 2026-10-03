@@ -205,6 +205,16 @@ def test_mail_node_backup_operation_round_trip(client, db, platform_owner):
     db.commit()
 
 
+def test_mail_node_provisioner_status_is_safe_when_unconfigured(client, platform_owner, monkeypatch):
+    login(client, platform_owner.email)
+    from app.api.v1 import mail_node_provisioning
+    monkeypatch.setattr(mail_node_provisioning, "provisioner_configured", lambda: False)
+
+    response = client.get("/api/v1/platform/mail-node-provisioner")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"configured": False}
+
+
 def test_professional_and_hosting_routes_are_registered(client):
     routes = set(client.app.openapi().get("paths", {}))
     required = {
@@ -229,5 +239,7 @@ def test_professional_and_hosting_routes_are_registered(client):
         "/api/v1/platform/mail-node-operations",
         "/api/v1/mail-node-agent/operations/claim",
         "/api/v1/mail-node-agent/operations/{operation_id}/status",
+        "/api/v1/platform/mail-node-provisioner",
+        "/api/v1/platform/mail-nodes/provision",
     }
     assert not (required - routes)
