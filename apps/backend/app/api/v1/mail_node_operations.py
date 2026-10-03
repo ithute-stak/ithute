@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_platform_owner
+from app.core.config import settings
 from app.core.security import hash_token
 from app.db.session import get_db
 from app.models import AuditLog, MailNode, MailNodeAgent, MailNodeOperation, MailNodeSnapshot, User
@@ -50,7 +51,11 @@ def _agent_from_token(db: Session, token: str | None) -> tuple[MailNodeAgent, Ma
 
 
 def _node_ready(node: MailNode) -> bool:
-    return bool(node.status == "active" and node.smtp_ready and node.imap_ready and node.tls_ready and node.backup_ready)
+    fresh = bool(
+        node.last_heartbeat_at
+        and (_now() - node.last_heartbeat_at).total_seconds() <= settings.mail_node_stale_seconds
+    )
+    return bool(node.status == "active" and fresh and node.smtp_ready and node.imap_ready and node.tls_ready and node.backup_ready)
 
 
 def _operation_json(row: MailNodeOperation) -> dict:
