@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.models.mail import Mailbox, MailboxStatus
+from app.models.mail import Mailbox, MailboxStatus, MailboxStorageType
 from app.services.mail_account_sync import MailAccountSyncError, sync_mailbox, sync_mailbox_forwarding
 
 
@@ -90,6 +90,24 @@ def test_sync_removes_suspended_account(tmp_path: Path, monkeypatch):
 
     content = account_file.read_text(encoding="utf-8")
     assert "info@ithute.co.ls|" not in content
+    assert "other@example.com|{SHA512-CRYPT}$6$other$hash" in content
+
+
+def test_external_mailbox_is_not_written_to_local_dms_accounts(tmp_path: Path, monkeypatch):
+    account_file = tmp_path / "postfix-accounts.cf"
+    account_file.write_text(
+        "external@customer.example|{SHA512-CRYPT}$6$current$hash\n"
+        "other@example.com|{SHA512-CRYPT}$6$other$hash\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAIL_ACCOUNTS_FILE", str(account_file))
+
+    mailbox = _mailbox("external@customer.example", "{SHA512-CRYPT}$6$current$hash")
+    mailbox.storage_type = MailboxStorageType.external
+    sync_mailbox(mailbox)
+
+    content = account_file.read_text(encoding="utf-8")
+    assert "external@customer.example|" not in content
     assert "other@example.com|{SHA512-CRYPT}$6$other$hash" in content
 
 
