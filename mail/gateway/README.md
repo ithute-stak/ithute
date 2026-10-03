@@ -28,3 +28,22 @@ starting the gateway, or otherwise generate the maps from the control plane.
 
 Do not expose an empty/unreconciled gateway on TCP/25. The container refuses to
 start until the routing `.ready` marker and all required maps exist.
+
+
+## Controlled production cutover
+
+After routing maps have been reconciled and staging SMTP on host port 2525 is healthy:
+
+```bash
+bash gateway/cutover.sh
+```
+
+The cutover script first proves the gateway on 2525, moves the existing Docker Mailserver SMTP listener to loopback port 2526 while keeping 465/587/993 unchanged, and only then promotes the routing gateway to public TCP/25. If promotion fails, it automatically attempts to restore the previous public SMTP listener.
+
+To return public TCP/25 to the original mailbox server:
+
+```bash
+bash gateway/rollback.sh
+```
+
+The marker `.ithute-routing-gateway-live` records a successful handoff. MX records do not need to change when the gateway and mailbox server share the existing Ithute public IP; the handoff is at TCP/25 on the host.
