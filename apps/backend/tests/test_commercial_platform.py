@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.models import EmailVerificationToken, MailNode, MailNodeAgent, MailNodeOperation, MailNodeSnapshot, ResellerAccount, WhiteLabelBrand
 
@@ -139,6 +139,14 @@ def test_mail_node_agent_reports_service_readiness(client, db, platform_owner):
     assert row["tls_ready"] is True
     assert row["backup_ready"] is True
     assert row["free_storage_bytes"] == 400 * 1024**3
+    scheduled = db.scalar(
+        select(MailNodeOperation).where(
+            MailNodeOperation.node_id == uuid.UUID(node_id),
+            MailNodeOperation.operation == "backup",
+            MailNodeOperation.status == "queued",
+        )
+    )
+    assert scheduled is not None
 
     db.execute(delete(MailNodeOperation).where(MailNodeOperation.node_id == uuid.UUID(node_id)))
     db.execute(delete(MailNodeSnapshot).where(MailNodeSnapshot.node_id == uuid.UUID(node_id)))
