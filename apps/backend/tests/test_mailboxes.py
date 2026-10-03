@@ -177,6 +177,22 @@ def test_external_mailbox_queues_secure_node_command(client, db, tenant_admin, p
     assert credential.status_code == 200, credential.text
     agent_token = credential.json()["token"]
 
+    heartbeat = client.post(
+        "/api/v1/mail-node-agent/heartbeat",
+        headers={"X-Ithute-Mail-Agent": agent_token},
+        json={
+            "version": "ithute-mail-agent/test",
+            "total_storage_bytes": 500 * 1024**3,
+            "used_storage_bytes": 10 * 1024**3,
+            "capabilities": ["mail", "storage"],
+            "smtp_ready": True,
+            "imap_ready": True,
+            "tls_ready": True,
+            "backup_ready": True,
+        },
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+
     user, tenant, _ = tenant_admin
     tenant_headers = login(client, user.email)
     domain = make_domain(db, user, tenant)
@@ -224,6 +240,8 @@ def test_external_mailbox_queues_secure_node_command(client, db, tenant_admin, p
 
     cleanup(db, domain)
     db.execute(delete(MailNodeCommand).where(MailNodeCommand.node_id == uuid.UUID(node_id)))
+    db.execute(delete(MailNodeOperation).where(MailNodeOperation.node_id == uuid.UUID(node_id)))
+    db.execute(delete(MailNodeSnapshot).where(MailNodeSnapshot.node_id == uuid.UUID(node_id)))
     db.execute(delete(MailNodeAgent).where(MailNodeAgent.node_id == uuid.UUID(node_id)))
     db.execute(delete(MailNode).where(MailNode.id == uuid.UUID(node_id)))
     db.commit()
@@ -247,6 +265,13 @@ def test_distributed_routing_maps_internal_and_external_mailboxes(client, db, te
     )
     assert created_node.status_code == 201, created_node.text
     node_id = created_node.json()["id"]
+    node = db.get(MailNode, uuid.UUID(node_id))
+    node.smtp_ready = True
+    node.imap_ready = True
+    node.tls_ready = True
+    node.backup_ready = True
+    node.last_heartbeat_at = datetime.now(timezone.utc)
+    db.commit()
 
     user, tenant, _ = tenant_admin
     tenant_headers = login(client, user.email)
@@ -425,6 +450,8 @@ def test_controlled_failover_switches_mailbox_only_after_restore_completes(clien
         smtp_ready=True,
         imap_ready=True,
         tls_ready=True,
+        backup_ready=True,
+        last_heartbeat_at=datetime.now(timezone.utc),
     )
     target = MailNode(
         name=f"target-{uuid.uuid4().hex[:8]}",
@@ -437,6 +464,7 @@ def test_controlled_failover_switches_mailbox_only_after_restore_completes(clien
         imap_ready=True,
         tls_ready=True,
         backup_ready=True,
+        last_heartbeat_at=datetime.now(timezone.utc),
     )
     db.add_all([source, target])
     db.commit()
