@@ -94,6 +94,7 @@ class MailNodeCreate(BaseModel):
     region: str = Field(default="lesotho", max_length=80)
     public_ip: str | None = Field(default=None, max_length=64)
     hostname: str = Field(min_length=3, max_length=253)
+    tenant_id: UUID | None = None
     ssh_port: int = Field(default=22, ge=1, le=65535)
     ssh_user: str | None = Field(default=None, max_length=80)
     storage_path: str = Field(default="/srv/ithute-mail", min_length=1, max_length=500)
@@ -347,6 +348,7 @@ def _mail_node_json(row: MailNode) -> dict:
         "region": row.region,
         "hostname": row.hostname,
         "public_ip": row.public_ip,
+        "tenant_id": str(row.tenant_id) if row.tenant_id else None,
         "ssh_port": row.ssh_port,
         "ssh_user": row.ssh_user,
         "storage_path": row.storage_path,
@@ -367,6 +369,8 @@ def create_mail_node(payload: MailNodeCreate, db: Session = Depends(get_db), cur
     clean_capabilities = sorted({x.strip().lower() for x in payload.capabilities if x.strip()})
     if not clean_capabilities:
         raise HTTPException(status_code=422, detail="At least one node capability is required")
+    if payload.tenant_id is not None and db.get(Tenant, payload.tenant_id) is None:
+        raise HTTPException(status_code=404, detail="Dedicated tenant not found")
     values = payload.model_dump(exclude={"capabilities"})
     values["capabilities_json"] = json.dumps(clean_capabilities)
     row = db.scalar(select(MailNode).where(MailNode.name == payload.name))
