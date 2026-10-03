@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import require_platform_owner
 from app.db.session import get_db
-from app.models import AuditLog, IthuteSecurityEvent, User
+from app.models import AuditLog, IthuteSecurityEvent, SecuritySeverity, User
 from app.services.security_operations import (
     SEVERITY_ORDER,
     audit_integrity_status,
@@ -50,7 +50,7 @@ def events(
         raise HTTPException(status_code=422, detail="invalid security severity")
     statement = select(IthuteSecurityEvent)
     if severity is not None:
-        statement = statement.where(IthuteSecurityEvent.severity == severity)
+        statement = statement.where(IthuteSecurityEvent.severity == SecuritySeverity(severity))
     if unresolved_only:
         statement = statement.where(IthuteSecurityEvent.resolved_at.is_(None))
     rows = db.scalars(statement.order_by(IthuteSecurityEvent.created_at.desc()).limit(limit)).all()
