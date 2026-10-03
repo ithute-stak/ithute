@@ -89,6 +89,9 @@ export default function MailNodesPage() {
   const [snapshots, setSnapshots] = useState<MailNodeSnapshot[]>([]);
   const [selectedSnapshot, setSelectedSnapshot] = useState("");
   const [selectedTarget, setSelectedTarget] = useState("");
+  const [policyNodeId, setPolicyNodeId] = useState("");
+  const [policyInterval, setPolicyInterval] = useState(24);
+  const [policyRetention, setPolicyRetention] = useState(7);
 
   const active = useMemo(() => nodes.filter((node) => node.status === "active").length, [nodes]);
   const healthy = useMemo(() => nodes.filter((node) => node.healthy).length, [nodes]);
@@ -259,6 +262,23 @@ export default function MailNodesPage() {
     }
     setFailoverSource(null);
     setMessage("Failover restore queued. Mailbox placement will switch only after the target confirms a successful restore.");
+    await loadNodes();
+  }
+
+  async function saveBackupPolicy() {
+    if (!policyNodeId) return;
+    setMessage("");
+    setError("");
+    const response = await api(`/platform/mail-nodes/${policyNodeId}/backup-policy`, {
+      method: "PATCH",
+      body: JSON.stringify({ interval_hours: policyInterval, retention_count: policyRetention }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      setError(body.detail || "Unable to update backup policy.");
+      return;
+    }
+    setMessage("Automatic backup policy updated.");
     await loadNodes();
   }
 
@@ -472,6 +492,24 @@ export default function MailNodesPage() {
             </div>
           </div>
         ) : null}
+        <section className="rounded-2xl border border-[#e1e7e3] bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+            <div className="flex-1">
+              <p className="text-sm font-black text-[#21342a]">Automatic backup policy</p>
+              <p className="mt-1 text-[10px] text-[#819087]">Snapshots are created by the node agent and replicated off-node before they count as ready.</p>
+            </div>
+            <label className="block min-w-[220px]"><span className="label">Mail node</span>
+              <select className="input" value={policyNodeId} onChange={e=>{const id=e.target.value;setPolicyNodeId(id);const node=nodes.find(item=>item.id===id);if(node){setPolicyInterval(node.backup_interval_hours);setPolicyRetention(node.backup_retention_count)}}}>
+                <option value="">Select node</option>
+                {nodes.map(node=><option key={node.id} value={node.id}>{node.name}</option>)}
+              </select>
+            </label>
+            <label className="block w-[130px]"><span className="label">Every hours</span><input className="input" type="number" min="1" max="168" value={policyInterval} onChange={e=>setPolicyInterval(Math.max(1,Number(e.target.value)||1))}/></label>
+            <label className="block w-[120px]"><span className="label">Keep</span><input className="input" type="number" min="1" max="100" value={policyRetention} onChange={e=>setPolicyRetention(Math.max(1,Number(e.target.value)||1))}/></label>
+            <button className="btn-primary" disabled={!policyNodeId} onClick={()=>void saveBackupPolicy()}>Save policy</button>
+          </div>
+        </section>
+
         <section className="rounded-2xl border border-[#e1e7e3] bg-white p-4 shadow-sm">
           <div className="mb-3">
             <p className="text-sm font-black text-[#21342a]">Recent infrastructure operations</p>
