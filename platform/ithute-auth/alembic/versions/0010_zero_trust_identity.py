@@ -1,7 +1,7 @@
 """zero trust identity hardening
 
 Revision ID: 0010_zero_trust_identity
-Revises: 0009_bda_mail_forward_grant
+Revises: 0009_bda_mail_forward
 Create Date: 2026-10-03
 """
 from alembic import op
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 
 revision = "0010_zero_trust_identity"
-down_revision = "0009_bda_mail_forward_grant"
+down_revision = "0009_bda_mail_forward"
 branch_labels = None
 depends_on = None
 
