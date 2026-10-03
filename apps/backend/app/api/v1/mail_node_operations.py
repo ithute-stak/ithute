@@ -162,7 +162,7 @@ def queue_mail_node_failover(
     if snapshot is None or snapshot.node_id != source.id or snapshot.status != "ready":
         raise HTTPException(status_code=409, detail="Failover requires a ready snapshot from the source node")
     if not _node_ready(target):
-        raise HTTPException(status_code=409, detail="Failover target must be active with SMTP, IMAP and TLS ready")
+        raise HTTPException(status_code=409, detail="Failover target must be active with SMTP, IMAP, TLS and off-node backup ready")
     if target.tenant_id is not None and target.tenant_id != source.tenant_id:
         raise HTTPException(status_code=409, detail="Failover target belongs to a different tenant")
     if db.get(MailNodeAgent, target.id) is None:
@@ -238,6 +238,40 @@ def claim_mail_node_operation(
     }
 
 
+def _queue_snapshot_retention(db: Session, agent: MailNodeAgent, node: MailNode) -> None:
+    keep = max(1, min(int(node.backup_retention_count or 7), 100))
+    ready = db.scalars(
+        select(MailNodeSnapshot)
+        .where(MailNodeSnapshot.node_id == node.id, MailNodeSnapshot.status == "ready")
+        .order_by(MailNodeSnapshot.created_at.desc())
+    ).all()
+    for snapshot in ready[keep:]:
+        if not snapshot.remote_uri:
+            continue
+        pending = db.scalar(
+            select(MailNodeOperation).where(
+                MailNodeOperation.node_id == node.id,
+                MailNodeOperation.operation == "delete_snapshot",
+                MailNodeOperation.status.in_(("queued", "claimed")),
+                MailNodeOperation.payload_json.contains(str(snapshot.id)),
+            )
+        )
+        if pending is not None:
+            continue
+        snapshot.status = "deleting"
+        db.add(MailNodeOperation(
+            node_id=node.id,
+            tenant_id=node.tenant_id,
+            operation="delete_snapshot",
+            payload_json=json.dumps({
+                "snapshot_id": str(snapshot.id),
+                "snapshot_key": snapshot.snapshot_key,
+                "remote_uri": snapshot.remote_uri,
+            }),
+            requested_by_user_id=agent.rotated_by_user_id,
+        ))
+
+
 @router.post("/mail-node-agent/operations/{operation_id}/status")
 def complete_mail_node_operation(
     operation_id: UUID,
@@ -277,6 +311,14 @@ def complete_mail_node_operation(
                 snapshot.completed_at = _now()
             else:
                 snapshot.status = "failed"
+        if payload.status == "completed":
+            _queue_snapshot_retention(db, agent, node)
+
+    if row.operation == "delete_snapshot":
+        snapshot_id = UUID(str(operation_payload["snapshot_id"]))
+        snapshot = db.get(MailNodeSnapshot, snapshot_id)
+        if snapshot:
+            snapshot.status = "deleted" if payload.status == "completed" else "ready"
 
     if row.operation == "restore_failover" and payload.status == "completed":
         source_node_id = UUID(str(operation_payload["source_node_id"]))
