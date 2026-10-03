@@ -106,7 +106,11 @@ def list_available_mail_nodes(
     _permission(tenant_id, "mail.read", db, current)
     rows = db.scalars(
         select(MailNode)
-        .where(MailNode.status == "active", MailNode.role.in_(("imap", "combined")))
+        .where(
+            MailNode.status == "active",
+            MailNode.role.in_(("imap", "combined")),
+            or_(MailNode.tenant_id.is_(None), MailNode.tenant_id == tenant_id),
+        )
         .order_by(MailNode.region, MailNode.name)
     ).all()
     return {
@@ -149,6 +153,7 @@ def create_mailbox(tenant_id: UUID, payload: MailboxCreate, db: Session = Depend
                 MailNode.id == payload.mail_node_id,
                 MailNode.status == "active",
                 MailNode.role.in_(("imap", "combined")),
+                or_(MailNode.tenant_id.is_(None), MailNode.tenant_id == tenant_id),
             )
         )
         if node is None:
