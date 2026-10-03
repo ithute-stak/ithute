@@ -164,8 +164,10 @@ jobs:
             if [ "$health" = healthy ]; then
               docker exec ithute-mail test -f /tmp/docker-mailserver/postfix-accounts.cf
               docker exec ithute-mail sh -c 'test "$(readlink /tmp/docker-mailserver/postfix-accounts.cf)" = /mail-accounts/postfix-accounts.cf'
-              docker exec ithute-app-api python -c 'import imaplib, ssl; client=imaplib.IMAP4_SSL("mail.ithute.co.ls", 993, ssl_context=ssl.create_default_context(), timeout=10); client.logout()'
-              docker exec ithute-app-api python -c 'import smtplib, ssl; client=smtplib.SMTP("mail.ithute.co.ls", 587, timeout=10); client.ehlo(); client.starttls(context=ssl.create_default_context()); client.ehlo(); client.quit()'
+              app_api_container="$(docker ps -q --filter label=com.docker.compose.project=ithute --filter label=com.docker.compose.service=ithute-app-api | head -n 1)"
+              test -n "$app_api_container"
+              docker exec "$app_api_container" python -c 'import imaplib, ssl; client=imaplib.IMAP4_SSL("mail.ithute.co.ls", 993, ssl_context=ssl.create_default_context(), timeout=10); client.logout()'
+              docker exec "$app_api_container" python -c 'import smtplib, ssl; client=smtplib.SMTP("mail.ithute.co.ls", 587, timeout=10); client.ehlo(); client.starttls(context=ssl.create_default_context()); client.ehlo(); client.quit()'
               exit 0
             fi
             if [ "$attempt" -eq 30 ]; then
