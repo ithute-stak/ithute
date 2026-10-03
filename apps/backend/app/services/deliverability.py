@@ -165,6 +165,52 @@ def deliverability_readiness(
     )
 
 
+def dmarc_policy_status(domain: str) -> dict:
+    values = [value for value in _txt_values(f"_dmarc.{domain}") if value.startswith("v=DMARC1;")]
+    if not values:
+        return {
+            "published": False,
+            "policy": None,
+            "pct": None,
+            "adkim": None,
+            "aspf": None,
+            "reject_enforced": False,
+            "raw": [],
+        }
+    raw = values[0]
+    tags: dict[str, str] = {}
+    for part in raw.split(";"):
+        key, sep, value = part.strip().partition("=")
+        if sep:
+            tags[key.strip().lower()] = value.strip().lower()
+    policy = tags.get("p")
+    try:
+        pct = int(tags.get("pct", "100"))
+    except ValueError:
+        pct = 0
+    return {
+        "published": True,
+        "policy": policy,
+        "pct": pct,
+        "adkim": tags.get("adkim"),
+        "aspf": tags.get("aspf"),
+        "reject_enforced": policy == "reject" and pct == 100,
+        "raw": values,
+    }
+
+
+def dmarc_reject_record(domain: str, report_address: str | None = None) -> dict:
+    value = "v=DMARC1; p=reject; adkim=s; aspf=s; pct=100"
+    if report_address:
+        value += f"; rua=mailto:{report_address}"
+    return {
+        "name": f"_dmarc.{domain}",
+        "type": "TXT",
+        "value": value,
+        "purpose": "dmarc",
+    }
+
+
 def infrastructure_readiness(mail_hostname: str, mail_public_ip: str | None) -> dict:
     hostname = mail_hostname.rstrip(".").lower()
     if not mail_public_ip:
