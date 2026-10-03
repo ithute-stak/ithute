@@ -19,7 +19,9 @@ from app.services.deliverability import (
     normalize_selector,
     recommended_records,
 )
+from app.services.caddy_routes import CaddyRouteError, activate_route, propagation_state
 from app.services.dkim_sync import sync_active_dkim_keys
+from app.services.mail_transport_security import mta_sts_policy, policy_hostname, transport_security_records
 
 router = APIRouter(prefix="/tenants/{tenant_id}/domains/{domain_id}/deliverability", tags=["deliverability"])
 
@@ -180,3 +182,77 @@ def readiness(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), c
     result.update({"domain": domain.ascii_name, "mail_hostname": settings.mail_hostname, "selector": key.selector, "infrastructure": infrastructure_result})
     result["ready"] = bool(result["ready"] and infrastructure_result["ready"])
     return result
+
+
+
+@router.get("/transport-security")
+def transport_security_status(
+    tenant_id: UUID,
+    domain_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "mail.read", db, current)
+    domain = _domain(db, tenant_id, domain_id)
+    host = policy_hostname(domain.ascii_name)
+    try:
+        propagation = propagation_state(host)
+    except CaddyRouteError as exc:
+        propagation = {"propagated": False, "expected_ips": [], "observed_ips": [], "error": str(exc)}
+    return {
+        "domain": domain.ascii_name,
+        "mta_sts_enabled": settings.mail_mta_sts_enabled,
+        "policy_hostname": host,
+        "policy": mta_sts_policy(domain.ascii_name) if settings.mail_mta_sts_enabled else None,
+        "records": transport_security_records(domain.ascii_name),
+        "propagation": propagation,
+        "tls_report_address": settings.mail_tls_report_address,
+    }
+
+
+@router.post("/transport-security/reconcile")
+def reconcile_transport_security(
+    tenant_id: UUID,
+    domain_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "mail.manage", db, current)
+    domain = _domain(db, tenant_id, domain_id)
+    if not settings.mail_mta_sts_enabled:
+        raise HTTPException(status_code=409, detail="MTA-STS is disabled")
+    host = policy_hostname(domain.ascii_name)
+    try:
+        propagation = propagation_state(host)
+        if not propagation["propagated"]:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Point the MTA-STS hostname to the Ithute edge before activation",
+                    "hostname": host,
+                    "expected_ips": propagation["expected_ips"],
+                    "observed_ips": propagation["observed_ips"],
+                },
+            )
+        activate_route(
+            f"mta-sts-{domain.id}",
+            host,
+            "http://ithute-app-api:8000",
+        )
+    except CaddyRouteError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    _audit(
+        db,
+        tenant_id,
+        current,
+        "deliverability.mta_sts.reconcile",
+        str(domain.id),
+        {"hostname": host},
+    )
+    db.commit()
+    return {
+        "active": True,
+        "hostname": host,
+        "policy": mta_sts_policy(domain.ascii_name),
+        "records": transport_security_records(domain.ascii_name),
+    }
