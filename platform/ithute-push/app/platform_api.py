@@ -36,6 +36,8 @@ def delegated_principal(
         raise HTTPException(status_code=401, detail=str(exc)) from None
     if principal.client_id not in get_settings().delegated_clients:
         raise HTTPException(status_code=403, detail="delegated push is restricted to approved platform services")
+    if principal.client_id == "ithute-notification" and not principal.managed:
+        raise HTTPException(status_code=401, detail="managed Ithute Notification service token required")
     return principal
 
 

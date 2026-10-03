@@ -23,6 +23,7 @@ class UserPrincipal:
 class ServicePrincipal:
     client_id: str
     scopes: frozenset[str]
+    managed: bool = False
 
 
 @dataclass(frozen=True)
@@ -126,7 +127,11 @@ class AuthVerifier:
             raise AuthError("service subject does not match authorized party")
         if int(claims["exp"]) - int(claims["iat"]) > self.settings.auth_max_service_token_seconds:
             raise AuthError("service token lifetime exceeds policy")
-        return ServicePrincipal(client_id=client_id, scopes=scopes)
+        return ServicePrincipal(
+            client_id=client_id,
+            scopes=scopes,
+            managed=claims.get("service_auth") == "managed",
+        )
 
     def lifecycle(self, token: str) -> LifecyclePrincipal:
         claims = self._decode(
