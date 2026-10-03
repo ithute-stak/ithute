@@ -35,10 +35,11 @@ from .schemas import (
     PasskeyRegistrationVerifyRequest,
     PasskeyRemoveRequest,
     PasskeyResponse,
+    StepUpResponse,
     TokenResponse,
 )
 from .security import create_access_token, hash_refresh_token, new_refresh_token, verify_password
-from .security_service import client_ip, login_rate_limited, record_audit, verify_second_factor
+from .security_service import client_ip, login_rate_limited, record_audit, session_risk, verify_second_factor
 
 
 router = APIRouter(tags=["passkeys"])
@@ -309,12 +310,18 @@ def passkey_authentication_verify(
     user.last_login_ip = client_ip(request)
 
     raw_refresh = new_refresh_token()
+    risk_level, risk_reasons = session_risk(db, user=user, request=request, settings=settings)
     session = AuthSession(
         user_id=user.id,
         client_id=payload.client_id,
         refresh_token_hash=hash_refresh_token(raw_refresh),
         user_agent=request.headers.get("user-agent"),
         ip_address=client_ip(request),
+        assurance_level=3,
+        auth_method="passkey",
+        last_step_up_at=now,
+        risk_level=risk_level,
+        risk_reasons_json=json.dumps(risk_reasons, separators=(",", ":"), sort_keys=True),
         expires_at=now + timedelta(days=settings.refresh_token_days),
     )
     db.add(session)
@@ -330,9 +337,127 @@ def passkey_authentication_verify(
         session_id=session.id,
         email=user.email,
         phone=user.phone,
+        assurance_level=session.assurance_level,
+        auth_method=session.auth_method,
+        risk_level=session.risk_level,
     )
     return TokenResponse(
         access_token=access,
         refresh_token=raw_refresh,
+        expires_in=settings.access_token_minutes * 60,
+    )
+
+
+
+@router.post("/v1/account/step-up/passkey/options")
+def passkey_step_up_options(
+    context: AuthContext = Depends(authenticated_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    credentials = db.scalars(
+        select(PasskeyCredential).where(PasskeyCredential.user_id == context.user.id)
+    ).all()
+    if not credentials:
+        raise HTTPException(status_code=409, detail="register a passkey before passkey step-up")
+    challenge = secrets.token_bytes(32)
+    row = WebAuthnChallenge(
+        user_id=context.user.id,
+        purpose="step_up",
+        challenge=_b64url(challenge),
+        expires_at=utcnow() + timedelta(minutes=settings.webauthn_challenge_minutes),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    options = generate_authentication_options(
+        rp_id=settings.webauthn_rp_id,
+        challenge=challenge,
+        user_verification=UserVerificationRequirement.REQUIRED,
+        allow_credentials=[
+            PublicKeyCredentialDescriptor(id=base64url_to_bytes(item.credential_id))
+            for item in credentials
+        ],
+    )
+    return {"challenge_id": str(row.id), "options": json.loads(options_to_json(options))}
+
+
+@router.post("/v1/account/step-up/passkey/verify", response_model=StepUpResponse)
+def passkey_step_up_verify(
+    payload: PasskeyAuthenticationVerifyRequest,
+    request: Request,
+    context: AuthContext = Depends(authenticated_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> StepUpResponse:
+    challenge = _challenge(db, payload.challenge_id, purpose="step_up", user_id=context.user.id)
+    credential_id = payload.credential.get("id") if isinstance(payload.credential, dict) else None
+    if not isinstance(credential_id, str) or not credential_id:
+        raise HTTPException(status_code=400, detail="invalid passkey credential")
+    passkey = db.scalar(
+        select(PasskeyCredential)
+        .where(
+            PasskeyCredential.credential_id == credential_id,
+            PasskeyCredential.user_id == context.user.id,
+        )
+        .with_for_update()
+    )
+    if passkey is None:
+        raise HTTPException(status_code=401, detail="invalid passkey")
+
+    try:
+        verification = verify_authentication_response(
+            credential=payload.credential,
+            expected_challenge=_from_b64url(challenge.challenge),
+            expected_rp_id=settings.webauthn_rp_id,
+            expected_origin=settings.webauthn_origin,
+            credential_public_key=_from_b64url(passkey.public_key),
+            credential_current_sign_count=passkey.sign_count,
+            require_user_verification=True,
+        )
+    except Exception as exc:
+        record_audit(
+            db,
+            event_type="passkey_step_up_failed",
+            user=context.user,
+            success=False,
+            client_id=context.session.client_id,
+            request=request,
+        )
+        db.commit()
+        raise HTTPException(status_code=401, detail="invalid passkey") from exc
+
+    now = utcnow()
+    challenge.consumed_at = now
+    passkey.sign_count = verification.new_sign_count
+    passkey.device_type = _enum_value(verification.credential_device_type)
+    passkey.backed_up = bool(verification.credential_backed_up)
+    passkey.last_used_at = now
+    context.session.assurance_level = 3
+    context.session.auth_method = "passkey-step-up"
+    context.session.last_step_up_at = now
+    record_audit(
+        db,
+        event_type="passkey_step_up_succeeded",
+        user=context.user,
+        client_id=context.session.client_id,
+        request=request,
+        details={"session_id": str(context.session.id), "passkey_id": str(passkey.id)},
+    )
+    db.commit()
+
+    token = create_access_token(
+        settings=settings,
+        user_id=context.user.id,
+        client_id=context.session.client_id,
+        session_id=context.session.id,
+        email=context.user.email,
+        phone=context.user.phone,
+        assurance_level=context.session.assurance_level,
+        auth_method=context.session.auth_method,
+        risk_level=context.session.risk_level,
+    )
+    return StepUpResponse(
+        access_token=token,
         expires_in=settings.access_token_minutes * 60,
     )
