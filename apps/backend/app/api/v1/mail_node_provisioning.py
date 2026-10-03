@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_platform_owner
+from app.core.config import settings
 from app.core.security import hash_token
 from app.db.session import get_db
 from app.models import AuditLog, MailNode, MailNodeAgent, Tenant, User
@@ -63,7 +65,7 @@ def provision_node(
         node_id=node.id,
         token_hash=hash_token(raw_agent_token),
         token_hint=raw_agent_token[:18],
-        rotated_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+        rotated_at=datetime.now(timezone.utc),
         rotated_by_user_id=current.id,
     )
     db.add(agent)
@@ -82,8 +84,9 @@ def provision_node(
             "cpu_cores": payload.cpu_cores,
         },
         "bootstrap": {
-            "api_url": "https://ithute.co.ls",
+            "api_url": settings.mail_node_control_plane_url,
             "agent_token": raw_agent_token,
+            "profile": "ithute-mail-node-v1",
             "mail_hostname": node.hostname,
         },
     }
@@ -102,6 +105,11 @@ def provision_node(
         ))
         db.commit()
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if result["hostname"] != payload.hostname.strip().lower().rstrip("."):
+        node.status = "disabled"
+        db.commit()
+        raise HTTPException(status_code=502, detail="Provisioner returned a hostname different from the requested mail hostname")
 
     node.provider = result["provider"]
     node.provider_instance_id = result["instance_id"]
