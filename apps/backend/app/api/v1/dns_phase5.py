@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.models import User
 from app.services.dns_phase5 import delegation_diagnostics, dns_templates
 from app.services.domains import add_domain_event
+from app.services.security_approvals import consume_dual_control, request_dual_control
 from app.services.powerdns import PowerDNSClient, PowerDNSError
 
 router = APIRouter(prefix="/tenants/{tenant_id}/domains/{domain_id}/dns", tags=["dns-security"])
@@ -60,13 +61,47 @@ def enable_dnssec(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db
 
 
 @router.post("/dnssec/disable")
-def disable_dnssec(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+def disable_dnssec(
+    tenant_id: UUID,
+    domain_id: UUID,
+    approval_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
     require_tenant_permission(tenant_id, "dns.manage", db, current)
     domain = _managed_domain(db, tenant_id, domain_id)
     # Disabling signing before removing a parent DS can break validation. The client must explicitly remove DS first.
     diagnostics = delegation_diagnostics(domain.ascii_name)
     if diagnostics.get("parent_ds_present"):
         raise HTTPException(409, "Remove the DS record at the registrar/parent zone before disabling DNSSEC")
+
+    approval_payload = {"domain": domain.ascii_name}
+    if approval_id is None:
+        approval = request_dual_control(
+            db,
+            current=current,
+            action="dnssec.disable",
+            resource_type="domain",
+            resource_id=str(domain.id),
+            payload=approval_payload,
+            tenant_id=tenant_id,
+        )
+        return {
+            "requires_approval": True,
+            "approval_id": str(approval.id),
+            "approval_status": approval.status,
+            "expires_at": approval.expires_at.isoformat(),
+        }
+
+    consume_dual_control(
+        db,
+        current=current,
+        approval_id=approval_id,
+        action="dnssec.disable",
+        resource_type="domain",
+        resource_id=str(domain.id),
+        payload=approval_payload,
+    )
     try:
         zone = PowerDNSClient().set_dnssec(domain.ascii_name, False)
     except PowerDNSError as exc:
