@@ -102,12 +102,13 @@ def _after_insert(_mapper, connection: Connection, target: AuditLog) -> None:
         "resource_type": target.resource_type,
         "resource_id": target.resource_id,
         "tenant_id": str(target.tenant_id) if target.tenant_id else None,
+        "product": "mailbox-dns",
         "integrity_signature": metadata.get("_audit_integrity_signature"),
     }
     source_ip = metadata.get("client_ip")
     connection.execute(
         insert(IthuteSecurityEvent.__table__).values(
-            product_id="mailbox-dns",
+            product_id=None,
             severity=severity,
             event_type=f"audit.{target.action}"[:160],
             actor_ref=str(target.actor_user_id) if target.actor_user_id else None,
