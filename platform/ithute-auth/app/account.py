@@ -9,13 +9,13 @@ from urllib.parse import quote
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from .config import Settings, get_settings
 from .db import get_db
 from .delivery import DeliveryUnavailable, send_email, send_sms
-from .models import AuditEvent, AuthSession, MfaRecoveryCode, SecurityToken, User, utcnow
+from .models import AuditEvent, AuthSession, Device, MfaRecoveryCode, SecurityToken, User, utcnow
 from .schemas import (
     AuditEventResponse,
     MfaConfirmRequest,
@@ -26,6 +26,7 @@ from .schemas import (
     PasswordChangeRequest,
     PasswordResetConfirmRequest,
     PasswordResetRequest,
+    DeviceResponse,
     SessionResponse,
     VerificationConfirmRequest,
     VerificationRequest,
@@ -440,6 +441,11 @@ def list_sessions(
             expires_at=row.expires_at,
             revoked_at=row.revoked_at,
             current=row.id == context.session.id,
+            auth_method=row.auth_method,
+            risk_score=row.risk_score,
+            risk_reasons=(json.loads(row.risk_reasons_json) if row.risk_reasons_json else []),
+            step_up_at=row.step_up_at,
+            device_id=str(row.device_id) if row.device_id else None,
         )
         for row in rows
     ]
@@ -472,6 +478,95 @@ def revoke_other_sessions(
     record_audit(db, event_type="other_sessions_revoked", user=context.user, request=request, details={"count": count})
     db.commit()
     return {"revoked": count}
+
+
+@router.get("/devices", response_model=list[DeviceResponse])
+def list_devices(
+    context: AuthContext = Depends(authenticated_context),
+    db: Session = Depends(get_db),
+) -> list[DeviceResponse]:
+    rows = db.scalars(
+        select(Device).where(Device.user_id == context.user.id).order_by(Device.last_seen_at.desc())
+    ).all()
+    return [
+        DeviceResponse(
+            id=str(row.id),
+            device_key=row.device_key,
+            platform=row.platform,
+            label=row.label,
+            active=row.is_active,
+            trusted=row.trusted_at is not None and row.revoked_at is None,
+            trusted_at=row.trusted_at,
+            last_seen_at=row.last_seen_at,
+            last_seen_ip=row.last_seen_ip,
+            risk_score=row.risk_score,
+        )
+        for row in rows
+    ]
+
+
+def _require_recent_passkey(context: AuthContext, *, max_age_seconds: int = 600) -> None:
+    if context.session.auth_method != "passkey" or context.session.step_up_at is None:
+        raise HTTPException(status_code=403, detail="fresh passkey authentication required")
+    age = (utcnow() - context.session.step_up_at).total_seconds()
+    if age < 0 or age > max_age_seconds:
+        raise HTTPException(status_code=403, detail="fresh passkey authentication required")
+
+
+@router.post("/devices/{device_id}/trust", response_model=DeviceResponse)
+def trust_device(
+    device_id: uuid.UUID,
+    request: Request,
+    context: AuthContext = Depends(authenticated_context),
+    db: Session = Depends(get_db),
+) -> DeviceResponse:
+    _require_recent_passkey(context)
+    row = db.get(Device, device_id)
+    if row is None or row.user_id != context.user.id or not row.is_active or row.revoked_at is not None:
+        raise HTTPException(status_code=404, detail="device not found")
+    row.trusted_at = utcnow()
+    row.risk_score = 0
+    record_audit(db, event_type="device_trusted", user=context.user, request=request, details={"device_id": str(row.id)})
+    db.commit()
+    db.refresh(row)
+    return DeviceResponse(
+        id=str(row.id), device_key=row.device_key, platform=row.platform, label=row.label,
+        active=row.is_active, trusted=True, trusted_at=row.trusted_at, last_seen_at=row.last_seen_at,
+        last_seen_ip=row.last_seen_ip, risk_score=row.risk_score,
+    )
+
+
+@router.delete("/devices/{device_id}", status_code=204)
+def revoke_trusted_device(
+    device_id: uuid.UUID,
+    request: Request,
+    context: AuthContext = Depends(authenticated_context),
+    db: Session = Depends(get_db),
+) -> None:
+    _require_recent_passkey(context)
+    row = db.get(Device, device_id)
+    if row is None or row.user_id != context.user.id:
+        raise HTTPException(status_code=404, detail="device not found")
+    now = utcnow()
+    row.is_active = False
+    row.revoked_at = now
+    sessions = db.scalars(
+        select(AuthSession).where(
+            AuthSession.user_id == context.user.id,
+            AuthSession.device_id == row.id,
+            AuthSession.revoked_at.is_(None),
+        )
+    ).all()
+    for session in sessions:
+        if session.id == context.session.id:
+            continue
+        session.revoked_at = now
+        session.revoked_reason = "trusted device revoked"
+    record_audit(
+        db, event_type="device_revoked", user=context.user, request=request,
+        details={"device_id": str(row.id), "sessions_revoked": len([s for s in sessions if s.id != context.session.id])},
+    )
+    db.commit()
 
 
 @router.get("/security-events", response_model=list[AuditEventResponse])
