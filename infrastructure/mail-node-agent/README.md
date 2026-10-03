@@ -18,6 +18,6 @@ The agent reports disk capacity/usage and claims only commands assigned to its a
 
 `ITHUTE_MAIL_ACCOUNTS_FILE` must point at the Docker Mailserver account file that the mail container watches. The agent writes that file in place so the watcher keeps the same inode.
 
-Phase 3 currently synchronizes mailbox existence, active/suspended state and password hashes. Quota is included in the control-plane command payload for the next quota-enforcement step, but is not yet enforced by this agent.
+The agent synchronizes mailbox existence, active/suspended state, password hashes and Dovecot quota limits. `ITHUTE_MAIL_QUOTAS_FILE` must point to Docker Mailserver's `dovecot-quotas.cf` file in the same watched config directory as `postfix-accounts.cf`.
 
 Never commit the node token.
