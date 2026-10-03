@@ -1,4 +1,5 @@
 import hmac
+import json
 import uuid
 from datetime import timedelta
 from typing import Annotated
@@ -16,7 +17,7 @@ from .account_dashboard import apply_account_dashboard
 from .admin import router as admin_router
 from .config import Settings, get_settings
 from .db import get_db
-from .models import Application, AuthSession, Device, User, utcnow
+from .models import Application, AuthSession, Device, PasskeyCredential, User, utcnow
 from .oauth import router as oauth_router
 from .passkeys import router as passkey_router
 from .portal import router as portal_router
@@ -49,7 +50,7 @@ from .security import (
     public_jwks,
     verify_password,
 )
-from .security_service import client_ip, login_rate_limited, record_audit, verify_second_factor
+from .security_service import client_ip, login_rate_limited, privileged_account, record_audit, session_risk, verify_second_factor
 
 
 bearer = HTTPBearer(auto_error=False)
@@ -317,6 +318,37 @@ def login(
         db.commit()
         raise HTTPException(status_code=401, detail="MFA required or invalid code")
 
+    passkey_exists = db.scalar(
+        select(PasskeyCredential.id).where(PasskeyCredential.user_id == user.id).limit(1)
+    ) is not None
+    if config.privileged_passkey_enforcement and privileged_account(user, config) and passkey_exists:
+        record_audit(
+            db,
+            event_type="privileged_password_login_blocked",
+            user=user,
+            success=False,
+            client_id=payload.client_id,
+            request=request,
+            details={"required_auth_method": "passkey"},
+        )
+        db.commit()
+        raise HTTPException(status_code=403, detail="privileged account requires passkey authentication")
+
+    risk_level, risk_reasons = session_risk(db, user=user, request=request, settings=config)
+    assurance_level = 2 if user.totp_enabled else 1
+    auth_method = "password+totp" if user.totp_enabled else "password"
+    if privileged_account(user, config) and not passkey_exists:
+        risk_level = "high"
+        if "privileged_passkey_not_enrolled" not in risk_reasons:
+            risk_reasons.append("privileged_passkey_not_enrolled")
+        record_audit(
+            db,
+            event_type="privileged_passkey_bootstrap_required",
+            user=user,
+            client_id=payload.client_id,
+            request=request,
+        )
+
     user.failed_login_attempts = 0
     user.locked_until = None
     user.last_login_at = now
@@ -329,6 +361,10 @@ def login(
         refresh_token_hash=hash_refresh_token(refresh_token),
         user_agent=user_agent,
         ip_address=client_ip(request),
+        assurance_level=assurance_level,
+        auth_method=auth_method,
+        risk_level=risk_level,
+        risk_reasons_json=json.dumps(risk_reasons, separators=(",", ":"), sort_keys=True),
         expires_at=now + timedelta(days=config.refresh_token_days),
     )
     db.add(auth_session)
@@ -344,6 +380,9 @@ def login(
         session_id=auth_session.id,
         email=user.email,
         phone=user.phone,
+        assurance_level=auth_session.assurance_level,
+        auth_method=auth_session.auth_method,
+        risk_level=auth_session.risk_level,
     )
     return TokenResponse(
         access_token=access_token,
@@ -428,6 +467,9 @@ def refresh(
         session_id=auth_session.id,
         email=user.email,
         phone=user.phone,
+        assurance_level=auth_session.assurance_level,
+        auth_method=auth_session.auth_method,
+        risk_level=auth_session.risk_level,
     )
     return TokenResponse(
         access_token=access_token,
