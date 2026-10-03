@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from app.api.v1 import security_operations
 from app.api.v1 import (
     account_verification,
     application_hosting,
@@ -181,3 +182,5 @@ api_router.include_router(webmail_drafts_plus.router)
 api_router.include_router(webmail_content.router)
 api_router.include_router(external_webmail_events.router)
 api_router.include_router(webmail_events.router)
+
+api_router.include_router(security_operations.router)
