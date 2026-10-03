@@ -2,7 +2,7 @@ version: 2
 updates:
   - package-ecosystem: pip
     directory: /apps/backend
-    target-branch: development
+    target-branch: main
     schedule:
       interval: weekly
       day: monday
@@ -16,7 +16,7 @@ updates:
 
   - package-ecosystem: npm
     directory: /apps/frontend
-    target-branch: development
+    target-branch: main
     schedule:
       interval: weekly
       day: monday
@@ -30,10 +30,61 @@ updates:
 
   - package-ecosystem: github-actions
     directory: /
-    target-branch: development
+    target-branch: main
     schedule:
       interval: weekly
       day: monday
       time: "06:30"
+      timezone: Africa/Maseru
+    open-pull-requests-limit: 3
+
+
+  - package-ecosystem: docker
+    directory: /apps/backend
+    target-branch: main
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:45"
+      timezone: Africa/Maseru
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: docker
+    directory: /apps/frontend
+    target-branch: main
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Africa/Maseru
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: docker
+    directory: /platform/ithute-auth
+    target-branch: main
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:15"
+      timezone: Africa/Maseru
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: docker
+    directory: /platform/ithute-push
+    target-branch: main
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:30"
+      timezone: Africa/Maseru
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: docker
+    directory: /platform/ithute-realtime
+    target-branch: main
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:45"
       timezone: Africa/Maseru
     open-pull-requests-limit: 3
