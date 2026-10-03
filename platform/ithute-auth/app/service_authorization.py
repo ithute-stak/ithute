@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import uuid
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -52,11 +53,9 @@ def require_managed_service_scope(required_scope: str, *, audience: str = "ithut
         if token_audience != audience or not isinstance(client_id, str) or subject != f"service:{client_id}":
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid service token")
         try:
-            credential_id = __import__("uuid").UUID(str(credential_id_claim))
+            credential_id = uuid.UUID(str(credential_id_claim))
         except (ValueError, TypeError):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="managed credential binding required") from None
-        if subject != f"service:{client_id}":
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid service token")
         scopes = frozenset(part for part in str(scope_claim).split(" ") if part)
         if required_scope not in scopes:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="service scope required")
