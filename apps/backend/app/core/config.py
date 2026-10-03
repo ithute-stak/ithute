@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     mail_node_provisioner_url: str | None = None
     mail_node_provisioner_token: str | None = None
     mail_node_provisioner_timeout_seconds: float = 60.0
+    mail_node_control_plane_url: str = "https://ithute.co.ls"
 
     domain_verification_min_interval_seconds: int = 10
     domain_verification_max_attempts_per_hour: int = 20
@@ -215,6 +216,9 @@ class Settings(BaseSettings):
             self.mail_node_provisioner_token = None
         if not 5 <= self.mail_node_provisioner_timeout_seconds <= 300:
             raise ValueError("MAIL_NODE_PROVISIONER_TIMEOUT_SECONDS must be between 5 and 300")
+        self.mail_node_control_plane_url = self.mail_node_control_plane_url.strip().rstrip("/")
+        if not self.mail_node_control_plane_url.startswith(("http://", "https://")):
+            raise ValueError("MAIL_NODE_CONTROL_PLANE_URL must be an HTTP(S) URL")
         if not self.nameserver_1.strip() or not self.nameserver_2.strip() or self.nameserver_1.lower() == self.nameserver_2.lower():
             raise ValueError("NAMESERVER_1 and NAMESERVER_2 must be distinct non-empty hostnames")
         if not self.mail_hostname.strip() or "." not in self.mail_hostname.strip().rstrip("."):
