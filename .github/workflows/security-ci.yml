@@ -60,7 +60,11 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --disable-pip-version-check pip-audit
-          for requirements in             apps/backend/requirements.txt             platform/ithute-auth/requirements.txt             platform/ithute-push/requirements.txt             platform/ithute-realtime/requirements.txt; do
+          for requirements in \
+            apps/backend/requirements.txt \
+            platform/ithute-auth/requirements.txt \
+            platform/ithute-push/requirements.txt \
+            platform/ithute-realtime/requirements.txt; do
             echo "Auditing $requirements"
             pip-audit -r "$requirements" --progress-spinner off
           done
@@ -115,7 +119,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Scan repository
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -137,7 +141,10 @@ jobs:
       - name: Generate SPDX SBOM
         run: |
           set -euo pipefail
-          docker run --rm             -v "$PWD:/workspace"             anchore/syft:v1.18.1             dir:/workspace -o spdx-json=/workspace/ithute-sbom.spdx.json
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            anchore/syft:v1.18.1 \
+            dir:/workspace -o spdx-json=/workspace/ithute-sbom.spdx.json
           test -s ithute-sbom.spdx.json
       - name: Upload SBOM
         uses: actions/upload-artifact@v4
