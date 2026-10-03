@@ -23,6 +23,8 @@ from app.services.deliverability import (
 )
 from app.services.dkim_sync import sync_active_dkim_keys
 from app.services.powerdns import PowerDNSClient, PowerDNSError, validate_record
+from app.services.caddy_routes import CaddyRouteError
+from app.services.mail_security_policy import activate_mta_sts_route, mta_sts_route_status
 
 router = APIRouter(prefix="/tenants/{tenant_id}/domains/{domain_id}/deliverability", tags=["deliverability"])
 
@@ -338,3 +340,50 @@ def enforce_dmarc_reject(
         "record": record,
         "detail": "DMARC reject is now enforced for Ithute-managed DNS.",
     }
+
+
+@router.get("/mta-sts")
+def mta_sts_status(
+    tenant_id: UUID,
+    domain_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "mail.read", db, current)
+    domain = _domain(db, tenant_id, domain_id)
+    status = mta_sts_route_status(domain.id, domain.ascii_name)
+    return {
+        "domain": domain.ascii_name,
+        "enabled": settings.mail_mta_sts_enabled,
+        "mode": settings.mail_mta_sts_mode,
+        "max_age": settings.mail_mta_sts_max_age_seconds,
+        "policy_id": settings.mail_mta_sts_policy_id,
+        **status,
+    }
+
+
+@router.post("/mta-sts/activate")
+def activate_domain_mta_sts(
+    tenant_id: UUID,
+    domain_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "mail.manage", db, current)
+    domain = _domain(db, tenant_id, domain_id)
+    if not settings.mail_mta_sts_enabled:
+        raise HTTPException(status_code=409, detail="MTA-STS is disabled by platform policy")
+    try:
+        activate_mta_sts_route(domain.id, domain.ascii_name)
+    except CaddyRouteError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    _audit(
+        db,
+        tenant_id,
+        current,
+        "deliverability.mta_sts.activate",
+        str(domain.id),
+        {"domain": domain.ascii_name, "mode": settings.mail_mta_sts_mode},
+    )
+    db.commit()
+    return mta_sts_route_status(domain.id, domain.ascii_name)
