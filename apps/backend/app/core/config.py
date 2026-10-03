@@ -187,6 +187,8 @@ class Settings(BaseSettings):
             raise ValueError("TRANSACTIONAL_TENANT_PER_MINUTE_LIMIT is invalid")
         if not 1 <= self.transactional_api_key_per_minute_limit <= self.transactional_tenant_per_minute_limit:
             raise ValueError("TRANSACTIONAL_API_KEY_PER_MINUTE_LIMIT is invalid")
+        if self.environment.lower() == "production" and not self.transactional_smtp_verify_tls:
+            raise ValueError("TRANSACTIONAL_SMTP_VERIFY_TLS must be enabled in production")
         if not self.mail_data_path.startswith("/"):
             raise ValueError("MAIL_DATA_PATH must be absolute")
         if not self.recovery_ops_url.startswith(("http://", "https://")) or len(self.recovery_ops_token) < 24:
