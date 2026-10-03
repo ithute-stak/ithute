@@ -35,6 +35,37 @@ def _session_key(token: str) -> str:
     return f"webmail:session:{hash_token(token)}"
 
 
+def _transport_key(address: str) -> str:
+    return f"webmail:transport:{address.strip().lower()}"
+
+
+def _mail_transport(address: str) -> dict:
+    defaults = {
+        "imap_host": settings.webmail_imap_host,
+        "imap_port": settings.webmail_imap_port,
+        "smtp_host": settings.webmail_smtp_host,
+        "smtp_port": settings.webmail_smtp_port,
+    }
+    try:
+        raw = _redis().get(_transport_key(address))
+    except redis.RedisError:
+        return defaults
+    if not raw:
+        return defaults
+    try:
+        payload = json.loads(raw)
+        imap_port = int(payload.get("imap_port") or defaults["imap_port"])
+        smtp_port = int(payload.get("smtp_port") or defaults["smtp_port"])
+        return {
+            "imap_host": str(payload.get("imap_host") or defaults["imap_host"]),
+            "imap_port": imap_port if 1 <= imap_port <= 65535 else defaults["imap_port"],
+            "smtp_host": str(payload.get("smtp_host") or defaults["smtp_host"]),
+            "smtp_port": smtp_port if 1 <= smtp_port <= 65535 else defaults["smtp_port"],
+        }
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return defaults
+
+
 def _tls_context() -> ssl.SSLContext:
     """Build the TLS policy used by hosted webmail transports.
 
@@ -56,7 +87,7 @@ def _close_imap(client: imaplib.IMAP4) -> None:
         pass
 
 
-def _connect_imap() -> imaplib.IMAP4:
+def _connect_imap(host: str | None = None, port: int | None = None) -> imaplib.IMAP4:
     """Open IMAP with the transport expected by the configured port.
 
     Port 993 is implicit TLS (IMAPS). Other configured IMAP ports use
@@ -65,17 +96,19 @@ def _connect_imap() -> imaplib.IMAP4:
     not bad passwords.
     """
     try:
-        if settings.webmail_imap_port == 993:
+        resolved_host = host or settings.webmail_imap_host
+        resolved_port = port or settings.webmail_imap_port
+        if resolved_port == 993:
             return imaplib.IMAP4_SSL(
-                settings.webmail_imap_host,
-                settings.webmail_imap_port,
+                resolved_host,
+                resolved_port,
                 ssl_context=_tls_context(),
                 timeout=settings.webmail_transport_timeout_seconds,
             )
 
         client = imaplib.IMAP4(
-            settings.webmail_imap_host,
-            settings.webmail_imap_port,
+            resolved_host,
+            resolved_port,
             timeout=settings.webmail_transport_timeout_seconds,
         )
         client.starttls(ssl_context=_tls_context())
@@ -84,8 +117,9 @@ def _connect_imap() -> imaplib.IMAP4:
         raise WebmailError("Mail server connection failed") from exc
 
 
-def _imap(address: str, password: str) -> imaplib.IMAP4:
-    client = _connect_imap()
+def _imap(address: str, password: str, host: str | None = None, port: int | None = None) -> imaplib.IMAP4:
+    transport = _mail_transport(address)
+    client = _connect_imap(host or transport["imap_host"], port or transport["imap_port"])
     try:
         client.login(address, password)
         return client
@@ -97,16 +131,24 @@ def _imap(address: str, password: str) -> imaplib.IMAP4:
         raise WebmailError("Mail server connection failed") from exc
 
 
-def authenticate(address: str, password: str) -> None:
-    client = _imap(address, password)
+def authenticate(address: str, password: str, *, imap_host: str | None = None, imap_port: int | None = None) -> None:
+    client = _imap(address, password, imap_host, imap_port)
     try:
         client.noop()
     finally:
         _close_imap(client)
 
 
-def create_session(address: str, password: str) -> str:
-    authenticate(address, password)
+def create_session(
+    address: str,
+    password: str,
+    *,
+    imap_host: str | None = None,
+    imap_port: int | None = None,
+    smtp_host: str | None = None,
+    smtp_port: int | None = None,
+) -> str:
+    authenticate(address, password, imap_host=imap_host, imap_port=imap_port)
     token = secrets.token_urlsafe(48)
     payload = json.dumps(
         {
@@ -117,7 +159,20 @@ def create_session(address: str, password: str) -> str:
         separators=(",", ":"),
     )
     try:
-        _redis().setex(_session_key(token), settings.webmail_session_ttl_seconds, payload)
+        store = _redis()
+        store.setex(_session_key(token), settings.webmail_session_ttl_seconds, payload)
+        if imap_host or smtp_host:
+            transport = {
+                "imap_host": imap_host or settings.webmail_imap_host,
+                "imap_port": imap_port or settings.webmail_imap_port,
+                "smtp_host": smtp_host or settings.webmail_smtp_host,
+                "smtp_port": smtp_port or settings.webmail_smtp_port,
+            }
+            store.setex(
+                _transport_key(address),
+                settings.webmail_session_ttl_seconds,
+                json.dumps(transport, separators=(",", ":")),
+            )
     except redis.RedisError as exc:
         raise WebmailError("Webmail session store is unavailable") from exc
     return token
@@ -507,8 +562,9 @@ def send_message(
         msg.add_attachment(payload, maintype=maintype, subtype=subtype, filename=filename)
 
     recipients = [*to, *cc, *bcc]
+    transport = _mail_transport(address)
     try:
-        with smtplib.SMTP(settings.webmail_smtp_host, settings.webmail_smtp_port, timeout=settings.webmail_transport_timeout_seconds) as smtp:
+        with smtplib.SMTP(transport["smtp_host"], transport["smtp_port"], timeout=settings.webmail_transport_timeout_seconds) as smtp:
             smtp.ehlo()
             smtp.starttls(context=_tls_context())
             smtp.ehlo()
