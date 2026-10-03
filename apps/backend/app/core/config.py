@@ -299,6 +299,11 @@ class Settings(BaseSettings):
             if not self.mail_node_token or len(self.mail_node_token) < 24:
                 raise ValueError("Production requires a strong MAIL_NODE_TOKEN")
 
+            if self.mail_node_provisioner_url and not self.mail_node_provisioner_url.startswith("https://"):
+                raise ValueError("Production MAIL_NODE_PROVISIONER_URL must use HTTPS")
+            if not self.mail_node_control_plane_url.startswith("https://"):
+                raise ValueError("Production MAIL_NODE_CONTROL_PLANE_URL must use HTTPS")
+
             if self.platform_mode == "domain":
                 if not self.cookie_secure:
                     raise ValueError("Domain production mode requires COOKIE_SECURE=true")
