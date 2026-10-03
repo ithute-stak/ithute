@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowLeft, Github, Mail, MapPin, Phone } from "lucide-react";
+import { ArrowLeft, Code2, Mail, MapPin, Phone } from "lucide-react";
 import { CvPrintControls } from "./print-button";
 
 export const metadata: Metadata = {
@@ -122,7 +122,7 @@ export default function FounderCvPage() {
                   <span className="flex items-start gap-2"><MapPin size={13} className="mt-1 shrink-0" /> Maseru, Lesotho</span>
                   <a href="mailto:thekoetlisi@ithute.co.ls" className="flex items-start gap-2 break-all"><Mail size={13} className="mt-1 shrink-0" /> thekoetlisi@ithute.co.ls</a>
                   <a href="tel:+26659001394" className="flex items-start gap-2"><Phone size={13} className="mt-1 shrink-0" /> +266 5900 1394</a>
-                  <a href="https://github.com/ithute-stak" className="flex items-start gap-2 break-all"><Github size={13} className="mt-1 shrink-0" /> github.com/ithute-stak</a>
+                  <a href="https://github.com/ithute-stak" className="flex items-start gap-2 break-all"><Code2 size={13} className="mt-1 shrink-0" /> github.com/ithute-stak</a>
                 </div>
               </section>
 

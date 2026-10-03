@@ -9,7 +9,6 @@ import {
   Database,
   Download,
   ExternalLink,
-  Github,
   GraduationCap,
   Mail,
   MapPin,
@@ -166,7 +165,7 @@ export default function FounderPage() {
                   rel="noreferrer"
                   className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/[.06] px-5 py-3 text-sm font-black text-white"
                 >
-                  <Github size={16} /> GitHub
+                  <Code2 size={16} /> GitHub
                 </a>
               </div>
 
@@ -273,7 +272,7 @@ export default function FounderPage() {
               Current repositories show work across financial technology, hosting infrastructure, education, payments, construction, risk and industrial systems. IDS also maintains private development repositories for internal work.
             </p>
             <a href="https://github.com/ithute-stak" target="_blank" rel="noreferrer" className="mt-6 inline-flex items-center gap-2 rounded-xl bg-[#123a38] px-4 py-3 text-xs font-black text-white">
-              <Github size={15} /> Open GitHub profile
+              <Code2 size={15} /> Open GitHub profile
             </a>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
