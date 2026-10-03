@@ -139,6 +139,8 @@ def mail_node_agent_heartbeat(
     node.tls_ready = payload.tls_ready
     node.tls_not_after = payload.tls_not_after
     node.readiness_error = payload.readiness_error
+    if node.status == "provisioning" and payload.smtp_ready and payload.imap_ready and payload.tls_ready:
+        node.status = "active"
     db.commit()
     return {"ok": True, "node_id": str(node.id), "status": node.status}
 
