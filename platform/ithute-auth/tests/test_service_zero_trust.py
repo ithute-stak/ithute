@@ -33,7 +33,7 @@ def test_managed_service_credentials_expire_by_default():
 
 
 def test_production_disables_legacy_service_secret_fallback():
-    compose = (Path(__file__).parents[2] / "compose.production.yml").read_text(encoding="utf-8")
+    compose = (Path(__file__).parents[3] / "compose.production.yml").read_text(encoding="utf-8")
     assert 'AUTH_ALLOW_LEGACY_SERVICE_SECRETS: "false"' in compose
 
     source = (Path(__file__).parents[1] / "app" / "service_token_api.py").read_text(encoding="utf-8")
