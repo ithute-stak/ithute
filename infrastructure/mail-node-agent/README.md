@@ -12,7 +12,7 @@ It deliberately replaces persistent SSH control. SSH may be used by an administr
 4. Create `/etc/ithute-mail-node/agent.env` from the example and put the one-time token there with mode 0600.
 5. Install the systemd service and start it.
 
-The agent reports disk capacity/usage and claims only commands assigned to its authenticated node.
+The agent reports disk capacity/usage, verifies SMTP ports 25/587, verifies IMAPS on 993 with the node hostname certificate, and claims only commands assigned to its authenticated node.
 
 ## Docker Mailserver
 
