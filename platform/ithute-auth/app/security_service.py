@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from .config import Settings, get_settings
 from .models import AuditEvent, AuthEventOutbox, AuthSession, MfaRecoveryCode, User, utcnow
-from .security import decrypt_totp_secret, hash_recovery_code, verify_totp
+from .security import decrypt_totp_secret, hash_recovery_code, is_system_owner, verify_totp
 
 
 _FAILED_LOGIN_EVENT_TYPES = {
@@ -223,3 +223,68 @@ def revoke_sessions(
         row.revoked_reason = reason[:160]
         count += 1
     return count
+
+
+def privileged_account(user: User, settings: Settings) -> bool:
+    return bool(user.is_platform_admin or is_system_owner(settings, user.email))
+
+
+def session_risk(
+    db: Session,
+    *,
+    user: User,
+    request: Any,
+    settings: Settings,
+) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+    score = 0
+    current_ip = client_ip(request, settings)
+    if user.last_login_ip and current_ip and user.last_login_ip != current_ip:
+        score += 35
+        reasons.append("ip_changed")
+
+    user_agent = request.headers.get("user-agent") if request else None
+    if user_agent:
+        prior = db.scalar(
+            select(AuditEvent)
+            .where(
+                AuditEvent.user_id == user.id,
+                AuditEvent.success.is_(True),
+                AuditEvent.event_type.in_({"login_succeeded", "passkey_login_succeeded"}),
+                AuditEvent.user_agent.is_not(None),
+            )
+            .order_by(AuditEvent.created_at.desc())
+            .limit(1)
+        )
+        if prior is not None and prior.user_agent and prior.user_agent != user_agent[:2000]:
+            score += 20
+            reasons.append("user_agent_changed")
+
+    if privileged_account(user, settings):
+        score += 20
+        reasons.append("privileged_account")
+
+    cutoff = utcnow() - timedelta(minutes=30)
+    failures = db.scalar(
+        select(func.count(AuditEvent.id)).where(
+            AuditEvent.user_id == user.id,
+            AuditEvent.success.is_(False),
+            AuditEvent.event_type.in_(_FAILED_LOGIN_EVENT_TYPES),
+            AuditEvent.created_at >= cutoff,
+        )
+    )
+    if int(failures or 0) >= 3:
+        score += 30
+        reasons.append("recent_failed_logins")
+
+    if score >= 60:
+        return "high", reasons
+    if score >= 30:
+        return "medium", reasons
+    return "low", reasons
+
+
+def recent_step_up(session: AuthSession, *, settings: Settings) -> bool:
+    if session.assurance_level < 3 or session.last_step_up_at is None:
+        return False
+    return session.last_step_up_at >= utcnow() - timedelta(minutes=settings.step_up_minutes)
