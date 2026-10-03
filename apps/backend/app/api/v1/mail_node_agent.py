@@ -134,16 +134,17 @@ def _queue_scheduled_backup_if_due(db: Session, agent: MailNodeAgent, node: Mail
         return
     latest = db.scalar(
         select(MailNodeSnapshot)
-        .where(
-            MailNodeSnapshot.node_id == node.id,
-            MailNodeSnapshot.status.in_(("ready", "creating")),
-        )
+        .where(MailNodeSnapshot.node_id == node.id)
         .order_by(MailNodeSnapshot.created_at.desc())
     )
     now = _now()
     interval = max(1, min(int(node.backup_interval_hours or 24), 168))
-    if latest is not None and latest.created_at and now - latest.created_at < timedelta(hours=interval):
-        return
+    if latest is not None and latest.created_at:
+        age = now - latest.created_at
+        if latest.status in {"ready", "creating"} and age < timedelta(hours=interval):
+            return
+        if latest.status == "failed" and age < timedelta(hours=min(interval, 1)):
+            return
 
     snapshot = MailNodeSnapshot(
         node_id=node.id,
