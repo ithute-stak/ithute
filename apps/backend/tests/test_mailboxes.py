@@ -5,6 +5,7 @@ from sqlalchemy import delete, select
 from app.models import AuditLog, MailNode, MailNodeAgent, MailNodeCommand
 from app.models.domains import Domain, DomainDnsMode, DomainStatus
 from app.models.mail import DistributionGroup, DistributionGroupMember, MailAlias, Mailbox
+from app.services.mail_routing_sync import build_mail_routing
 from app.services.mailboxes import hash_mailbox_password, mailbox_address, normalize_local_part
 
 PASSWORD = "Phase1-Test-Password!"
@@ -223,6 +224,80 @@ def test_external_mailbox_queues_secure_node_command(client, db, tenant_admin, p
     cleanup(db, domain)
     db.execute(delete(MailNodeCommand).where(MailNodeCommand.node_id == uuid.UUID(node_id)))
     db.execute(delete(MailNodeAgent).where(MailNodeAgent.node_id == uuid.UUID(node_id)))
+    db.execute(delete(MailNode).where(MailNode.id == uuid.UUID(node_id)))
+    db.commit()
+
+
+def test_distributed_routing_maps_internal_and_external_mailboxes(client, db, tenant_admin, platform_owner):
+    platform_headers = login(client, platform_owner.email)
+    node_name = f"route-node-{uuid.uuid4().hex[:8]}"
+    created_node = client.post(
+        "/api/v1/platform/mail-nodes",
+        headers=platform_headers,
+        json={
+            "name": node_name,
+            "role": "combined",
+            "region": "lesotho",
+            "hostname": f"{node_name}.mail.example.com",
+            "ssh_port": 22,
+            "storage_path": "/srv/ithute-mail",
+            "capabilities": ["mail", "storage"],
+        },
+    )
+    assert created_node.status_code == 201, created_node.text
+    node_id = created_node.json()["id"]
+
+    user, tenant, _ = tenant_admin
+    tenant_headers = login(client, user.email)
+    domain = make_domain(db, user, tenant)
+
+    internal = client.post(
+        f"/api/v1/tenants/{tenant.id}/mailboxes",
+        headers=tenant_headers,
+        json={
+            "domain_id": str(domain.id),
+            "local_part": "inside",
+            "password": "StrongMailbox1!",
+            "quota_bytes": 1073741824,
+            "storage_type": "internal",
+        },
+    )
+    assert internal.status_code == 201, internal.text
+
+    external = client.post(
+        f"/api/v1/tenants/{tenant.id}/mailboxes",
+        headers=tenant_headers,
+        json={
+            "domain_id": str(domain.id),
+            "local_part": "outside",
+            "password": "StrongMailbox1!",
+            "quota_bytes": 1073741824,
+            "storage_type": "external",
+            "mail_node_id": node_id,
+        },
+    )
+    assert external.status_code == 201, external.text
+
+    alias = client.post(
+        f"/api/v1/tenants/{tenant.id}/aliases",
+        headers=tenant_headers,
+        json={
+            "domain_id": str(domain.id),
+            "local_part": "support",
+            "destination_address": external.json()["address"],
+        },
+    )
+    assert alias.status_code == 201, alias.text
+
+    routes = build_mail_routing(db)
+    assert routes["relay_domains"][domain.ascii_name] == "OK"
+    assert routes["relay_recipients"][internal.json()["address"]] == "OK"
+    assert routes["relay_recipients"][external.json()["address"]] == "OK"
+    assert routes["transport"][internal.json()["address"]].endswith("[mail.ithute.co.ls]:25")
+    assert routes["transport"][external.json()["address"]] == f"smtp:[{node_name}.mail.example.com]:25"
+    assert routes["virtual_aliases"][alias.json()["source_address"]] == external.json()["address"]
+
+    cleanup(db, domain)
     db.execute(delete(MailNode).where(MailNode.id == uuid.UUID(node_id)))
     db.commit()
 
