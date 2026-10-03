@@ -23,6 +23,11 @@ class AgentHeartbeat(BaseModel):
     total_storage_bytes: int | None = Field(default=None, ge=0)
     used_storage_bytes: int | None = Field(default=None, ge=0)
     capabilities: list[str] = Field(default_factory=lambda: ["mail", "storage"])
+    smtp_ready: bool = False
+    imap_ready: bool = False
+    tls_ready: bool = False
+    tls_not_after: datetime | None = None
+    readiness_error: str | None = Field(default=None, max_length=2000)
 
 
 class AgentCommandStatus(BaseModel):
@@ -129,6 +134,11 @@ def mail_node_agent_heartbeat(
     if payload.used_storage_bytes is not None:
         node.used_storage_bytes = payload.used_storage_bytes
     node.capabilities_json = json.dumps(sorted({x.strip().lower() for x in payload.capabilities if x.strip()}))
+    node.smtp_ready = payload.smtp_ready
+    node.imap_ready = payload.imap_ready
+    node.tls_ready = payload.tls_ready
+    node.tls_not_after = payload.tls_not_after
+    node.readiness_error = payload.readiness_error
     db.commit()
     return {"ok": True, "node_id": str(node.id), "status": node.status}
 
