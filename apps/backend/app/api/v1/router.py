@@ -56,6 +56,7 @@ from app.api.v1 import (
     mail_intelligence,
     mail_node_agent,
     mail_node_operations,
+    mail_node_provisioning,
     mail_operations,
     mail_routing,
     mailboxes,
@@ -106,6 +107,7 @@ api_router.include_router(edge_routes.router)
 api_router.include_router(mailboxes.router)
 api_router.include_router(mail_node_agent.router)
 api_router.include_router(mail_node_operations.router)
+api_router.include_router(mail_node_provisioning.router)
 api_router.include_router(mail_routing.router)
 api_router.include_router(platform_mail.router)
 api_router.include_router(platform_mail_attachments.router)
