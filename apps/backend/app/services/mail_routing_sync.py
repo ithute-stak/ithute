@@ -84,6 +84,8 @@ def build_mail_routing(db: Session) -> dict[str, dict[str, str]]:
             node = nodes.get(mailbox.mail_node_id)
             if node is None or node.status != "active":
                 raise MailRoutingSyncError(f"External mailbox {address} is assigned to an unavailable mail node")
+            if node.tenant_id is not None and node.tenant_id != mailbox.tenant_id:
+                raise MailRoutingSyncError(f"External mailbox {address} is assigned to another tenant's dedicated mail node")
             transport[address] = f"smtp:[{_safe_host(node.hostname)}]:25"
         else:
             transport[address] = f"smtp:[{_safe_host(settings.mail_gateway_internal_host)}]:25"
