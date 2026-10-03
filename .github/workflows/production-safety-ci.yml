@@ -8,6 +8,8 @@ on:
       - "scripts/deploy-production-latest.sh"
       - "platform/ithute-auth/**"
       - ".github/workflows/release-images.yml"
+      - ".github/workflows/production-readiness-ci.yml"
+      - "scripts/production-readiness-probe.py"
       - ".github/workflows/deploy-backup-assurance.yml"
       - ".github/workflows/deploy-telemetry.yml"
       - ".github/workflows/vps-disk-maintenance.yml"
@@ -103,8 +105,18 @@ jobs:
               failures.append('Ithute Release Images must never connect to the production VPS.')
           if 'packages: write' not in release:
               failures.append('Ithute Release Images must be able to publish packages.')
-          if 'Ithute Standalone CI' not in release or 'Production Safety CI' not in release or 'Security CI' not in release:
-              failures.append('Ithute Release Images must require standalone, production-safety and security gates for the exact SHA.')
+          required_release_gates = (
+              'Ithute Standalone CI',
+              'Production Safety CI',
+              'Security CI',
+              'Backup Assurance CI',
+              'Production Readiness CI',
+          )
+          missing_release_gates = [gate for gate in required_release_gates if gate not in release]
+          if missing_release_gates:
+              failures.append(
+                  'Ithute Release Images is missing exact-SHA gates: ' + ', '.join(missing_release_gates)
+              )
 
           marker = "verify_public_health() {"
           end_marker = "\n}\n\ndump_failure_logs()"

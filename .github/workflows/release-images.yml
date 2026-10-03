@@ -52,7 +52,7 @@ jobs:
           require_success() {
             workflow="$1"
             label="$2"
-            echo "Waiting for $label on $RELEASE_SHA. No image publication occurs before both gates pass."
+            echo "Waiting for $label on $RELEASE_SHA. No image publication occurs before every required gate passes."
             for attempt in $(seq 1 120); do
               runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?branch=main&per_page=100")"
               row="$(printf '%s' "$runs" | jq -r --arg sha "$RELEASE_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] | if . == null then "" else [.status, (.conclusion // ""), (.html_url // "")] | @tsv end')"
@@ -80,6 +80,8 @@ jobs:
           require_success ci.yml 'Ithute Standalone CI'
           require_success production-safety-ci.yml 'Production Safety CI'
           require_success security-ci.yml 'Security CI'
+          require_success backup-assurance-ci.yml 'Backup Assurance CI'
+          require_success production-readiness-ci.yml 'Production Readiness CI'
           echo "publish=true" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
