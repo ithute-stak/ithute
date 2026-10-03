@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
 
@@ -177,7 +178,7 @@ def test_mail_node_backup_operation_round_trip(client, db, platform_owner):
     token = credential.json()["token"]
     node = db.get(MailNode, uuid.UUID(node_id))
     node.backup_ready = True
-    node.last_heartbeat_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    node.last_heartbeat_at = datetime.now(timezone.utc)
     db.commit()
 
     queued = client.post(f"/api/v1/platform/mail-nodes/{node_id}/backup")
