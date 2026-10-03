@@ -13,6 +13,8 @@ import json
 import os
 import shutil
 import signal
+import socket
+import ssl
 import time
 import urllib.error
 import urllib.request
@@ -35,6 +37,7 @@ AGENT_TOKEN = required_env("ITHUTE_MAIL_AGENT_TOKEN")
 ACCOUNTS_FILE = Path(required_env("ITHUTE_MAIL_ACCOUNTS_FILE", "/tmp/docker-mailserver/postfix-accounts.cf"))
 QUOTAS_FILE = Path(required_env("ITHUTE_MAIL_QUOTAS_FILE", "/tmp/docker-mailserver/dovecot-quotas.cf"))
 STORAGE_PATH = Path(required_env("ITHUTE_MAIL_STORAGE_PATH", "/srv/ithute-mail"))
+MAIL_HOSTNAME = required_env("ITHUTE_MAIL_HOSTNAME")
 POLL_SECONDS = max(5, int(os.getenv("ITHUTE_MAIL_POLL_SECONDS", "10")))
 HEARTBEAT_SECONDS = max(15, int(os.getenv("ITHUTE_MAIL_HEARTBEAT_SECONDS", "60")))
 ALLOW_HTTP = os.getenv("ITHUTE_MAIL_ALLOW_HTTP", "false").lower() == "true"
@@ -133,14 +136,49 @@ def write_account(address: str, password_hash: str, quota_bytes: int, active: bo
         fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
+def _tcp_ready(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=3):
+            return True
+    except OSError:
+        return False
+
+
+def _imap_tls_ready() -> tuple[bool, str | None, str | None]:
+    context = ssl.create_default_context()
+    try:
+        with socket.create_connection((MAIL_HOSTNAME, 993), timeout=5) as raw:
+            with context.wrap_socket(raw, server_hostname=MAIL_HOSTNAME) as tls:
+                certificate = tls.getpeercert()
+                return True, certificate.get("notAfter"), None
+    except Exception as exc:
+        return False, None, str(exc)[:500]
+
+
 def heartbeat() -> None:
     STORAGE_PATH.mkdir(parents=True, exist_ok=True)
     usage = shutil.disk_usage(STORAGE_PATH)
+    smtp_ready = _tcp_ready(25) and _tcp_ready(587)
+    imap_ready = _tcp_ready(993)
+    tls_ready, tls_not_after, tls_error = _imap_tls_ready() if imap_ready else (False, None, "IMAPS port 993 is not reachable")
+    readiness_error = None
+    if not smtp_ready:
+        readiness_error = "SMTP ports 25/587 are not both reachable"
+    if not imap_ready:
+        readiness_error = "IMAPS port 993 is not reachable"
+    if imap_ready and not tls_ready:
+        readiness_error = f"IMAPS TLS validation failed: {tls_error}"
+
     api("/mail-node-agent/heartbeat", {
         "version": AGENT_VERSION,
         "total_storage_bytes": usage.total,
         "used_storage_bytes": usage.used,
         "capabilities": ["mail", "storage"],
+        "smtp_ready": smtp_ready,
+        "imap_ready": imap_ready,
+        "tls_ready": tls_ready,
+        "tls_not_after": tls_not_after,
+        "readiness_error": readiness_error,
     })
 
 
