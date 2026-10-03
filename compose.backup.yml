@@ -3,6 +3,8 @@ services:
     environment:
       BACKUP_STATUS_DIR: /backup-status/status
       BACKUP_MAX_AGE_SECONDS: ${ITHUTE_BACKUP_MAX_AGE_SECONDS:-93600}
+      BACKUP_REQUIRE_OFFSITE: ${ITHUTE_BACKUP_REQUIRE_OFFSITE:-false}
+      BACKUP_OFFSITE_MAX_AGE_SECONDS: ${ITHUTE_BACKUP_OFFSITE_MAX_AGE_SECONDS:-10800}
     volumes:
       - ithute_backup_status:/backup-status/status:ro
 
@@ -46,6 +48,28 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    networks: [ithute]
+
+
+  ithute-backup-offsite:
+    image: rclone/rclone:1.69.1
+    profiles: ["offsite-backup"]
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/opt/ithute-backup/offsite-sync-loop.sh"]
+    environment:
+      BACKUP_ROOT: /backups
+      BACKUP_STATUS_DIR: /backup-status/status
+      BACKUP_REMOTE: ${ITHUTE_BACKUP_REMOTE:?ITHUTE_BACKUP_REMOTE is required for the offsite-backup profile}
+      RCLONE_CONFIG: /config/rclone.conf
+      OFFSITE_SYNC_INTERVAL_SECONDS: ${ITHUTE_BACKUP_OFFSITE_INTERVAL_SECONDS:-3600}
+    volumes:
+      - ./infrastructure/backup:/opt/ithute-backup:ro
+      - ithute_backup_data:/backups:ro
+      - ithute_backup_status:/backup-status/status
+      - ${ITHUTE_BACKUP_RCLONE_CONFIG:?ITHUTE_BACKUP_RCLONE_CONFIG is required for the offsite-backup profile}:/config/rclone.conf:ro
+    depends_on:
+      ithute-backup:
+        condition: service_healthy
     networks: [ithute]
 
   ithute-restore-drill-db:
