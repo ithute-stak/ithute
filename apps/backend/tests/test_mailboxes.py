@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
 
-from app.models import AuditLog, MailNode, MailNodeAgent, MailNodeCommand, Tenant
+from app.models import AuditLog, MailNode, MailNodeAgent, MailNodeCommand, MailNodeOperation, MailNodeSnapshot, Tenant
 from app.models.domains import Domain, DomainDnsMode, DomainStatus
 from app.models.mail import DistributionGroup, DistributionGroupMember, MailAlias, Mailbox
 from app.services.mail_routing_sync import build_mail_routing
@@ -406,6 +406,114 @@ def test_dedicated_mail_node_is_hidden_from_other_tenants(client, db, tenant_adm
     cleanup(db, domain)
     db.execute(delete(MailNode).where(MailNode.id == uuid.UUID(node_id)))
     db.execute(delete(Tenant).where(Tenant.id == other.id))
+    db.commit()
+
+
+def test_controlled_failover_switches_mailbox_only_after_restore_completes(client, db, tenant_admin, platform_owner):
+    user, tenant, _ = tenant_admin
+    platform_headers = login(client, platform_owner.email)
+
+    source = MailNode(
+        name=f"source-{uuid.uuid4().hex[:8]}",
+        role="combined",
+        region="lesotho",
+        hostname=f"source-{uuid.uuid4().hex[:8]}.example.com",
+        tenant_id=tenant.id,
+        status="active",
+        smtp_ready=True,
+        imap_ready=True,
+        tls_ready=True,
+    )
+    target = MailNode(
+        name=f"target-{uuid.uuid4().hex[:8]}",
+        role="combined",
+        region="lesotho",
+        hostname=f"target-{uuid.uuid4().hex[:8]}.example.com",
+        tenant_id=tenant.id,
+        status="active",
+        smtp_ready=True,
+        imap_ready=True,
+        tls_ready=True,
+    )
+    db.add_all([source, target])
+    db.commit()
+    db.refresh(source)
+    db.refresh(target)
+
+    target_token_response = client.post(
+        f"/api/v1/platform/mail-nodes/{target.id}/agent-token",
+        headers=platform_headers,
+    )
+    assert target_token_response.status_code == 200, target_token_response.text
+    target_token = target_token_response.json()["token"]
+
+    snapshot = MailNodeSnapshot(
+        node_id=source.id,
+        tenant_id=tenant.id,
+        snapshot_key=f"snapshot-{uuid.uuid4().hex}",
+        remote_uri="remote:ithute-mail-backups/failover.tar.gz",
+        size_bytes=1024,
+        checksum_sha256="b" * 64,
+        status="ready",
+        completed_at=datetime.now(timezone.utc),
+    )
+    db.add(snapshot)
+    db.commit()
+    db.refresh(snapshot)
+
+    domain = make_domain(db, user, tenant)
+    tenant_headers = login(client, user.email)
+    created = client.post(
+        f"/api/v1/tenants/{tenant.id}/mailboxes",
+        headers=tenant_headers,
+        json={
+            "domain_id": str(domain.id),
+            "local_part": "failover",
+            "password": "StrongMailbox1!",
+            "quota_bytes": 1073741824,
+            "storage_type": "external",
+            "mail_node_id": str(source.id),
+        },
+    )
+    assert created.status_code == 201, created.text
+    mailbox_id = uuid.UUID(created.json()["id"])
+
+    queued = client.post(
+        f"/api/v1/platform/mail-nodes/{source.id}/failover",
+        headers=platform_headers,
+        json={"target_node_id": str(target.id), "snapshot_id": str(snapshot.id)},
+    )
+    assert queued.status_code == 202, queued.text
+    db.refresh(db.get(Mailbox, mailbox_id))
+    assert db.get(Mailbox, mailbox_id).mail_node_id == source.id
+
+    claimed = client.post(
+        "/api/v1/mail-node-agent/operations/claim",
+        headers={"X-Ithute-Mail-Agent": target_token},
+        json={},
+    )
+    assert claimed.status_code == 200, claimed.text
+    operation = claimed.json()["operation"]
+    assert operation["operation"] == "restore_failover"
+
+    completed = client.post(
+        f"/api/v1/mail-node-agent/operations/{operation['id']}/status",
+        headers={"X-Ithute-Mail-Agent": target_token},
+        json={
+            "status": "completed",
+            "result": {"restored": True, "checksum_sha256": "b" * 64},
+        },
+    )
+    assert completed.status_code == 200, completed.text
+    db.expire_all()
+    assert db.get(Mailbox, mailbox_id).mail_node_id == target.id
+    assert db.get(MailNode, source.id).status == "maintenance"
+
+    cleanup(db, domain)
+    db.execute(delete(MailNodeOperation).where(MailNodeOperation.node_id == target.id))
+    db.execute(delete(MailNodeSnapshot).where(MailNodeSnapshot.node_id == source.id))
+    db.execute(delete(MailNodeAgent).where(MailNodeAgent.node_id == target.id))
+    db.execute(delete(MailNode).where(MailNode.id.in_([source.id, target.id])))
     db.commit()
 
 
