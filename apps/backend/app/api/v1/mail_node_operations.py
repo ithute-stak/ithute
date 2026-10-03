@@ -50,7 +50,7 @@ def _agent_from_token(db: Session, token: str | None) -> tuple[MailNodeAgent, Ma
 
 
 def _node_ready(node: MailNode) -> bool:
-    return bool(node.status == "active" and node.smtp_ready and node.imap_ready and node.tls_ready)
+    return bool(node.status == "active" and node.smtp_ready and node.imap_ready and node.tls_ready and node.backup_ready)
 
 
 def _operation_json(row: MailNodeOperation) -> dict:
