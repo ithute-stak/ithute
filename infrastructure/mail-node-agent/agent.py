@@ -370,6 +370,15 @@ def process_operation(operation: dict[str, Any]) -> None:
             str(payload.get("snapshot_key") or ""),
             str(payload.get("checksum_sha256") or "") or None,
         )
+    elif kind == "delete_snapshot":
+        remote_uri = str(payload.get("remote_uri") or "")
+        if not remote_uri:
+            raise RuntimeError("Snapshot retention operation is missing remote URI")
+        _run(_rclone_args("deletefile", remote_uri), timeout=120)
+        local = BACKUP_ROOT / f"{str(payload.get('snapshot_key') or '')}.tar.gz"
+        if local.exists():
+            local.unlink()
+        result = {"deleted": True, "remote_uri": remote_uri}
     else:
         raise RuntimeError(f"Unsupported mail node operation: {kind}")
 
