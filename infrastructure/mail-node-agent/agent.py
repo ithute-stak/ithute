@@ -9,9 +9,13 @@ sync without exposing SSH credentials to the Ithute control plane.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import shutil
+import subprocess
+import tarfile
+import tempfile
 import signal
 import socket
 import ssl
@@ -42,6 +46,12 @@ MAIL_HOSTNAME = required_env("ITHUTE_MAIL_HOSTNAME")
 POLL_SECONDS = max(5, int(os.getenv("ITHUTE_MAIL_POLL_SECONDS", "10")))
 HEARTBEAT_SECONDS = max(15, int(os.getenv("ITHUTE_MAIL_HEARTBEAT_SECONDS", "60")))
 ALLOW_HTTP = os.getenv("ITHUTE_MAIL_ALLOW_HTTP", "false").lower() == "true"
+BACKUP_ROOT = Path(os.getenv("ITHUTE_MAIL_BACKUP_ROOT", "/var/lib/ithute-mail-node/backups")).resolve()
+BACKUP_REMOTE = os.getenv("ITHUTE_MAIL_BACKUP_REMOTE", "").strip().rstrip("/")
+BACKUP_REMOTE_REQUIRED = os.getenv("ITHUTE_MAIL_BACKUP_REMOTE_REQUIRED", "true").lower() == "true"
+RCLONE = os.getenv("ITHUTE_MAIL_RCLONE", "rclone").strip()
+RCLONE_CONFIG = os.getenv("ITHUTE_MAIL_RCLONE_CONFIG", "/etc/ithute-mail-node/rclone.conf").strip()
+MAIL_CONTAINER = os.getenv("ITHUTE_MAIL_CONTAINER", "ithute-mail").strip()
 
 if not API_URL.startswith("https://") and not ALLOW_HTTP:
     raise RuntimeError("ITHUTE_API_URL must use HTTPS unless ITHUTE_MAIL_ALLOW_HTTP=true")
@@ -51,6 +61,10 @@ if not ACCOUNTS_FILE.is_absolute() or not QUOTAS_FILE.is_absolute() or not STORA
     raise RuntimeError("Mail account, quota and storage paths must be absolute")
 if ACCOUNTS_FILE.parent != QUOTAS_FILE.parent:
     raise RuntimeError("ITHUTE_MAIL_ACCOUNTS_FILE and ITHUTE_MAIL_QUOTAS_FILE must share the DMS config directory")
+if not BACKUP_ROOT.is_absolute():
+    raise RuntimeError("ITHUTE_MAIL_BACKUP_ROOT must be absolute")
+if BACKUP_REMOTE_REQUIRED and not BACKUP_REMOTE:
+    raise RuntimeError("ITHUTE_MAIL_BACKUP_REMOTE is required when ITHUTE_MAIL_BACKUP_REMOTE_REQUIRED=true")
 
 
 def log(message: str) -> None:
@@ -218,6 +232,158 @@ def claim_once() -> bool:
     return True
 
 
+def _run(args: list[str], *, timeout: int = 3600) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()[-2000:]
+        raise RuntimeError(f"{Path(args[0]).name} failed: {detail}")
+    return result
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _remote_uri(snapshot_key: str) -> str:
+    if not BACKUP_REMOTE:
+        return ""
+    return f"{BACKUP_REMOTE}/{snapshot_key}.tar.gz"
+
+
+def _rclone_args(*args: str) -> list[str]:
+    command = [RCLONE]
+    if RCLONE_CONFIG:
+        command.extend(["--config", RCLONE_CONFIG])
+    command.extend(args)
+    return command
+
+
+def create_snapshot(snapshot_key: str) -> dict[str, Any]:
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    archive = BACKUP_ROOT / f"{snapshot_key}.tar.gz"
+    if archive.exists():
+        archive.unlink()
+
+    with tarfile.open(archive, "w:gz") as tar:
+        if STORAGE_PATH.exists():
+            for child in sorted(STORAGE_PATH.iterdir()):
+                tar.add(child, arcname=child.name, recursive=True)
+
+    size = archive.stat().st_size
+    checksum = _sha256(archive)
+    remote_uri = _remote_uri(snapshot_key)
+    if remote_uri:
+        _run(_rclone_args("copyto", str(archive), remote_uri))
+    elif BACKUP_REMOTE_REQUIRED:
+        raise RuntimeError("Off-node backup remote is not configured")
+
+    return {
+        "snapshot_key": snapshot_key,
+        "remote_uri": remote_uri or None,
+        "size_bytes": size,
+        "checksum_sha256": checksum,
+    }
+
+
+def _safe_extract(archive: Path, destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    root = destination.resolve()
+    with tarfile.open(archive, "r:gz") as tar:
+        for member in tar.getmembers():
+            candidate = (root / member.name).resolve()
+            if candidate != root and root not in candidate.parents:
+                raise RuntimeError("Snapshot contains an unsafe path")
+            if member.issym() or member.islnk():
+                raise RuntimeError("Snapshot contains unsupported links")
+        tar.extractall(destination, filter="data")
+
+
+def restore_snapshot(remote_uri: str, snapshot_key: str, checksum: str | None) -> dict[str, Any]:
+    if not remote_uri:
+        raise RuntimeError("Failover snapshot does not have an off-node remote URI")
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    archive = BACKUP_ROOT / f"{snapshot_key}.restore.tar.gz"
+    _run(_rclone_args("copyto", remote_uri, str(archive)))
+    actual_checksum = _sha256(archive)
+    if checksum and actual_checksum.lower() != checksum.lower():
+        raise RuntimeError("Snapshot checksum verification failed")
+
+    parent = STORAGE_PATH.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".ithute-mail-restore-", dir=parent) as tmp:
+        staging = Path(tmp) / "mail-data"
+        _safe_extract(archive, staging)
+
+        _run(["docker", "stop", "--time", "30", MAIL_CONTAINER], timeout=90)
+        previous = parent / f".{STORAGE_PATH.name}.pre-restore-{int(time.time())}"
+        try:
+            if STORAGE_PATH.exists():
+                STORAGE_PATH.rename(previous)
+            staging.rename(STORAGE_PATH)
+            _run(["docker", "start", MAIL_CONTAINER], timeout=90)
+            if previous.exists():
+                shutil.rmtree(previous)
+        except Exception:
+            if STORAGE_PATH.exists():
+                shutil.rmtree(STORAGE_PATH)
+            if previous.exists():
+                previous.rename(STORAGE_PATH)
+            _run(["docker", "start", MAIL_CONTAINER], timeout=90)
+            raise
+
+    return {
+        "snapshot_key": snapshot_key,
+        "checksum_sha256": actual_checksum,
+        "restored": True,
+    }
+
+
+def process_operation(operation: dict[str, Any]) -> None:
+    operation_id = str(operation["id"])
+    kind = str(operation.get("operation") or "")
+    payload = operation.get("payload")
+    if not isinstance(payload, dict):
+        raise RuntimeError("Mail node operation payload is invalid")
+
+    if kind == "backup":
+        result = create_snapshot(str(payload.get("snapshot_key") or ""))
+    elif kind == "restore_failover":
+        result = restore_snapshot(
+            str(payload.get("remote_uri") or ""),
+            str(payload.get("snapshot_key") or ""),
+            str(payload.get("checksum_sha256") or "") or None,
+        )
+    else:
+        raise RuntimeError(f"Unsupported mail node operation: {kind}")
+
+    api(f"/mail-node-agent/operations/{operation_id}/status", {"status": "completed", "result": result})
+
+
+def claim_operation_once() -> bool:
+    result = api("/mail-node-agent/operations/claim", {})
+    operation = result.get("operation")
+    if not isinstance(operation, dict):
+        return False
+    try:
+        process_operation(operation)
+        log(f"completed node operation {operation.get('id')}")
+    except Exception as exc:
+        message = str(exc)[:3900]
+        log(f"node operation {operation.get('id')} failed: {message}")
+        try:
+            api(
+                f"/mail-node-agent/operations/{operation.get('id')}/status",
+                {"status": "failed", "message": message, "result": {}},
+            )
+        except Exception as report_exc:
+            log(f"could not report node operation failure: {report_exc}")
+    return True
+
+
 def stop(_signum, _frame) -> None:
     global STOP
     STOP = True
@@ -234,7 +400,9 @@ def main() -> None:
             if now - last_heartbeat >= HEARTBEAT_SECONDS:
                 heartbeat()
                 last_heartbeat = now
-            worked = claim_once()
+            worked = claim_operation_once()
+            if not worked:
+                worked = claim_once()
         except Exception as exc:
             log(f"control-plane error: {exc}")
             worked = False
