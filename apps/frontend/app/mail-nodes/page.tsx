@@ -41,6 +41,7 @@ type MailNode = {
   backup_error?: string | null;
   backup_interval_hours: number;
   backup_retention_count: number;
+  backup_immutability_days: number;
 };
 
 async function api(path: string, init?: RequestInit) {
@@ -92,6 +93,7 @@ export default function MailNodesPage() {
   const [policyNodeId, setPolicyNodeId] = useState("");
   const [policyInterval, setPolicyInterval] = useState(24);
   const [policyRetention, setPolicyRetention] = useState(7);
+  const [policyImmutability, setPolicyImmutability] = useState(7);
 
   const active = useMemo(() => nodes.filter((node) => node.status === "active").length, [nodes]);
   const healthy = useMemo(() => nodes.filter((node) => node.healthy).length, [nodes]);
@@ -271,7 +273,7 @@ export default function MailNodesPage() {
     setError("");
     const response = await api(`/platform/mail-nodes/${policyNodeId}/backup-policy`, {
       method: "PATCH",
-      body: JSON.stringify({ interval_hours: policyInterval, retention_count: policyRetention }),
+      body: JSON.stringify({ interval_hours: policyInterval, retention_count: policyRetention, immutability_days: policyImmutability }),
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
