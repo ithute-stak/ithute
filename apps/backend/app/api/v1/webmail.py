@@ -188,6 +188,7 @@ def _mailbox_transport(db: Session, address: str) -> dict:
         select(MailNode).where(
             MailNode.id == mailbox.mail_node_id,
             MailNode.status == "active",
+            (MailNode.tenant_id.is_(None)) | (MailNode.tenant_id == mailbox.tenant_id),
         )
     )
     if node is None:
