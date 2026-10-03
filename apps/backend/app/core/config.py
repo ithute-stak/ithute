@@ -89,6 +89,8 @@ class Settings(BaseSettings):
 
     mail_node_token: str | None = None
     mail_node_stale_seconds: int = 180
+    mail_routing_dir: str | None = None
+    mail_gateway_internal_host: str = "mail.ithute.co.ls"
 
     domain_verification_min_interval_seconds: int = 10
     domain_verification_max_attempts_per_hour: int = 20
@@ -193,6 +195,12 @@ class Settings(BaseSettings):
             raise ValueError("GROUPWARE_AUTH_FILE must be absolute")
         if not 30 <= self.mail_node_stale_seconds <= 3600:
             raise ValueError("MAIL_NODE_STALE_SECONDS must be between 30 and 3600")
+        if self.mail_routing_dir is not None:
+            self.mail_routing_dir = self.mail_routing_dir.strip() or None
+            if self.mail_routing_dir and not self.mail_routing_dir.startswith("/"):
+                raise ValueError("MAIL_ROUTING_DIR must be absolute when configured")
+        if not self.mail_gateway_internal_host.strip():
+            raise ValueError("MAIL_GATEWAY_INTERNAL_HOST must be non-empty")
         if not self.nameserver_1.strip() or not self.nameserver_2.strip() or self.nameserver_1.lower() == self.nameserver_2.lower():
             raise ValueError("NAMESERVER_1 and NAMESERVER_2 must be distinct non-empty hostnames")
         if not self.mail_hostname.strip() or "." not in self.mail_hostname.strip().rstrip("."):
