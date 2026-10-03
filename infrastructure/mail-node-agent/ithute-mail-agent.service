@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=ithute-mail-agent
-Group=ithute-mail-agent
+User=root
+Group=root
 EnvironmentFile=/etc/ithute-mail-node/agent.env
 ExecStart=/usr/bin/python3 /opt/ithute-mail-agent/agent.py
 Restart=on-failure
@@ -15,7 +15,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/tmp/docker-mailserver /srv/ithute-mail
+ReadWritePaths=/tmp/docker-mailserver /srv/ithute-mail /var/lib/ithute-mail-node /etc/ithute-mail-node
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 LockPersonality=true
 MemoryDenyWriteExecute=true
