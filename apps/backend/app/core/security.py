@@ -3,24 +3,32 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 import jwt
 import pyotp
 from cryptography.fernet import Fernet, InvalidToken
-from passlib.context import CryptContext
-
 from app.core.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ALGORITHM = "HS256"
 DKIM_ENVELOPE_PREFIX = "dkim$"
 
 
+def _password_bytes(password: str) -> bytes:
+    raw = password.encode("utf-8")
+    if len(raw) > 72:
+        raise ValueError("Password must not exceed 72 UTF-8 bytes")
+    return raw
+
+
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(_password_bytes(password), bcrypt.gensalt()).decode("ascii")
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    return pwd_context.verify(password, password_hash)
+    try:
+        return bcrypt.checkpw(_password_bytes(password), password_hash.encode("ascii"))
+    except (ValueError, UnicodeEncodeError):
+        return False
 
 
 def create_access_token(subject: str, extra: dict | None = None) -> str:
