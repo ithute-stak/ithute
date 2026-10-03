@@ -113,6 +113,11 @@ class MailNodeStatusUpdate(BaseModel):
     status: str = Field(pattern=r"^(active|maintenance|disabled)$")
 
 
+class MailNodeBackupPolicyUpdate(BaseModel):
+    interval_hours: int = Field(default=24, ge=1, le=168)
+    retention_count: int = Field(default=7, ge=1, le=100)
+
+
 def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")[:80]
 
@@ -412,6 +417,34 @@ def update_mail_node_status(node_id: UUID, payload: MailNodeStatusUpdate, db: Se
         raise HTTPException(status_code=404, detail="Mail node not found")
     row.status = payload.status
     db.add(AuditLog(actor_user_id=current.id, action="mail_node.status.update", resource_type="mail_node", resource_id=str(row.id), metadata_json=json.dumps({"status": row.status})))
+    db.commit()
+    db.refresh(row)
+    return _mail_node_json(row)
+
+
+@router.patch("/platform/mail-nodes/{node_id}/backup-policy")
+def update_mail_node_backup_policy(
+    node_id: UUID,
+    payload: MailNodeBackupPolicyUpdate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    row = db.get(MailNode, node_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Mail node not found")
+    row.backup_interval_hours = payload.interval_hours
+    row.backup_retention_count = payload.retention_count
+    db.add(AuditLog(
+        actor_user_id=current.id,
+        tenant_id=row.tenant_id,
+        action="mail_node.backup_policy.update",
+        resource_type="mail_node",
+        resource_id=str(row.id),
+        metadata_json=json.dumps({
+            "interval_hours": row.backup_interval_hours,
+            "retention_count": row.backup_retention_count,
+        }),
+    ))
     db.commit()
     db.refresh(row)
     return _mail_node_json(row)
