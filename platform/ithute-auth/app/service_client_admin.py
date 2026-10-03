@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import or_, select
@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from .account import AuthContext
 from .admin import require_admin
+from .config import Settings, get_settings
 from .db import get_db
 from .managed_service_models import ManagedServiceClient, ManagedServiceCredential
 from .models import Application, AuditEvent, utcnow
@@ -38,6 +39,21 @@ def _future_expiry(value: datetime | None, *, field_name: str) -> datetime | Non
     if value <= utcnow():
         raise HTTPException(status_code=400, detail=f"{field_name} must be in the future")
     return value
+
+
+def _credential_expiry(value: datetime | None, settings: Settings) -> datetime:
+    now = utcnow()
+    maximum = now + timedelta(days=max(1, settings.service_credential_max_days))
+    if value is None:
+        return maximum
+    parsed = _future_expiry(value, field_name="credential_expires_at")
+    assert parsed is not None
+    if parsed > maximum:
+        raise HTTPException(
+            status_code=400,
+            detail=f"service credential lifetime cannot exceed {settings.service_credential_max_days} days",
+        )
+    return parsed
 
 
 def _credential_response(row: ManagedServiceCredential) -> AdminServiceCredentialResponse:
@@ -100,6 +116,7 @@ def create_service_client(
     request: Request,
     context: AuthContext = Depends(require_admin),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> AdminServiceClientCreateResponse:
     if db.scalar(select(ManagedServiceClient).where(ManagedServiceClient.client_id == payload.client_id)) is not None:
         raise HTTPException(status_code=409, detail="service client already exists")
@@ -125,7 +142,7 @@ def create_service_client(
     credential, secret = create_service_credential(
         db,
         client=row,
-        expires_at=_future_expiry(payload.credential_expires_at, field_name="credential_expires_at"),
+        expires_at=_credential_expiry(payload.credential_expires_at, settings),
     )
     record_audit(
         db,
@@ -202,6 +219,7 @@ def rotate_service_client_secret(
     request: Request,
     context: AuthContext = Depends(require_admin),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> AdminServiceSecretResponse:
     row = _find_client(db, client_id)
     now = utcnow()
@@ -217,7 +235,7 @@ def rotate_service_client_secret(
             credential.revoked_at = now
             revoked_ids.append(str(credential.id))
 
-    expires_at = _future_expiry(payload.expires_at, field_name="expires_at")
+    expires_at = _credential_expiry(payload.expires_at, settings)
     credential, secret = create_service_credential(db, client=row, expires_at=expires_at)
     record_audit(
         db,
