@@ -389,6 +389,11 @@ def create_mail_node(payload: MailNodeCreate, db: Session = Depends(get_db), cur
         raise HTTPException(status_code=404, detail="Dedicated tenant not found")
     values = payload.model_dump(exclude={"capabilities"})
     values["capabilities_json"] = json.dumps(clean_capabilities)
+    duplicate_hostname = db.scalar(
+        select(MailNode).where(MailNode.hostname == payload.hostname, MailNode.name != payload.name)
+    )
+    if duplicate_hostname is not None:
+        raise HTTPException(status_code=409, detail="A different mail node already uses this hostname")
     row = db.scalar(select(MailNode).where(MailNode.name == payload.name))
     if row is None:
         row = MailNode(**values)
