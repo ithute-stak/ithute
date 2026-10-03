@@ -2,7 +2,7 @@ import uuid
 
 from sqlalchemy import delete, select
 
-from app.models import AuditLog, MailNode, MailNodeAgent, MailNodeCommand
+from app.models import AuditLog, MailNode, MailNodeAgent, MailNodeCommand, Tenant
 from app.models.domains import Domain, DomainDnsMode, DomainStatus
 from app.models.mail import DistributionGroup, DistributionGroupMember, MailAlias, Mailbox
 from app.services.mail_routing_sync import build_mail_routing
@@ -299,6 +299,58 @@ def test_distributed_routing_maps_internal_and_external_mailboxes(client, db, te
 
     cleanup(db, domain)
     db.execute(delete(MailNode).where(MailNode.id == uuid.UUID(node_id)))
+    db.commit()
+
+
+def test_dedicated_mail_node_is_hidden_from_other_tenants(client, db, tenant_admin, platform_owner):
+    other = Tenant(name="Other Mail Tenant", slug=f"other-{uuid.uuid4().hex[:10]}")
+    db.add(other)
+    db.commit()
+    db.refresh(other)
+
+    platform_headers = login(client, platform_owner.email)
+    node_name = f"dedicated-{uuid.uuid4().hex[:8]}"
+    created_node = client.post(
+        "/api/v1/platform/mail-nodes",
+        headers=platform_headers,
+        json={
+            "name": node_name,
+            "role": "combined",
+            "region": "lesotho",
+            "hostname": f"{node_name}.example.com",
+            "tenant_id": str(other.id),
+            "ssh_port": 22,
+            "storage_path": "/srv/ithute-mail",
+            "capabilities": ["mail", "storage"],
+        },
+    )
+    assert created_node.status_code == 201, created_node.text
+    node_id = created_node.json()["id"]
+
+    user, tenant, _ = tenant_admin
+    tenant_headers = login(client, user.email)
+    available = client.get(f"/api/v1/tenants/{tenant.id}/mail-nodes", headers=tenant_headers)
+    assert available.status_code == 200, available.text
+    assert node_id not in {item["id"] for item in available.json()["items"]}
+
+    domain = make_domain(db, user, tenant)
+    rejected = client.post(
+        f"/api/v1/tenants/{tenant.id}/mailboxes",
+        headers=tenant_headers,
+        json={
+            "domain_id": str(domain.id),
+            "local_part": "wrong-node",
+            "password": "StrongMailbox1!",
+            "quota_bytes": 1073741824,
+            "storage_type": "external",
+            "mail_node_id": node_id,
+        },
+    )
+    assert rejected.status_code == 409
+
+    cleanup(db, domain)
+    db.execute(delete(MailNode).where(MailNode.id == uuid.UUID(node_id)))
+    db.execute(delete(Tenant).where(Tenant.id == other.id))
     db.commit()
 
 
