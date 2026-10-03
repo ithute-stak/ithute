@@ -214,6 +214,7 @@ def create_browser_session_token(
     settings: Settings,
     user_id: uuid.UUID,
     security_version: int,
+    auth_method: str = "password",
 ) -> str:
     issued_at = utcnow()
     return _encode(
@@ -227,6 +228,7 @@ def create_browser_session_token(
             "exp": int((issued_at + timedelta(hours=settings.browser_session_hours)).timestamp()),
             "token_use": "browser_session",
             "sv": security_version,
+            "amr": auth_method,
         },
     )
 

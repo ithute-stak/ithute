@@ -39,6 +39,7 @@ from .schemas import (
 )
 from .security import create_access_token, hash_refresh_token, new_refresh_token, verify_password
 from .security_service import client_ip, login_rate_limited, record_audit, verify_second_factor
+from .zero_trust import assess_login_risk, resolve_device
 
 
 router = APIRouter(tags=["passkeys"])
@@ -309,6 +310,8 @@ def passkey_authentication_verify(
     user.last_login_ip = client_ip(request)
 
     raw_refresh = new_refresh_token()
+    device = resolve_device(db, user=user, request=request)
+    risk = assess_login_risk(user=user, request=request, device=device, auth_method="passkey")
     session = AuthSession(
         user_id=user.id,
         client_id=payload.client_id,
@@ -316,10 +319,15 @@ def passkey_authentication_verify(
         user_agent=request.headers.get("user-agent"),
         ip_address=client_ip(request),
         expires_at=now + timedelta(days=settings.refresh_token_days),
+        auth_method="passkey",
+        risk_score=risk.score,
+        risk_reasons_json=risk.reasons_json(),
+        step_up_at=now,
+        device_id=device.id if device else None,
     )
     db.add(session)
     db.flush()
-    record_audit(db, event_type="passkey_login_succeeded", user=user, client_id=payload.client_id, request=request, details={"passkey_id": str(passkey.id), "session_id": str(session.id)})
+    record_audit(db, event_type="passkey_login_succeeded", user=user, client_id=payload.client_id, request=request, details={"passkey_id": str(passkey.id), "session_id": str(session.id), "risk_score": risk.score, "risk_level": risk.level})
     db.commit()
     db.refresh(session)
 

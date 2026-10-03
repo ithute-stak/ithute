@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from .config import Settings, get_settings
 from .db import get_db
-from .models import Application, AuthSession, AuthorizationCode, User, utcnow
+from .models import Application, AuthSession, AuthorizationCode, PasskeyCredential, User, utcnow
 from .schemas import TokenResponse
 from .security import (
     create_access_token,
@@ -32,6 +32,7 @@ from .security import (
     verify_password,
 )
 from .security_service import client_ip, login_rate_limited, record_audit, verify_second_factor
+from .zero_trust import assess_login_risk, resolve_device
 
 
 router = APIRouter(tags=["oauth"])
@@ -106,6 +107,7 @@ def _issue_authorization_code(
     code_challenge: str,
     nonce: str,
     scope: str,
+    auth_method: str = "password",
 ) -> str:
     raw_code = new_authorization_code()
     db.add(
@@ -117,6 +119,7 @@ def _issue_authorization_code(
             code_challenge=code_challenge,
             nonce=nonce,
             scope=scope,
+            auth_method=auth_method,
             expires_at=utcnow() + timedelta(minutes=settings.authorization_code_minutes),
         )
     )
@@ -124,7 +127,7 @@ def _issue_authorization_code(
     return raw_code
 
 
-def _browser_user(request: Request, db: Session, settings: Settings) -> User | None:
+def _browser_session(request: Request, db: Session, settings: Settings) -> tuple[User, str] | None:
     raw = request.cookies.get(settings.browser_cookie_name)
     if not raw:
         return None
@@ -132,13 +135,15 @@ def _browser_user(request: Request, db: Session, settings: Settings) -> User | N
         claims = decode_browser_session_token(raw, settings)
         user_id = uuid.UUID(str(claims["sub"]))
         security_version = int(claims["sv"])
+        auth_method = str(claims.get("amr") or "password")
     except (jwt.PyJWTError, KeyError, TypeError, ValueError):
         return None
     user = db.get(User, user_id)
     if user is None or not user.is_active or user.security_version != security_version:
         return None
-    return user
-
+    if user.is_platform_admin and auth_method != "passkey":
+        return None
+    return user, auth_method
 
 def _authorization_fields(
     *,
@@ -239,8 +244,9 @@ def authorize_get(
         state=state,
         nonce=nonce,
     )
-    user = _browser_user(request, db, settings)
-    if user is not None:
+    browser_session = _browser_session(request, db, settings)
+    if browser_session is not None:
+        user, auth_method = browser_session
         code = _issue_authorization_code(
             db=db,
             settings=settings,
@@ -250,6 +256,7 @@ def authorize_get(
             code_challenge=code_challenge,
             nonce=nonce,
             scope=normalized_scope,
+            auth_method=auth_method,
         )
         return RedirectResponse(_redirect_with_code(redirect_uri, code, state), status_code=303)
 
@@ -352,6 +359,19 @@ def authorize_post(
         )
         db.commit()
         return login_error("The email or password is incorrect.", 401)
+    if user.is_platform_admin:
+        passkey_count = db.scalar(select(PasskeyCredential.id).where(PasskeyCredential.user_id == user.id).limit(1))
+        record_audit(
+            db,
+            event_type="privileged_password_login_blocked",
+            user=user,
+            success=False,
+            client_id=client_id,
+            request=request,
+            details={"passkey_registered": passkey_count is not None},
+        )
+        db.commit()
+        return login_error("Privileged accounts must sign in with a passkey.", 403)
     if not verify_second_factor(db, user=user, code=mfa_code or None, settings=settings):
         user.failed_login_attempts += 1
         if user.failed_login_attempts >= settings.max_login_failures:
@@ -382,6 +402,7 @@ def authorize_post(
         code_challenge=code_challenge,
         nonce=nonce,
         scope=normalized_scope,
+        auth_method="password",
     )
     response = RedirectResponse(_redirect_with_code(redirect_uri, code, state), status_code=303)
     response.set_cookie(
@@ -390,6 +411,7 @@ def authorize_post(
             settings=settings,
             user_id=user.id,
             security_version=user.security_version,
+            auth_method="password",
         ),
         max_age=settings.browser_session_hours * 3600,
         httponly=True,
@@ -448,6 +470,8 @@ def token(
             raise HTTPException(status_code=400, detail="invalid_grant")
         row.consumed_at = now
         raw_refresh = new_refresh_token()
+        device = resolve_device(db, user=user, request=request)
+        risk = assess_login_risk(user=user, request=request, device=device, auth_method=row.auth_method)
         session = AuthSession(
             user_id=user.id,
             client_id=client_id,
@@ -455,6 +479,11 @@ def token(
             user_agent=request.headers.get("user-agent"),
             ip_address=client_ip(request),
             expires_at=now + timedelta(days=settings.refresh_token_days),
+            auth_method=row.auth_method,
+            risk_score=risk.score,
+            risk_reasons_json=risk.reasons_json(),
+            step_up_at=now if row.auth_method == "passkey" else None,
+            device_id=device.id if device else None,
         )
         db.add(session)
         db.commit()
