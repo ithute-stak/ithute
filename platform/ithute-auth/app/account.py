@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from .config import Settings, get_settings
 from .db import get_db
 from .delivery import DeliveryUnavailable, send_email, send_sms
-from .models import AuditEvent, AuthSession, MfaRecoveryCode, SecurityToken, User, utcnow
+from .models import AuditEvent, AuthSession, Device, MfaRecoveryCode, PasskeyCredential, SecurityToken, User, utcnow
 from .schemas import (
     AuditEventResponse,
     MfaConfirmRequest,
@@ -48,6 +48,8 @@ from .security import (
     verify_totp,
 )
 from .security_service import (
+    privileged_account,
+    recent_step_up,
     record_audit,
     recovery_request_rate_limited,
     revoke_sessions,
@@ -100,6 +102,20 @@ def authenticated_context(
     session.last_seen_at = utcnow()
     db.commit()
     return AuthContext(user=user, session=session, claims=claims)
+
+
+def sensitive_context(
+    context: AuthContext = Depends(authenticated_context),
+    settings: Settings = Depends(get_settings),
+) -> AuthContext:
+    if (privileged_account(context.user, settings) or context.session.risk_level == "high") and not recent_step_up(
+        context.session, settings=settings
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="fresh passkey step-up required",
+        )
+    return context
 
 
 def _find_user(db: Session, identifier: str) -> User | None:
@@ -435,6 +451,10 @@ def list_sessions(
             client_id=row.client_id,
             ip_address=row.ip_address,
             user_agent=row.user_agent,
+            assurance_level=row.assurance_level,
+            auth_method=row.auth_method,
+            risk_level=row.risk_level,
+            last_step_up_at=row.last_step_up_at,
             created_at=row.created_at,
             last_seen_at=row.last_seen_at,
             expires_at=row.expires_at,
@@ -465,7 +485,7 @@ def revoke_session(
 @router.post("/sessions/revoke-others")
 def revoke_other_sessions(
     request: Request,
-    context: AuthContext = Depends(authenticated_context),
+    context: AuthContext = Depends(sensitive_context),
     db: Session = Depends(get_db),
 ) -> dict[str, int]:
     count = revoke_sessions(db, user_id=context.user.id, reason="logout other devices", except_session_id=context.session.id)
@@ -503,3 +523,136 @@ def security_events(
             )
         )
     return result
+
+
+
+@router.get("/security-posture")
+def security_posture(
+    context: AuthContext = Depends(authenticated_context),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    passkeys = db.scalars(
+        select(PasskeyCredential).where(PasskeyCredential.user_id == context.user.id)
+    ).all()
+    active_sessions = db.scalars(
+        select(AuthSession).where(
+            AuthSession.user_id == context.user.id,
+            AuthSession.revoked_at.is_(None),
+            AuthSession.expires_at > utcnow(),
+        )
+    ).all()
+    devices = db.scalars(
+        select(Device).where(Device.user_id == context.user.id, Device.is_active.is_(True))
+    ).all()
+    privileged = privileged_account(context.user, settings)
+    step_up_fresh = recent_step_up(context.session, settings=settings)
+    required_passkey = bool(privileged and settings.privileged_passkey_enforcement)
+    protected = bool(
+        (not required_passkey or passkeys)
+        and (not privileged or context.user.totp_enabled or passkeys)
+        and context.session.risk_level != "high"
+    )
+    return {
+        "privileged": privileged,
+        "protected": protected,
+        "passkey_required": required_passkey,
+        "passkeys_registered": len(passkeys),
+        "mfa_enabled": context.user.totp_enabled,
+        "active_sessions": len(active_sessions),
+        "active_devices": len(devices),
+        "trusted_devices": sum(1 for device in devices if device.trusted_at is not None),
+        "current_session": {
+            "assurance_level": context.session.assurance_level,
+            "auth_method": context.session.auth_method,
+            "risk_level": context.session.risk_level,
+            "step_up_fresh": step_up_fresh,
+            "last_step_up_at": context.session.last_step_up_at.isoformat() if context.session.last_step_up_at else None,
+        },
+        "recommendations": [
+            message
+            for condition, message in (
+                (required_passkey and not passkeys, "Register a passkey for privileged access."),
+                (not context.user.totp_enabled and not passkeys, "Enable MFA or register a passkey."),
+                (context.session.risk_level == "high", "Complete a fresh passkey step-up."),
+                (privileged and not step_up_fresh, "Use a passkey before sensitive administrative actions."),
+            )
+            if condition
+        ],
+    }
+
+
+@router.get("/devices")
+def list_devices(
+    context: AuthContext = Depends(authenticated_context),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    rows = db.scalars(
+        select(Device)
+        .where(Device.user_id == context.user.id)
+        .order_by(Device.last_seen_at.desc())
+        .limit(100)
+    ).all()
+    return [
+        {
+            "device_key": row.device_key,
+            "platform": row.platform,
+            "label": row.label,
+            "active": row.is_active,
+            "trusted": row.trusted_at is not None and row.is_active,
+            "trusted_at": row.trusted_at.isoformat() if row.trusted_at else None,
+            "last_seen_at": row.last_seen_at.isoformat(),
+            "last_ip_address": row.last_ip_address,
+        }
+        for row in rows
+    ]
+
+
+@router.post("/devices/{device_key}/trust")
+def trust_device(
+    device_key: str,
+    request: Request,
+    context: AuthContext = Depends(sensitive_context),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    device = db.scalar(
+        select(Device).where(Device.user_id == context.user.id, Device.device_key == device_key)
+    )
+    if device is None or not device.is_active:
+        raise HTTPException(status_code=404, detail="device not found")
+    device.trusted_at = utcnow()
+    device.last_ip_address = context.session.ip_address
+    record_audit(
+        db,
+        event_type="device_trusted",
+        user=context.user,
+        client_id=context.session.client_id,
+        request=request,
+        details={"device_key": device_key},
+    )
+    db.commit()
+    return {"trusted": True, "device_key": device_key}
+
+
+@router.delete("/devices/{device_key}/trust", status_code=204)
+def untrust_device(
+    device_key: str,
+    request: Request,
+    context: AuthContext = Depends(authenticated_context),
+    db: Session = Depends(get_db),
+) -> None:
+    device = db.scalar(
+        select(Device).where(Device.user_id == context.user.id, Device.device_key == device_key)
+    )
+    if device is None:
+        raise HTTPException(status_code=404, detail="device not found")
+    device.trusted_at = None
+    record_audit(
+        db,
+        event_type="device_untrusted",
+        user=context.user,
+        client_id=context.session.client_id,
+        request=request,
+        details={"device_key": device_key},
+    )
+    db.commit()
