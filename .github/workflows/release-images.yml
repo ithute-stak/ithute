@@ -40,8 +40,15 @@ jobs:
           persist-credentials: false
 
       - name: Require exact green CI gates
+        id: gates
         run: |
           set -euo pipefail
+          current_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "$RELEASE_SHA" != "$current_main" ]; then
+            echo "Release SHA $RELEASE_SHA has been superseded by main at $current_main; skipping image publication."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           require_success() {
             workflow="$1"
             label="$2"
@@ -73,8 +80,10 @@ jobs:
           require_success ci.yml 'Ithute Standalone CI'
           require_success production-safety-ci.yml 'Production Safety CI'
           require_success security-ci.yml 'Security CI'
+          echo "publish=true" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
+        if: steps.gates.outputs.publish == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -82,9 +91,11 @@ jobs:
           password: ${{ github.token }}
 
       - name: Set up Docker Buildx
+        if: steps.gates.outputs.publish == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Publish web image
+        if: steps.gates.outputs.publish == 'true'
         id: web
         uses: docker/build-push-action@v7
         with:
@@ -99,6 +110,7 @@ jobs:
           sbom: true
 
       - name: Publish app API image
+        if: steps.gates.outputs.publish == 'true'
         id: app_api
         uses: docker/build-push-action@v7
         with:
@@ -110,6 +122,7 @@ jobs:
           sbom: true
 
       - name: Publish auth image
+        if: steps.gates.outputs.publish == 'true'
         id: auth
         uses: docker/build-push-action@v7
         with:
@@ -121,6 +134,7 @@ jobs:
           sbom: true
 
       - name: Publish push image
+        if: steps.gates.outputs.publish == 'true'
         id: push
         uses: docker/build-push-action@v7
         with:
@@ -132,6 +146,7 @@ jobs:
           sbom: true
 
       - name: Publish realtime image
+        if: steps.gates.outputs.publish == 'true'
         id: realtime
         uses: docker/build-push-action@v7
         with:
@@ -143,6 +158,7 @@ jobs:
           sbom: true
 
       - name: Attest web image provenance
+        if: steps.gates.outputs.publish == 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REGISTRY }}/ithute-web
@@ -150,6 +166,7 @@ jobs:
           push-to-registry: true
 
       - name: Attest app API image provenance
+        if: steps.gates.outputs.publish == 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REGISTRY }}/ithute-app-api
@@ -157,6 +174,7 @@ jobs:
           push-to-registry: true
 
       - name: Attest auth image provenance
+        if: steps.gates.outputs.publish == 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REGISTRY }}/ithute-auth
@@ -164,6 +182,7 @@ jobs:
           push-to-registry: true
 
       - name: Attest push image provenance
+        if: steps.gates.outputs.publish == 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REGISTRY }}/ithute-push
@@ -171,6 +190,7 @@ jobs:
           push-to-registry: true
 
       - name: Attest realtime image provenance
+        if: steps.gates.outputs.publish == 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REGISTRY }}/ithute-realtime
@@ -178,6 +198,7 @@ jobs:
           push-to-registry: true
 
       - name: Release summary
+        if: steps.gates.outputs.publish == 'true'
         run: |
           echo "Ithute images are published only; no VPS deployment is performed."
           echo "Release SHA: $RELEASE_SHA"
