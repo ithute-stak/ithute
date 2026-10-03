@@ -19,4 +19,4 @@ pyotp==2.10.0
 dnspython==2.8.0
 bleach==6.4.0
 prometheus-client==0.26.0
-reportlab==4.4.4
+reportlab==5.0.1
