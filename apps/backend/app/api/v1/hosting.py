@@ -347,6 +347,8 @@ def _mail_node_json(row: MailNode) -> dict:
         "role": row.role,
         "region": row.region,
         "hostname": row.hostname,
+        "provider": row.provider,
+        "provider_instance_id": row.provider_instance_id,
         "public_ip": row.public_ip,
         "tenant_id": str(row.tenant_id) if row.tenant_id else None,
         "ssh_port": row.ssh_port,
