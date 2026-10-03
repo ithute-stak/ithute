@@ -310,9 +310,9 @@ def _safe_extract(archive: Path, destination: Path) -> None:
             candidate = (root / member.name).resolve()
             if candidate != root and root not in candidate.parents:
                 raise RuntimeError("Snapshot contains an unsafe path")
-            if member.issym() or member.islnk():
-                raise RuntimeError("Snapshot contains unsupported links")
-        tar.extractall(destination, filter="data")
+            if member.issym() or member.islnk() or not (member.isfile() or member.isdir()):
+                raise RuntimeError("Snapshot contains an unsupported entry type")
+        tar.extractall(destination)
 
 
 def restore_snapshot(remote_uri: str, snapshot_key: str, checksum: str | None) -> dict[str, Any]:
