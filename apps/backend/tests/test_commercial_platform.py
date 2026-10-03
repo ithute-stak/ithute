@@ -175,6 +175,10 @@ def test_mail_node_backup_operation_round_trip(client, db, platform_owner):
     credential = client.post(f"/api/v1/platform/mail-nodes/{node_id}/agent-token")
     assert credential.status_code == 200, credential.text
     token = credential.json()["token"]
+    node = db.get(MailNode, uuid.UUID(node_id))
+    node.backup_ready = True
+    node.last_heartbeat_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    db.commit()
 
     queued = client.post(f"/api/v1/platform/mail-nodes/{node_id}/backup")
     assert queued.status_code == 202, queued.text
