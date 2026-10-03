@@ -5,7 +5,7 @@ import json
 import re
 import secrets
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -76,6 +76,8 @@ def create_service_credential(
     client: ManagedServiceClient,
     expires_at: datetime | None = None,
 ) -> tuple[ManagedServiceCredential, str]:
+    if expires_at is None:
+        expires_at = utcnow() + timedelta(days=30)
     secret = new_service_secret()
     credential = ManagedServiceCredential(
         service_client_id=client.id,
