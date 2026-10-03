@@ -90,6 +90,7 @@ export default function MailNodesPage() {
   const [snapshots, setSnapshots] = useState<MailNodeSnapshot[]>([]);
   const [selectedSnapshot, setSelectedSnapshot] = useState("");
   const [selectedTarget, setSelectedTarget] = useState("");
+  const [pendingFailoverApproval, setPendingFailoverApproval] = useState("");
   const [policyNodeId, setPolicyNodeId] = useState("");
   const [policyInterval, setPolicyInterval] = useState(24);
   const [policyRetention, setPolicyRetention] = useState(7);
@@ -255,15 +256,26 @@ export default function MailNodesPage() {
     setError("");
     const response = await api(`/platform/mail-nodes/${failoverSource.id}/failover`, {
       method: "POST",
-      body: JSON.stringify({ target_node_id: selectedTarget, snapshot_id: selectedSnapshot }),
+      body: JSON.stringify({
+        target_node_id: selectedTarget,
+        snapshot_id: selectedSnapshot,
+        approval_id: pendingFailoverApproval || null,
+      }),
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
       setError(body.detail || "Unable to queue failover.");
       return;
     }
+    const body = await response.json();
+    if (body.requires_approval) {
+      setPendingFailoverApproval(body.approval_id || "");
+      setMessage("Failover approval requested. A different platform owner must approve it in Security approvals. After approval, click Queue failover again.");
+      return;
+    }
+    setPendingFailoverApproval("");
     setFailoverSource(null);
-    setMessage("Failover restore queued. Mailbox placement will switch only after the target confirms a successful restore.");
+    setMessage("Failover restore queued after dual approval. Mailbox placement will switch only after the target confirms a successful restore.");
     await loadNodes();
   }
 
