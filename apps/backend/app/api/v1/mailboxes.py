@@ -165,9 +165,18 @@ def list_available_mail_nodes(
             MailNode.status == "active",
             MailNode.role.in_(("imap", "combined")),
             or_(MailNode.tenant_id.is_(None), MailNode.tenant_id == tenant_id),
+            MailNode.smtp_ready.is_(True),
+            MailNode.imap_ready.is_(True),
+            MailNode.tls_ready.is_(True),
+            MailNode.backup_ready.is_(True),
         )
         .order_by(MailNode.region, MailNode.name)
     ).all()
+    now = datetime.now(timezone.utc)
+    fresh_rows = [
+        row for row in rows
+        if row.last_heartbeat_at and (now - row.last_heartbeat_at).total_seconds() <= settings.mail_node_stale_seconds
+    ]
     return {
         "items": [
             {
@@ -178,7 +187,7 @@ def list_available_mail_nodes(
                 "hostname": row.hostname,
                 "status": row.status,
             }
-            for row in rows
+            for row in fresh_rows
         ]
     }
 
@@ -209,10 +218,19 @@ def create_mailbox(tenant_id: UUID, payload: MailboxCreate, db: Session = Depend
                 MailNode.status == "active",
                 MailNode.role.in_(("imap", "combined")),
                 or_(MailNode.tenant_id.is_(None), MailNode.tenant_id == tenant_id),
+                MailNode.smtp_ready.is_(True),
+                MailNode.imap_ready.is_(True),
+                MailNode.tls_ready.is_(True),
+                MailNode.backup_ready.is_(True),
             )
         )
-        if node is None:
-            raise HTTPException(status_code=409, detail="Selected mail node is unavailable")
+        fresh = bool(
+            node
+            and node.last_heartbeat_at
+            and (datetime.now(timezone.utc) - node.last_heartbeat_at).total_seconds() <= settings.mail_node_stale_seconds
+        )
+        if node is None or not fresh:
+            raise HTTPException(status_code=409, detail="Selected mail node is unavailable or not production-ready")
         mail_node_id = node.id
 
     item = Mailbox(
