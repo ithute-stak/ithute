@@ -9,6 +9,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
 
 type Me = { email: string; is_platform_owner: boolean };
 type Tenant = { id:string; name:string; slug:string; status:string };
+type MailNodeSnapshot = {id:string;snapshot_key:string;remote_uri?:string|null;size_bytes?:number|null;checksum_sha256?:string|null;status:string;created_at?:string|null;completed_at?:string|null};
 type MailNode = {
   id: string;
   name: string;
@@ -74,6 +75,10 @@ export default function MailNodesPage() {
   const [error, setError] = useState("");
   const [agentToken, setAgentToken] = useState<{node:string;token:string}|null>(null);
   const [routing, setRouting] = useState<{relay_domains:number;relay_recipients:number;transport_routes:number;virtual_aliases:number}|null>(null);
+  const [failoverSource, setFailoverSource] = useState<MailNode|null>(null);
+  const [snapshots, setSnapshots] = useState<MailNodeSnapshot[]>([]);
+  const [selectedSnapshot, setSelectedSnapshot] = useState("");
+  const [selectedTarget, setSelectedTarget] = useState("");
 
   const active = useMemo(() => nodes.filter((node) => node.status === "active").length, [nodes]);
   const healthy = useMemo(() => nodes.filter((node) => node.healthy).length, [nodes]);
@@ -181,6 +186,62 @@ export default function MailNodesPage() {
     }
     const body = await response.json();
     setAgentToken({ node: node.name, token: body.token });
+  }
+
+  async function backupNode(node: MailNode) {
+    setMessage("");
+    setError("");
+    const response = await api(`/platform/mail-nodes/${node.id}/backup`, { method: "POST" });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      setError(body.detail || "Unable to queue mail-node backup.");
+      return;
+    }
+    const body = await response.json();
+    setMessage(`Backup queued for ${node.name} · snapshot ${body.snapshot_key}`);
+  }
+
+  async function openFailover(node: MailNode) {
+    setMessage("");
+    setError("");
+    const response = await api(`/platform/mail-nodes/${node.id}/snapshots`);
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      setError(body.detail || "Unable to load node snapshots.");
+      return;
+    }
+    const body = await response.json();
+    const ready = (body.items || []).filter((item: MailNodeSnapshot) => item.status === "ready" && item.remote_uri);
+    setSnapshots(ready);
+    setSelectedSnapshot(ready[0]?.id || "");
+    const target = nodes.find(candidate =>
+      candidate.id !== node.id &&
+      candidate.status === "active" &&
+      candidate.smtp_ready &&
+      candidate.imap_ready &&
+      candidate.tls_ready &&
+      (!candidate.tenant_id || candidate.tenant_id === node.tenant_id)
+    );
+    setSelectedTarget(target?.id || "");
+    setFailoverSource(node);
+  }
+
+  async function queueFailover() {
+    if (!failoverSource || !selectedTarget || !selectedSnapshot) return;
+    setMessage("");
+    setError("");
+    const response = await api(`/platform/mail-nodes/${failoverSource.id}/failover`, {
+      method: "POST",
+      body: JSON.stringify({ target_node_id: selectedTarget, snapshot_id: selectedSnapshot }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      setError(body.detail || "Unable to queue failover.");
+      return;
+    }
+    setFailoverSource(null);
+    setMessage("Failover restore queued. Mailbox placement will switch only after the target confirms a successful restore.");
+    await loadNodes();
   }
 
   async function reconcileRouting() {
@@ -324,6 +385,8 @@ export default function MailNodesPage() {
                           {node.readiness_error?<p className="mt-2 text-[10px] font-semibold text-amber-700">{node.readiness_error}</p>:null}
                         </div>
                         <div className="flex flex-wrap gap-2">
+                          <button className="btn-secondary text-[10px]" onClick={() => void backupNode(node)}>Backup now</button>
+                          <button className="btn-secondary text-[10px]" onClick={() => void openFailover(node)}>Failover</button>
                           <button className="btn-secondary text-[10px]" onClick={() => void generateAgentToken(node)}>Agent token</button>
                           {node.status !== "active" ? <button className="btn-secondary text-[10px]" onClick={() => void updateStatus(node, "active")}>Activate</button> : null}
                           {node.status !== "maintenance" ? <button className="btn-secondary text-[10px]" onClick={() => void updateStatus(node, "maintenance")}><Wrench size={12} /> Maintenance</button> : null}
@@ -349,6 +412,41 @@ export default function MailNodesPage() {
               </div>
             </div>
           </section>
+        ) : null}
+        {failoverSource ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+            <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-2xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-black text-[#21342a]">Controlled mail-node failover</p>
+                  <p className="mt-1 text-[11px] text-[#718078]">{failoverSource.name}</p>
+                </div>
+                <button onClick={() => setFailoverSource(null)} className="text-xl text-[#718078]">×</button>
+              </div>
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[10px] leading-5 text-amber-800">
+                Ithute restores a verified off-node snapshot to the target first. Mailbox placement and SMTP routes change only after restore succeeds.
+              </div>
+              <div className="mt-4 space-y-3">
+                <label className="block"><span className="label">Ready off-node snapshot</span>
+                  <select className="input" value={selectedSnapshot} onChange={e=>setSelectedSnapshot(e.target.value)}>
+                    <option value="">Select snapshot</option>
+                    {snapshots.map(snapshot=><option key={snapshot.id} value={snapshot.id}>{snapshot.snapshot_key} · {snapshot.size_bytes ? storage(snapshot.size_bytes) : "size pending"}</option>)}
+                  </select>
+                </label>
+                <label className="block"><span className="label">Healthy target node</span>
+                  <select className="input" value={selectedTarget} onChange={e=>setSelectedTarget(e.target.value)}>
+                    <option value="">Select target</option>
+                    {nodes.filter(node=>node.id!==failoverSource.id&&node.status==="active"&&node.smtp_ready&&node.imap_ready&&node.tls_ready&&(!node.tenant_id||node.tenant_id===failoverSource.tenant_id)).map(node=><option key={node.id} value={node.id}>{node.name} · {node.region} · {storage(node.free_storage_bytes)}</option>)}
+                  </select>
+                </label>
+                {!snapshots.length?<p className="text-[10px] font-semibold text-amber-700">Create and complete an off-node backup before failover.</p>:null}
+              </div>
+              <div className="mt-5 flex justify-end gap-2">
+                <button className="btn-secondary" onClick={()=>setFailoverSource(null)}>Cancel</button>
+                <button className="btn-primary" disabled={!selectedSnapshot||!selectedTarget} onClick={()=>void queueFailover()}>Queue controlled failover</button>
+              </div>
+            </div>
+          </div>
         ) : null}
         {agentToken ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
