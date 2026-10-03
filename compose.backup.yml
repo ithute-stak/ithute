@@ -3,7 +3,7 @@ services:
     environment:
       BACKUP_STATUS_DIR: /backup-status/status
       BACKUP_MAX_AGE_SECONDS: ${ITHUTE_BACKUP_MAX_AGE_SECONDS:-93600}
-      BACKUP_REQUIRE_OFFSITE: ${ITHUTE_BACKUP_REQUIRE_OFFSITE:-false}
+      BACKUP_REQUIRE_OFFSITE: ${ITHUTE_BACKUP_REQUIRE_OFFSITE:-true}
       BACKUP_OFFSITE_MAX_AGE_SECONDS: ${ITHUTE_BACKUP_OFFSITE_MAX_AGE_SECONDS:-10800}
     volumes:
       - ithute_backup_status:/backup-status/status:ro
