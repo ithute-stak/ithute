@@ -1,13 +1,15 @@
 import json
+from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_tenant_permission
+from app.core.config import settings
 from app.db.session import get_db
 from app.models import AuditLog, MailNode, User
 from app.models.domains import Domain, DomainStatus
@@ -94,6 +96,55 @@ def _mailbox_json(item: Mailbox) -> dict:
         "mail_node_id": str(item.mail_node_id) if item.mail_node_id else None,
         "storage_path": item.storage_path,
         "password_changed_at": item.password_changed_at, "created_at": item.created_at, "updated_at": item.updated_at,
+    }
+
+
+@router.get("/mail-nodes/recommend")
+def recommend_mail_node(
+    tenant_id: UUID,
+    quota_bytes: int = Query(..., ge=100 * 1024**2, le=10 * 1024**4),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    _permission(tenant_id, "mail.read", db, current)
+    now = datetime.now(timezone.utc)
+    rows = db.scalars(
+        select(MailNode).where(
+            MailNode.status == "active",
+            MailNode.role.in_(("imap", "combined")),
+            or_(MailNode.tenant_id.is_(None), MailNode.tenant_id == tenant_id),
+            MailNode.total_storage_bytes.is_not(None),
+            MailNode.used_storage_bytes.is_not(None),
+        )
+    ).all()
+
+    candidates = []
+    for row in rows:
+        if not row.last_heartbeat_at:
+            continue
+        if (now - row.last_heartbeat_at).total_seconds() > settings.mail_node_stale_seconds:
+            continue
+        free = max(0, int(row.total_storage_bytes or 0) - int(row.used_storage_bytes or 0))
+        reserve = max(5 * 1024**3, int((row.total_storage_bytes or 0) * 0.05))
+        if free - reserve < quota_bytes:
+            continue
+        candidates.append((1 if row.tenant_id == tenant_id else 0, row.weight, free, row))
+
+    if not candidates:
+        return {"recommended": None, "reason": "No healthy mail node has enough reported free storage after reserve."}
+
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    _, _, free, row = candidates[0]
+    return {
+        "recommended": {
+            "id": str(row.id),
+            "name": row.name,
+            "hostname": row.hostname,
+            "region": row.region,
+            "scope": "dedicated" if row.tenant_id else "shared",
+            "free_storage_bytes": free,
+            "weight": row.weight,
+        }
     }
 
 
