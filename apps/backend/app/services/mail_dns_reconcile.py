@@ -10,7 +10,9 @@ from app.core.config import settings
 from app.models.deliverability import DkimKey
 from app.models.domains import Domain, DomainDnsMode, DomainStatus
 from app.services.deliverability import generate_dkim_material, recommended_records
+from app.services.caddy_routes import CaddyRouteError, activate_route
 from app.services.dkim_sync import sync_active_dkim_keys
+from app.services.mail_transport_security import policy_hostname, transport_security_records
 from app.services.powerdns import PowerDNSClient, PowerDNSError, validate_record
 
 
@@ -181,9 +183,54 @@ def reconcile_mail_dns(
                     "purpose": record["purpose"],
                 }
             )
+        transport_records = transport_security_records(domain.ascii_name)
+        host_records = [record for record in transport_records if record["purpose"] == "mta-sts-host"]
+        activation_records = [record for record in transport_records if record["purpose"] != "mta-sts-host"]
+
+        for record in host_records:
+            fqdn, rtype, contents = validate_record(
+                domain.ascii_name,
+                record["name"],
+                record["type"],
+                [record["value"]],
+            )
+            dns.replace_rrset(
+                domain.ascii_name,
+                fqdn,
+                rtype,
+                settings.powerdns_default_ttl,
+                contents,
+            )
+            published.append({"name": fqdn, "type": rtype, "values": contents, "purpose": record["purpose"]})
+
         dns.rectify_zone(domain.ascii_name)
-    except (PowerDNSError, ValueError) as exc:
-        raise MailDNSReconcileError(f"PowerDNS mail record reconciliation failed: {exc}") from exc
+
+        if host_records:
+            activate_route(
+                f"mta-sts-{domain.id}",
+                policy_hostname(domain.ascii_name),
+                "http://ithute-app-api:8000",
+            )
+
+        for record in activation_records:
+            fqdn, rtype, contents = validate_record(
+                domain.ascii_name,
+                record["name"],
+                record["type"],
+                [record["value"]],
+            )
+            dns.replace_rrset(
+                domain.ascii_name,
+                fqdn,
+                rtype,
+                settings.powerdns_default_ttl,
+                contents,
+            )
+            published.append({"name": fqdn, "type": rtype, "values": contents, "purpose": record["purpose"]})
+
+        dns.rectify_zone(domain.ascii_name)
+    except (PowerDNSError, CaddyRouteError, ValueError) as exc:
+        raise MailDNSReconcileError(f"PowerDNS/mail transport security reconciliation failed: {exc}") from exc
 
     return MailDNSReconcileResult(
         domain=domain.ascii_name,
