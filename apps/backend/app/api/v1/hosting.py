@@ -97,7 +97,7 @@ class MailNodeCreate(BaseModel):
     tenant_id: UUID | None = None
     ssh_port: int = Field(default=22, ge=1, le=65535)
     ssh_user: str | None = Field(default=None, max_length=80)
-    storage_path: str = Field(default="/srv/ithute-mail", min_length=1, max_length=500)
+    storage_path: str = Field(default="/srv/ithute-mail/data/mail-data", min_length=1, max_length=500)
     capabilities: list[str] = Field(default_factory=lambda: ["mail", "storage"])
     weight: int = Field(default=100, ge=0, le=1000)
 
