@@ -15,6 +15,11 @@ class MailboxStatus(str, enum.Enum):
     archived = "archived"
 
 
+class MailboxStorageType(str, enum.Enum):
+    internal = "internal"
+    external = "external"
+
+
 class Mailbox(Base):
     __tablename__ = "mailboxes"
     __table_args__ = (
@@ -30,6 +35,9 @@ class Mailbox(Base):
     display_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     quota_bytes: Mapped[int] = mapped_column(BigInteger, default=5 * 1024**3, nullable=False)
+    storage_type: Mapped[MailboxStorageType] = mapped_column(Enum(MailboxStorageType), default=MailboxStorageType.internal, nullable=False, index=True)
+    mail_node_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("mail_nodes.id", ondelete="SET NULL"), index=True, nullable=True)
+    storage_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[MailboxStatus] = mapped_column(Enum(MailboxStatus), default=MailboxStatus.active, nullable=False, index=True)
     created_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     password_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

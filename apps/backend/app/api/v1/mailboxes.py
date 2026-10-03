@@ -1,18 +1,21 @@
 import json
+from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_tenant_permission
+from app.core.config import settings
 from app.db.session import get_db
-from app.models import AuditLog, User
+from app.models import AuditLog, MailNode, User
 from app.models.domains import Domain, DomainStatus
-from app.models.mail import DistributionGroup, DistributionGroupMember, MailAlias, Mailbox, MailboxStatus
+from app.models.mail import DistributionGroup, DistributionGroupMember, MailAlias, Mailbox, MailboxStatus, MailboxStorageType
 from app.services.billing import require_entitlement
+from app.services.mail_node_commands import queue_mailbox_sync
 from app.services.mailboxes import hash_mailbox_password, mailbox_address, normalize_destination, normalize_local_part, utcnow
 
 router = APIRouter(prefix="/tenants/{tenant_id}", tags=["mailboxes"])
@@ -24,6 +27,8 @@ class MailboxCreate(BaseModel):
     password: str
     display_name: str | None = Field(default=None, max_length=150)
     quota_bytes: int = Field(default=5 * 1024**3, ge=100 * 1024**2, le=10 * 1024**4)
+    storage_type: MailboxStorageType = MailboxStorageType.internal
+    mail_node_id: UUID | None = None
 
 
 class MailboxUpdate(BaseModel):
@@ -87,7 +92,103 @@ def _mailbox_json(item: Mailbox) -> dict:
         "id": str(item.id), "tenant_id": str(item.tenant_id), "domain_id": str(item.domain_id),
         "local_part": item.local_part, "address": item.address, "display_name": item.display_name,
         "quota_bytes": item.quota_bytes, "status": item.status.value,
+        "storage_type": item.storage_type.value,
+        "mail_node_id": str(item.mail_node_id) if item.mail_node_id else None,
+        "storage_path": item.storage_path,
         "password_changed_at": item.password_changed_at, "created_at": item.created_at, "updated_at": item.updated_at,
+    }
+
+
+@router.get("/mail-nodes/recommend")
+def recommend_mail_node(
+    tenant_id: UUID,
+    quota_bytes: int = Query(..., ge=100 * 1024**2, le=10 * 1024**4),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    _permission(tenant_id, "mail.read", db, current)
+    now = datetime.now(timezone.utc)
+    rows = db.scalars(
+        select(MailNode).where(
+            MailNode.status == "active",
+            MailNode.role.in_(("imap", "combined")),
+            or_(MailNode.tenant_id.is_(None), MailNode.tenant_id == tenant_id),
+            MailNode.total_storage_bytes.is_not(None),
+            MailNode.used_storage_bytes.is_not(None),
+            MailNode.smtp_ready.is_(True),
+            MailNode.imap_ready.is_(True),
+            MailNode.tls_ready.is_(True),
+            MailNode.backup_ready.is_(True),
+        )
+    ).all()
+
+    candidates = []
+    for row in rows:
+        if not row.last_heartbeat_at:
+            continue
+        if (now - row.last_heartbeat_at).total_seconds() > settings.mail_node_stale_seconds:
+            continue
+        free = max(0, int(row.total_storage_bytes or 0) - int(row.used_storage_bytes or 0))
+        reserve = max(5 * 1024**3, int((row.total_storage_bytes or 0) * 0.05))
+        if free - reserve < quota_bytes:
+            continue
+        candidates.append((1 if row.tenant_id == tenant_id else 0, row.weight, free, row))
+
+    if not candidates:
+        return {"recommended": None, "reason": "No healthy mail node has enough reported free storage after reserve."}
+
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    _, _, free, row = candidates[0]
+    return {
+        "recommended": {
+            "id": str(row.id),
+            "name": row.name,
+            "hostname": row.hostname,
+            "region": row.region,
+            "scope": "dedicated" if row.tenant_id else "shared",
+            "free_storage_bytes": free,
+            "weight": row.weight,
+        }
+    }
+
+
+@router.get("/mail-nodes")
+def list_available_mail_nodes(
+    tenant_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    _permission(tenant_id, "mail.read", db, current)
+    rows = db.scalars(
+        select(MailNode)
+        .where(
+            MailNode.status == "active",
+            MailNode.role.in_(("imap", "combined")),
+            or_(MailNode.tenant_id.is_(None), MailNode.tenant_id == tenant_id),
+            MailNode.smtp_ready.is_(True),
+            MailNode.imap_ready.is_(True),
+            MailNode.tls_ready.is_(True),
+            MailNode.backup_ready.is_(True),
+        )
+        .order_by(MailNode.region, MailNode.name)
+    ).all()
+    now = datetime.now(timezone.utc)
+    fresh_rows = [
+        row for row in rows
+        if row.last_heartbeat_at and (now - row.last_heartbeat_at).total_seconds() <= settings.mail_node_stale_seconds
+    ]
+    return {
+        "items": [
+            {
+                "id": str(row.id),
+                "name": row.name,
+                "role": row.role,
+                "region": row.region,
+                "hostname": row.hostname,
+                "status": row.status,
+            }
+            for row in fresh_rows
+        ]
     }
 
 
@@ -107,9 +208,35 @@ def create_mailbox(tenant_id: UUID, payload: MailboxCreate, db: Session = Depend
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if db.scalar(select(Mailbox).where(Mailbox.address == address)) or db.scalar(select(DistributionGroup).where(DistributionGroup.address == address)):
         raise HTTPException(status_code=409, detail="Address is already in use")
+    mail_node_id = None
+    if payload.storage_type == MailboxStorageType.external:
+        if payload.mail_node_id is None:
+            raise HTTPException(status_code=422, detail="External storage requires a mail node")
+        node = db.scalar(
+            select(MailNode).where(
+                MailNode.id == payload.mail_node_id,
+                MailNode.status == "active",
+                MailNode.role.in_(("imap", "combined")),
+                or_(MailNode.tenant_id.is_(None), MailNode.tenant_id == tenant_id),
+                MailNode.smtp_ready.is_(True),
+                MailNode.imap_ready.is_(True),
+                MailNode.tls_ready.is_(True),
+                MailNode.backup_ready.is_(True),
+            )
+        )
+        fresh = bool(
+            node
+            and node.last_heartbeat_at
+            and (datetime.now(timezone.utc) - node.last_heartbeat_at).total_seconds() <= settings.mail_node_stale_seconds
+        )
+        if node is None or not fresh:
+            raise HTTPException(status_code=409, detail="Selected mail node is unavailable or not production-ready")
+        mail_node_id = node.id
+
     item = Mailbox(
         tenant_id=tenant_id, domain_id=domain.id, local_part=local, address=address,
         display_name=payload.display_name, password_hash=password_hash, quota_bytes=payload.quota_bytes,
+        storage_type=payload.storage_type, mail_node_id=mail_node_id,
         created_by_user_id=current.id,
     )
     db.add(item)
@@ -118,7 +245,20 @@ def create_mailbox(tenant_id: UUID, payload: MailboxCreate, db: Session = Depend
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Mailbox address already exists") from exc
-    _audit(db, tenant_id, current, "mailbox.create", "mailbox", str(item.id), {"address": address})
+    queue_mailbox_sync(db, item)
+    _audit(
+        db,
+        tenant_id,
+        current,
+        "mailbox.create",
+        "mailbox",
+        str(item.id),
+        {
+            "address": address,
+            "storage_type": item.storage_type.value,
+            "mail_node_id": str(item.mail_node_id) if item.mail_node_id else None,
+        },
+    )
     db.commit()
     db.refresh(item)
     return _mailbox_json(item)
@@ -161,6 +301,7 @@ def update_mailbox(tenant_id: UUID, mailbox_id: UUID, payload: MailboxUpdate, db
             except ValueError as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
         item.quota_bytes = payload.quota_bytes
+    queue_mailbox_sync(db, item)
     _audit(db, tenant_id, current, "mailbox.update", "mailbox", str(item.id))
     db.commit()
     db.refresh(item)
@@ -178,6 +319,7 @@ def change_mailbox_password(tenant_id: UUID, mailbox_id: UUID, payload: Password
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     item.password_changed_at = utcnow()
+    queue_mailbox_sync(db, item)
     _audit(db, tenant_id, current, "mailbox.password_change", "mailbox", str(item.id))
     db.commit()
     return {"id": str(item.id), "password_changed_at": item.password_changed_at}
@@ -190,6 +332,7 @@ def suspend_mailbox(tenant_id: UUID, mailbox_id: UUID, db: Session = Depends(get
     if item.status == MailboxStatus.archived:
         raise HTTPException(status_code=409, detail="Archived mailbox cannot be suspended")
     item.status = MailboxStatus.suspended
+    queue_mailbox_sync(db, item)
     _audit(db, tenant_id, current, "mailbox.suspend", "mailbox", str(item.id))
     db.commit()
     db.refresh(item)
@@ -203,6 +346,7 @@ def restore_mailbox(tenant_id: UUID, mailbox_id: UUID, db: Session = Depends(get
     if item.status == MailboxStatus.archived:
         raise HTTPException(status_code=409, detail="Archived mailbox cannot be restored")
     item.status = MailboxStatus.active
+    queue_mailbox_sync(db, item)
     _audit(db, tenant_id, current, "mailbox.restore", "mailbox", str(item.id))
     db.commit()
     db.refresh(item)
@@ -214,6 +358,7 @@ def archive_mailbox(tenant_id: UUID, mailbox_id: UUID, db: Session = Depends(get
     _permission(tenant_id, "mail.manage", db, current)
     item = _mailbox(db, tenant_id, mailbox_id)
     item.status = MailboxStatus.archived
+    queue_mailbox_sync(db, item)
     _audit(db, tenant_id, current, "mailbox.archive", "mailbox", str(item.id))
     db.commit()
     db.refresh(item)

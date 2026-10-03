@@ -89,6 +89,12 @@ class Settings(BaseSettings):
 
     mail_node_token: str | None = None
     mail_node_stale_seconds: int = 180
+    mail_routing_dir: str | None = None
+    mail_gateway_internal_host: str = "mail.ithute.co.ls"
+    mail_node_provisioner_url: str | None = None
+    mail_node_provisioner_token: str | None = None
+    mail_node_provisioner_timeout_seconds: float = 60.0
+    mail_node_control_plane_url: str = "https://ithute.co.ls"
 
     domain_verification_min_interval_seconds: int = 10
     domain_verification_max_attempts_per_hour: int = 20
@@ -193,6 +199,26 @@ class Settings(BaseSettings):
             raise ValueError("GROUPWARE_AUTH_FILE must be absolute")
         if not 30 <= self.mail_node_stale_seconds <= 3600:
             raise ValueError("MAIL_NODE_STALE_SECONDS must be between 30 and 3600")
+        if self.mail_routing_dir is not None:
+            self.mail_routing_dir = self.mail_routing_dir.strip() or None
+            if self.mail_routing_dir and not self.mail_routing_dir.startswith("/"):
+                raise ValueError("MAIL_ROUTING_DIR must be absolute when configured")
+        if not self.mail_gateway_internal_host.strip():
+            raise ValueError("MAIL_GATEWAY_INTERNAL_HOST must be non-empty")
+        if self.mail_node_provisioner_url:
+            self.mail_node_provisioner_url = self.mail_node_provisioner_url.strip()
+            if not self.mail_node_provisioner_url.startswith(("http://", "https://")):
+                raise ValueError("MAIL_NODE_PROVISIONER_URL must be an HTTP(S) URL")
+            if not self.mail_node_provisioner_token or len(self.mail_node_provisioner_token.strip()) < 24:
+                raise ValueError("MAIL_NODE_PROVISIONER_TOKEN must be at least 24 characters when a provisioner URL is configured")
+        else:
+            self.mail_node_provisioner_url = None
+            self.mail_node_provisioner_token = None
+        if not 5 <= self.mail_node_provisioner_timeout_seconds <= 300:
+            raise ValueError("MAIL_NODE_PROVISIONER_TIMEOUT_SECONDS must be between 5 and 300")
+        self.mail_node_control_plane_url = self.mail_node_control_plane_url.strip().rstrip("/")
+        if not self.mail_node_control_plane_url.startswith(("http://", "https://")):
+            raise ValueError("MAIL_NODE_CONTROL_PLANE_URL must be an HTTP(S) URL")
         if not self.nameserver_1.strip() or not self.nameserver_2.strip() or self.nameserver_1.lower() == self.nameserver_2.lower():
             raise ValueError("NAMESERVER_1 and NAMESERVER_2 must be distinct non-empty hostnames")
         if not self.mail_hostname.strip() or "." not in self.mail_hostname.strip().rstrip("."):
@@ -272,6 +298,11 @@ class Settings(BaseSettings):
                 raise ValueError("Production MAIL_OPS_URL must use HTTPS unless it targets the private Postfix service")
             if not self.mail_node_token or len(self.mail_node_token) < 24:
                 raise ValueError("Production requires a strong MAIL_NODE_TOKEN")
+
+            if self.mail_node_provisioner_url and not self.mail_node_provisioner_url.startswith("https://"):
+                raise ValueError("Production MAIL_NODE_PROVISIONER_URL must use HTTPS")
+            if not self.mail_node_control_plane_url.startswith("https://"):
+                raise ValueError("Production MAIL_NODE_CONTROL_PLANE_URL must use HTTPS")
 
             if self.platform_mode == "domain":
                 if not self.cookie_secure:

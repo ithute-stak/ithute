@@ -9,7 +9,7 @@ from pathlib import Path
 from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
-from app.models.mail import Mailbox, MailboxStatus
+from app.models.mail import Mailbox, MailboxStatus, MailboxStorageType
 
 
 class MailAccountSyncError(RuntimeError):
@@ -138,10 +138,12 @@ def _write_account(address: str, password_hash: str, *, active: bool) -> bool:
 
 
 def sync_mailbox(mailbox: Mailbox, *, deleted: bool = False) -> bool:
+    storage_type = getattr(mailbox, "storage_type", None)
+    is_internal = storage_type in (None, MailboxStorageType.internal)
     return _write_account(
         mailbox.address,
         mailbox.password_hash,
-        active=not deleted and mailbox.status == MailboxStatus.active,
+        active=not deleted and is_internal and mailbox.status == MailboxStatus.active,
     )
 
 

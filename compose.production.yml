@@ -134,6 +134,12 @@ services:
       MAIL_OPS_URL: https://mail.ithute.co.ls
       MAIL_OPS_TOKEN: ${ITHUTE_APP_MAIL_OPS_TOKEN}
       MAIL_NODE_TOKEN: ${ITHUTE_APP_MAIL_NODE_TOKEN}
+      MAIL_ROUTING_DIR: /mail-routing
+      MAIL_GATEWAY_INTERNAL_HOST: ${ITHUTE_MAIL_GATEWAY_INTERNAL_HOST:-mail.ithute.co.ls}
+      MAIL_NODE_CONTROL_PLANE_URL: ${ITHUTE_MAIL_NODE_CONTROL_PLANE_URL:-https://ithute.co.ls}
+      MAIL_NODE_PROVISIONER_URL: ${ITHUTE_MAIL_NODE_PROVISIONER_URL:-}
+      MAIL_NODE_PROVISIONER_TOKEN: ${ITHUTE_MAIL_NODE_PROVISIONER_TOKEN:-}
+      MAIL_NODE_PROVISIONER_TIMEOUT_SECONDS: ${ITHUTE_MAIL_NODE_PROVISIONER_TIMEOUT_SECONDS:-60}
       RECOVERY_OPS_URL: https://ithute.co.ls
       RECOVERY_OPS_TOKEN: ${ITHUTE_APP_RECOVERY_OPS_TOKEN}
       WEBMAIL_IMAP_HOST: mail.ithute.co.ls
@@ -153,6 +159,7 @@ services:
       ITHUTE_AUTH_INTERNAL_URL: http://ithute-auth:8080
     volumes:
       - ${ITHUTE_MAIL_ACCOUNTS_DIR:-/home/administrator/ithute-platform-mail/accounts}:/mail-accounts
+      - ${ITHUTE_MAIL_ROUTING_DIR:-/home/administrator/ithute-platform-mail/routing}:/mail-routing
       - ./infrastructure/caddy/Caddyfile:/caddy-base/Caddyfile:ro
       - ithute_caddy_routes:/caddy-routes
     depends_on:

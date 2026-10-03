@@ -1,10 +1,12 @@
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
 
-from app.models import AuditLog
+from app.models import AuditLog, MailNode, MailNodeAgent, MailNodeCommand, MailNodeOperation, MailNodeSnapshot, Tenant
 from app.models.domains import Domain, DomainDnsMode, DomainStatus
 from app.models.mail import DistributionGroup, DistributionGroupMember, MailAlias, Mailbox
+from app.services.mail_routing_sync import build_mail_routing
 from app.services.mailboxes import hash_mailbox_password, mailbox_address, normalize_local_part
 
 PASSWORD = "Phase1-Test-Password!"
@@ -75,6 +77,8 @@ def test_mailbox_lifecycle_alias_and_group(client, db, tenant_admin):
     mailbox = created.json()
     assert mailbox["address"] == f"alice@{domain.ascii_name}"
     assert mailbox["status"] == "active"
+    assert mailbox["storage_type"] == "internal"
+    assert mailbox["mail_node_id"] is None
 
     suspended = client.post(f"/api/v1/tenants/{tenant.id}/mailboxes/{mailbox['id']}/suspend", headers=headers)
     assert suspended.status_code == 200 and suspended.json()["status"] == "suspended"
@@ -124,6 +128,424 @@ def test_mailbox_lifecycle_alias_and_group(client, db, tenant_admin):
     archived = client.delete(f"/api/v1/tenants/{tenant.id}/mailboxes/{mailbox['id']}", headers=headers)
     assert archived.status_code == 200 and archived.json()["status"] == "archived"
     cleanup(db, domain)
+
+
+def test_external_mailbox_requires_registered_node(client, db, tenant_admin):
+    user, tenant, _ = tenant_admin
+    headers = login(client, user.email)
+    domain = make_domain(db, user, tenant)
+
+    response = client.post(
+        f"/api/v1/tenants/{tenant.id}/mailboxes",
+        headers=headers,
+        json={
+            "domain_id": str(domain.id),
+            "local_part": "external",
+            "password": "StrongMailbox1!",
+            "quota_bytes": 1073741824,
+            "storage_type": "external",
+        },
+    )
+    assert response.status_code == 422
+    assert "mail node" in response.json()["detail"].lower()
+    cleanup(db, domain)
+
+
+def test_external_mailbox_queues_secure_node_command(client, db, tenant_admin, platform_owner):
+    platform_headers = login(client, platform_owner.email)
+    node_name = f"mail-node-{uuid.uuid4().hex[:8]}"
+    created_node = client.post(
+        "/api/v1/platform/mail-nodes",
+        headers=platform_headers,
+        json={
+            "name": node_name,
+            "role": "combined",
+            "region": "lesotho",
+            "hostname": f"{node_name}.example.com",
+            "ssh_port": 22,
+            "storage_path": "/srv/ithute-mail",
+            "capabilities": ["mail", "storage"],
+        },
+    )
+    assert created_node.status_code == 201, created_node.text
+    node_id = created_node.json()["id"]
+
+    credential = client.post(
+        f"/api/v1/platform/mail-nodes/{node_id}/agent-token",
+        headers=platform_headers,
+    )
+    assert credential.status_code == 200, credential.text
+    agent_token = credential.json()["token"]
+
+    heartbeat = client.post(
+        "/api/v1/mail-node-agent/heartbeat",
+        headers={"X-Ithute-Mail-Agent": agent_token},
+        json={
+            "version": "ithute-mail-agent/test",
+            "total_storage_bytes": 500 * 1024**3,
+            "used_storage_bytes": 10 * 1024**3,
+            "capabilities": ["mail", "storage"],
+            "smtp_ready": True,
+            "imap_ready": True,
+            "tls_ready": True,
+            "backup_ready": True,
+        },
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+
+    user, tenant, _ = tenant_admin
+    tenant_headers = login(client, user.email)
+    domain = make_domain(db, user, tenant)
+    created = client.post(
+        f"/api/v1/tenants/{tenant.id}/mailboxes",
+        headers=tenant_headers,
+        json={
+            "domain_id": str(domain.id),
+            "local_part": "remote",
+            "password": "StrongMailbox1!",
+            "quota_bytes": 1073741824,
+            "storage_type": "external",
+            "mail_node_id": node_id,
+        },
+    )
+    assert created.status_code == 201, created.text
+    mailbox = created.json()
+    assert mailbox["storage_type"] == "external"
+    assert mailbox["mail_node_id"] == node_id
+
+    queued = db.scalar(
+        select(MailNodeCommand).where(
+            MailNodeCommand.mailbox_id == uuid.UUID(mailbox["id"]),
+            MailNodeCommand.status == "queued",
+        )
+    )
+    assert queued is not None
+
+    claimed = client.post(
+        "/api/v1/mail-node-agent/commands/claim",
+        headers={"X-Ithute-Mail-Agent": agent_token},
+        json={},
+    )
+    assert claimed.status_code == 200, claimed.text
+    command = claimed.json()["command"]
+    assert command["payload"]["address"] == mailbox["address"]
+    assert command["payload"]["status"] == "active"
+
+    completed = client.post(
+        f"/api/v1/mail-node-agent/commands/{command['id']}/status",
+        headers={"X-Ithute-Mail-Agent": agent_token},
+        json={"status": "completed"},
+    )
+    assert completed.status_code == 200, completed.text
+
+    cleanup(db, domain)
+    db.execute(delete(MailNodeCommand).where(MailNodeCommand.node_id == uuid.UUID(node_id)))
+    db.execute(delete(MailNodeOperation).where(MailNodeOperation.node_id == uuid.UUID(node_id)))
+    db.execute(delete(MailNodeSnapshot).where(MailNodeSnapshot.node_id == uuid.UUID(node_id)))
+    db.execute(delete(MailNodeAgent).where(MailNodeAgent.node_id == uuid.UUID(node_id)))
+    db.execute(delete(MailNode).where(MailNode.id == uuid.UUID(node_id)))
+    db.commit()
+
+
+def test_distributed_routing_maps_internal_and_external_mailboxes(client, db, tenant_admin, platform_owner):
+    platform_headers = login(client, platform_owner.email)
+    node_name = f"route-node-{uuid.uuid4().hex[:8]}"
+    created_node = client.post(
+        "/api/v1/platform/mail-nodes",
+        headers=platform_headers,
+        json={
+            "name": node_name,
+            "role": "combined",
+            "region": "lesotho",
+            "hostname": f"{node_name}.mail.example.com",
+            "ssh_port": 22,
+            "storage_path": "/srv/ithute-mail",
+            "capabilities": ["mail", "storage"],
+        },
+    )
+    assert created_node.status_code == 201, created_node.text
+    node_id = created_node.json()["id"]
+    node = db.get(MailNode, uuid.UUID(node_id))
+    node.smtp_ready = True
+    node.imap_ready = True
+    node.tls_ready = True
+    node.backup_ready = True
+    node.last_heartbeat_at = datetime.now(timezone.utc)
+    db.commit()
+
+    user, tenant, _ = tenant_admin
+    tenant_headers = login(client, user.email)
+    domain = make_domain(db, user, tenant)
+
+    internal = client.post(
+        f"/api/v1/tenants/{tenant.id}/mailboxes",
+        headers=tenant_headers,
+        json={
+            "domain_id": str(domain.id),
+            "local_part": "inside",
+            "password": "StrongMailbox1!",
+            "quota_bytes": 1073741824,
+            "storage_type": "internal",
+        },
+    )
+    assert internal.status_code == 201, internal.text
+
+    external = client.post(
+        f"/api/v1/tenants/{tenant.id}/mailboxes",
+        headers=tenant_headers,
+        json={
+            "domain_id": str(domain.id),
+            "local_part": "outside",
+            "password": "StrongMailbox1!",
+            "quota_bytes": 1073741824,
+            "storage_type": "external",
+            "mail_node_id": node_id,
+        },
+    )
+    assert external.status_code == 201, external.text
+
+    alias = client.post(
+        f"/api/v1/tenants/{tenant.id}/aliases",
+        headers=tenant_headers,
+        json={
+            "domain_id": str(domain.id),
+            "local_part": "support",
+            "destination_address": external.json()["address"],
+        },
+    )
+    assert alias.status_code == 201, alias.text
+
+    routes = build_mail_routing(db)
+    assert routes["relay_domains"][domain.ascii_name] == "OK"
+    assert routes["relay_recipients"][internal.json()["address"]] == "OK"
+    assert routes["relay_recipients"][external.json()["address"]] == "OK"
+    assert routes["transport"][internal.json()["address"]].endswith("[mail.ithute.co.ls]:25")
+    assert routes["transport"][external.json()["address"]] == f"smtp:[{node_name}.mail.example.com]:25"
+    assert routes["virtual_aliases"][alias.json()["source_address"]] == external.json()["address"]
+
+    cleanup(db, domain)
+    db.execute(delete(MailNode).where(MailNode.id == uuid.UUID(node_id)))
+    db.commit()
+
+
+def test_mail_node_recommendation_prefers_healthy_dedicated_capacity(client, db, tenant_admin, platform_owner):
+    user, tenant, _ = tenant_admin
+    platform_headers = login(client, platform_owner.email)
+
+    shared = MailNode(
+        name=f"shared-{uuid.uuid4().hex[:8]}",
+        role="combined",
+        region="lesotho",
+        hostname=f"shared-{uuid.uuid4().hex[:8]}.example.com",
+        status="active",
+        total_storage_bytes=500 * 1024**3,
+        used_storage_bytes=100 * 1024**3,
+        last_heartbeat_at=datetime.now(timezone.utc),
+        smtp_ready=True,
+        imap_ready=True,
+        tls_ready=True,
+        backup_ready=True,
+        weight=500,
+    )
+    dedicated = MailNode(
+        name=f"dedicated-{uuid.uuid4().hex[:8]}",
+        role="combined",
+        region="lesotho",
+        hostname=f"dedicated-{uuid.uuid4().hex[:8]}.example.com",
+        tenant_id=tenant.id,
+        status="active",
+        total_storage_bytes=300 * 1024**3,
+        used_storage_bytes=50 * 1024**3,
+        last_heartbeat_at=datetime.now(timezone.utc),
+        smtp_ready=True,
+        imap_ready=True,
+        tls_ready=True,
+        backup_ready=True,
+        weight=100,
+    )
+    db.add_all([shared, dedicated])
+    db.commit()
+    db.refresh(shared)
+    db.refresh(dedicated)
+
+    headers = login(client, user.email)
+    response = client.get(
+        f"/api/v1/tenants/{tenant.id}/mail-nodes/recommend",
+        headers=headers,
+        params={"quota_bytes": 200 * 1024**3},
+    )
+    assert response.status_code == 200, response.text
+    recommended = response.json()["recommended"]
+    assert recommended is not None
+    assert recommended["id"] == str(dedicated.id)
+    assert recommended["scope"] == "dedicated"
+
+    db.execute(delete(MailNode).where(MailNode.id.in_([shared.id, dedicated.id])))
+    db.commit()
+
+
+def test_dedicated_mail_node_is_hidden_from_other_tenants(client, db, tenant_admin, platform_owner):
+    other = Tenant(name="Other Mail Tenant", slug=f"other-{uuid.uuid4().hex[:10]}")
+    db.add(other)
+    db.commit()
+    db.refresh(other)
+
+    platform_headers = login(client, platform_owner.email)
+    node_name = f"dedicated-{uuid.uuid4().hex[:8]}"
+    created_node = client.post(
+        "/api/v1/platform/mail-nodes",
+        headers=platform_headers,
+        json={
+            "name": node_name,
+            "role": "combined",
+            "region": "lesotho",
+            "hostname": f"{node_name}.example.com",
+            "tenant_id": str(other.id),
+            "ssh_port": 22,
+            "storage_path": "/srv/ithute-mail",
+            "capabilities": ["mail", "storage"],
+        },
+    )
+    assert created_node.status_code == 201, created_node.text
+    node_id = created_node.json()["id"]
+
+    user, tenant, _ = tenant_admin
+    tenant_headers = login(client, user.email)
+    available = client.get(f"/api/v1/tenants/{tenant.id}/mail-nodes", headers=tenant_headers)
+    assert available.status_code == 200, available.text
+    assert node_id not in {item["id"] for item in available.json()["items"]}
+
+    domain = make_domain(db, user, tenant)
+    rejected = client.post(
+        f"/api/v1/tenants/{tenant.id}/mailboxes",
+        headers=tenant_headers,
+        json={
+            "domain_id": str(domain.id),
+            "local_part": "wrong-node",
+            "password": "StrongMailbox1!",
+            "quota_bytes": 1073741824,
+            "storage_type": "external",
+            "mail_node_id": node_id,
+        },
+    )
+    assert rejected.status_code == 409
+
+    cleanup(db, domain)
+    db.execute(delete(MailNode).where(MailNode.id == uuid.UUID(node_id)))
+    db.execute(delete(Tenant).where(Tenant.id == other.id))
+    db.commit()
+
+
+def test_controlled_failover_switches_mailbox_only_after_restore_completes(client, db, tenant_admin, platform_owner):
+    user, tenant, _ = tenant_admin
+    platform_headers = login(client, platform_owner.email)
+
+    source = MailNode(
+        name=f"source-{uuid.uuid4().hex[:8]}",
+        role="combined",
+        region="lesotho",
+        hostname=f"source-{uuid.uuid4().hex[:8]}.example.com",
+        tenant_id=tenant.id,
+        status="active",
+        smtp_ready=True,
+        imap_ready=True,
+        tls_ready=True,
+        backup_ready=True,
+        last_heartbeat_at=datetime.now(timezone.utc),
+    )
+    target = MailNode(
+        name=f"target-{uuid.uuid4().hex[:8]}",
+        role="combined",
+        region="lesotho",
+        hostname=f"target-{uuid.uuid4().hex[:8]}.example.com",
+        tenant_id=tenant.id,
+        status="active",
+        smtp_ready=True,
+        imap_ready=True,
+        tls_ready=True,
+        backup_ready=True,
+        last_heartbeat_at=datetime.now(timezone.utc),
+    )
+    db.add_all([source, target])
+    db.commit()
+    db.refresh(source)
+    db.refresh(target)
+
+    target_token_response = client.post(
+        f"/api/v1/platform/mail-nodes/{target.id}/agent-token",
+        headers=platform_headers,
+    )
+    assert target_token_response.status_code == 200, target_token_response.text
+    target_token = target_token_response.json()["token"]
+
+    snapshot = MailNodeSnapshot(
+        node_id=source.id,
+        tenant_id=tenant.id,
+        snapshot_key=f"snapshot-{uuid.uuid4().hex}",
+        remote_uri="remote:ithute-mail-backups/failover.tar.gz",
+        size_bytes=1024,
+        checksum_sha256="b" * 64,
+        status="ready",
+        completed_at=datetime.now(timezone.utc),
+    )
+    db.add(snapshot)
+    db.commit()
+    db.refresh(snapshot)
+
+    domain = make_domain(db, user, tenant)
+    tenant_headers = login(client, user.email)
+    created = client.post(
+        f"/api/v1/tenants/{tenant.id}/mailboxes",
+        headers=tenant_headers,
+        json={
+            "domain_id": str(domain.id),
+            "local_part": "failover",
+            "password": "StrongMailbox1!",
+            "quota_bytes": 1073741824,
+            "storage_type": "external",
+            "mail_node_id": str(source.id),
+        },
+    )
+    assert created.status_code == 201, created.text
+    mailbox_id = uuid.UUID(created.json()["id"])
+
+    queued = client.post(
+        f"/api/v1/platform/mail-nodes/{source.id}/failover",
+        headers=platform_headers,
+        json={"target_node_id": str(target.id), "snapshot_id": str(snapshot.id)},
+    )
+    assert queued.status_code == 202, queued.text
+    db.refresh(db.get(Mailbox, mailbox_id))
+    assert db.get(Mailbox, mailbox_id).mail_node_id == source.id
+
+    claimed = client.post(
+        "/api/v1/mail-node-agent/operations/claim",
+        headers={"X-Ithute-Mail-Agent": target_token},
+        json={},
+    )
+    assert claimed.status_code == 200, claimed.text
+    operation = claimed.json()["operation"]
+    assert operation["operation"] == "restore_failover"
+
+    completed = client.post(
+        f"/api/v1/mail-node-agent/operations/{operation['id']}/status",
+        headers={"X-Ithute-Mail-Agent": target_token},
+        json={
+            "status": "completed",
+            "result": {"restored": True, "checksum_sha256": "b" * 64},
+        },
+    )
+    assert completed.status_code == 200, completed.text
+    db.expire_all()
+    assert db.get(Mailbox, mailbox_id).mail_node_id == target.id
+    assert db.get(MailNode, source.id).status == "maintenance"
+
+    cleanup(db, domain)
+    db.execute(delete(MailNodeOperation).where(MailNodeOperation.node_id == target.id))
+    db.execute(delete(MailNodeSnapshot).where(MailNodeSnapshot.node_id == source.id))
+    db.execute(delete(MailNodeAgent).where(MailNodeAgent.node_id == target.id))
+    db.execute(delete(MailNode).where(MailNode.id.in_([source.id, target.id])))
+    db.commit()
 
 
 def test_member_without_mail_permission_is_forbidden(client, tenant_member):

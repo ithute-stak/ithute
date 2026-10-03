@@ -13,7 +13,7 @@ from app.models.entities import (
 )
 from app.models.auth import PasswordResetToken
 from app.models.domains import Domain, DomainDnsMode, DomainEvent, DomainStatus, DomainVerificationAttempt
-from app.models.mail import DistributionGroup, DistributionGroupMember, MailAlias, Mailbox, MailboxStatus
+from app.models.mail import DistributionGroup, DistributionGroupMember, MailAlias, Mailbox, MailboxStatus, MailboxStorageType
 from app.models.platform_mail import PlatformMailDomainGrant, PlatformMailboxBinding, PlatformMailOutboundDelivery
 from app.models.deliverability import DkimKey
 from app.models.billing import (
@@ -72,6 +72,10 @@ from app.models.commercial_platform import (
     GroupwareCredential,
     MailMigrationJob,
     MailNode,
+    MailNodeAgent,
+    MailNodeCommand,
+    MailNodeOperation,
+    MailNodeSnapshot,
     MailboxDelegate,
     MailboxPolicy,
     MailboxRecoveryJob,
@@ -118,7 +122,7 @@ __all__ = [
     "ApiKey", "AuditLog", "Invitation", "MembershipRole", "MembershipStatus", "Tenant",
     "TenantMembership", "TenantStatus", "User", "UserRole", "UserSession", "PasswordResetToken", "Domain",
     "DomainDnsMode", "DomainEvent", "DomainStatus", "DomainVerificationAttempt", "Mailbox",
-    "MailboxStatus", "MailAlias", "DistributionGroup", "DistributionGroupMember", "PlatformMailDomainGrant",
+    "MailboxStatus", "MailboxStorageType", "MailAlias", "DistributionGroup", "DistributionGroupMember", "PlatformMailDomainGrant",
     "PlatformMailboxBinding", "PlatformMailOutboundDelivery", "DkimKey", "BillingPlan", "TenantSubscription", "UsageSnapshot", "BillingInvoice",
     "BillingPaymentEvent", "SubscriptionStatus", "InvoiceStatus", "BillingAddon", "TenantAddon", "EdgeRouteDeployment",
     "BillingContract", "UptimeMonitor", "UptimeCheck",
@@ -127,7 +131,7 @@ __all__ = [
     "HostingBuild", "HostingBuilderAgent", "HostingBuildLog", "HostingDatabaseBackup", "HostingSourceWebhook", "HostingWebhookDelivery", "HostingDatabase", "HostingSource", "HostingSourceCredential",
     "CustomerProfile", "Notification", "ServiceIncident", "ServiceIncidentImpact", "ServiceIncidentStatus",
     "SupportTicket", "SupportTicketMessage", "SupportTicketPriority", "SupportTicketStatus", "DomainOrder",
-    "EmailVerificationToken", "GroupwareCredential", "MailMigrationJob", "MailNode", "MailboxDelegate",
+    "EmailVerificationToken", "GroupwareCredential", "MailMigrationJob", "MailNode", "MailNodeAgent", "MailNodeCommand", "MailNodeOperation", "MailNodeSnapshot", "MailboxDelegate",
     "MailboxPolicy", "MailboxRecoveryJob", "ReputationSnapshot", "ResellerAccount", "ResellerCustomer",
     "SmtpCredential", "TransactionalMessage", "WhiteLabelBrand", "PlatformConfiguration",
     "EdgeApplication", "EdgeOrigin", "EdgeRule", "EdgeInspection", "DnsZoneAnalyticsSnapshot",

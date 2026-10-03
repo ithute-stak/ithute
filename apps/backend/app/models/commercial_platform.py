@@ -195,7 +195,87 @@ class MailNode(Base):
     region: Mapped[str] = mapped_column(String(80), default="lesotho", nullable=False)
     public_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     hostname: Mapped[str] = mapped_column(String(253), nullable=False)
+    provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    provider_instance_id: Mapped[str | None] = mapped_column(String(180), nullable=True, index=True)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="SET NULL"), index=True, nullable=True)
+    ssh_port: Mapped[int] = mapped_column(Integer, default=22, nullable=False)
+    ssh_user: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    storage_path: Mapped[str] = mapped_column(String(500), default="/srv/ithute-mail", nullable=False)
+    capabilities_json: Mapped[str] = mapped_column(Text, default='["mail","storage"]', nullable=False)
+    total_storage_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    used_storage_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    agent_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    smtp_ready: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    imap_ready: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    tls_ready: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    tls_not_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    readiness_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    backup_ready: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    backup_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    backup_interval_hours: Mapped[int] = mapped_column(Integer, default=24, nullable=False)
+    backup_retention_count: Mapped[int] = mapped_column(Integer, default=7, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="active", index=True, nullable=False)
     weight: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class MailNodeAgent(Base):
+    __tablename__ = "mail_node_agents"
+
+    node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("mail_nodes.id", ondelete="CASCADE"), primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    token_hint: Mapped[str] = mapped_column(String(24), nullable=False)
+    agent_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rotated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    rotated_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+
+
+class MailNodeCommand(Base):
+    __tablename__ = "mail_node_commands"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("mail_nodes.id", ondelete="CASCADE"), index=True, nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True, nullable=False)
+    mailbox_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("mailboxes.id", ondelete="CASCADE"), index=True, nullable=False)
+    operation: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True, nullable=False)
+    failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MailNodeOperation(Base):
+    __tablename__ = "mail_node_operations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("mail_nodes.id", ondelete="CASCADE"), index=True, nullable=False)
+    target_node_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("mail_nodes.id", ondelete="SET NULL"), index=True, nullable=True)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="SET NULL"), index=True, nullable=True)
+    operation: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True, nullable=False)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MailNodeSnapshot(Base):
+    __tablename__ = "mail_node_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("mail_nodes.id", ondelete="CASCADE"), index=True, nullable=False)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="SET NULL"), index=True, nullable=True)
+    snapshot_key: Mapped[str] = mapped_column(String(180), unique=True, nullable=False)
+    remote_uri: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="creating", index=True, nullable=False)
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
