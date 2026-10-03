@@ -3,20 +3,9 @@ name: Backup Assurance CI
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "compose.backup.yml"
-      - "infrastructure/backup/**"
-      - "apps/backend/app/services/backup_status.py"
-      - ".github/workflows/backup-assurance-ci.yml"
-      - ".github/workflows/deploy-backup-assurance.yml"
   push:
     branches: [main]
-    paths:
-      - "compose.backup.yml"
-      - "infrastructure/backup/**"
-      - "apps/backend/app/services/backup_status.py"
-      - ".github/workflows/backup-assurance-ci.yml"
-      - ".github/workflows/deploy-backup-assurance.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
