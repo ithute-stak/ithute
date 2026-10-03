@@ -3,6 +3,7 @@ from __future__ import annotations
 import fcntl
 import os
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import select
@@ -82,8 +83,13 @@ def build_mail_routing(db: Session) -> dict[str, dict[str, str]]:
             if mailbox.mail_node_id is None:
                 raise MailRoutingSyncError(f"External mailbox {address} has no mail node")
             node = nodes.get(mailbox.mail_node_id)
-            if node is None or node.status != "active":
-                raise MailRoutingSyncError(f"External mailbox {address} is assigned to an unavailable mail node")
+            fresh = bool(
+                node
+                and node.last_heartbeat_at
+                and (datetime.now(timezone.utc) - node.last_heartbeat_at).total_seconds() <= settings.mail_node_stale_seconds
+            )
+            if node is None or node.status != "active" or not fresh or not node.smtp_ready:
+                raise MailRoutingSyncError(f"External mailbox {address} is assigned to an unavailable or stale mail node")
             if node.tenant_id is not None and node.tenant_id != mailbox.tenant_id:
                 raise MailRoutingSyncError(f"External mailbox {address} is assigned to another tenant's dedicated mail node")
             transport[address] = f"smtp:[{_safe_host(node.hostname)}]:25"
