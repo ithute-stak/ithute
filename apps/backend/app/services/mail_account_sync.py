@@ -138,7 +138,8 @@ def _write_account(address: str, password_hash: str, *, active: bool) -> bool:
 
 
 def sync_mailbox(mailbox: Mailbox, *, deleted: bool = False) -> bool:
-    is_internal = getattr(mailbox, "storage_type", MailboxStorageType.internal) == MailboxStorageType.internal
+    storage_type = getattr(mailbox, "storage_type", None)
+    is_internal = storage_type in (None, MailboxStorageType.internal)
     return _write_account(
         mailbox.address,
         mailbox.password_hash,
