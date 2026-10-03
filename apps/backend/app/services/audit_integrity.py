@@ -5,11 +5,13 @@ import hmac
 import json
 from typing import Any
 
-from sqlalchemy import event, text
+from sqlalchemy import event, insert, text
 from sqlalchemy.engine import Connection
 
 from app.core.config import settings
 from app.models.entities import AuditLog
+from app.models.ithute_operating import IthuteSecurityEvent
+from app.services.security_event_rules import audit_security_severity
 
 
 _INTEGRITY_VERSION = 1
@@ -89,9 +91,37 @@ def verify_audit_row(row: AuditLog) -> dict[str, Any]:
     }
 
 
+def _after_insert(_mapper, connection: Connection, target: AuditLog) -> None:
+    severity = audit_security_severity(target.action)
+    if severity is None:
+        return
+    metadata = _metadata(target.metadata_json)
+    details = {
+        "audit_log_id": str(target.id),
+        "action": target.action,
+        "resource_type": target.resource_type,
+        "resource_id": target.resource_id,
+        "tenant_id": str(target.tenant_id) if target.tenant_id else None,
+        "integrity_signature": metadata.get("_audit_integrity_signature"),
+    }
+    source_ip = metadata.get("client_ip")
+    connection.execute(
+        insert(IthuteSecurityEvent.__table__).values(
+            product_id="mailbox-dns",
+            severity=severity,
+            event_type=f"audit.{target.action}"[:160],
+            actor_ref=str(target.actor_user_id) if target.actor_user_id else None,
+            subject_ref=f"audit:{target.id}",
+            source_ip=str(source_ip)[:64] if source_ip else None,
+            details_json=details,
+        )
+    )
+
+
 def install_audit_integrity() -> None:
     global _INSTALLED
     if _INSTALLED:
         return
     event.listen(AuditLog, "before_insert", _before_insert)
+    event.listen(AuditLog, "after_insert", _after_insert)
     _INSTALLED = True
