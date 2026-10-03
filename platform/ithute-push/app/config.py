@@ -9,9 +9,9 @@ class Settings(BaseSettings):
     database_url: str
     auth_issuer: str = "https://auth.ithute.co.ls"
     auth_jwks_url: str = "https://auth.ithute.co.ls/.well-known/jwks.json"
-    allowed_user_clients: str = "loanhub,rsl-pos,mailbox-dns,ithute-account,ithute-tutor,ithute-pay"
-    allowed_service_clients: str = "loanhub,rsl-pos,mailbox-dns,ithute-account,ithute-tutor,ithute-pay,ithute-realtime"
-    delegated_service_clients: str = "ithute-realtime"
+    allowed_user_clients: str = "loanhub,rsl-pos,mailbox-dns,ithute-account,ithute-tutor,ithute-pay,business-digital-address"
+    allowed_service_clients: str = "loanhub,rsl-pos,mailbox-dns,ithute-account,ithute-tutor,ithute-pay,ithute-realtime,ithute-notification"
+    delegated_service_clients: str = "ithute-realtime,ithute-notification"
     allowed_admin_clients: str = "mailbox-dns"
     auth_clock_skew_seconds: int = 30
     auth_max_push_access_seconds: int = 600
