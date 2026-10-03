@@ -62,6 +62,7 @@ class AuthorizationCode(Base):
     code_challenge: Mapped[str] = mapped_column(String(128))
     nonce: Mapped[str] = mapped_column(String(512))
     scope: Mapped[str] = mapped_column(String(512), default="openid", nullable=False)
+    auth_method: Mapped[str] = mapped_column(String(32), default="password", nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
