@@ -8,7 +8,7 @@ services:
     restart: unless-stopped
     stop_grace_period: 1m
     ports:
-      - "25:25"
+      - "${ITHUTE_MAIL_SMTP_BIND:-25}:25"
       - "465:465"
       - "587:587"
       - "993:993"
