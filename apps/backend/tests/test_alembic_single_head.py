@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0060_mail_node_backup_policy"
+LATEST_MIGRATION_HEAD = "0061_domain_health_monitor"
 
 
 def test_alembic_has_one_consolidated_head():
