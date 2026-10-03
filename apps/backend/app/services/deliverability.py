@@ -143,14 +143,26 @@ def dns_readiness(
     return {"ready": all(checks.values()), "checks": checks, "recommended_records": records}
 
 
-def deliverability_readiness(domain: str, mail_hostname: str, selector: str, public_key_b64: str) -> dict:
-    """Stable public service API used by the deliverability routes.
-
-    Keep the route-facing name separate from the DNS implementation helper so
-    future Phase 10 policy checks can be composed here without breaking older
-    callers or the Phase 8/9 regression gates.
-    """
-    return dns_readiness(domain, mail_hostname, selector, public_key_b64)
+def deliverability_readiness(
+    domain: str,
+    mail_hostname: str,
+    selector: str,
+    public_key_b64: str,
+    *,
+    mta_sts_id: str | None = None,
+    mta_sts_ip: str | None = None,
+    tls_report_address: str | None = None,
+) -> dict:
+    """Stable public service API used by the deliverability routes."""
+    return dns_readiness(
+        domain,
+        mail_hostname,
+        selector,
+        public_key_b64,
+        mta_sts_id=mta_sts_id,
+        mta_sts_ip=mta_sts_ip,
+        tls_report_address=tls_report_address,
+    )
 
 
 def infrastructure_readiness(mail_hostname: str, mail_public_ip: str | None) -> dict:
