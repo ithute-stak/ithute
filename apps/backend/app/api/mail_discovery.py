@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import PlainTextResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models import MailNode
+from app.models import Domain, MailNode
+from app.models.domains import DomainStatus
 from app.models.mail import Mailbox, MailboxStatus, MailboxStorageType
+from app.services.mail_transport_security import mta_sts_policy
 from app.services.mail_client_settings import (
     autodiscover_email_address,
     outlook_autodiscover,
@@ -81,3 +83,30 @@ async def microsoft_autodiscover(request: Request, db: Session = Depends(get_db)
         return _xml_response(outlook_autodiscover(email, _hostname_for_address(db, email)))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+
+@router.get("/.well-known/mta-sts.txt", include_in_schema=False)
+def mta_sts_policy_document(request: Request, db: Session = Depends(get_db)):
+    host = request.headers.get("host", "").split(":", 1)[0].strip().lower().rstrip(".")
+    if not host.startswith("mta-sts."):
+        raise HTTPException(status_code=404, detail="MTA-STS policy host not found")
+    domain_name = host[len("mta-sts.") :]
+    domain = db.scalar(
+        select(Domain).where(
+            Domain.ascii_name == domain_name,
+            Domain.status == DomainStatus.verified,
+            Domain.mail_enabled.is_(True),
+        )
+    )
+    if domain is None:
+        raise HTTPException(status_code=404, detail="MTA-STS policy not found")
+    return PlainTextResponse(
+        content=mta_sts_policy(domain.ascii_name),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "public, max-age=3600",
+            "X-Content-Type-Options": "nosniff",
+            "X-Robots-Tag": "noindex, nofollow",
+        },
+    )
