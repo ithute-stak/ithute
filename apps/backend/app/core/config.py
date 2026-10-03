@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     dkim_encryption_key: str | None = None
     dkim_encryption_key_id: str = "v1"
     billing_webhook_secret: str | None = None
+    billing_webhook_secret_ref: str | None = None
     billing_grace_days: int = 7
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 14
@@ -60,10 +61,12 @@ class Settings(BaseSettings):
     mail_data_path: str = "/srv/vmail"
     mail_ops_url: str = "http://postfix:9080"
     mail_ops_token: str = "development-mail-ops-token-change-me"
+    mail_ops_token_ref: str | None = None
     mail_ops_timeout_seconds: float = 5.0
 
     recovery_ops_url: str = "http://backup-recovery:9081"
     recovery_ops_token: str = "development-recovery-ops-token-change-me"
+    recovery_ops_token_ref: str | None = None
     recovery_ops_timeout_seconds: float = 120.0
 
     webmail_session_cookie_name: str = "mdns_webmail"
@@ -93,6 +96,7 @@ class Settings(BaseSettings):
     mail_gateway_internal_host: str = "mail.ithute.co.ls"
     mail_node_provisioner_url: str | None = None
     mail_node_provisioner_token: str | None = None
+    mail_node_provisioner_token_ref: str | None = None
     mail_node_provisioner_timeout_seconds: float = 60.0
     mail_node_control_plane_url: str = "https://ithute.co.ls"
 
@@ -101,6 +105,7 @@ class Settings(BaseSettings):
 
     powerdns_api_url: str = "http://powerdns:8081/api/v1"
     powerdns_api_key: str = "development-powerdns-api-key-change-me"
+    powerdns_api_key_ref: str | None = None
     powerdns_server_id: str = "localhost"
     powerdns_api_timeout_seconds: float = 5.0
     powerdns_default_ttl: int = 3600
@@ -110,6 +115,7 @@ class Settings(BaseSettings):
     dpo_api_url: str = "https://secure.3gdirectpay.com/API/v6/"
     dpo_checkout_url: str = "https://secure.3gdirectpay.com/payv2.php?ID={token}"
     dpo_company_token: str | None = None
+    dpo_company_token_ref: str | None = None
     dpo_service_type: str | None = None
     dpo_redirect_url: str = "http://localhost:3006/billing"
     dpo_back_url: str = "http://localhost:8006/api/v1/payments/dpo/callback"
@@ -118,6 +124,7 @@ class Settings(BaseSettings):
     opensrs_api_url: str = "https://rr-n1-tor.opensrs.net:55443/"
     opensrs_username: str | None = None
     opensrs_api_key: str | None = None
+    opensrs_api_key_ref: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
 
@@ -139,8 +146,8 @@ class Settings(BaseSettings):
             self.dkim_encryption_key = None
         if self.billing_webhook_secret:
             self.billing_webhook_secret = self.billing_webhook_secret.strip()
-            if len(self.billing_webhook_secret) < 32:
-                raise ValueError("BILLING_WEBHOOK_SECRET must be at least 32 characters when configured")
+            if not self.billing_webhook_secret_ref and len(self.billing_webhook_secret) < 32:
+                raise ValueError("BILLING_WEBHOOK_SECRET must be at least 32 characters when configured without a secret reference")
         else:
             self.billing_webhook_secret = None
         if not 1 <= self.billing_grace_days <= 90:
@@ -171,7 +178,7 @@ class Settings(BaseSettings):
             raise ValueError("MAIL_TLS_MODE must be selfsigned, acme, or external")
         if not self.mail_data_path.startswith("/"):
             raise ValueError("MAIL_DATA_PATH must be absolute")
-        if not self.recovery_ops_url.startswith(("http://", "https://")) or len(self.recovery_ops_token) < 24:
+        if not self.recovery_ops_url.startswith(("http://", "https://")) or (not self.recovery_ops_token_ref and len(self.recovery_ops_token) < 24):
             raise ValueError("Recovery service configuration is invalid")
         if not 2 <= self.recovery_ops_timeout_seconds <= 600:
             raise ValueError("RECOVERY_OPS_TIMEOUT_SECONDS must be between 2 and 600")
@@ -209,11 +216,12 @@ class Settings(BaseSettings):
             self.mail_node_provisioner_url = self.mail_node_provisioner_url.strip()
             if not self.mail_node_provisioner_url.startswith(("http://", "https://")):
                 raise ValueError("MAIL_NODE_PROVISIONER_URL must be an HTTP(S) URL")
-            if not self.mail_node_provisioner_token or len(self.mail_node_provisioner_token.strip()) < 24:
-                raise ValueError("MAIL_NODE_PROVISIONER_TOKEN must be at least 24 characters when a provisioner URL is configured")
+            if not self.mail_node_provisioner_token_ref and (not self.mail_node_provisioner_token or len(self.mail_node_provisioner_token.strip()) < 24):
+                raise ValueError("MAIL_NODE_PROVISIONER_TOKEN or MAIL_NODE_PROVISIONER_TOKEN_REF is required when a provisioner URL is configured")
         else:
             self.mail_node_provisioner_url = None
             self.mail_node_provisioner_token = None
+            self.mail_node_provisioner_token_ref = None
         if not 5 <= self.mail_node_provisioner_timeout_seconds <= 300:
             raise ValueError("MAIL_NODE_PROVISIONER_TIMEOUT_SECONDS must be between 5 and 300")
         self.mail_node_control_plane_url = self.mail_node_control_plane_url.strip().rstrip("/")
@@ -239,8 +247,8 @@ class Settings(BaseSettings):
                 raise ValueError("MAIL_PUBLIC_IP must identify a usable mail-server address")
         if not self.mail_ops_url.startswith(("http://", "https://")):
             raise ValueError("MAIL_OPS_URL must be an HTTP(S) URL")
-        if len(self.mail_ops_token) < 24:
-            raise ValueError("MAIL_OPS_TOKEN must be at least 24 characters")
+        if not self.mail_ops_token_ref and len(self.mail_ops_token) < 24:
+            raise ValueError("MAIL_OPS_TOKEN must be at least 24 characters when no secret reference is configured")
         if not 0.5 <= self.mail_ops_timeout_seconds <= 30:
             raise ValueError("MAIL_OPS_TIMEOUT_SECONDS must be between 0.5 and 30")
         if not 5 <= self.domain_verification_min_interval_seconds <= 3600:
@@ -255,10 +263,10 @@ class Settings(BaseSettings):
             raise ValueError("POWERDNS_DEFAULT_TTL must be between 60 and 86400")
         if not 2 <= self.external_provider_timeout_seconds <= 120:
             raise ValueError("EXTERNAL_PROVIDER_TIMEOUT_SECONDS must be between 2 and 120")
-        if self.dpo_company_token and not self.dpo_service_type:
-            raise ValueError("DPO_SERVICE_TYPE is required when DPO_COMPANY_TOKEN is configured")
-        if self.opensrs_username and not self.opensrs_api_key:
-            raise ValueError("OPENSRS_API_KEY is required when OPENSRS_USERNAME is configured")
+        if (self.dpo_company_token or self.dpo_company_token_ref) and not self.dpo_service_type:
+            raise ValueError("DPO_SERVICE_TYPE is required when DPO credentials are configured")
+        if self.opensrs_username and not (self.opensrs_api_key or self.opensrs_api_key_ref):
+            raise ValueError("OPENSRS_API_KEY or OPENSRS_API_KEY_REF is required when OPENSRS_USERNAME is configured")
         if not 1 <= self.dpo_payment_time_limit_hours <= 168:
             raise ValueError("DPO_PAYMENT_TIME_LIMIT_HOURS must be between 1 and 168")
 
@@ -266,27 +274,27 @@ class Settings(BaseSettings):
             insecure_markers = ("change-this", "change-me", "changeme", "replace-with", "example-secret", "development-only")
             if not self.dkim_encryption_key:
                 raise ValueError("Production requires a dedicated DKIM_ENCRYPTION_KEY")
-            if not self.billing_webhook_secret:
-                raise ValueError("Production requires BILLING_WEBHOOK_SECRET")
+            if not (self.billing_webhook_secret or self.billing_webhook_secret_ref):
+                raise ValueError("Production requires BILLING_WEBHOOK_SECRET or BILLING_WEBHOOK_SECRET_REF")
             secret_values = (
                 self.secret_key.lower(),
                 self.dkim_encryption_key.lower(),
-                self.billing_webhook_secret.lower(),
+                (self.billing_webhook_secret or "").lower() if not self.billing_webhook_secret_ref else "",
                 self.bootstrap_admin_password.lower(),
-                self.powerdns_api_key.lower(),
-                self.mail_ops_token.lower(),
-                self.recovery_ops_token.lower(),
+                self.powerdns_api_key.lower() if not self.powerdns_api_key_ref else "",
+                self.mail_ops_token.lower() if not self.mail_ops_token_ref else "",
+                self.recovery_ops_token.lower() if not self.recovery_ops_token_ref else "",
             )
             if any(marker in value for marker in insecure_markers for value in secret_values):
                 raise ValueError("Production refuses placeholder application, DKIM, billing, bootstrap, PowerDNS, mail-operations, or recovery secrets")
             if self.dkim_encryption_key == self.secret_key:
                 raise ValueError("Production DKIM_ENCRYPTION_KEY must be distinct from SECRET_KEY")
-            if self.billing_webhook_secret in {self.secret_key, self.dkim_encryption_key}:
+            if self.billing_webhook_secret and not self.billing_webhook_secret_ref and self.billing_webhook_secret in {self.secret_key, self.dkim_encryption_key}:
                 raise ValueError("Production BILLING_WEBHOOK_SECRET must be distinct from application and DKIM secrets")
             if self.rspamd_redis_url == self.redis_url:
                 raise ValueError("Production RSPAMD_REDIS_URL must be isolated from application REDIS_URL")
-            if len(self.powerdns_api_key) < 24:
-                raise ValueError("Production POWERDNS_API_KEY must be at least 24 characters")
+            if not self.powerdns_api_key_ref and len(self.powerdns_api_key) < 24:
+                raise ValueError("Production POWERDNS_API_KEY must be at least 24 characters when no secret reference is configured")
             if not self.bootstrap_public_ip:
                 raise ValueError("Production requires BOOTSTRAP_PUBLIC_IP")
             if not self.mail_public_ip:
