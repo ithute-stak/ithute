@@ -15,6 +15,7 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.add_column("authorization_codes", sa.Column("auth_method", sa.String(length=32), nullable=False, server_default="password"))
     op.add_column("devices", sa.Column("trusted_at", sa.DateTime(timezone=True), nullable=True))
     op.add_column("devices", sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True))
     op.add_column("devices", sa.Column("first_seen_ip", sa.String(length=64), nullable=True))
@@ -46,3 +47,4 @@ def downgrade() -> None:
     op.drop_column("devices", "first_seen_ip")
     op.drop_column("devices", "revoked_at")
     op.drop_column("devices", "trusted_at")
+    op.drop_column("authorization_codes", "auth_method")
