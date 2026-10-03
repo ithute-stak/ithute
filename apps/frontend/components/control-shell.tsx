@@ -54,6 +54,7 @@ const navigation: NavGroup[] = [
       { label: "Domain portfolio", href: "/domains", icon: Globe2 },
       { label: "DNS zones", href: "/dns", icon: Server },
       { label: "DNS security", href: "/dns-security", icon: ShieldCheck },
+      { label: "Mail domain health", href: "/domain-health", icon: Activity },
     ],
   },
   {
