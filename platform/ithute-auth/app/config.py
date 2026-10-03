@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     access_token_minutes: int = 10
     refresh_token_days: int = 30
     service_token_minutes: int = 5
+    allow_legacy_service_secrets: bool = True
     push_user_token_minutes: int = 3
     authorization_code_minutes: int = 5
     browser_session_hours: int = 8
