@@ -256,6 +256,18 @@ def _cookie_user(request: Request, db: Session, settings: Settings) -> User | No
     return user
 
 
+def _cookie_auth_method(request: Request, settings: Settings) -> str | None:
+    raw = request.cookies.get(settings.browser_cookie_name)
+    if not raw:
+        return None
+    try:
+        claims = decode_browser_session_token(raw, settings)
+    except jwt.PyJWTError:
+        return None
+    value = claims.get("amr")
+    return str(value) if value else "password"
+
+
 def _portal_csrf(raw_cookie: str, settings: Settings) -> str:
     key = hashlib.sha256(("ithute-portal-csrf-v1\n" + settings.private_key).encode("utf-8")).digest()
     return hmac.new(key, raw_cookie.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -961,6 +973,8 @@ def _require_admin(request: Request, db: Session, settings: Settings) -> tuple[U
     user, _, csrf = _require_portal_user(request, db, settings)
     if not user.is_platform_admin:
         raise HTTPException(status_code=403, detail="platform admin required")
+    if _cookie_auth_method(request, settings) != "passkey":
+        raise HTTPException(status_code=403, detail="platform admin requires passkey step-up")
     return user, csrf
 
 
@@ -971,6 +985,8 @@ def admin_home(request: Request, db: Session = Depends(get_db), settings: Settin
         return RedirectResponse("/account/login", status_code=303)
     if not user.is_platform_admin:
         raise HTTPException(status_code=403, detail="platform admin required")
+    if _cookie_auth_method(request, settings) != "passkey":
+        return RedirectResponse("/account/passkey-login?step_up=1", status_code=303)
     raw = request.cookies[settings.browser_cookie_name]
     csrf = _portal_csrf(raw, settings)
     users = db.scalars(select(User).order_by(User.created_at.desc()).limit(100)).all()
