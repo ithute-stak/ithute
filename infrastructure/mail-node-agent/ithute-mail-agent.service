@@ -1,0 +1,25 @@
+[Unit]
+Description=Ithute Mail Node Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ithute-mail-agent
+Group=ithute-mail-agent
+EnvironmentFile=/etc/ithute-mail-node/agent.env
+ExecStart=/usr/bin/python3 /opt/ithute-mail-agent/agent.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/tmp/docker-mailserver /srv/ithute-mail
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
