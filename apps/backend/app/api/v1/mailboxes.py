@@ -118,6 +118,7 @@ def recommend_mail_node(
             MailNode.smtp_ready.is_(True),
             MailNode.imap_ready.is_(True),
             MailNode.tls_ready.is_(True),
+            MailNode.backup_ready.is_(True),
         )
     ).all()
 
