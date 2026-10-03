@@ -34,14 +34,16 @@ def normalize_email_address(value: str) -> tuple[str, str]:
     return f"{local}@{domain}", domain
 
 
-def settings_for_email(value: str) -> MailClientSettings:
+def settings_for_email(value: str, hostname: str | None = None) -> MailClientSettings:
     email, domain = normalize_email_address(value)
-    hostname = settings.mail_hostname.strip().rstrip(".").lower()
+    resolved = (hostname or settings.mail_hostname).strip().rstrip(".").lower()
+    if not resolved or "." not in resolved or any(ch.isspace() for ch in resolved):
+        raise ValueError("Mail hostname is invalid")
     return MailClientSettings(
         email=email,
         domain=domain,
-        imap_hostname=hostname,
-        smtp_hostname=hostname,
+        imap_hostname=resolved,
+        smtp_hostname=resolved,
     )
 
 
@@ -49,8 +51,8 @@ def _xml_bytes(root: ET.Element) -> bytes:
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
-def thunderbird_autoconfig(value: str) -> bytes:
-    client = settings_for_email(value)
+def thunderbird_autoconfig(value: str, hostname: str | None = None) -> bytes:
+    client = settings_for_email(value, hostname)
     root = ET.Element("clientConfig", {"version": "1.1"})
     provider = ET.SubElement(root, "emailProvider", {"id": client.domain})
     ET.SubElement(provider, "domain").text = client.domain
@@ -85,8 +87,8 @@ def autodiscover_email_address(payload: bytes) -> str:
     raise ValueError("Autodiscover request is missing EMailAddress")
 
 
-def outlook_autodiscover(value: str) -> bytes:
-    client = settings_for_email(value)
+def outlook_autodiscover(value: str, hostname: str | None = None) -> bytes:
+    client = settings_for_email(value, hostname)
     response_ns = "http://schemas.microsoft.com/exchange/autodiscover/responseschema/2006"
     outlook_ns = "http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a"
     root = ET.Element(f"{{{response_ns}}}Autodiscover")
