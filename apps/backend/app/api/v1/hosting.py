@@ -94,7 +94,22 @@ class MailNodeCreate(BaseModel):
     region: str = Field(default="lesotho", max_length=80)
     public_ip: str | None = Field(default=None, max_length=64)
     hostname: str = Field(min_length=3, max_length=253)
+    ssh_port: int = Field(default=22, ge=1, le=65535)
+    ssh_user: str | None = Field(default=None, max_length=80)
+    storage_path: str = Field(default="/srv/ithute-mail", min_length=1, max_length=500)
+    capabilities: list[str] = Field(default_factory=lambda: ["mail", "storage"])
     weight: int = Field(default=100, ge=0, le=1000)
+
+
+class MailNodeHeartbeat(BaseModel):
+    total_storage_bytes: int | None = Field(default=None, ge=0)
+    used_storage_bytes: int | None = Field(default=None, ge=0)
+    agent_version: str | None = Field(default=None, max_length=80)
+    capabilities: list[str] | None = None
+
+
+class MailNodeStatusUpdate(BaseModel):
+    status: str = Field(pattern=r"^(active|maintenance|disabled)$")
 
 
 def _slug(value: str) -> str:
@@ -315,41 +330,98 @@ def groupware_status(tenant_id: UUID, db: Session = Depends(get_db), current: Us
     return {"public_url": settings.groupware_public_url, "items": [{"id": str(g.id), "mailbox_id": str(m.id), "username": g.username, "active": g.active, "mailbox": m.address} for g, m in rows]}
 
 
+def _mail_node_json(row: MailNode) -> dict:
+    now = datetime.now(timezone.utc)
+    fresh = bool(row.last_heartbeat_at and (now - row.last_heartbeat_at).total_seconds() <= settings.mail_node_stale_seconds)
+    total = row.total_storage_bytes
+    used = row.used_storage_bytes
+    free = max(0, total - used) if total is not None and used is not None else None
+    try:
+        capabilities = json.loads(row.capabilities_json or "[]")
+    except json.JSONDecodeError:
+        capabilities = []
+    return {
+        "id": str(row.id),
+        "name": row.name,
+        "role": row.role,
+        "region": row.region,
+        "hostname": row.hostname,
+        "public_ip": row.public_ip,
+        "ssh_port": row.ssh_port,
+        "ssh_user": row.ssh_user,
+        "storage_path": row.storage_path,
+        "capabilities": capabilities,
+        "status": row.status,
+        "weight": row.weight,
+        "last_heartbeat_at": row.last_heartbeat_at.isoformat() if row.last_heartbeat_at else None,
+        "healthy": row.status == "active" and fresh,
+        "total_storage_bytes": total,
+        "used_storage_bytes": used,
+        "free_storage_bytes": free,
+        "agent_version": row.agent_version,
+    }
+
+
 @router.post("/platform/mail-nodes", status_code=201)
 def create_mail_node(payload: MailNodeCreate, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
+    clean_capabilities = sorted({x.strip().lower() for x in payload.capabilities if x.strip()})
+    if not clean_capabilities:
+        raise HTTPException(status_code=422, detail="At least one node capability is required")
+    values = payload.model_dump(exclude={"capabilities"})
+    values["capabilities_json"] = json.dumps(clean_capabilities)
     row = db.scalar(select(MailNode).where(MailNode.name == payload.name))
     if row is None:
-        row = MailNode(**payload.model_dump())
+        row = MailNode(**values)
         db.add(row)
     else:
-        for key, value in payload.model_dump().items():
+        for key, value in values.items():
             setattr(row, key, value)
         row.status = "active"
-    db.add(AuditLog(actor_user_id=current.id, action="mail_node.upsert", resource_type="mail_node", resource_id=str(row.id) if row.id else None))
+    db.flush()
+    db.add(AuditLog(actor_user_id=current.id, action="mail_node.upsert", resource_type="mail_node", resource_id=str(row.id), metadata_json=json.dumps({"hostname": row.hostname, "role": row.role})))
     db.commit()
     db.refresh(row)
-    return {"id": str(row.id), "name": row.name, "role": row.role, "region": row.region, "hostname": row.hostname, "public_ip": row.public_ip, "status": row.status, "weight": row.weight}
+    return _mail_node_json(row)
 
 
 @router.get("/platform/mail-nodes")
 def list_mail_nodes(db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     rows = db.scalars(select(MailNode).order_by(MailNode.role, MailNode.region, MailNode.name)).all()
-    now = datetime.now(timezone.utc)
-    items = []
-    for row in rows:
-        fresh = bool(row.last_heartbeat_at and (now - row.last_heartbeat_at).total_seconds() <= settings.mail_node_stale_seconds)
-        items.append({"id": str(row.id), "name": row.name, "role": row.role, "region": row.region, "hostname": row.hostname, "public_ip": row.public_ip, "status": row.status, "weight": row.weight, "last_heartbeat_at": row.last_heartbeat_at.isoformat() if row.last_heartbeat_at else None, "healthy": row.status == "active" and fresh})
-    return {"items": items}
+    return {"items": [_mail_node_json(row) for row in rows]}
+
+
+@router.patch("/platform/mail-nodes/{node_id}/status")
+def update_mail_node_status(node_id: UUID, payload: MailNodeStatusUpdate, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
+    row = db.get(MailNode, node_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Mail node not found")
+    row.status = payload.status
+    db.add(AuditLog(actor_user_id=current.id, action="mail_node.status.update", resource_type="mail_node", resource_id=str(row.id), metadata_json=json.dumps({"status": row.status})))
+    db.commit()
+    db.refresh(row)
+    return _mail_node_json(row)
 
 
 @router.post("/mail-nodes/{node_id}/heartbeat")
-def mail_node_heartbeat(node_id: UUID, x_mail_node_token: str | None = Header(default=None), db: Session = Depends(get_db)):
+def mail_node_heartbeat(node_id: UUID, payload: MailNodeHeartbeat | None = None, x_mail_node_token: str | None = Header(default=None), db: Session = Depends(get_db)):
     if not settings.mail_node_token or not secrets.compare_digest(x_mail_node_token or "", settings.mail_node_token):
         raise HTTPException(status_code=401, detail="Invalid mail node token")
     row = db.get(MailNode, node_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Mail node not found")
+    if payload:
+        if payload.total_storage_bytes is not None:
+            row.total_storage_bytes = payload.total_storage_bytes
+        if payload.used_storage_bytes is not None:
+            row.used_storage_bytes = payload.used_storage_bytes
+        if payload.agent_version is not None:
+            row.agent_version = payload.agent_version
+        if payload.capabilities is not None:
+            clean_capabilities = sorted({x.strip().lower() for x in payload.capabilities if x.strip()})
+            row.capabilities_json = json.dumps(clean_capabilities)
     row.last_heartbeat_at = datetime.now(timezone.utc)
-    row.status = "active"
+    if row.status != "disabled":
+        row.status = "active"
     db.commit()
-    return {"healthy": True, "node_id": str(row.id)}
+    db.refresh(row)
+    return {"healthy": row.status == "active", "node_id": str(row.id), "status": row.status}
