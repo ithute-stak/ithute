@@ -151,6 +151,7 @@ def _queue_scheduled_backup_if_due(db: Session, agent: MailNodeAgent, node: Mail
         tenant_id=node.tenant_id,
         snapshot_key=f"{node.id.hex}-{now.strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}",
         status="creating",
+        immutable_until=now + timedelta(days=max(1, min(int(node.backup_immutability_days or 7), 365))),
     )
     db.add(snapshot)
     db.flush()
