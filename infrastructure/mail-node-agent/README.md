@@ -21,3 +21,21 @@ The agent reports disk capacity/usage, verifies SMTP ports 25/587, verifies IMAP
 The agent synchronizes mailbox existence, active/suspended state, password hashes and Dovecot quota limits. `ITHUTE_MAIL_QUOTAS_FILE` must point to Docker Mailserver's `dovecot-quotas.cf` file in the same watched config directory as `postfix-accounts.cf`.
 
 Never commit the node token.
+
+
+## Production bootstrap
+
+The node bundle now includes:
+
+- `compose.yml` for the external Docker Mailserver runtime;
+- `install.sh` for deterministic agent/mail-node installation;
+- `provision-tls.sh` for Let's Encrypt issuance and a Docker Mailserver renewal hook;
+- mandatory off-node backup configuration through rclone.
+
+A production node is not considered placement-ready until the agent reports SMTP 25/587, IMAPS 993 and hostname-valid TLS as healthy.
+
+## Backup and failover
+
+Platform owners can queue a node snapshot. The agent archives the mail storage, calculates SHA-256, and copies it to the configured off-node rclone destination. Failover requires a ready off-node snapshot and a healthy target node. The target agent verifies the checksum, restores the snapshot with the mail container stopped, and only after a successful restore does Ithute move mailbox placement and regenerate SMTP routing.
+
+This order is intentional: Ithute never changes routing first and hopes that data arrives later.
