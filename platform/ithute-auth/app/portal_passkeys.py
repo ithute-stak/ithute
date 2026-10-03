@@ -104,7 +104,7 @@ def _require_csrf(request: Request, submitted: str, settings: Settings) -> None:
 def _set_sso_cookie(response, user: User, settings: Settings) -> None:
     response.set_cookie(
         settings.browser_cookie_name,
-        create_browser_session_token(settings=settings, user_id=user.id, security_version=user.security_version),
+        create_browser_session_token(settings=settings, user_id=user.id, security_version=user.security_version, auth_method="passkey"),
         max_age=settings.browser_session_hours * 3600,
         httponly=True,
         secure=settings.browser_cookie_secure,
