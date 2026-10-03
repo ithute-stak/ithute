@@ -33,11 +33,8 @@ command -v rclone >/dev/null 2>&1 || {
   exit 2
 }
 
-getent group ithute-mail-agent >/dev/null || groupadd --system ithute-mail-agent
-id ithute-mail-agent >/dev/null 2>&1 || useradd --system --gid ithute-mail-agent --home-dir /nonexistent --shell /usr/sbin/nologin ithute-mail-agent
-
 install -d -m 0755 "$INSTALL_DIR" "$CONFIG_DIR"
-install -d -m 0750 -o ithute-mail-agent -g ithute-mail-agent /var/lib/ithute-mail-node/backups
+install -d -m 0700 /var/lib/ithute-mail-node/backups
 install -d -m 0750 "$MAIL_ROOT" "$MAIL_ROOT/config" "$MAIL_ROOT/data/mail-data" "$MAIL_ROOT/data/mail-state" "$MAIL_ROOT/data/mail-logs"
 install -m 0755 "$SCRIPT_DIR/agent.py" "$INSTALL_DIR/agent.py"
 install -m 0644 "$SCRIPT_DIR/compose.yml" "$MAIL_ROOT/compose.yml"
@@ -65,7 +62,6 @@ ITHUTE_MAIL_POLL_SECONDS=10
 ITHUTE_MAIL_HEARTBEAT_SECONDS=60
 EOF
 chmod 0600 "$CONFIG_DIR/agent.env"
-chown root:ithute-mail-agent "$CONFIG_DIR/agent.env"
 
 if [ -z "${ITHUTE_MAIL_BACKUP_REMOTE:-}" ]; then
   echo "ITHUTE_MAIL_BACKUP_REMOTE must point to off-node rclone storage before the agent can start." >&2
