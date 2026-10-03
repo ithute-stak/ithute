@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0062_mail_backup_immutability"
+LATEST_MIGRATION_HEAD = "0063_audit_integrity"
 
 
 def test_alembic_has_one_consolidated_head():
