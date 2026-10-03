@@ -363,7 +363,7 @@ def _mail_node_json(row: MailNode) -> dict:
         "status": row.status,
         "weight": row.weight,
         "last_heartbeat_at": row.last_heartbeat_at.isoformat() if row.last_heartbeat_at else None,
-        "healthy": row.status == "active" and fresh,
+        "healthy": row.status == "active" and fresh and row.smtp_ready and row.imap_ready and row.tls_ready and row.backup_ready,
         "total_storage_bytes": total,
         "used_storage_bytes": used,
         "free_storage_bytes": free,
