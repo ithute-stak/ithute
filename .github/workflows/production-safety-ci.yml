@@ -103,8 +103,8 @@ jobs:
               failures.append('Ithute Release Images must never connect to the production VPS.')
           if 'packages: write' not in release:
               failures.append('Ithute Release Images must be able to publish packages.')
-          if 'Ithute Standalone CI' not in release or 'Production Safety CI' not in release:
-              failures.append('Ithute Release Images must require both CI gates for the exact SHA.')
+          if 'Ithute Standalone CI' not in release or 'Production Safety CI' not in release or 'Security CI' not in release:
+              failures.append('Ithute Release Images must require standalone, production-safety and security gates for the exact SHA.')
 
           marker = "verify_public_health() {"
           end_marker = "\n}\n\ndump_failure_logs()"
