@@ -27,3 +27,21 @@ def test_recommended_mail_authentication_records():
     assert "p=PUBLICKEY" in by_purpose["dkim"]["value"]
     assert by_purpose["dmarc"]["name"] == "_dmarc.example.com"
     assert "p=quarantine" in by_purpose["dmarc"]["value"]
+
+
+def test_recommended_transport_security_records():
+    records = recommended_records(
+        "example.com",
+        "mail.example.com",
+        "s1",
+        "PUBLICKEY",
+        mta_sts_id="20261003",
+        mta_sts_ip="203.0.113.20",
+        tls_report_address="tls-reports@example.net",
+    )
+    by_purpose = {row["purpose"]: row for row in records}
+    assert by_purpose["mta-sts"]["name"] == "_mta-sts.example.com"
+    assert by_purpose["mta-sts"]["value"] == "v=STSv1; id=20261003"
+    assert by_purpose["mta-sts-host"]["name"] == "mta-sts.example.com"
+    assert by_purpose["mta-sts-host"]["value"] == "203.0.113.20"
+    assert by_purpose["tls-rpt"]["value"] == "v=TLSRPTv1; rua=mailto:tls-reports@example.net"

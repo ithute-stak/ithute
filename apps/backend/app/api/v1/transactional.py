@@ -114,7 +114,29 @@ def _api_key_from_request(request: Request, db: Session) -> ApiKey:
 def transactional_send(payload: SendRequest, request: Request, db: Session = Depends(get_db)):
     key = _api_key_from_request(request, db)
     tenant_id = key.tenant_id
-    start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    current = datetime.now(timezone.utc)
+    minute_start = current.replace(second=0, microsecond=0)
+    tenant_recent = db.scalar(
+        select(func.count(TransactionalMessage.id)).where(
+            TransactionalMessage.tenant_id == tenant_id,
+            TransactionalMessage.created_at >= minute_start,
+            TransactionalMessage.status != "failed",
+        )
+    ) or 0
+    if int(tenant_recent) >= settings.transactional_tenant_per_minute_limit:
+        raise HTTPException(status_code=429, detail="Transactional per-minute tenant sending limit reached")
+
+    key_recent = db.scalar(
+        select(func.count(TransactionalMessage.id)).where(
+            TransactionalMessage.api_key_id == key.id,
+            TransactionalMessage.created_at >= minute_start,
+            TransactionalMessage.status != "failed",
+        )
+    ) or 0
+    if int(key_recent) >= settings.transactional_api_key_per_minute_limit:
+        raise HTTPException(status_code=429, detail="Transactional per-minute API key sending limit reached")
+
+    start = current.replace(hour=0, minute=0, second=0, microsecond=0)
     sent_today = db.scalar(select(func.count(TransactionalMessage.id)).where(TransactionalMessage.tenant_id == tenant_id, TransactionalMessage.created_at >= start, TransactionalMessage.status != "failed")) or 0
     if int(sent_today) >= settings.transactional_tenant_daily_limit:
         raise HTTPException(status_code=429, detail="Transactional daily sending limit reached")

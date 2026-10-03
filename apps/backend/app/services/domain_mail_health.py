@@ -119,15 +119,31 @@ def domain_mail_health(db: Session, domain: Domain) -> dict:
     key = _active_dkim(db, domain.id)
     expected_records: list[dict] = []
     if key is not None:
-        readiness = dns_readiness(domain_name, settings.mail_hostname, key.selector, key.public_key_b64)
+        readiness = dns_readiness(
+            domain_name,
+            settings.mail_hostname,
+            key.selector,
+            key.public_key_b64,
+            mta_sts_id=settings.mail_mta_sts_policy_id if settings.mail_mta_sts_enabled else None,
+            mta_sts_ip=settings.bootstrap_public_ip if settings.mail_mta_sts_enabled else None,
+            tls_report_address=settings.mail_tls_reporting_address or None,
+        )
         expected_records = readiness["recommended_records"]
         labels = {
             "mx": ("MX routing", "MX points to the Ithute mail gateway.", "MX does not point to the Ithute mail gateway."),
             "spf": ("SPF", "SPF authorizes the Ithute mail route.", "SPF is missing or does not match the Ithute policy."),
             "dkim": ("DKIM", f"DKIM selector {key.selector} is published and matches the active signing key.", f"DKIM selector {key.selector} is missing or does not match the active signing key."),
             "dmarc": ("DMARC", "DMARC is published for the domain.", "DMARC is missing or invalid."),
+            "mta_sts": ("MTA-STS policy ID", "MTA-STS DNS policy identity is published.", "MTA-STS DNS policy identity is missing or stale."),
+            "mta_sts_host": ("MTA-STS HTTPS host", "MTA-STS hostname resolves to the Ithute edge.", "MTA-STS hostname does not resolve to the Ithute edge."),
+            "tls_rpt": ("TLS reporting", "TLS-RPT reporting is published.", "TLS-RPT reporting is missing or does not match Ithute policy."),
         }
-        for item in ("mx", "spf", "dkim", "dmarc"):
+        required_items = ["mx", "spf", "dkim", "dmarc"]
+        if settings.mail_mta_sts_enabled:
+            required_items.extend(["mta_sts", "mta_sts_host"])
+        if settings.mail_tls_reporting_address:
+            required_items.append("tls_rpt")
+        for item in required_items:
             label, good, bad = labels[item]
             checks.append(_check(item, label, bool(readiness["checks"].get(item)), good if readiness["checks"].get(item) else bad))
     else:
@@ -141,7 +157,22 @@ def domain_mail_health(db: Session, domain: Domain) -> dict:
             {"name": domain_name, "type": "TXT", "value": "v=spf1 mx -all", "purpose": "spf"},
             {"name": f"_dmarc.{domain_name}", "type": "TXT", "value": "v=DMARC1; p=quarantine; adkim=s; aspf=s; pct=100", "purpose": "dmarc"},
         ]
-        for item, label in (("mx", "MX routing"), ("spf", "SPF"), ("dkim", "DKIM"), ("dmarc", "DMARC")):
+        pending_checks = [("mx", "MX routing"), ("spf", "SPF"), ("dkim", "DKIM"), ("dmarc", "DMARC")]
+        if settings.mail_mta_sts_enabled:
+            expected_records.extend([
+                {"name": f"_mta-sts.{domain_name}", "type": "TXT", "value": f"v=STSv1; id={settings.mail_mta_sts_policy_id}", "purpose": "mta-sts"},
+                {"name": f"mta-sts.{domain_name}", "type": "A", "value": settings.bootstrap_public_ip or "<Ithute edge IP>", "purpose": "mta-sts-host"},
+            ])
+            pending_checks.extend([("mta_sts", "MTA-STS policy ID"), ("mta_sts_host", "MTA-STS HTTPS host")])
+        if settings.mail_tls_reporting_address:
+            expected_records.append({
+                "name": f"_smtp._tls.{domain_name}",
+                "type": "TXT",
+                "value": f"v=TLSRPTv1; rua=mailto:{settings.mail_tls_reporting_address}",
+                "purpose": "tls-rpt",
+            })
+            pending_checks.append(("tls_rpt", "TLS reporting"))
+        for item, label in pending_checks:
             checks.append(
                 {
                     "id": item,

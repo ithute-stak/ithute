@@ -11,15 +11,20 @@ from app.api.deps import get_current_user, require_tenant_permission
 from app.core.config import settings
 from app.db.session import get_db
 from app.models import AuditLog, DkimKey, User
-from app.models.domains import Domain, DomainStatus
+from app.models.domains import Domain, DomainDnsMode, DomainStatus
 from app.services.deliverability import (
     deliverability_readiness,
+    dmarc_policy_status,
+    dmarc_reject_record,
     generate_dkim_material,
     infrastructure_readiness,
     normalize_selector,
     recommended_records,
 )
 from app.services.dkim_sync import sync_active_dkim_keys
+from app.services.powerdns import PowerDNSClient, PowerDNSError, validate_record
+from app.services.caddy_routes import CaddyRouteError
+from app.services.mail_security_policy import activate_mta_sts_route, mta_sts_route_status
 
 router = APIRouter(prefix="/tenants/{tenant_id}/domains/{domain_id}/deliverability", tags=["deliverability"])
 
@@ -50,6 +55,9 @@ def _audit(db: Session, tenant_id: UUID, current: User, action: str, resource_id
 
 
 def _key_json(domain: Domain, key: DkimKey) -> dict:
+    now = datetime.now(timezone.utc)
+    created = key.created_at
+    age_days = max(0, (now - created).days) if created else 0
     return {
         "id": str(key.id),
         "selector": key.selector,
@@ -59,6 +67,9 @@ def _key_json(domain: Domain, key: DkimKey) -> dict:
         "dns_value": f"v=DKIM1; k=rsa; p={key.public_key_b64}",
         "created_at": key.created_at,
         "rotated_at": key.rotated_at,
+        "age_days": age_days,
+        "rotation_recommended": bool(key.active and age_days >= settings.dkim_rotation_days),
+        "rotation_target_days": settings.dkim_rotation_days,
     }
 
 
@@ -156,7 +167,19 @@ def records(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), cur
     key = _active_key(db, tenant_id, domain.id)
     if not key:
         raise HTTPException(status_code=409, detail="Generate an active DKIM key first")
-    return {"domain": domain.ascii_name, "mail_hostname": settings.mail_hostname, "records": recommended_records(domain.ascii_name, settings.mail_hostname, key.selector, key.public_key_b64)}
+    return {
+        "domain": domain.ascii_name,
+        "mail_hostname": settings.mail_hostname,
+        "records": recommended_records(
+            domain.ascii_name,
+            settings.mail_hostname,
+            key.selector,
+            key.public_key_b64,
+            mta_sts_id=settings.mail_mta_sts_policy_id if settings.mail_mta_sts_enabled else None,
+            mta_sts_ip=settings.bootstrap_public_ip if settings.mail_mta_sts_enabled else None,
+            tls_report_address=settings.mail_tls_reporting_address or None,
+        ),
+    }
 
 
 @router.get("/infrastructure-readiness")
@@ -176,7 +199,191 @@ def readiness(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), c
     infrastructure_result = infrastructure_readiness(settings.mail_hostname, settings.mail_public_ip)
     if not key:
         return {"ready": False, "checks": {"mx": False, "spf": False, "dkim": False, "dmarc": False}, "infrastructure": infrastructure_result, "detail": "Generate an active DKIM key first"}
-    result = deliverability_readiness(domain.ascii_name, settings.mail_hostname, key.selector, key.public_key_b64)
-    result.update({"domain": domain.ascii_name, "mail_hostname": settings.mail_hostname, "selector": key.selector, "infrastructure": infrastructure_result})
+    result = deliverability_readiness(
+        domain.ascii_name,
+        settings.mail_hostname,
+        key.selector,
+        key.public_key_b64,
+        mta_sts_id=settings.mail_mta_sts_policy_id if settings.mail_mta_sts_enabled else None,
+        mta_sts_ip=settings.bootstrap_public_ip if settings.mail_mta_sts_enabled else None,
+        tls_report_address=settings.mail_tls_reporting_address or None,
+    )
+    result.update({
+        "domain": domain.ascii_name,
+        "mail_hostname": settings.mail_hostname,
+        "selector": key.selector,
+        "infrastructure": infrastructure_result,
+        "dkim": _key_json(domain, key),
+        "mta_sts": {
+            "enabled": settings.mail_mta_sts_enabled,
+            "mode": settings.mail_mta_sts_mode,
+            "max_age": settings.mail_mta_sts_max_age_seconds,
+            "policy_id": settings.mail_mta_sts_policy_id,
+        },
+        "tls_reporting_address": settings.mail_tls_reporting_address,
+    })
     result["ready"] = bool(result["ready"] and infrastructure_result["ready"])
     return result
+
+
+@router.get("/dmarc-policy")
+def dmarc_policy(
+    tenant_id: UUID,
+    domain_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "mail.read", db, current)
+    domain = _domain(db, tenant_id, domain_id)
+    key = _active_key(db, tenant_id, domain.id)
+    current_policy = dmarc_policy_status(domain.ascii_name)
+    infrastructure_result = infrastructure_readiness(settings.mail_hostname, settings.mail_public_ip)
+    if not key:
+        return {
+            "domain": domain.ascii_name,
+            "current": current_policy,
+            "reject_ready": False,
+            "reason": "Generate and publish an active DKIM key before enforcing DMARC reject.",
+        }
+    readiness_result = deliverability_readiness(
+        domain.ascii_name,
+        settings.mail_hostname,
+        key.selector,
+        key.public_key_b64,
+        mta_sts_id=settings.mail_mta_sts_policy_id if settings.mail_mta_sts_enabled else None,
+        mta_sts_ip=settings.bootstrap_public_ip if settings.mail_mta_sts_enabled else None,
+        tls_report_address=settings.mail_tls_reporting_address or None,
+    )
+    reject_ready = bool(readiness_result["ready"] and infrastructure_result["ready"])
+    return {
+        "domain": domain.ascii_name,
+        "current": current_policy,
+        "reject_ready": reject_ready,
+        "managed_dns": domain.dns_mode == DomainDnsMode.platform,
+        "required_checks": readiness_result["checks"],
+        "infrastructure": infrastructure_result,
+        "recommended_record": dmarc_reject_record(domain.ascii_name),
+        "next_step": (
+            "DMARC reject can be enforced."
+            if reject_ready
+            else "Resolve all mail DNS and infrastructure readiness checks before enforcing DMARC reject."
+        ),
+    }
+
+
+@router.post("/dmarc/enforce")
+def enforce_dmarc_reject(
+    tenant_id: UUID,
+    domain_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "mail.manage", db, current)
+    domain = _domain(db, tenant_id, domain_id)
+    if domain.dns_mode != DomainDnsMode.platform:
+        raise HTTPException(
+            status_code=409,
+            detail="Automatic DMARC enforcement is available only for Ithute-managed DNS. Publish the recommended record at the external DNS provider.",
+        )
+    key = _active_key(db, tenant_id, domain.id)
+    if key is None:
+        raise HTTPException(status_code=409, detail="An active DKIM key is required before DMARC reject enforcement")
+
+    readiness_result = deliverability_readiness(
+        domain.ascii_name,
+        settings.mail_hostname,
+        key.selector,
+        key.public_key_b64,
+        mta_sts_id=settings.mail_mta_sts_policy_id if settings.mail_mta_sts_enabled else None,
+        mta_sts_ip=settings.bootstrap_public_ip if settings.mail_mta_sts_enabled else None,
+        tls_report_address=settings.mail_tls_reporting_address or None,
+    )
+    infrastructure_result = infrastructure_readiness(settings.mail_hostname, settings.mail_public_ip)
+    if not readiness_result["ready"] or not infrastructure_result["ready"]:
+        raise HTTPException(
+            status_code=409,
+            detail="DMARC reject requires all mail DNS and infrastructure readiness checks to pass",
+        )
+
+    record = dmarc_reject_record(domain.ascii_name)
+    try:
+        fqdn, rtype, contents = validate_record(
+            domain.ascii_name,
+            record["name"],
+            record["type"],
+            [record["value"]],
+        )
+        client = PowerDNSClient()
+        client.replace_rrset(
+            domain.ascii_name,
+            fqdn,
+            rtype,
+            settings.powerdns_default_ttl,
+            contents,
+        )
+        client.rectify_zone(domain.ascii_name)
+    except (PowerDNSError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=f"Unable to enforce DMARC reject: {exc}") from exc
+
+    _audit(
+        db,
+        tenant_id,
+        current,
+        "deliverability.dmarc.enforce_reject",
+        str(domain.id),
+        {"domain": domain.ascii_name, "record": record["value"]},
+    )
+    db.commit()
+    return {
+        "domain": domain.ascii_name,
+        "policy": "reject",
+        "record": record,
+        "detail": "DMARC reject is now enforced for Ithute-managed DNS.",
+    }
+
+
+@router.get("/mta-sts")
+def mta_sts_status(
+    tenant_id: UUID,
+    domain_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "mail.read", db, current)
+    domain = _domain(db, tenant_id, domain_id)
+    status = mta_sts_route_status(domain.id, domain.ascii_name)
+    return {
+        "domain": domain.ascii_name,
+        "enabled": settings.mail_mta_sts_enabled,
+        "mode": settings.mail_mta_sts_mode,
+        "max_age": settings.mail_mta_sts_max_age_seconds,
+        "policy_id": settings.mail_mta_sts_policy_id,
+        **status,
+    }
+
+
+@router.post("/mta-sts/activate")
+def activate_domain_mta_sts(
+    tenant_id: UUID,
+    domain_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "mail.manage", db, current)
+    domain = _domain(db, tenant_id, domain_id)
+    if not settings.mail_mta_sts_enabled:
+        raise HTTPException(status_code=409, detail="MTA-STS is disabled by platform policy")
+    try:
+        activate_mta_sts_route(domain.id, domain.ascii_name)
+    except CaddyRouteError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    _audit(
+        db,
+        tenant_id,
+        current,
+        "deliverability.mta_sts.activate",
+        str(domain.id),
+        {"domain": domain.ascii_name, "mode": settings.mail_mta_sts_mode},
+    )
+    db.commit()
+    return mta_sts_route_status(domain.id, domain.ascii_name)
