@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     webauthn_rp_name: str = "!thute"
     webauthn_origin: str = "https://auth.ithute.co.ls"
     webauthn_challenge_minutes: int = 5
+    privileged_passkey_enforcement: bool = True
+    step_up_minutes: int = 10
+    risk_step_up_level: str = "high"
     jwt_private_key_file: str = "/run/secrets/jwt-private.pem"
     jwt_public_key_file: str = "/run/secrets/jwt-public.pem"
     jwt_key_id: str = "ithute-auth-2026-01"
