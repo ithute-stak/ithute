@@ -9,4 +9,6 @@ class AuditOut(BaseModel):
     resource_type: str
     resource_id: str | None
     metadata: dict | None
+    prev_hash: str | None = None
+    event_hash: str | None = None
     created_at: str
