@@ -127,6 +127,7 @@ def test_mail_node_agent_reports_service_readiness(client, db, platform_owner):
             "imap_ready": True,
             "tls_ready": True,
             "tls_not_after": "2027-10-03T00:00:00+00:00",
+            "backup_ready": True,
         },
     )
     assert heartbeat.status_code == 200, heartbeat.text
@@ -136,8 +137,11 @@ def test_mail_node_agent_reports_service_readiness(client, db, platform_owner):
     assert row["smtp_ready"] is True
     assert row["imap_ready"] is True
     assert row["tls_ready"] is True
+    assert row["backup_ready"] is True
     assert row["free_storage_bytes"] == 400 * 1024**3
 
+    db.execute(delete(MailNodeOperation).where(MailNodeOperation.node_id == uuid.UUID(node_id)))
+    db.execute(delete(MailNodeSnapshot).where(MailNodeSnapshot.node_id == uuid.UUID(node_id)))
     db.execute(delete(MailNodeAgent).where(MailNodeAgent.node_id == uuid.UUID(node_id)))
     db.execute(delete(MailNode).where(MailNode.id == uuid.UUID(node_id)))
     db.commit()
@@ -226,6 +230,7 @@ def test_professional_and_hosting_routes_are_registered(client):
         "/api/v1/tenants/{tenant_id}/groupware/credentials",
         "/api/v1/platform/mail-nodes",
         "/api/v1/platform/mail-nodes/{node_id}/status",
+        "/api/v1/platform/mail-nodes/{node_id}/backup-policy",
         "/api/v1/mail-nodes/{node_id}/heartbeat",
         "/api/v1/platform/mail-nodes/{node_id}/agent-token",
         "/api/v1/platform/mail-nodes/{node_id}/agent",
