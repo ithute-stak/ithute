@@ -8,6 +8,7 @@ import { ControlShell } from "@/components/control-shell";
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
 
 type Me = { email: string; is_platform_owner: boolean };
+type Tenant = { id:string; name:string; slug:string; status:string };
 type MailNode = {
   id: string;
   name: string;
@@ -15,6 +16,7 @@ type MailNode = {
   region: string;
   hostname: string;
   public_ip?: string | null;
+  tenant_id?: string | null;
   ssh_port: number;
   ssh_user?: string | null;
   storage_path: string;
@@ -60,6 +62,7 @@ export default function MailNodesPage() {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
   const [nodes, setNodes] = useState<MailNode[]>([]);
+  const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -75,7 +78,7 @@ export default function MailNodesPage() {
   async function loadNodes() {
     setLoading(true);
     setError("");
-    const [response, routingResponse] = await Promise.all([api("/platform/mail-nodes"), api("/platform/mail-routing")]);
+    const [response, routingResponse, tenantsResponse] = await Promise.all([api("/platform/mail-nodes"), api("/platform/mail-routing"), api("/tenants")]);
     if (!response.ok) {
       setError(response.status === 403 ? "Platform owner access is required." : "Unable to load mail nodes.");
       setLoading(false);
@@ -84,6 +87,7 @@ export default function MailNodesPage() {
     const payload = await response.json();
     setNodes(payload.items || []);
     if (routingResponse.ok) setRouting(await routingResponse.json());
+    if (tenantsResponse.ok) setTenants(await tenantsResponse.json());
     setLoading(false);
   }
 
@@ -126,6 +130,7 @@ export default function MailNodesPage() {
         region: data.get("region"),
         hostname: data.get("hostname"),
         public_ip: data.get("public_ip") || null,
+        tenant_id: data.get("tenant_id") || null,
         ssh_port: Number(data.get("ssh_port") || 22),
         ssh_user: data.get("ssh_user") || null,
         storage_path: data.get("storage_path") || "/srv/ithute-mail",
@@ -255,6 +260,13 @@ export default function MailNodesPage() {
                 </div>
                 <input name="hostname" className="input" placeholder="mail01.example.com or VPS hostname" required />
                 <input name="public_ip" className="input" placeholder="Public IP (optional)" />
+                <label className="block">
+                  <span className="label">Node scope</span>
+                  <select name="tenant_id" className="input" defaultValue="">
+                    <option value="">Shared infrastructure · available to all tenants</option>
+                    {tenants.filter(t=>t.status==="active").map(t=><option key={t.id} value={t.id}>Dedicated · {t.name}</option>)}
+                  </select>
+                </label>
                 <div className="grid grid-cols-[1fr_110px] gap-2">
                   <input name="ssh_user" className="input" placeholder="SSH user, e.g. root" />
                   <input name="ssh_port" type="number" min="1" max="65535" defaultValue="22" className="input" aria-label="SSH port" />
@@ -296,7 +308,8 @@ export default function MailNodesPage() {
                             </span>
                           </div>
                           <p className="mt-1 text-[10px] text-[#718078]">{node.hostname}{node.public_ip ? ` · ${node.public_ip}` : ""} · {node.region}</p>
-                          <p className="mt-1 text-[10px] text-[#819087]">Role: {node.role} · Storage: {node.storage_path} · SSH: {node.ssh_user || "not set"}@{node.hostname}:{node.ssh_port}</p>
+                          <p className="mt-1 text-[10px] text-[#819087]">Scope: {node.tenant_id ? `Dedicated · ${tenants.find(t=>t.id===node.tenant_id)?.name || node.tenant_id}` : "Shared"} · Role: {node.role}</p>
+                          <p className="mt-1 text-[10px] text-[#819087]">Storage: {node.storage_path} · SSH: {node.ssh_user || "not set"}@{node.hostname}:{node.ssh_port}</p>
                           <p className="mt-1 text-[10px] text-[#819087]">Capabilities: {node.capabilities.join(", ") || "none"} · Agent: {node.agent_version || "not connected"}</p>
                         </div>
                         <div className="flex flex-wrap gap-2">
