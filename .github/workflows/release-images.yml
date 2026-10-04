@@ -137,6 +137,18 @@ jobs:
           provenance: mode=max
           sbom: true
 
+      - name: Publish Java worker image
+        if: steps.gates.outputs.publish == 'true'
+        id: java_worker
+        uses: docker/build-push-action@v7
+        with:
+          context: engines/java-worker
+          file: engines/java-worker/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/ithute-java-worker:${{ env.RELEASE_SHA }}
+          provenance: mode=max
+          sbom: true
+
       - name: Publish auth image
         if: steps.gates.outputs.publish == 'true'
         id: auth
@@ -198,6 +210,14 @@ jobs:
           subject-digest: ${{ steps.go_worker.outputs.digest }}
           push-to-registry: true
 
+      - name: Attest Java worker image provenance
+        if: steps.gates.outputs.publish == 'true'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/ithute-java-worker
+          subject-digest: ${{ steps.java_worker.outputs.digest }}
+          push-to-registry: true
+
       - name: Attest auth image provenance
         if: steps.gates.outputs.publish == 'true'
         uses: actions/attest-build-provenance@v2
@@ -227,7 +247,7 @@ jobs:
         run: |
           echo "Ithute images are published only; no VPS deployment is performed."
           echo "Release SHA: $RELEASE_SHA"
-          for image in ithute-web ithute-app-api ithute-go-worker ithute-auth ithute-push ithute-realtime; do
+          for image in ithute-web ithute-app-api ithute-go-worker ithute-java-worker ithute-auth ithute-push ithute-realtime; do
             echo "$REGISTRY/$image:$RELEASE_SHA"
           done
           echo "Production changes only when an operator deploys this exact SHA from the VPS."
