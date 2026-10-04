@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_tenant_permission
 from app.core.config import settings
 from app.db.session import get_db
-from app.models import AuditLog, DkimKey, DmarcAggregateReport, DmarcAggregateSource, User
+from app.models import AuditLog, DkimKey, DmarcAggregateReport, User
 from app.models.domains import Domain, DomainDnsMode, DomainStatus
 from app.services.deliverability import (
     deliverability_readiness,
@@ -352,25 +352,23 @@ def enforce_dmarc_reject(
 
 
 def _dmarc_report_json(report: DmarcAggregateReport) -> dict:
+    metadata = report.raw_summary_json or {}
     return {
         "id": str(report.id),
-        "domain_id": str(report.domain_id),
-        "reporter_org": report.reporter_org,
-        "reporter_email": report.reporter_email,
+        "domain": report.domain,
+        "reporter_org": report.reporter,
+        "reporter_email": metadata.get("reporter_email"),
         "report_id": report.report_id,
         "period_begin": report.period_begin,
         "period_end": report.period_end,
-        "policy_domain": report.policy_domain,
-        "policy_p": report.policy_p,
-        "policy_sp": report.policy_sp,
-        "policy_pct": report.policy_pct,
         "total_messages": report.total_messages,
-        "passed_messages": report.passed_messages,
+        "passed_messages": report.aligned_messages,
         "failed_messages": report.failed_messages,
-        "pass_rate_percent": report.pass_rate_percent,
-        "parser_engine": report.parser_engine,
-        "parser_version": report.parser_version,
-        "report_sha256": report.report_sha256,
+        "pass_rate_percent": metadata.get("pass_rate_percent", 0.0),
+        "parser_engine": metadata.get("parser_engine", "unknown"),
+        "parser_version": metadata.get("parser_version", "1"),
+        "report_sha256": metadata.get("report_sha256"),
+        "policy": metadata.get("policy") or {},
         "created_at": report.created_at,
     }
 
@@ -399,53 +397,44 @@ async def upload_dmarc_report(
     metadata = result["metadata"]
     existing = db.scalar(
         select(DmarcAggregateReport).where(
-            DmarcAggregateReport.domain_id == domain.id,
-            DmarcAggregateReport.reporter_org == metadata["org_name"],
+            DmarcAggregateReport.tenant_id == tenant_id,
             DmarcAggregateReport.report_id == metadata["report_id"],
         )
     )
     if existing is not None:
+        if existing.domain != domain.ascii_name:
+            raise HTTPException(status_code=409, detail="DMARC report ID already belongs to another domain in this organization")
         return {**_dmarc_report_json(existing), "duplicate": True}
+
+    begin = epoch_datetime(metadata["begin"])
+    end_at = epoch_datetime(metadata["end"])
+    if begin is None or end_at is None or end_at < begin:
+        raise HTTPException(status_code=422, detail="DMARC report contains an invalid reporting period")
 
     policy = result["policy"]
     summary = result["summary"]
     report = DmarcAggregateReport(
         tenant_id=tenant_id,
-        domain_id=domain.id,
-        reporter_org=metadata["org_name"],
-        reporter_email=metadata["email"] or None,
+        domain=domain.ascii_name,
         report_id=metadata["report_id"],
-        period_begin=epoch_datetime(metadata["begin"]),
-        period_end=epoch_datetime(metadata["end"]),
-        policy_domain=policy["domain"],
-        policy_p=policy["p"] or None,
-        policy_sp=policy["sp"] or None,
-        policy_pct=policy["pct"],
+        reporter=metadata["org_name"],
+        period_begin=begin,
+        period_end=end_at,
         total_messages=summary["total_messages"],
-        passed_messages=summary["passed_messages"],
+        aligned_messages=summary["passed_messages"],
         failed_messages=summary["failed_messages"],
-        pass_rate_percent=summary["pass_rate_percent"],
-        parser_engine=engine,
-        parser_version=result["parser_version"],
-        report_sha256=report_sha256(xml_bytes),
-        created_by_user_id=current.id,
+        sources_json=result["records"],
+        raw_summary_json={
+            "reporter_email": metadata["email"] or None,
+            "policy": policy,
+            "pass_rate_percent": summary["pass_rate_percent"],
+            "parser_engine": engine,
+            "parser_version": result["parser_version"],
+            "report_sha256": report_sha256(xml_bytes),
+        },
     )
     db.add(report)
     db.flush()
-    for item in result["records"]:
-        db.add(
-            DmarcAggregateSource(
-                report_id=report.id,
-                source_ip=item["source_ip"],
-                message_count=item["count"],
-                disposition=item["disposition"] or None,
-                dkim_result=item["dkim"] or None,
-                spf_result=item["spf"] or None,
-                header_from=item["header_from"] or None,
-                envelope_from=item["envelope_from"] or None,
-                dmarc_pass=item["dmarc_pass"],
-            )
-        )
     _audit(
         db,
         tenant_id,
@@ -454,7 +443,7 @@ async def upload_dmarc_report(
         str(report.id),
         {
             "domain": domain.ascii_name,
-            "reporter_org": report.reporter_org,
+            "reporter_org": report.reporter,
             "report_id": report.report_id,
             "parser_engine": engine,
             "records": len(result["records"]),
@@ -484,7 +473,10 @@ def list_dmarc_reports(
     domain = _domain(db, tenant_id, domain_id)
     rows = db.scalars(
         select(DmarcAggregateReport)
-        .where(DmarcAggregateReport.domain_id == domain.id)
+        .where(
+            DmarcAggregateReport.tenant_id == tenant_id,
+            DmarcAggregateReport.domain == domain.ascii_name,
+        )
         .order_by(DmarcAggregateReport.period_end.desc(), DmarcAggregateReport.created_at.desc())
         .offset(offset)
         .limit(limit)
@@ -510,33 +502,15 @@ def get_dmarc_report(
     report = db.scalar(
         select(DmarcAggregateReport).where(
             DmarcAggregateReport.id == report_id,
-            DmarcAggregateReport.domain_id == domain.id,
             DmarcAggregateReport.tenant_id == tenant_id,
+            DmarcAggregateReport.domain == domain.ascii_name,
         )
     )
     if report is None:
         raise HTTPException(status_code=404, detail="DMARC report not found")
-    sources = db.scalars(
-        select(DmarcAggregateSource)
-        .where(DmarcAggregateSource.report_id == report.id)
-        .order_by(DmarcAggregateSource.message_count.desc(), DmarcAggregateSource.source_ip.asc())
-    ).all()
     return {
         **_dmarc_report_json(report),
-        "sources": [
-            {
-                "id": str(row.id),
-                "source_ip": row.source_ip,
-                "message_count": row.message_count,
-                "disposition": row.disposition,
-                "dkim": row.dkim_result,
-                "spf": row.spf_result,
-                "header_from": row.header_from,
-                "envelope_from": row.envelope_from,
-                "dmarc_pass": row.dmarc_pass,
-            }
-            for row in sources
-        ],
+        "sources": report.sources_json or [],
     }
 
 
