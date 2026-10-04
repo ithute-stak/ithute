@@ -138,6 +138,14 @@ if command -v docker >/dev/null 2>&1 && [[ -f "$COMPOSE_FILE" ]]; then
     pass "Caddy admin port 2019 is not host-published"
   fi
 
+  if docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -Fxq ithute-hosting-health-controller; then
+    if docker compose -f "$COMPOSE_FILE" ps --status running ithute-hosting-health-controller 2>/dev/null | grep -q ithute-hosting-health-controller; then
+      pass "Hosting node self-healing controller is running"
+    else
+      fail "Hosting node self-healing controller is not running"
+    fi
+  fi
+
   if docker compose -f "$COMPOSE_FILE" ps --status running caddy 2>/dev/null | grep -q caddy; then
     if docker compose -f "$COMPOSE_FILE" exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
       pass "Running Caddy configuration validates"
