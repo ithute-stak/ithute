@@ -63,6 +63,15 @@ const navigation: NavGroup[] = [
     children: [{ label: "Edge control centre", href: "/edge", icon: ShieldCheck }],
   },
   {
+    label: "Infrastructure",
+    icon: Server,
+    children: [
+      { label: "Servers & VPS nodes", href: "/infrastructure/servers", icon: Server },
+      { label: "Mail nodes", href: "/mail-nodes", icon: Mail },
+      { label: "Hosting nodes", href: "/hosting-nodes", icon: Server },
+    ],
+  },
+  {
     label: "Mail platform",
     icon: Mail,
     children: [
@@ -114,7 +123,6 @@ const navigation: NavGroup[] = [
     children: [
       { label: "Security operations", href: "/security-operations", icon: ShieldCheck },
       { label: "Mail operations", href: "/mail-operations", icon: Activity },
-      { label: "Mail nodes", href: "/mail-nodes", icon: Server },
       { label: "Status centre", href: "/status", icon: Activity },
       { label: "Help & DNS guide", href: "/help", icon: BookOpen },
     ],
