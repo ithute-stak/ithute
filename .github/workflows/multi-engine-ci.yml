@@ -76,7 +76,7 @@ jobs:
           assert status["brain"]["authoritative"] is True
           assert status["engines"]["rust"]["available"] is True
           assert status["engines"]["cpp"]["available"] is True
-          result = sample_native_result("Subject: engine\n\nbody".encode())
+          result = sample_native_result(b"Subject: engine\\n\\nbody")
           assert result["stats_engine"] == "rust"
           assert result["fingerprint_engine"] == "cpp"
           print(result)
