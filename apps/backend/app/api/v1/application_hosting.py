@@ -169,13 +169,28 @@ def _node_allocated(db: Session, node_id: UUID) -> dict:
         )
         or 0
     )
+    reserved = db.execute(
+        select(
+            func.coalesce(func.sum(HostingProject.storage_mb), 0),
+            func.coalesce(func.sum(HostingProject.memory_mb), 0),
+            func.coalesce(func.sum(HostingProject.cpu_millicores), 0),
+            func.count(HostingProject.id),
+        )
+        .join(HostingFailoverAttempt, HostingFailoverAttempt.project_id == HostingProject.id)
+        .where(
+            HostingFailoverAttempt.target_node_id == node_id,
+            HostingFailoverAttempt.status.in_(["pending", "deploying", "edge_pending"]),
+            HostingProject.node_id != node_id,
+        )
+    ).one()
     return {
-        "storage_mb": int(row[0]) + database_storage,
+        "storage_mb": int(row[0]) + database_storage + int(reserved[0]),
         "application_storage_mb": int(row[0]),
         "database_storage_mb": database_storage,
-        "memory_mb": int(row[1]),
-        "cpu_millicores": int(row[2]),
-        "projects": int(row[3]),
+        "failover_reserved_storage_mb": int(reserved[0]),
+        "memory_mb": int(row[1]) + int(reserved[1]),
+        "cpu_millicores": int(row[2]) + int(reserved[2]),
+        "projects": int(row[3]) + int(reserved[3]),
     }
 
 
