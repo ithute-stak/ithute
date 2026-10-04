@@ -133,6 +133,55 @@ def docker_info() -> dict:
     }
 
 
+def wireguard_info() -> dict:
+    if not command_exists("wg") or not command_exists("ip"):
+        return {"installed": False, "interface": "ithute0", "up": False, "connected": False}
+    public_key = command_output(["wg", "show", "ithute0", "public-key"])
+    addresses = command_output(["ip", "-4", "-o", "addr", "show", "dev", "ithute0"])
+    latest = command_output(["wg", "show", "ithute0", "latest-handshakes"])
+    transfer = command_output(["wg", "show", "ithute0", "transfer"])
+    handshake_unix = 0
+    peer_key = None
+    if latest:
+        row = latest.splitlines()[0].split()
+        if len(row) >= 2:
+            peer_key = row[0]
+            try:
+                handshake_unix = int(row[1])
+            except ValueError:
+                handshake_unix = 0
+    rx_bytes = tx_bytes = None
+    if transfer:
+        row = transfer.splitlines()[0].split()
+        if len(row) >= 3:
+            try:
+                rx_bytes = int(row[1])
+                tx_bytes = int(row[2])
+            except ValueError:
+                pass
+    address = None
+    if addresses:
+        parts = addresses.split()
+        if "inet" in parts:
+            try:
+                address = parts[parts.index("inet") + 1].split("/", 1)[0]
+            except (ValueError, IndexError):
+                pass
+    now = int(time.time())
+    return {
+        "installed": True,
+        "interface": "ithute0",
+        "up": bool(public_key and address),
+        "connected": bool(handshake_unix and now - handshake_unix <= 180),
+        "public_key": public_key,
+        "peer_public_key": peer_key,
+        "address": address,
+        "latest_handshake_unix": handshake_unix or None,
+        "rx_bytes": rx_bytes,
+        "tx_bytes": tx_bytes,
+    }
+
+
 def capabilities() -> dict:
     return {
         "docker": command_exists("docker"),
@@ -144,6 +193,7 @@ def capabilities() -> dict:
         "mail": service_active("postfix") or command_exists("postfix"),
         "imap": service_active("dovecot") or command_exists("dovecot"),
         "systemd": command_exists("systemctl"),
+        "wireguard": command_exists("wg"),
     }
 
 
@@ -166,6 +216,7 @@ def payload() -> dict:
             "memory": memory(),
             "disks": disks(),
             "docker": docker_info(),
+            "wireguard": wireguard_info(),
         },
         "capabilities": capabilities(),
     }
