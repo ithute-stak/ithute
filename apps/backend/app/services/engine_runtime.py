@@ -8,6 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 import httpx
 
@@ -317,6 +318,99 @@ def network_probe(targets: list[dict], concurrency: int = 16) -> tuple[dict, str
     except (httpx.HTTPError, ValueError, TypeError):
         body = python_network_probe(payload["targets"], payload["concurrency"])
         return body, "python-fallback"
+
+
+def _xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+
+def python_enterprise_xml_inspect(xml_bytes: bytes) -> dict:
+    """Reference XML structural inspection used when the Java worker is unavailable."""
+    if len(xml_bytes) > 10 * 1024 * 1024:
+        raise ValueError("enterprise XML exceeds the maximum size")
+    upper = xml_bytes.upper()
+    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
+        raise ValueError("enterprise XML DTD/entities are not allowed")
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError as exc:
+        raise ValueError("enterprise XML is invalid") from exc
+
+    element_count = 0
+    attribute_count = 0
+    text_characters = 0
+    max_depth = 0
+    counts: dict[str, int] = {}
+    stack: list[tuple[ET.Element, int]] = [(root, 1)]
+    while stack:
+        element, depth = stack.pop()
+        element_count += 1
+        if element_count > 100_000:
+            raise ValueError("enterprise XML has too many elements")
+        if depth > 128:
+            raise ValueError("enterprise XML nesting is too deep")
+        max_depth = max(max_depth, depth)
+        attribute_count += len(element.attrib)
+        name = _xml_local_name(str(element.tag))
+        counts[name] = counts.get(name, 0) + 1
+        if element.text:
+            text_characters += len(element.text.strip())
+        for child in reversed(list(element)):
+            if child.tail:
+                text_characters += len(child.tail.strip())
+            stack.append((child, depth + 1))
+
+    root_tag = str(root.tag)
+    namespace = ""
+    if root_tag.startswith("{") and "}" in root_tag:
+        namespace = root_tag[1:].split("}", 1)[0]
+    top_elements = [
+        {"name": name, "count": count}
+        for name, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:20]
+    ]
+    return {
+        "engine": "python-fallback",
+        "parser_version": "1",
+        "root": _xml_local_name(root_tag),
+        "namespace": namespace,
+        "element_count": element_count,
+        "attribute_count": attribute_count,
+        "text_characters": text_characters,
+        "max_depth": max_depth,
+        "top_elements": top_elements,
+    }
+
+
+def enterprise_xml_inspect(xml_bytes: bytes) -> tuple[dict, str]:
+    """Use Java for secure enterprise XML inspection with a Python reference fallback."""
+    if len(xml_bytes) > 10 * 1024 * 1024:
+        raise ValueError("enterprise XML exceeds the maximum size")
+    try:
+        with httpx.Client(timeout=max(ENGINE_HTTP_TIMEOUT_SECONDS, 6.0), trust_env=False) as client:
+            response = client.post(
+                f"{JAVA_WORKER_URL}/v1/xml/inspect",
+                content=xml_bytes,
+                headers={"Content-Type": "application/xml"},
+            )
+            response.raise_for_status()
+            body = response.json()
+        required = (
+            "root",
+            "namespace",
+            "element_count",
+            "attribute_count",
+            "text_characters",
+            "max_depth",
+            "top_elements",
+        )
+        if not isinstance(body, dict) or body.get("engine") != "java":
+            raise ValueError("invalid Java XML response")
+        if any(key not in body for key in required) or not isinstance(body.get("top_elements"), list):
+            raise ValueError("invalid Java XML inspection shape")
+        return body, "java"
+    except (httpx.HTTPError, ValueError, TypeError):
+        return python_enterprise_xml_inspect(xml_bytes), "python-fallback"
+
 
 def java_worker_status() -> dict:
     try:
