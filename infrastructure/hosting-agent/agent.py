@@ -367,7 +367,7 @@ def activate(work: dict[str, Any]) -> None:
 
 
 def heartbeat() -> None:
-    api("/hosting/agent/heartbeat", {"version": AGENT_VERSION})
+    api("/hosting/agent/heartbeat", {"version": AGENT_VERSION, "origin_bind_ip": ORIGIN_BIND_IP or None})
 
 
 def claim() -> dict[str, Any] | None:

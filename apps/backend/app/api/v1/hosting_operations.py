@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -20,7 +22,10 @@ from app.models import (
     HostingEnvironmentVariable,
     HostingNode,
     HostingNodeAgent,
+    HostingNodeBootstrap,
     HostingProject,
+    InfrastructureServer,
+    InfrastructureServerAgent,
     User,
 )
 
@@ -45,6 +50,13 @@ class DeploymentCreate(BaseModel):
 
 class AgentHeartbeat(BaseModel):
     version: str = Field(min_length=1, max_length=64)
+    origin_bind_ip: str | None = Field(default=None, max_length=64)
+
+
+class HostingNodeBootstrapCreate(BaseModel):
+    origin_bind_ip: str | None = Field(default=None, max_length=64)
+    edge_origin_cidrs: str = Field(default="", max_length=1000)
+    backup_remote: str | None = Field(default=None, max_length=1000)
 
 
 class AgentStatusUpdate(BaseModel):
@@ -55,6 +67,30 @@ class AgentStatusUpdate(BaseModel):
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _private_ipv4(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        address = ipaddress.ip_address(value.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Origin bind IP must be a literal private IPv4 address") from exc
+    if not isinstance(address, ipaddress.IPv4Address) or not address.is_private or address.is_loopback or address.is_link_local or address.is_unspecified or address.is_multicast:
+        raise HTTPException(status_code=422, detail="Origin bind IP must be a private/VPN IPv4 address")
+    return str(address)
+
+
+def _cidr_list(value: str) -> str:
+    rows = [item.strip() for item in value.split(",") if item.strip()]
+    for item in rows:
+        try:
+            network = ipaddress.ip_network(item, strict=False)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid edge origin CIDR: {item}") from exc
+        if not network.is_private:
+            raise HTTPException(status_code=422, detail="Edge origin CIDRs must be private/VPN networks")
+    return ",".join(rows)
 
 
 def _audit(
@@ -218,6 +254,228 @@ def _agent_from_token(db: Session, token: str | None) -> tuple[HostingNodeAgent,
     return agent, node
 
 
+@router.post("/platform/hosting/nodes/{node_id}/bootstrap")
+def create_node_bootstrap(
+    node_id: UUID,
+    payload: HostingNodeBootstrapCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    node = db.get(HostingNode, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Hosting node not found")
+
+    origin_bind_ip = _private_ipv4(payload.origin_bind_ip)
+    edge_cidrs = _cidr_list(payload.edge_origin_cidrs)
+    if origin_bind_ip and not edge_cidrs:
+        raise HTTPException(status_code=422, detail="Edge origin CIDRs are required when private origin routing is enabled")
+
+    raw = "ith_boot_" + secrets.token_urlsafe(36)
+    now = _now()
+    db.query(HostingNodeBootstrap).filter(
+        HostingNodeBootstrap.node_id == node.id,
+        HostingNodeBootstrap.used_at.is_(None),
+    ).delete(synchronize_session=False)
+    bootstrap = HostingNodeBootstrap(
+        node_id=node.id,
+        token_hash=hash_token(raw),
+        token_hint=raw[:18],
+        origin_bind_ip=origin_bind_ip,
+        edge_origin_cidrs=edge_cidrs,
+        backup_remote=payload.backup_remote.strip() if payload.backup_remote else None,
+        expires_at=now + timedelta(minutes=15),
+        created_by_user_id=current.id,
+    )
+    db.add(bootstrap)
+    node.status = "draining"
+    node.accepts_new_projects = False
+    _audit(db, current, "hosting.node_bootstrap.create", "hosting_node", str(node.id), metadata={
+        "origin_bind_ip": origin_bind_ip,
+        "edge_origin_cidrs": edge_cidrs,
+        "expires_minutes": 15,
+    })
+    db.commit()
+    return {
+        "node_id": str(node.id),
+        "token": raw,
+        "token_hint": raw[:18],
+        "expires_at": bootstrap.expires_at.isoformat(),
+        "script_path": f"/hosting/bootstrap/{node.id}/script",
+        "warning": "This bootstrap token is valid for 15 minutes and can be exchanged only once.",
+    }
+
+
+@router.get("/hosting/bootstrap/{node_id}/script", response_class=PlainTextResponse)
+def exchange_node_bootstrap(
+    node_id: UUID,
+    x_ithute_node_bootstrap: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    raw = (x_ithute_node_bootstrap or "").strip()
+    if not raw.startswith("ith_boot_"):
+        raise HTTPException(status_code=401, detail="Bootstrap credential required")
+    bootstrap = db.scalar(
+        select(HostingNodeBootstrap)
+        .where(
+            HostingNodeBootstrap.node_id == node_id,
+            HostingNodeBootstrap.token_hash == hash_token(raw),
+        )
+        .with_for_update()
+    )
+    now = _now()
+    if bootstrap is None:
+        raise HTTPException(status_code=401, detail="Invalid bootstrap credential")
+    if bootstrap.used_at is not None:
+        raise HTTPException(status_code=410, detail="Bootstrap credential has already been used")
+    expires = bootstrap.expires_at if bootstrap.expires_at.tzinfo else bootstrap.expires_at.replace(tzinfo=timezone.utc)
+    if expires <= now:
+        raise HTTPException(status_code=410, detail="Bootstrap credential has expired")
+
+    node = db.get(HostingNode, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Hosting node not found")
+
+    hosting_raw = "ith_host_" + secrets.token_urlsafe(36)
+    agent = db.get(HostingNodeAgent, node.id)
+    if agent is None:
+        agent = HostingNodeAgent(
+            node_id=node.id,
+            token_hash=hash_token(hosting_raw),
+            token_hint=hosting_raw[:18],
+            rotated_at=now,
+            rotated_by_user_id=bootstrap.created_by_user_id,
+        )
+        db.add(agent)
+    else:
+        agent.token_hash = hash_token(hosting_raw)
+        agent.token_hint = hosting_raw[:18]
+        agent.rotated_at = now
+        agent.rotated_by_user_id = bootstrap.created_by_user_id
+        agent.last_seen_at = None
+        agent.agent_version = None
+        agent.origin_bind_ip = None
+
+    server = db.scalar(select(InfrastructureServer).where(InfrastructureServer.hosting_node_id == node.id))
+    if server is None:
+        server = db.scalar(select(InfrastructureServer).where(func.lower(InfrastructureServer.hostname) == node.hostname.lower()))
+        if server is not None and server.hosting_node_id not in {None, node.id}:
+            raise HTTPException(status_code=409, detail="Infrastructure server hostname is already linked to another hosting node")
+    if server is None:
+        server = InfrastructureServer(
+            name=node.name,
+            hostname=node.hostname,
+            public_ip=node.public_ip,
+            region="lesotho",
+            roles_json=json.dumps(["application", "database", "storage"]),
+            status="active",
+            hosting_node_id=node.id,
+            created_by_user_id=bootstrap.created_by_user_id,
+        )
+        db.add(server)
+        db.flush()
+    else:
+        server.hosting_node_id = node.id
+        roles = set(json.loads(server.roles_json or "[]"))
+        roles.update({"application", "database", "storage"})
+        server.roles_json = json.dumps(sorted(roles))
+        if not server.public_ip and node.public_ip:
+            server.public_ip = node.public_ip
+
+    server_raw = "ith_srv_" + secrets.token_urlsafe(36)
+    server_agent = db.get(InfrastructureServerAgent, server.id)
+    if server_agent is None:
+        server_agent = InfrastructureServerAgent(
+            server_id=server.id,
+            token_hash=hash_token(server_raw),
+            token_hint=server_raw[:18],
+            rotated_at=now,
+            rotated_by_user_id=bootstrap.created_by_user_id,
+        )
+        db.add(server_agent)
+    else:
+        server_agent.token_hash = hash_token(server_raw)
+        server_agent.token_hint = server_raw[:18]
+        server_agent.rotated_at = now
+        server_agent.rotated_by_user_id = bootstrap.created_by_user_id
+        server_agent.last_seen_at = None
+        server_agent.agent_version = None
+        server_agent.telemetry_json = "{}"
+        server_agent.capabilities_json = "{}"
+
+    bootstrap.used_at = now
+    node.status = "draining"
+    node.accepts_new_projects = False
+    script = render_hosting_node_bootstrap(
+        api_base_url="https://ithute.co.ls",
+        hosting_token=hosting_raw,
+        server_token=server_raw,
+        origin_bind_ip=bootstrap.origin_bind_ip,
+        edge_origin_cidrs=bootstrap.edge_origin_cidrs,
+        backup_remote=bootstrap.backup_remote,
+    )
+    db.commit()
+    return PlainTextResponse(script, media_type="text/x-shellscript", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/platform/hosting/nodes/{node_id}/onboarding")
+def node_onboarding_status(
+    node_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    node = db.get(HostingNode, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Hosting node not found")
+    now = _now()
+    hosting_agent = db.get(HostingNodeAgent, node.id)
+    server = db.scalar(select(InfrastructureServer).where(InfrastructureServer.hosting_node_id == node.id))
+    server_agent = db.get(InfrastructureServerAgent, server.id) if server else None
+
+    def fresh(value):
+        if value is None:
+            return False
+        observed = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return observed >= now - timedelta(minutes=3)
+
+    hosting_online = bool(hosting_agent and fresh(hosting_agent.last_seen_at))
+    server_online = bool(server_agent and fresh(server_agent.last_seen_at))
+    origin_ready = bool(hosting_agent and hosting_agent.origin_bind_ip)
+    checks = {
+        "hosting_agent_online": hosting_online,
+        "server_agent_online": server_online,
+        "private_origin_configured": origin_ready,
+        "infrastructure_linked": server is not None,
+    }
+    ready = all(checks.values())
+    return {
+        "node_id": str(node.id),
+        "ready": ready,
+        "active": node.status == "active" and node.accepts_new_projects,
+        "checks": checks,
+        "origin_bind_ip": hosting_agent.origin_bind_ip if hosting_agent else None,
+        "hosting_agent_version": hosting_agent.agent_version if hosting_agent else None,
+        "server_agent_version": server_agent.agent_version if server_agent else None,
+    }
+
+
+@router.post("/platform/hosting/nodes/{node_id}/activate")
+def activate_onboarded_node(
+    node_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    status = node_onboarding_status(node_id, db, current)
+    if not status["ready"]:
+        missing = [key for key, value in status["checks"].items() if not value]
+        raise HTTPException(status_code=409, detail="Node onboarding is not complete: " + ", ".join(missing))
+    node = db.get(HostingNode, node_id)
+    node.status = "active"
+    node.accepts_new_projects = True
+    _audit(db, current, "hosting.node_bootstrap.activate", "hosting_node", str(node.id), metadata=status["checks"])
+    db.commit()
+    return {"ok": True, "node_id": str(node.id), "status": node.status, "accepts_new_projects": node.accepts_new_projects}
+
+
 @router.post("/platform/hosting/nodes/{node_id}/agent-token")
 def rotate_node_agent_token(
     node_id: UUID,
@@ -272,6 +530,7 @@ def node_agent_status(
         "token_hint": agent.token_hint if agent else None,
         "agent_version": agent.agent_version if agent else None,
         "last_seen_at": agent.last_seen_at.isoformat() if agent and agent.last_seen_at else None,
+        "origin_bind_ip": agent.origin_bind_ip if agent else None,
         "rotated_at": agent.rotated_at.isoformat() if agent else None,
     }
 
@@ -456,6 +715,7 @@ def agent_heartbeat(
     agent, node = _agent_from_token(db, x_ithute_hosting_agent)
     agent.agent_version = payload.version.strip()
     agent.last_seen_at = _now()
+    agent.origin_bind_ip = _private_ipv4(payload.origin_bind_ip)
     db.commit()
     return {"ok": True, "node_id": str(node.id), "node": node.name, "status": node.status}
 
