@@ -12,6 +12,7 @@ from app.models import (
     HostingNodeAgent,
     HostingNodeHealthState,
     HostingProject,
+    HostingProjectOperation,
 )
 from app.services import hosting_failover
 
@@ -144,6 +145,15 @@ def test_stateless_project_stages_replacement_then_cuts_over(db, tenant_admin, p
     assert project.node_id == target.id
     assert project.status == "running"
     assert attempt.status == "completed"
+    retirement = db.scalar(
+        select(HostingProjectOperation).where(
+            HostingProjectOperation.project_id == project.id,
+            HostingProjectOperation.node_id == source.id,
+            HostingProjectOperation.operation == "retire",
+        )
+    )
+    assert retirement is not None
+    assert retirement.status == "queued"
 
     db.execute(delete(HostingFailoverAttempt).where(HostingFailoverAttempt.project_id == project.id))
     db.execute(delete(HostingDeployment).where(HostingDeployment.project_id == project.id))
