@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, timezone
 from typing import Annotated
 from urllib.parse import quote
 
@@ -556,14 +557,26 @@ def get_business_workspace(
                     "direction": row.get("direction"),
                 })
         latest = rows[0] if rows else {}
+        unread_from_them = sum(1 for row in rows if row.get("direction") == "incoming" and not row.get("seen", True))
         status = "No conversation yet"
-        if latest:
-            if latest.get("direction") == "outgoing":
-                status = "Waiting for reply"
-            elif not latest.get("seen", True):
-                status = "You owe a reply"
-            else:
-                status = "Conversation active"
+        stale = False
+        last_seen = str(contact.get("last_seen") or "")
+        if last_seen:
+            try:
+                seen_at = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
+                if seen_at.tzinfo is None:
+                    seen_at = seen_at.replace(tzinfo=timezone.utc)
+                stale = (datetime.now(timezone.utc) - seen_at).days >= 30
+            except ValueError:
+                stale = False
+        if unread_from_them:
+            status = "You owe a reply"
+        elif latest and latest.get("direction") == "outgoing":
+            status = "Waiting for reply"
+        elif stale:
+            status = "No contact for 30+ days"
+        elif latest:
+            status = "Conversation active"
         timeline = [
             {
                 "type": "email",
@@ -587,6 +600,8 @@ def get_business_workspace(
                 "status": status,
                 "online": bool(contact_presence([email]).get(email.lower(), False)),
                 "internal_chat": internal,
+                "unread_from_them": unread_from_them,
+                "stale": stale,
             },
             "emails": rows,
             "documents": documents,
