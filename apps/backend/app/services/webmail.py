@@ -1,5 +1,4 @@
 import base64
-import hashlib
 import imaplib
 import json
 import logging
