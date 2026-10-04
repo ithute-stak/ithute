@@ -52,6 +52,7 @@ from app.models.hosting_operations import (
     HostingEnvironmentVariable,
     HostingNodeAgent,
     HostingNodeBootstrap,
+    HostingNodeHealthState,
     HostingProjectOperation, HostingProvisioningWorkflow,
 )
 from app.models.hosting_builds import HostingBuild, HostingBuilderAgent
@@ -131,7 +132,7 @@ __all__ = [
     "BillingPaymentEvent", "SubscriptionStatus", "InvoiceStatus", "BillingAddon", "TenantAddon", "EdgeRouteDeployment",
     "BillingContract", "UptimeMonitor", "UptimeCheck",
     "FinanceClient", "FinanceInvoice", "FinanceInvoiceItem", "FinanceInvoiceSchedule", "FinancePayment", "FinanceCreditNote", "FinanceDocument", "FinanceDocumentItem", "FinanceSenderConfiguration", "FinanceExpense", "FinanceBankTransaction", "FinanceServiceBillingLink", "FinanceAccountingPeriod", "FinanceRefund", "FinanceTaxRate", "FinanceApprovalRequest", "FinanceGovernanceSetting", "FinanceRoleGrant", "FinancePortalAccess", "FinanceDeliveryEvent", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject", "InfrastructureServer", "InfrastructureServerAgent", "InfrastructureTelemetrySnapshot", "InfrastructureWireGuardPeer",
-    "HOSTING_RUNTIME_MANIFEST_VERSION", "HostingDeployment", "HostingEnvironmentVariable", "HostingNodeAgent", "HostingNodeBootstrap", "HostingProjectOperation", "HostingProvisioningWorkflow",
+    "HOSTING_RUNTIME_MANIFEST_VERSION", "HostingDeployment", "HostingEnvironmentVariable", "HostingNodeAgent", "HostingNodeBootstrap", "HostingNodeHealthState", "HostingProjectOperation", "HostingProvisioningWorkflow",
     "HostingBuild", "HostingBuilderAgent", "HostingBuildLog", "HostingDatabaseBackup", "HostingSourceWebhook", "HostingWebhookDelivery", "HostingDatabase", "HostingSource", "HostingSourceCredential",
     "CustomerProfile", "Notification", "ServiceIncident", "ServiceIncidentImpact", "ServiceIncidentStatus",
     "SupportTicket", "SupportTicketMessage", "SupportTicketPriority", "SupportTicketStatus", "DomainOrder",
