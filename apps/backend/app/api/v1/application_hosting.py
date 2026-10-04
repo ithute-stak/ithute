@@ -365,6 +365,18 @@ def update_project_failover_policy(
             detail="Confirm that project-local /data is disposable before enabling stateless automatic failover",
         )
     project.failover_policy = payload.policy
+    if payload.policy == "stateless_auto" and project.node_id is not None:
+        recovery_rows = db.scalars(
+            select(HostingFailoverAttempt).where(
+                HostingFailoverAttempt.project_id == project.id,
+                HostingFailoverAttempt.source_node_id == project.node_id,
+                HostingFailoverAttempt.status == "recovery_required",
+            )
+        ).all()
+        for row in recovery_rows:
+            row.status = "superseded"
+            row.completed_at = datetime.now(timezone.utc)
+            row.reason = "Superseded after explicit stateless auto-failover opt-in."
     _audit(
         db,
         current,
