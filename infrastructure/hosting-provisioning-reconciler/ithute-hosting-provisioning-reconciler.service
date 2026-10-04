@@ -1,0 +1,9 @@
+[Unit]
+Description=Ithute hosting provisioning reconciler
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/ithute
+ExecStart=/opt/ithute/infrastructure/hosting-provisioning-reconciler/run.sh
