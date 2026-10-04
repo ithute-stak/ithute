@@ -21,6 +21,7 @@ from app.models import (
     HOSTING_RULES_VERSION,
     HostingDatabase,
     HostingNode,
+    HostingNodeHealthState,
     HostingProject,
     SubscriptionStatus,
     TenantSubscription,
@@ -280,7 +281,20 @@ def update_hosting_node(node_id: UUID, payload: HostingNodeUpdate, db: Session =
         raise HTTPException(status_code=409, detail="Node capacity cannot be reduced below resources already allocated to projects")
     for key, value in changes.items():
         setattr(node, key, value)
-    _audit(db, current, "hosting.node.update", "hosting_node", str(node.id), metadata={"changed_fields": sorted(changes)})
+
+    manual_state_change = bool({"status", "accepts_new_projects"} & set(changes))
+    if manual_state_change:
+        health_state = db.get(HostingNodeHealthState, node.id)
+        if health_state is not None:
+            health_state.automation_enabled = False
+            health_state.last_transition = "manual_hold"
+            health_state.last_transition_at = datetime.now(timezone.utc)
+            health_state.last_reason = "Node scheduling state changed manually by platform owner"
+
+    _audit(db, current, "hosting.node.update", "hosting_node", str(node.id), metadata={
+        "changed_fields": sorted(changes),
+        "automation_disabled": manual_state_change,
+    })
     db.commit()
     db.refresh(node)
     return _node_out(db, node)
