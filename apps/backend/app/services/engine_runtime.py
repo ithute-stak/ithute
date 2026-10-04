@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -83,6 +84,12 @@ def _load_rust() -> ctypes.CDLL | None:
             ctypes.POINTER(_RustMimeScan),
         ]
         library.ithute_rust_mime_scan.restype = ctypes.c_int
+        library.ithute_rust_sha256.argtypes = [
+            ctypes.POINTER(ctypes.c_ubyte),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_ubyte),
+        ]
+        library.ithute_rust_sha256.restype = ctypes.c_int
     except (OSError, AttributeError):
         return None
     _rust = library
@@ -190,6 +197,32 @@ def mime_scan(data: bytes) -> tuple[MimeScan, str]:
     ), "rust"
 
 
+def python_sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha256_digest(data: bytes) -> tuple[str, str]:
+    """Hash mail/attachment bytes in Rust with an exact hashlib fallback."""
+    library = _load_rust()
+    if library is None:
+        return python_sha256(data), "python-fallback"
+
+    if data:
+        buffer = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
+        pointer = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte))
+    else:
+        pointer = ctypes.POINTER(ctypes.c_ubyte)()
+
+    output = (ctypes.c_ubyte * 32)()
+    try:
+        code = library.ithute_rust_sha256(pointer, len(data), output)
+    except (OSError, ValueError, ctypes.ArgumentError):
+        return python_sha256(data), "python-fallback"
+    if code != 0:
+        return python_sha256(data), "python-fallback"
+    return bytes(output).hex(), "rust"
+
+
 def _python_fnv1a64(data: bytes) -> int:
     value = 14695981039346656037
     for byte in data:
@@ -272,7 +305,7 @@ def engine_status() -> dict:
                 "available": rust_available,
                 "mode": "native",
                 "library": str(RUST_LIBRARY),
-                "capabilities": ["byte-stats", "mime-prescan"] if rust_available else [],
+                "capabilities": ["byte-stats", "mime-prescan", "sha256"] if rust_available else [],
                 "fallback": "python",
             },
             "go": go,
@@ -292,6 +325,7 @@ def sample_native_result(data: bytes) -> dict:
     stats, stats_engine = byte_stats(data)
     mime, mime_engine = mime_scan(data)
     fingerprint, fingerprint_engine = fast_fingerprint(data)
+    sha256, sha256_engine = sha256_digest(data)
     return {
         "stats": asdict(stats),
         "stats_engine": stats_engine,
@@ -299,4 +333,6 @@ def sample_native_result(data: bytes) -> dict:
         "mime_engine": mime_engine,
         "fingerprint": str(fingerprint),
         "fingerprint_engine": fingerprint_engine,
+        "sha256": sha256,
+        "sha256_engine": sha256_engine,
     }
