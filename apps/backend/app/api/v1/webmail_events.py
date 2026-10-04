@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from app.core.config import settings
 from app.services.mail_events import MailEventStream, POLL_SECONDS
 from app.services.webmail import WebmailError, session_credentials
+from app.services.webmail_polish import touch_presence
 
 
 router = APIRouter(prefix="/webmail/events", tags=["webmail-events"])
@@ -65,8 +66,10 @@ async def sse_stream(
         stream = MailEventStream(address)
         cursor = last_id
         try:
+            await asyncio.to_thread(touch_presence, address)
             yield "event: ready\ndata: {\"type\":\"ready\"}\n\n"
             while not await request.is_disconnected():
+                await asyncio.to_thread(touch_presence, address)
                 try:
                     rows = await stream.read(cursor, POLL_SECONDS * 1000)
                 except redis.RedisError:
@@ -112,11 +115,13 @@ async def websocket_stream(websocket: WebSocket):
         return
 
     await websocket.accept()
+    await asyncio.to_thread(touch_presence, address)
     stream = MailEventStream(address)
     cursor = _event_cursor(websocket.query_params.get("last_event_id"))
     try:
         await websocket.send_json({"type": "ready", "cursor": cursor})
         while True:
+            await asyncio.to_thread(touch_presence, address)
             try:
                 rows = await stream.read(cursor, POLL_SECONDS * 1000)
             except redis.RedisError:
