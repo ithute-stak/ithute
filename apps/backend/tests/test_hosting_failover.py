@@ -186,3 +186,19 @@ def test_stateful_default_never_auto_relocates(db, tenant_admin, platform_owner,
     db.execute(delete(HostingProject).where(HostingProject.id == project.id))
     db.execute(delete(HostingNode).where(HostingNode.id == source.id))
     db.commit()
+
+
+
+def test_failover_runtime_cleanup_contract_exists():
+    repo = __import__("pathlib").Path(__file__).resolve().parents[3]
+    agent = (repo / "infrastructure" / "hosting-agent" / "agent.py").read_text(encoding="utf-8")
+    agent_v3 = (repo / "infrastructure" / "hosting-agent" / "agent_v3.py").read_text(encoding="utf-8")
+    operations = (repo / "apps" / "backend" / "app" / "api" / "v1" / "hosting_project_operations.py").read_text(encoding="utf-8")
+    frontend = (repo / "apps" / "frontend" / "app" / "hosting" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "reset_data_volume" in agent
+    assert 'operation not in {"restart", "logs", "retire"}' in agent_v3
+    assert "label=ithute.project=" in agent_v3
+    assert 'row.operation == "retire"' in operations
+    assert "Enable stateless failover" in frontend
+    assert "Move safely" in frontend
