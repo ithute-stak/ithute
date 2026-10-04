@@ -74,3 +74,44 @@ def test_python_sha256_matches_known_vector():
         "ba7816bf8f01cfea414140de5dae2223"
         "b00361a396177a9cb410ff61f20015ad"
     )
+
+
+def test_go_network_probe_falls_back_to_python(monkeypatch):
+    class BrokenClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def post(self, *args, **kwargs):
+            raise engine_runtime.httpx.ConnectError("offline")
+
+    monkeypatch.setattr(engine_runtime.httpx, "Client", BrokenClient)
+    monkeypatch.setattr(
+        engine_runtime,
+        "python_network_probe",
+        lambda targets, concurrency=16: {
+            "engine": "python-fallback",
+            "checked": len(targets),
+            "results": [
+                {
+                    "id": targets[0]["id"],
+                    "host": targets[0]["host"],
+                    "port": targets[0]["port"],
+                    "reachable": True,
+                    "latency_ms": 0.1,
+                }
+            ],
+        },
+    )
+
+    body, engine = engine_runtime.network_probe(
+        [{"id": "local:https", "host": "127.0.0.1", "port": 443}],
+        concurrency=4,
+    )
+
+    assert engine == "python-fallback"
+    assert body["engine"] == "python-fallback"
+    assert body["checked"] == 1
+    assert body["results"][0]["reachable"] is True
