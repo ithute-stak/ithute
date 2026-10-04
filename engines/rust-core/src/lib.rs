@@ -97,7 +97,7 @@ fn mime_scan(bytes: &[u8]) -> MimeScan {
     let boundary_markers = bytes
         .split(|value| *value == b'\n')
         .filter(|line| {
-            let trimmed = if line.first() == Some(&b'\r') { &line[1..] } else { line };
+            let trimmed = line.iter().position(|value| *value != b'\r').map(|index| &line[index..]).unwrap_or(&[]);
             trimmed.starts_with(b"--")
         })
         .count();
