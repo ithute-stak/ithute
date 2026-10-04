@@ -26,6 +26,10 @@ CONTACT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 CONTACT_SCAN_LIMIT = 100
 MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024
 PRESENCE_TTL_SECONDS = 90
+PUBLIC_SHARED_DOMAINS = {
+    "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
+    "yahoo.com", "icloud.com", "me.com", "proton.me", "protonmail.com",
+}
 
 
 def _redis():
@@ -87,6 +91,24 @@ def _contact_meta_key(address: str) -> str:
     return f"webmail:contacts-meta:{address.lower()}"
 
 
+def _contact_domain(value: str) -> str:
+    normal = _normal_contact(value)
+    return normal.rsplit("@", 1)[-1] if "@" in normal else ""
+
+
+def _shared_contacts_key(address: str) -> str:
+    return f"webmail:shared-contacts:{_contact_domain(address)}"
+
+
+def _relationship_key(kind: str, address: str, email_address: str) -> str:
+    return f"webmail:relationship:{kind}:{_normal_contact(address)}:{_normal_contact(email_address)}"
+
+
+def _chat_key(left: str, right: str) -> str:
+    first, second = sorted([_normal_contact(left), _normal_contact(right)])
+    return f"webmail:chat:{first}:{second}"
+
+
 def _normal_contact(value: str) -> str:
     return (value or "").strip().lower()
 
@@ -129,6 +151,9 @@ def _learn_contact(address: str, email_address: str, display_name: str = "", sou
         elif not name:
             name = existing_name
         store.hset(contacts_key, email_address, name)
+        owner_domain = _contact_domain(owner)
+        if owner_domain and owner_domain not in PUBLIC_SHARED_DOMAINS:
+            store.hset(_shared_contacts_key(owner), email_address, name)
         store.hset(
             meta_key,
             email_address,
@@ -137,6 +162,7 @@ def _learn_contact(address: str, email_address: str, display_name: str = "", sou
                     "sources": sorted(sources),
                     "last_seen": now,
                     "interactions": int(meta.get("interactions", 0) or 0) + 1,
+                    "pinned": bool(meta.get("pinned", False)),
                 },
                 separators=(",", ":"),
             ),
@@ -176,6 +202,121 @@ def contact_presence(addresses: list[str]) -> dict[str, bool]:
     return {value: bool(values[index]) for index, value in enumerate(clean)}
 
 
+def set_contact_pinned(address: str, email_address: str, pinned: bool) -> dict:
+    owner = _normal_contact(address)
+    email_address = _normal_contact(email_address)
+    if not CONTACT_RE.fullmatch(email_address):
+        raise WebmailError("Invalid contact email address")
+    try:
+        store = _redis()
+        meta_key = _contact_meta_key(owner)
+        meta = _contact_metadata(store.hget(meta_key, email_address))
+        meta["pinned"] = bool(pinned)
+        store.hset(meta_key, email_address, json.dumps(meta, separators=(",", ":")))
+    except redis.RedisError as exc:
+        raise WebmailError("Webmail contacts store is unavailable") from exc
+    return {"email": email_address, "pinned": bool(pinned)}
+
+
+def shared_contacts(address: str) -> list[dict]:
+    owner_domain = _contact_domain(address)
+    if not owner_domain or owner_domain in PUBLIC_SHARED_DOMAINS:
+        return []
+    try:
+        raw = _redis().hgetall(_shared_contacts_key(address))
+    except redis.RedisError as exc:
+        raise WebmailError("Webmail contacts store is unavailable") from exc
+    return [
+        {"email": email_address, "name": display_name, "domain": _contact_domain(email_address)}
+        for email_address, display_name in sorted(raw.items())
+    ][:200]
+
+
+def add_relationship_note(address: str, email_address: str, text: str) -> dict:
+    clean = " ".join((text or "").replace("\r", " ").replace("\n", " ").split())[:2000]
+    if not clean:
+        raise WebmailError("Note cannot be empty")
+    item = {"text": clean, "created_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        store = _redis()
+        key = _relationship_key("notes", address, email_address)
+        store.lpush(key, json.dumps(item, separators=(",", ":")))
+        store.ltrim(key, 0, 99)
+    except redis.RedisError as exc:
+        raise WebmailError("Webmail relationship store is unavailable") from exc
+    return item
+
+
+def relationship_notes(address: str, email_address: str) -> list[dict]:
+    try:
+        rows = _redis().lrange(_relationship_key("notes", address, email_address), 0, 99)
+    except redis.RedisError as exc:
+        raise WebmailError("Webmail relationship store is unavailable") from exc
+    return [_contact_metadata(row) for row in rows if _contact_metadata(row)]
+
+
+def add_relationship_task(address: str, email_address: str, text: str, due_at: str = "") -> dict:
+    clean = " ".join((text or "").replace("\r", " ").replace("\n", " ").split())[:1000]
+    if not clean:
+        raise WebmailError("Task cannot be empty")
+    now = datetime.now(timezone.utc)
+    item = {
+        "id": f"{int(now.timestamp() * 1000)}",
+        "text": clean,
+        "due_at": (due_at or "")[:64],
+        "completed": False,
+        "created_at": now.isoformat(),
+    }
+    try:
+        store = _redis()
+        key = _relationship_key("tasks", address, email_address)
+        store.lpush(key, json.dumps(item, separators=(",", ":")))
+        store.ltrim(key, 0, 99)
+    except redis.RedisError as exc:
+        raise WebmailError("Webmail relationship store is unavailable") from exc
+    return item
+
+
+def relationship_tasks(address: str, email_address: str) -> list[dict]:
+    try:
+        rows = _redis().lrange(_relationship_key("tasks", address, email_address), 0, 99)
+    except redis.RedisError as exc:
+        raise WebmailError("Webmail relationship store is unavailable") from exc
+    return [_contact_metadata(row) for row in rows if _contact_metadata(row)]
+
+
+def internal_chat_messages(address: str, peer: str) -> list[dict]:
+    if _contact_domain(address) != _contact_domain(peer):
+        return []
+    try:
+        rows = _redis().lrange(_chat_key(address, peer), -100, -1)
+    except redis.RedisError as exc:
+        raise WebmailError("Internal chat store is unavailable") from exc
+    return [_contact_metadata(row) for row in rows if _contact_metadata(row)]
+
+
+def send_internal_chat(address: str, peer: str, text: str) -> dict:
+    if _contact_domain(address) != _contact_domain(peer):
+        raise WebmailError("Internal chat is only available between mailboxes on the same company domain")
+    clean = " ".join((text or "").replace("\r", " ").replace("\n", " ").split())[:4000]
+    if not clean:
+        raise WebmailError("Chat message cannot be empty")
+    item = {
+        "from": _normal_contact(address),
+        "to": _normal_contact(peer),
+        "text": clean,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        store = _redis()
+        key = _chat_key(address, peer)
+        store.rpush(key, json.dumps(item, separators=(",", ":")))
+        store.ltrim(key, -100, -1)
+    except redis.RedisError as exc:
+        raise WebmailError("Internal chat store is unavailable") from exc
+    return item
+
+
 def contacts(address: str, query: str = "") -> list[dict]:
     owner = address.lower()
     try:
@@ -200,6 +341,8 @@ def contacts(address: str, query: str = "") -> list[dict]:
                 "sources": sources,
                 "last_seen": str(meta.get("last_seen") or ""),
                 "interactions": int(meta.get("interactions", 0) or 0),
+                "pinned": bool(meta.get("pinned", False)),
+                "domain": _contact_domain(email_address),
             }
         )
     return sorted(rows, key=lambda row: (row["last_seen"], row["name"].lower(), row["email"].lower()), reverse=True)[:100]
