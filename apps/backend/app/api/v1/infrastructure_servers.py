@@ -180,8 +180,19 @@ def _hosting_allocated(db: Session, node_id: UUID) -> dict:
             func.count(HostingProject.id),
         ).where(HostingProject.node_id == node_id)
     ).one()
+    database_storage = int(
+        db.scalar(
+            select(func.coalesce(func.sum(HostingDatabase.storage_mb), 0)).where(
+                HostingDatabase.node_id == node_id,
+                HostingDatabase.status != "deleting",
+            )
+        )
+        or 0
+    )
     return {
-        "storage_mb": int(row[0]),
+        "storage_mb": int(row[0]) + database_storage,
+        "application_storage_mb": int(row[0]),
+        "database_storage_mb": database_storage,
         "memory_mb": int(row[1]),
         "cpu_millicores": int(row[2]),
         "projects": int(row[3]),
