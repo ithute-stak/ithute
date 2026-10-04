@@ -33,7 +33,10 @@ type Onboarding = {
     server_agent_online: boolean;
     private_origin_configured: boolean;
     infrastructure_linked: boolean;
+    managed_network_connected: boolean;
   };
+  managed_network_ip?: string | null;
+  managed_network_last_handshake_at?: string | null;
 };
 type Bootstrap = { node_id: string; node: string; token: string; script_path: string; expires_at: string };
 
@@ -66,8 +69,6 @@ export default function HostingNodesPage() {
   const [error, setError] = useState("");
   const [newToken, setNewToken] = useState<{ node: string; token: string } | null>(null);
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
-  const [originIps, setOriginIps] = useState<Record<string, string>>({});
-  const [edgeCidrs, setEdgeCidrs] = useState<Record<string, string>>({});
   const [backupRemotes, setBackupRemotes] = useState<Record<string, string>>({});
 
   async function load() {
@@ -109,8 +110,7 @@ export default function HostingNodesPage() {
     const response = await api(`/platform/hosting/nodes/${node.id}/bootstrap`, {
       method: "POST",
       body: JSON.stringify({
-        origin_bind_ip: (originIps[node.id] || "").trim() || null,
-        edge_origin_cidrs: (edgeCidrs[node.id] || "").trim(),
+        managed_private_network: true,
         backup_remote: (backupRemotes[node.id] || "").trim() || null,
       }),
     });
@@ -173,7 +173,7 @@ export default function HostingNodesPage() {
       <section className="surface-card p-4 sm:p-5"><div className="flex items-center justify-between gap-3"><div><h2 className="text-sm font-black">Registered hosting nodes</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">Capacity is configured under Packages & Capacity. This page controls the node-agent identity only.</p></div><button className="icon-button" aria-label="Refresh hosting nodes" disabled={!me?.is_platform_owner} onClick={() => void load()}><RefreshCw size={15}/></button></div>{loading ? <p className="mt-6 text-xs text-[var(--admin-muted)]">Loading hosting nodes…</p> : <div className="mt-5 grid gap-4 xl:grid-cols-2">{nodes.map((node) => { const agent = agents[node.id]; return <article key={node.id} className="rounded-2xl border border-[#dce5e0] bg-white p-4"><div className="flex items-start justify-between gap-3"><div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-[#edf4f1] text-[#285b55]"><Server size={18}/></span><div><h3 className="text-sm font-black">{node.name}</h3><p className="mt-0.5 text-[9px] text-[var(--admin-muted)]">{node.hostname}{node.public_ip ? ` · ${node.public_ip}` : ""}</p></div></div><span className={`rounded-full px-2 py-1 text-[9px] font-black ${node.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{node.status}</span></div><div className="mt-4 grid grid-cols-3 gap-2 text-[9px]"><div className="rounded-xl bg-[#f5f8f6] p-2.5"><b>{gb(node.available.storage_mb)}</b><br/>storage free</div><div className="rounded-xl bg-[#f5f8f6] p-2.5"><b>{node.available.memory_mb} MB</b><br/>RAM free</div><div className="rounded-xl bg-[#f5f8f6] p-2.5"><b>{cpu(node.available.cpu_millicores)}</b><br/>CPU free</div></div><div className="mt-4 rounded-xl border border-[#e4e9e6] p-3"><div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black">Node agent</p><p className="mt-1 text-[9px] text-[var(--admin-muted)]">{agent?.configured ? `Configured · ${agent.token_hint || "credential hidden"}` : "No agent credential yet"}</p><p className="mt-1 text-[9px] text-[var(--admin-muted)]">{agent?.last_seen_at ? `Last seen ${new Date(agent.last_seen_at).toLocaleString()}${agent.agent_version ? ` · ${agent.agent_version}` : ""}` : "No heartbeat received yet"}</p></div><button className="btn-secondary shrink-0" onClick={() => void rotate(node)}><KeyRound size={13}/>{agent?.configured ? "Rotate" : "Create credential"}</button></div></div>
 <div className="mt-3 rounded-xl border border-[#e4e9e6] bg-[#f8fbf9] p-3">
   <div className="flex items-center gap-2"><Network size={14}/><p className="text-[10px] font-black">Secure VPS onboarding</p></div>
-  <div className="mt-3 grid gap-2 sm:grid-cols-2"><input className="input" value={originIps[node.id] ?? agent?.origin_bind_ip ?? ""} onChange={(event) => setOriginIps((current) => ({ ...current, [node.id]: event.target.value }))} placeholder="Private/VPN origin IP, e.g. 10.20.0.15"/><input className="input" value={edgeCidrs[node.id] || ""} onChange={(event) => setEdgeCidrs((current) => ({ ...current, [node.id]: event.target.value }))} placeholder="Edge CIDRs, e.g. 10.20.0.10/32"/></div>
+  <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-[9px] text-emerald-800"><b>Ithute managed private network</b><br/>The installer generates the VPS key locally, Ithute allocates the tunnel IP automatically, and the private key never leaves the VPS.{onboarding[node.id]?.managed_network_ip ? <span className="mt-1 block font-black">Assigned IP: {onboarding[node.id]?.managed_network_ip}</span> : null}</div>
   <input className="input mt-2" value={backupRemotes[node.id] || ""} onChange={(event) => setBackupRemotes((current) => ({ ...current, [node.id]: event.target.value }))} placeholder="Optional rclone backup remote"/>
   <div className="mt-3 flex flex-wrap gap-2"><button className="btn-primary" onClick={() => void createBootstrap(node)}><TerminalSquare size={13}/>Generate secure installer</button>{onboarding[node.id]?.ready && !onboarding[node.id]?.active ? <button className="btn-secondary" onClick={() => void activateNode(node)}><CheckCircle2 size={13}/>Activate node</button> : null}</div>
   {onboarding[node.id] ? <div className="mt-3 grid grid-cols-2 gap-1.5 text-[8px]">{Object.entries(onboarding[node.id].checks).map(([name, passed]) => <span key={name} className={`rounded-lg px-2 py-1.5 font-black ${passed ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>{passed ? "✓" : "•"} {name.replaceAll("_", " ")}</span>)}</div> : null}
