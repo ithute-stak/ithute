@@ -368,6 +368,33 @@ def run_application_failover_reconcile(db: Session, limit: int = 200) -> dict:
             elif existing.status in ACTIVE_ATTEMPT_STATUSES:
                 pending += 1
 
+    # Clear unresolved pre-deployment records when the source recovers before
+    # a replacement was actually staged. A later failure creates a fresh event.
+    unresolved = db.scalars(
+        select(HostingFailoverAttempt)
+        .where(
+            HostingFailoverAttempt.status.in_(["pending", "recovery_required"]),
+            HostingFailoverAttempt.deployment_id.is_(None),
+        )
+        .limit(max(1, min(limit, 1000)))
+    ).all()
+    for attempt in unresolved:
+        source = db.get(HostingNode, attempt.source_node_id)
+        state = db.get(HostingNodeHealthState, attempt.source_node_id)
+        still_failed = bool(
+            source
+            and source.status == "draining"
+            and not source.accepts_new_projects
+            and state
+            and state.automation_enabled
+            and state.health_status == "unhealthy"
+            and state.last_transition == "auto_drained"
+        )
+        if not still_failed:
+            attempt.status = "resolved_by_source_recovery"
+            attempt.reason = "Source node recovered before a replacement deployment was staged."
+            attempt.completed_at = now
+
     # Continue previously started relocation attempts even if the source node
     # recovers before cutover. This avoids abandoning a healthy staged release.
     active_attempts = db.scalars(
