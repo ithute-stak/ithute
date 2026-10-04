@@ -15,8 +15,10 @@ def test_rendered_bootstrap_installs_both_agents_without_public_origin():
 
     assert "ITHUTE_HOSTING_AGENT_TOKEN=ith_host_example" in script
     assert "ITHUTE_SERVER_AGENT_TOKEN=ith_srv_example" in script
-    assert "ITHUTE_HOSTING_ORIGIN_BIND_IP=10.20.0.15" in script
-    assert "ITHUTE_EDGE_ORIGIN_CIDRS=10.20.0.10/32" in script
+    assert "/api/v1/hosting/agent/network/enroll" in script
+    assert "wg genkey" in script
+    assert "systemctl enable --now wg-quick@ithute0" in script
+    assert "ITHUTE_HOSTING_ORIGIN_BIND_IP=$ORIGIN_BIND_IP" in script
     assert "systemctl enable --now ithute-hosting-agent.service" in script
     assert "systemctl enable --now ithute-server-agent.service" in script
     assert "/opt/ithute-hosting-node/validate-host.sh" in script
@@ -39,6 +41,8 @@ def test_secure_onboarding_contract_exists():
     assert "node.accepts_new_projects = False" in api
     assert '@router.post("/platform/hosting/nodes/{node_id}/activate")' in api
     assert "origin_bind_ip" in agent
+    assert "managed_private_network" in api
+    assert "managed_network_connected" in api
     assert "Generate secure installer" in frontend
     assert "Copy safe install command" in frontend
     assert "Activate node" in frontend
