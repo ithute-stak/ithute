@@ -17,3 +17,36 @@ Required production settings:
 - `ITHUTE_HOSTING_ORIGIN_CIDRS` — should include the managed mesh subnet
 
 The edge private key lives only in `/etc/ithute-wireguard/private.key`.
+
+
+## Automatic edge bootstrap
+
+Fresh Ithute VPS setup and normal production upgrades now run
+`bootstrap.sh` automatically. The helper is idempotent and:
+
+- installs WireGuard tooling and iptables when required;
+- generates the edge private key once under `/etc/ithute-wireguard/private.key`;
+- derives and writes the edge public key into `.env.production`;
+- creates/preserves a strong reconciler credential;
+- writes the edge address, subnet, endpoint and UDP listen port into production config;
+- opens only the configured WireGuard UDP port through an Ithute-owned persistent firewall service;
+- brings up `ithute0` before the API is available, avoiding first-boot circular dependencies;
+- installs and enables the peer reconciler timer;
+- validates the interface address and listen port before returning success.
+
+The private key and reconciler secret are never printed by the bootstrap.
+
+If the VPS provider has a separate cloud firewall/security group, UDP 51820 (or
+the configured listen port) must also be permitted there. Host-level firewall
+configuration cannot modify a provider control plane.
+
+For recovery on an existing Ithute edge host, use the same canonical helper:
+
+```bash
+sudo ITHUTE_APP_DIR=/home/administrator/ithute-platform \
+  bash /home/administrator/ithute-platform/infrastructure/wireguard-edge/bootstrap.sh
+```
+
+`scripts/verify-production-readiness.sh` validates the edge interface, address,
+public key, listen port, firewall service, reconciler timer and advertised
+endpoint whenever the managed-network settings exist in production.
