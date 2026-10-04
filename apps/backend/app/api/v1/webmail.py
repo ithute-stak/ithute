@@ -31,7 +31,23 @@ from app.services.webmail import (
     session_credentials,
     set_flags,
 )
-from app.services.webmail_polish import contact_presence, contacts, folder_counts, save_contact, save_signature, send_rich_message, signature
+from app.services.webmail_polish import (
+    add_relationship_note,
+    add_relationship_task,
+    contact_presence,
+    contacts,
+    folder_counts,
+    internal_chat_messages,
+    relationship_notes,
+    relationship_tasks,
+    save_contact,
+    save_signature,
+    send_internal_chat,
+    send_rich_message,
+    set_contact_pinned,
+    shared_contacts,
+    signature,
+)
 
 router = APIRouter(prefix="/webmail", tags=["webmail"])
 UID_RE = re.compile(r"^[0-9]+$")
@@ -113,6 +129,27 @@ class WebmailIdentity(BaseModel):
 class WebmailContact(BaseModel):
     email: EmailStr
     name: str = Field(default="", max_length=255)
+
+
+class WebmailBusinessPin(BaseModel):
+    email: EmailStr
+    pinned: bool = True
+
+
+class WebmailBusinessNote(BaseModel):
+    email: EmailStr
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class WebmailBusinessTask(BaseModel):
+    email: EmailStr
+    text: str = Field(min_length=1, max_length=1000)
+    due_at: str = Field(default="", max_length=64)
+
+
+class WebmailBusinessChat(BaseModel):
+    email: EmailStr
+    text: str = Field(min_length=1, max_length=4000)
 
 
 def _failure(exc: WebmailError, status: int = 503) -> HTTPException:
@@ -415,11 +452,13 @@ def get_business_contacts(
                 **row,
                 "online": bool(presence.get(email_address, False)),
                 "business": bool("incoming" in source_set or "outgoing" in source_set),
-                "score": interactions * 10 + (100000 if presence.get(email_address, False) else 0),
+                "score": interactions * 10 + (100000 if presence.get(email_address, False) else 0) + (1000000 if row.get("pinned") else 0),
                 "last_seen": last_seen,
+                "company": email_address.rsplit("@", 1)[-1] if "@" in email_address else "",
             })
         enriched.sort(
             key=lambda row: (
+                bool(row.get("pinned")),
                 bool(row["online"]),
                 int(row["score"]),
                 str(row["last_seen"]),
@@ -455,6 +494,158 @@ def get_business_conversation(
         return {"items": rows[:limit], "email": email}
     except WebmailError as exc:
         raise _failure(exc) from exc
+
+
+@router.put("/business-contacts/pin")
+def pin_business_contact(
+    payload: WebmailBusinessPin,
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+):
+    address, _ = _credentials(token)
+    try:
+        return set_contact_pinned(address, str(payload.email), payload.pinned)
+    except WebmailError as exc:
+        raise _failure(exc, 422) from exc
+
+
+def _business_conversation_rows(address: str, password: str, email_address: str, limit: int = 50) -> list[dict]:
+    available = folders(address, password)
+    names = [str(item.get("name") or "") for item in available]
+    inbox_name = next((name for name in names if name.lower() == "inbox"), "INBOX")
+    sent_name = next((name for name in names if "sent" in name.lower()), "")
+    inbox = messages(address, password, folder=inbox_name, limit=limit, offset=0, query=email_address)
+    sent = messages(address, password, folder=sent_name, limit=limit, offset=0, query=email_address) if sent_name else {"items": []}
+    rows = [
+        *[{**row, "folder": inbox_name, "direction": "incoming"} for row in inbox.get("items", [])],
+        *[{**row, "folder": sent_name, "direction": "outgoing"} for row in sent.get("items", [])],
+    ]
+    rows.sort(key=lambda row: str(row.get("date") or ""), reverse=True)
+    return rows[:limit]
+
+
+@router.get("/business-workspace")
+def get_business_workspace(
+    email: WebmailAddress,
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+):
+    address, password = _credentials(token)
+    try:
+        rows = _business_conversation_rows(address, password, email, 50)
+        contact = next((item for item in contacts(address) if str(item.get("email") or "").lower() == email.lower()), None) or {
+            "email": email,
+            "name": "",
+            "interactions": len(rows),
+            "last_seen": "",
+            "pinned": False,
+            "domain": email.rsplit("@", 1)[-1] if "@" in email else "",
+        }
+        domain = email.rsplit("@", 1)[-1].lower() if "@" in email else ""
+        company_people = [
+            item for item in contacts(address)
+            if str(item.get("email") or "").lower().endswith(f"@{domain}")
+        ][:50]
+        documents = []
+        for row in rows:
+            for item in row.get("attachments") or []:
+                documents.append({
+                    **item,
+                    "message_uid": row.get("uid"),
+                    "folder": row.get("folder"),
+                    "subject": row.get("subject") or "",
+                    "date": row.get("date") or "",
+                    "direction": row.get("direction"),
+                })
+        latest = rows[0] if rows else {}
+        status = "No conversation yet"
+        if latest:
+            if latest.get("direction") == "outgoing":
+                status = "Waiting for reply"
+            elif not latest.get("seen", True):
+                status = "You owe a reply"
+            else:
+                status = "Conversation active"
+        timeline = [
+            {
+                "type": "email",
+                "direction": row.get("direction"),
+                "subject": row.get("subject") or "(no subject)",
+                "date": row.get("date") or "",
+                "uid": row.get("uid"),
+                "folder": row.get("folder"),
+                "attachments": len(row.get("attachments") or []),
+            }
+            for row in rows
+        ]
+        owner_domain = address.rsplit("@", 1)[-1].lower() if "@" in address else ""
+        internal = bool(domain and domain == owner_domain)
+        return {
+            "contact": contact,
+            "company": {"domain": domain, "people": company_people},
+            "overview": {
+                "emails": len(rows),
+                "documents": len(documents),
+                "status": status,
+                "online": bool(contact_presence([email]).get(email.lower(), False)),
+                "internal_chat": internal,
+            },
+            "emails": rows,
+            "documents": documents,
+            "notes": relationship_notes(address, email),
+            "tasks": relationship_tasks(address, email),
+            "timeline": timeline,
+            "shared_contacts": shared_contacts(address),
+            "chat": internal_chat_messages(address, email) if internal else [],
+        }
+    except WebmailError as exc:
+        raise _failure(exc) from exc
+
+
+@router.post("/business-notes", status_code=201)
+def create_business_note(
+    payload: WebmailBusinessNote,
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+):
+    address, _ = _credentials(token)
+    try:
+        return add_relationship_note(address, str(payload.email), payload.text)
+    except WebmailError as exc:
+        raise _failure(exc, 422) from exc
+
+
+@router.post("/business-tasks", status_code=201)
+def create_business_task(
+    payload: WebmailBusinessTask,
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+):
+    address, _ = _credentials(token)
+    try:
+        return add_relationship_task(address, str(payload.email), payload.text, payload.due_at)
+    except WebmailError as exc:
+        raise _failure(exc, 422) from exc
+
+
+@router.get("/business-chat")
+def get_business_chat(
+    email: WebmailAddress,
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+):
+    address, _ = _credentials(token)
+    try:
+        return {"items": internal_chat_messages(address, email)}
+    except WebmailError as exc:
+        raise _failure(exc) from exc
+
+
+@router.post("/business-chat", status_code=201)
+def create_business_chat(
+    payload: WebmailBusinessChat,
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+):
+    address, _ = _credentials(token)
+    try:
+        return send_internal_chat(address, str(payload.email), payload.text)
+    except WebmailError as exc:
+        raise _failure(exc, 422) from exc
 
 
 @router.post("/contacts", status_code=201)
