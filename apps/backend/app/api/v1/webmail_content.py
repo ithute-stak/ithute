@@ -1,3 +1,4 @@
+import html
 import re
 from email import policy
 from email.parser import BytesParser
@@ -39,6 +40,11 @@ ALLOWED_ATTRIBUTES = {
     "col": ["span", "width"],
 }
 REMOTE_IMAGE_RE = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
+IMG_ALT_RE = re.compile(r"""\balt\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.IGNORECASE)
+EMPTY_SAFE_LINK_RE = re.compile(
+    r'(<a\b[^>]*\bhref=["\'](?:https?://|mailto:)[^"\']+["\'][^>]*>)\s*(</a\s*>)',
+    re.IGNORECASE,
+)
 SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
 
 
@@ -69,9 +75,17 @@ def _html_body(raw: bytes) -> tuple[str, bool, int]:
 
     html_value = SCRIPT_STYLE_RE.sub("", html_value)
     image_count = len(REMOTE_IMAGE_RE.findall(html_value))
-    # Remote images are removed server-side by default. This prevents tracking
-    # pixels and third-party content from loading just because a message opened.
-    html_value = REMOTE_IMAGE_RE.sub("", html_value)
+    # Remote images are removed server-side by default. Preserve only their
+    # human-readable alt text so image-backed action buttons (common in account
+    # verification emails) do not become invisible while tracking remains blocked.
+    def _blocked_image_label(match: re.Match[str]) -> str:
+        alt = IMG_ALT_RE.search(match.group(0))
+        if alt is None:
+            return ""
+        value = next((part for part in alt.groups() if part is not None), "")
+        return html.escape(value.strip())
+
+    html_value = REMOTE_IMAGE_RE.sub(_blocked_image_label, html_value)
     safe = bleach.clean(
         html_value,
         tags=ALLOWED_TAGS,
@@ -79,6 +93,10 @@ def _html_body(raw: bytes) -> tuple[str, bool, int]:
         protocols=["http", "https", "mailto"],
         strip=True,
     )
+    # A legitimate action anchor can still be empty when the sender used a
+    # decorative/background-only button. Keep the safe URL clickable with a
+    # neutral label instead of silently hiding the action from the user.
+    safe = EMPTY_SAFE_LINK_RE.sub(r"\1Open secure link\2", safe)
     return safe[:2_000_000], True, image_count
 
 
