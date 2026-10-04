@@ -4,14 +4,13 @@ set -Eeuo pipefail
 APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute-platform}"
 REPO="ithute-stak/ithute"
 API="https://api.github.com/repos/$REPO"
-HELPER="$APP_DIR/scripts/deploy-production-manual.sh"
+LOCAL_HELPER="$APP_DIR/scripts/deploy-production-manual.sh"
+REPO_RAW="https://raw.githubusercontent.com/$REPO"
 
 if [ "$APP_DIR" != "/home/administrator/ithute-platform" ]; then
   echo "Refusing to operate outside /home/administrator/ithute-platform." >&2
   exit 2
 fi
-
-test -f "$HELPER" || { echo "Missing Ithute deployment helper: $HELPER" >&2; exit 1; }
 
 tmpdir="$(mktemp -d /tmp/ithute-latest.XXXXXX)"
 cleanup() { rm -rf "$tmpdir"; }
@@ -34,6 +33,15 @@ PY
 )"
 
 echo "[Ithute] Current main: $MAIN_SHA"
+
+REMOTE_HELPER="$tmpdir/deploy-production-manual.sh"
+echo "[Ithute] Refreshing deployment helper from approved main $MAIN_SHA"
+curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL \
+  "$REPO_RAW/$MAIN_SHA/scripts/deploy-production-manual.sh" \
+  -o "$REMOTE_HELPER"
+test -s "$REMOTE_HELPER" || { echo "Downloaded deployment helper is empty." >&2; exit 1; }
+bash -n "$REMOTE_HELPER"
+chmod 700 "$REMOTE_HELPER"
 
 current=""
 if [ -f "$APP_DIR/.image.env" ]; then
@@ -83,7 +91,7 @@ echo "[Ithute] Current production: ${current:-unknown}"
 echo "[Ithute] Deploying approved current main: $MAIN_SHA"
 
 if [ "$(id -u)" -eq 0 ]; then
-  exec "$HELPER" "$MAIN_SHA"
+  exec "$REMOTE_HELPER" "$MAIN_SHA"
 else
-  exec sudo "$HELPER" "$MAIN_SHA"
+  exec sudo "$REMOTE_HELPER" "$MAIN_SHA"
 fi
