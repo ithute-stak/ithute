@@ -31,6 +31,33 @@ class _RustByteStats(ctypes.Structure):
     ]
 
 
+@dataclass(frozen=True)
+class MimeScan:
+    bytes: int
+    header_bytes: int
+    body_bytes: int
+    lines: int
+    crlf_lines: int
+    non_ascii: int
+    nul_bytes: int
+    boundary_markers: int
+    attachment_signals: int
+
+
+class _RustMimeScan(ctypes.Structure):
+    _fields_ = [
+        ("bytes", ctypes.c_size_t),
+        ("header_bytes", ctypes.c_size_t),
+        ("body_bytes", ctypes.c_size_t),
+        ("lines", ctypes.c_size_t),
+        ("crlf_lines", ctypes.c_size_t),
+        ("non_ascii", ctypes.c_size_t),
+        ("nul_bytes", ctypes.c_size_t),
+        ("boundary_markers", ctypes.c_size_t),
+        ("attachment_signals", ctypes.c_size_t),
+    ]
+
+
 _rust: ctypes.CDLL | None = None
 _cpp: ctypes.CDLL | None = None
 
@@ -48,6 +75,12 @@ def _load_rust() -> ctypes.CDLL | None:
         ctypes.POINTER(_RustByteStats),
     ]
     library.ithute_rust_byte_stats.restype = ctypes.c_int
+    library.ithute_rust_mime_scan.argtypes = [
+        ctypes.POINTER(ctypes.c_ubyte),
+        ctypes.c_size_t,
+        ctypes.POINTER(_RustMimeScan),
+    ]
+    library.ithute_rust_mime_scan.restype = ctypes.c_int
     _rust = library
     return library
 
@@ -90,6 +123,61 @@ def byte_stats(data: bytes) -> tuple[ByteStats, str]:
     if code != 0:
         return python_byte_stats(data), "python-fallback"
     return ByteStats(output.bytes, output.lines, output.ascii, output.non_ascii), "rust"
+
+
+def python_mime_scan(data: bytes) -> MimeScan:
+    split_at = data.find(b"\r\n\r\n")
+    separator = 4
+    if split_at < 0:
+        split_at = data.find(b"\n\n")
+        separator = 2
+    header_bytes = len(data) if split_at < 0 else split_at + separator
+    lower = data.lower()
+    attachment_signals = int(
+        b"content-disposition" in lower or b"filename" in lower or b"name" in lower
+    )
+    return MimeScan(
+        bytes=len(data),
+        header_bytes=header_bytes,
+        body_bytes=max(0, len(data) - header_bytes),
+        lines=0 if not data else data.count(b"\n") + 1,
+        crlf_lines=data.count(b"\r\n"),
+        non_ascii=sum(1 for value in data if value >= 128),
+        nul_bytes=data.count(b"\x00"),
+        boundary_markers=sum(
+            1 for line in data.split(b"\n")
+            if line.lstrip(b"\r").startswith(b"--")
+        ),
+        attachment_signals=attachment_signals,
+    )
+
+
+def mime_scan(data: bytes) -> tuple[MimeScan, str]:
+    """Use Rust for the raw RFC822/MIME pre-scan with a Python reference fallback."""
+    library = _load_rust()
+    if library is None:
+        return python_mime_scan(data), "python-fallback"
+
+    output = _RustMimeScan()
+    if data:
+        buffer = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
+        pointer = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte))
+    else:
+        pointer = ctypes.POINTER(ctypes.c_ubyte)()
+    code = library.ithute_rust_mime_scan(pointer, len(data), ctypes.byref(output))
+    if code != 0:
+        return python_mime_scan(data), "python-fallback"
+    return MimeScan(
+        output.bytes,
+        output.header_bytes,
+        output.body_bytes,
+        output.lines,
+        output.crlf_lines,
+        output.non_ascii,
+        output.nul_bytes,
+        output.boundary_markers,
+        output.attachment_signals,
+    ), "rust"
 
 
 def _python_fnv1a64(data: bytes) -> int:
@@ -154,7 +242,7 @@ def engine_status() -> dict:
                 "available": rust_available,
                 "mode": "native",
                 "library": str(RUST_LIBRARY),
-                "capabilities": ["byte-stats"] if rust_available else [],
+                "capabilities": ["byte-stats", "mime-prescan"] if rust_available else [],
                 "fallback": "python",
             },
             "go": go,
@@ -171,10 +259,13 @@ def engine_status() -> dict:
 
 def sample_native_result(data: bytes) -> dict:
     stats, stats_engine = byte_stats(data)
+    mime, mime_engine = mime_scan(data)
     fingerprint, fingerprint_engine = fast_fingerprint(data)
     return {
         "stats": asdict(stats),
         "stats_engine": stats_engine,
+        "mime": asdict(mime),
+        "mime_engine": mime_engine,
         "fingerprint": str(fingerprint),
         "fingerprint_engine": fingerprint_engine,
     }
