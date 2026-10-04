@@ -21,6 +21,7 @@ from app.models import (
     DomainStatus,
     HOSTING_RULES_VERSION,
     HostingDatabase,
+    HostingFailoverAttempt,
     HostingNode,
     HostingNodeHealthState,
     HostingProject,
