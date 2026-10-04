@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import hashlib
 import json
 import smtplib
 import ssl
@@ -16,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import TransactionalMessage
+from app.services.engine_router import execute_binary
 from app.services.mailboxes import normalize_destination
 from app.services.transactional_mail import ensure_system_credential, validate_sender
 
@@ -40,7 +40,7 @@ class DecodedAttachment:
 
     @property
     def sha256_hex(self) -> str:
-        return hashlib.sha256(self.content).hexdigest()
+        return str(execute_binary("mail.sha256", self.content).value)
 
 
 def decode_attachments(items) -> list[DecodedAttachment]:

@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from app.services import engine_runtime
+
+
+@dataclass(frozen=True)
+class EngineExecution:
+    operation: str
+    engine: str
+    value: Any
+
+
+BinaryHandler = Callable[[bytes], tuple[Any, str]]
+
+
+_BINARY_OPERATIONS: dict[str, BinaryHandler] = {
+    "mail.byte_stats": engine_runtime.byte_stats,
+    "mail.mime_scan": engine_runtime.mime_scan,
+    "mail.sha256": engine_runtime.sha256_digest,
+    "native.fingerprint": engine_runtime.fast_fingerprint,
+}
+
+
+PREFERRED_ENGINES: dict[str, str] = {
+    "mail.byte_stats": "rust",
+    "mail.mime_scan": "rust",
+    "mail.sha256": "rust",
+    "native.fingerprint": "cpp",
+    "network.concurrent": "go",
+    "enterprise.xml": "java",
+}
+
+
+def preferred_engine(operation: str) -> str:
+    return PREFERRED_ENGINES.get(operation, "python")
+
+
+def execute_binary(operation: str, data: bytes) -> EngineExecution:
+    """Route bounded byte-oriented work while Python remains authoritative.
+
+    Each native handler owns its fallback semantics. A specialist failure must
+    therefore degrade to Python rather than fail a mailbox request.
+    """
+    handler = _BINARY_OPERATIONS.get(operation)
+    if handler is None:
+        raise ValueError(f"Unsupported binary engine operation: {operation}")
+    value, engine = handler(data)
+    return EngineExecution(operation=operation, engine=engine, value=value)
+
+
+def routing_status() -> dict[str, dict[str, str]]:
+    return {
+        operation: {
+            "preferred": engine,
+            "fallback": "python",
+        }
+        for operation, engine in PREFERRED_ENGINES.items()
+    }
