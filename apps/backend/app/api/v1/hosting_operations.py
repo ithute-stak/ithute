@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -20,7 +22,10 @@ from app.models import (
     HostingEnvironmentVariable,
     HostingNode,
     HostingNodeAgent,
+    HostingNodeBootstrap,
     HostingProject,
+    InfrastructureServer,
+    InfrastructureServerAgent,
     User,
 )
 
@@ -45,6 +50,13 @@ class DeploymentCreate(BaseModel):
 
 class AgentHeartbeat(BaseModel):
     version: str = Field(min_length=1, max_length=64)
+    origin_bind_ip: str | None = Field(default=None, max_length=64)
+
+
+class HostingNodeBootstrapCreate(BaseModel):
+    origin_bind_ip: str | None = Field(default=None, max_length=64)
+    edge_origin_cidrs: str = Field(default="", max_length=1000)
+    backup_remote: str | None = Field(default=None, max_length=1000)
 
 
 class AgentStatusUpdate(BaseModel):
@@ -55,6 +67,30 @@ class AgentStatusUpdate(BaseModel):
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _private_ipv4(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        address = ipaddress.ip_address(value.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Origin bind IP must be a literal private IPv4 address") from exc
+    if not isinstance(address, ipaddress.IPv4Address) or not address.is_private or address.is_loopback or address.is_link_local or address.is_unspecified or address.is_multicast:
+        raise HTTPException(status_code=422, detail="Origin bind IP must be a private/VPN IPv4 address")
+    return str(address)
+
+
+def _cidr_list(value: str) -> str:
+    rows = [item.strip() for item in value.split(",") if item.strip()]
+    for item in rows:
+        try:
+            network = ipaddress.ip_network(item, strict=False)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid edge origin CIDR: {item}") from exc
+        if not network.is_private:
+            raise HTTPException(status_code=422, detail="Edge origin CIDRs must be private/VPN networks")
+    return ",".join(rows)
 
 
 def _audit(
@@ -456,6 +492,7 @@ def agent_heartbeat(
     agent, node = _agent_from_token(db, x_ithute_hosting_agent)
     agent.agent_version = payload.version.strip()
     agent.last_seen_at = _now()
+    agent.origin_bind_ip = _private_ipv4(payload.origin_bind_ip)
     db.commit()
     return {"ok": True, "node_id": str(node.id), "node": node.name, "status": node.status}
 
