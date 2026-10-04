@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
+from app.services.engine_router import execute_network
 from app.services.managed_network import update_peer_telemetry
 from app.models import (
     AuditLog,
@@ -325,6 +326,24 @@ def _server_out(db: Session, server: InfrastructureServer) -> dict:
     }
 
 
+def _network_probe_targets(server: InfrastructureServer) -> list[dict]:
+    host = (server.public_ip or server.hostname or "").strip()
+    if not host or server.status == "disabled":
+        return []
+    roles = set(_json_roles(server.roles_json))
+    targets: list[dict] = []
+    if "mail" in roles:
+        targets.extend([
+            {"id": f"{server.id}:smtp", "host": host, "port": 25, "timeout_ms": 1500},
+            {"id": f"{server.id}:imaps", "host": host, "port": 993, "timeout_ms": 1500},
+        ])
+    if "application" in roles:
+        targets.append(
+            {"id": f"{server.id}:https", "host": host, "port": 443, "timeout_ms": 1500}
+        )
+    return targets
+
+
 @router.get("/servers")
 def list_servers(db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     rows = db.scalars(select(InfrastructureServer).order_by(InfrastructureServer.name.asc())).all()
@@ -332,6 +351,70 @@ def list_servers(db: Session = Depends(get_db), current: User = Depends(require_
         "items": [_server_out(db, row) for row in rows],
         "roles": sorted(ALLOWED_ROLES),
         "heartbeat_grace_seconds": HEARTBEAT_GRACE_SECONDS,
+    }
+
+
+@router.get("/servers/network-health")
+def server_network_health(
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    servers = db.scalars(
+        select(InfrastructureServer)
+        .where(InfrastructureServer.status != "disabled")
+        .order_by(InfrastructureServer.name.asc())
+    ).all()
+    targets: list[dict] = []
+    labels: dict[str, tuple[str, str]] = {}
+    for server in servers:
+        for target in _network_probe_targets(server):
+            targets.append(target)
+            service = target["id"].rsplit(":", 1)[-1]
+            labels[target["id"]] = (str(server.id), service)
+
+    if not targets:
+        return {"engine": "python", "checked": 0, "servers": []}
+
+    execution = execute_network(targets, concurrency=24)
+    grouped: dict[str, dict] = {}
+    by_id = {str(server.id): server for server in servers}
+    for result in execution.value.get("results", []):
+        target_id = str(result.get("id") or "")
+        mapping = labels.get(target_id)
+        if mapping is None:
+            continue
+        server_id, service = mapping
+        server = by_id.get(server_id)
+        if server is None:
+            continue
+        row = grouped.setdefault(
+            server_id,
+            {
+                "server_id": server_id,
+                "name": server.name,
+                "hostname": server.hostname,
+                "public_ip": server.public_ip,
+                "checks": [],
+            },
+        )
+        row["checks"].append(
+            {
+                "service": service,
+                "port": result.get("port"),
+                "reachable": bool(result.get("reachable")),
+                "latency_ms": result.get("latency_ms"),
+                "error": result.get("error"),
+            }
+        )
+
+    rows = list(grouped.values())
+    for row in rows:
+        row["reachable"] = all(check["reachable"] for check in row["checks"])
+    return {
+        "engine": execution.engine,
+        "checked": int(execution.value.get("checked") or 0),
+        "servers": rows,
+        "advisory_only": True,
     }
 
 
