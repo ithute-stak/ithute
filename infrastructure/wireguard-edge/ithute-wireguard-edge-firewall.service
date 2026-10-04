@@ -1,7 +1,7 @@
 [Unit]
 Description=Ithute managed private-network firewall
 Before=wg-quick@ithute0.service
-After=network-pre.target
+After=network-pre.target ufw.service firewalld.service
 Wants=network-pre.target
 
 [Service]
