@@ -16,6 +16,10 @@ depends_on = None
 
 def upgrade() -> None:
     op.add_column(
+        "hosting_deployments",
+        sa.Column("reset_data_volume", sa.Boolean(), nullable=False, server_default=sa.false()),
+    )
+    op.add_column(
         "hosting_projects",
         sa.Column("failover_policy", sa.String(length=32), nullable=False, server_default="manual"),
     )
@@ -52,3 +56,4 @@ def downgrade() -> None:
     op.drop_table("hosting_failover_attempts")
     op.drop_index("ix_hosting_projects_failover_policy", table_name="hosting_projects")
     op.drop_column("hosting_projects", "failover_policy")
+    op.drop_column("hosting_deployments", "reset_data_volume")
