@@ -58,3 +58,27 @@ def test_network_router_uses_runtime_result(monkeypatch):
     assert result.operation == "network.concurrent"
     assert result.engine == "go"
     assert result.value["checked"] == 1
+
+
+def test_enterprise_xml_router_uses_java_runtime(monkeypatch):
+    monkeypatch.setattr(
+        engine_router.engine_runtime,
+        "enterprise_xml_inspect",
+        lambda payload: (
+            {
+                "engine": "java",
+                "root": "report",
+                "namespace": "",
+                "element_count": 2,
+                "attribute_count": 0,
+                "text_characters": 4,
+                "max_depth": 2,
+                "top_elements": [{"name": "report", "count": 1}, {"name": "row", "count": 1}],
+            },
+            "java",
+        ),
+    )
+    result = engine_router.execute_enterprise_xml(b"<report><row>data</row></report>")
+    assert result.operation == "enterprise.xml"
+    assert result.engine == "java"
+    assert result.value["root"] == "report"

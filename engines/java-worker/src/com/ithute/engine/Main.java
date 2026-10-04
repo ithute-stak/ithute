@@ -37,8 +37,8 @@ public final class Main {
             write(exchange, 200, json(Map.of(
                 "service", "ithute-java-worker",
                 "engine", "java",
-                "version", "0.1.0",
-                "capabilities", List.of("health", "dmarc-aggregate-xml")
+                "version", "0.2.0",
+                "capabilities", List.of("health", "dmarc-aggregate-xml", "enterprise-xml-inspect")
             )));
         });
         server.createContext("/v1/capabilities", exchange -> {
@@ -49,8 +49,8 @@ public final class Main {
             write(exchange, 200, json(Map.of(
                 "service", "ithute-java-worker",
                 "engine", "java",
-                "version", "0.1.0",
-                "capabilities", List.of("dmarc-aggregate-xml")
+                "version", "0.2.0",
+                "capabilities", List.of("dmarc-aggregate-xml", "enterprise-xml-inspect")
             )));
         });
         server.createContext("/v1/dmarc/parse", exchange -> {
@@ -67,6 +67,25 @@ public final class Main {
             } catch (Exception exc) {
                 write(exchange, 422, json(Map.of(
                     "error", "invalid_dmarc_report",
+                    "detail", exc.getClass().getSimpleName()
+                )));
+            }
+        });
+
+        server.createContext("/v1/xml/inspect", exchange -> {
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                write(exchange, 405, json(Map.of("error", "method_not_allowed")));
+                return;
+            }
+            try {
+                byte[] payload = readBounded(exchange.getRequestBody(), MAX_XML_BYTES);
+                Map<String, Object> result = inspectXml(payload);
+                write(exchange, 200, json(result));
+            } catch (PayloadTooLargeException exc) {
+                write(exchange, 413, json(Map.of("error", "payload_too_large")));
+            } catch (Exception exc) {
+                write(exchange, 422, json(Map.of(
+                    "error", "invalid_enterprise_xml",
                     "detail", exc.getClass().getSimpleName()
                 )));
             }
@@ -103,6 +122,92 @@ public final class Main {
         factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
         return factory;
     }
+
+
+    private static Map<String, Object> inspectXml(byte[] payload) throws Exception {
+        DocumentBuilderFactory factory = secureFactory();
+        factory.setNamespaceAware(true);
+        Document document = factory.newDocumentBuilder()
+            .parse(new java.io.ByteArrayInputStream(payload));
+        Element root = document.getDocumentElement();
+        if (root == null) {
+            throw new IllegalArgumentException("XML document has no root element");
+        }
+
+        int elementCount = 0;
+        int attributeCount = 0;
+        int textCharacters = 0;
+        int maxDepth = 0;
+        Map<String, Integer> elementNames = new LinkedHashMap<>();
+
+        java.util.ArrayDeque<NodeDepth> stack = new java.util.ArrayDeque<>();
+        stack.push(new NodeDepth(root, 1));
+        while (!stack.isEmpty()) {
+            NodeDepth current = stack.pop();
+            if (!(current.node() instanceof Element element)) continue;
+            elementCount++;
+            if (elementCount > 100_000) {
+                throw new IllegalArgumentException("XML document has too many elements");
+            }
+            maxDepth = Math.max(maxDepth, current.depth());
+            if (maxDepth > 128) {
+                throw new IllegalArgumentException("XML document nesting is too deep");
+            }
+            var attributes = element.getAttributes();
+            for (int i = 0; i < attributes.getLength(); i++) {
+                Node attribute = attributes.item(i);
+                String name = attribute.getNodeName();
+                String namespaceUri = attribute.getNamespaceURI();
+                if ("xmlns".equals(name) || (name != null && name.startsWith("xmlns:"))
+                    || XMLConstants.XMLNS_ATTRIBUTE_NS_URI.equals(namespaceUri)) {
+                    continue;
+                }
+                attributeCount++;
+            }
+
+            String local = element.getLocalName();
+            String name = (local == null || local.isBlank()) ? element.getTagName() : local;
+            elementNames.merge(name, 1, Integer::sum);
+
+            NodeList children = element.getChildNodes();
+            for (int i = children.getLength() - 1; i >= 0; i--) {
+                Node child = children.item(i);
+                if (child instanceof Element) {
+                    stack.push(new NodeDepth(child, current.depth() + 1));
+                } else if (child != null && child.getNodeType() == Node.TEXT_NODE) {
+                    String text = child.getNodeValue();
+                    if (text != null) textCharacters += text.trim().length();
+                }
+            }
+        }
+
+        List<Map.Entry<String, Integer>> sorted = new ArrayList<>(elementNames.entrySet());
+        sorted.sort((left, right) -> {
+            int byCount = Integer.compare(right.getValue(), left.getValue());
+            return byCount != 0 ? byCount : left.getKey().compareTo(right.getKey());
+        });
+        List<Map<String, Object>> topElements = new ArrayList<>();
+        for (int i = 0; i < Math.min(20, sorted.size()); i++) {
+            var entry = sorted.get(i);
+            topElements.add(Map.of("name", entry.getKey(), "count", entry.getValue()));
+        }
+
+        String namespace = root.getNamespaceURI();
+        String localRoot = root.getLocalName();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("engine", "java");
+        result.put("parser_version", "1");
+        result.put("root", (localRoot == null || localRoot.isBlank()) ? root.getTagName() : localRoot);
+        result.put("namespace", namespace == null ? "" : namespace);
+        result.put("element_count", elementCount);
+        result.put("attribute_count", attributeCount);
+        result.put("text_characters", textCharacters);
+        result.put("max_depth", maxDepth);
+        result.put("top_elements", topElements);
+        return result;
+    }
+
+    private record NodeDepth(Node node, int depth) {}
 
     private static Map<String, Object> parseDmarc(byte[] payload) throws Exception {
         Document document = secureFactory().newDocumentBuilder()
