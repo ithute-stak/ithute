@@ -441,11 +441,15 @@ def get_business_conversation(
 ):
     address, password = _credentials(token)
     try:
-        inbox = messages(address, password, folder="INBOX", limit=limit, offset=0, query=email)
-        sent = messages(address, password, folder="Sent", limit=limit, offset=0, query=email)
+        available = folders(address, password)
+        names = [str(item.get("name") or "") for item in available]
+        inbox_name = next((name for name in names if name.lower() == "inbox"), "INBOX")
+        sent_name = next((name for name in names if "sent" in name.lower()), "")
+        inbox = messages(address, password, folder=inbox_name, limit=limit, offset=0, query=email)
+        sent = messages(address, password, folder=sent_name, limit=limit, offset=0, query=email) if sent_name else {"items": []}
         rows = [
-            *[{**row, "folder": "INBOX"} for row in inbox.get("items", [])],
-            *[{**row, "folder": "Sent"} for row in sent.get("items", [])],
+            *[{**row, "folder": inbox_name} for row in inbox.get("items", [])],
+            *[{**row, "folder": sent_name} for row in sent.get("items", [])],
         ]
         rows.sort(key=lambda row: str(row.get("date") or ""), reverse=True)
         return {"items": rows[:limit], "email": email}
