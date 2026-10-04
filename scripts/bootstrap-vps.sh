@@ -131,7 +131,7 @@ chmod 600 "$ENV_FILE"
 unset OWNER_PASSWORD ITHUTE_SYSTEM_OWNER_PASSWORD ITHUTE_SYSTEM_OWNER_PASSWORD_B64
 
 EDGE_BOOTSTRAP="$APP_DIR/infrastructure/wireguard-edge/bootstrap.sh"
-test -x "$EDGE_BOOTSTRAP" || { echo "Missing Ithute Edge private-network bootstrap: $EDGE_BOOTSTRAP" >&2; exit 2; }
+test -f "$EDGE_BOOTSTRAP" || { echo "Missing Ithute Edge private-network bootstrap: $EDGE_BOOTSTRAP" >&2; exit 2; }
 ITHUTE_APP_DIR="$APP_DIR" \
 ITHUTE_ENV_FILE="$ENV_FILE" \
 ITHUTE_PUBLIC_IPV4="$PUBLIC_IPV4" \
