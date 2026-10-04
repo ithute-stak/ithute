@@ -53,6 +53,7 @@ from app.api.v1 import (
     hosting_source_credentials,
     hosting_uploads,
     identity,
+    infrastructure_servers,
     ithute_auth,
     ithute_operating,
     ithute_platform,
@@ -97,6 +98,7 @@ api_router.include_router(system_owner.router)
 api_router.include_router(system_owner_telemetry.router)
 api_router.include_router(account_verification.router)
 api_router.include_router(identity.router)
+api_router.include_router(infrastructure_servers.router)
 api_router.include_router(reseller_contexts.router)
 api_router.include_router(audit.router)
 api_router.include_router(tenants.router)
