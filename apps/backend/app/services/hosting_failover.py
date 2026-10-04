@@ -391,7 +391,12 @@ def request_project_relocation(
         raise ValueError("Suspended projects cannot be relocated")
     existing = _attempt(db, project.id, project.node_id)
     if existing is not None:
-        raise ValueError("A failover or recovery action already exists for this project")
+        if existing.status == "recovery_required":
+            existing.status = "superseded"
+            existing.completed_at = now
+            existing.reason = "Superseded by an explicit stateless relocation request."
+        else:
+            raise ValueError("A failover or recovery action already exists for this project")
     local_database = _managed_database_on_source(db, project, project.node_id)
     if local_database is not None:
         raise ValueError("Project has a managed database on its current node and cannot use application-only relocation")
