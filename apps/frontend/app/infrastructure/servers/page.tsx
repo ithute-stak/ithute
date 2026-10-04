@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, Database, HardDrive, Mail, RefreshCw, Server, ShieldCheck, Wrench } from "lucide-react";
+import { Activity, AlertTriangle, Copy, Cpu, Database, HardDrive, KeyRound, Mail, MemoryStick, RefreshCw, Server, ShieldCheck, Wrench } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { ControlShell } from "@/components/control-shell";
@@ -59,6 +59,24 @@ type InfrastructureServer = {
     capacity?: Capacity | null;
   };
   configuration_required: string[];
+  agent: {
+    configured: boolean;
+    online: boolean;
+    token_hint?: string | null;
+    version?: string | null;
+    last_seen_at?: string | null;
+    os_name?: string | null;
+    kernel_version?: string | null;
+    uptime_seconds?: number | null;
+    telemetry: {
+      hostname?: string;
+      cpu?: { used_percent?: number | null; load_1m?: number | null };
+      memory?: { total_bytes?: number; used_bytes?: number; available_bytes?: number; used_percent?: number | null };
+      disks?: Array<{ device?: string; mountpoint?: string; filesystem?: string; total_bytes?: number; used_bytes?: number; free_bytes?: number; used_percent?: number | null }>;
+      docker?: { installed?: boolean; reachable?: boolean; version?: string | null; containers_running?: number; containers_total?: number };
+    };
+    capabilities: Record<string, boolean>;
+  };
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -120,6 +138,7 @@ export default function InfrastructureServersPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [newToken, setNewToken] = useState<{ server: string; token: string } | null>(null);
 
   const healthy = useMemo(() => servers.filter((server) => server.health === "healthy").length, [servers]);
   const configured = useMemo(() => servers.filter((server) => !server.configuration_required.length).length, [servers]);
@@ -187,6 +206,22 @@ export default function InfrastructureServersPage() {
     setSaving(false);
   }
 
+  async function rotateAgentToken(server: InfrastructureServer) {
+    setMessage(""); setError(""); setNewToken(null);
+    const response = await api(`/platform/infrastructure/servers/${server.id}/agent-token`, { method: "POST" });
+    if (!response.ok) { setError(await detail(response, "Unable to create server-agent token.")); return; }
+    const body = await response.json();
+    setNewToken({ server: server.name, token: body.token });
+    setMessage(`New server-agent credential created for ${server.name}. It is shown once only.`);
+    await load();
+  }
+
+  async function copyToken() {
+    if (!newToken) return;
+    await navigator.clipboard.writeText(newToken.token);
+    setMessage(`Credential for ${newToken.server} copied.`);
+  }
+
   async function updateRoles(server: InfrastructureServer, role: string) {
     const next = server.roles.includes(role) ? server.roles.filter((item) => item !== role) : [...server.roles, role];
     if (!next.length) return;
@@ -207,6 +242,7 @@ export default function InfrastructureServersPage() {
         description="Register each physical or virtual server once. Ithute links mail and hosting workload nodes underneath it, so the same VPS can be monitored centrally without pretending that mail, application and database workloads are the same service."
       />
 
+      {newToken ? <section className="rounded-2xl border border-amber-300 bg-amber-50 p-4"><p className="text-xs font-black text-amber-950">Save this server-agent token now — it will not be shown again</p><div className="mt-2 flex gap-2"><code className="min-w-0 flex-1 break-all rounded-xl border border-amber-200 bg-white p-3 text-[10px]">{newToken.token}</code><button className="btn-secondary shrink-0" onClick={() => void copyToken()}><Copy size={13}/>Copy</button></div><p className="mt-2 text-[10px] text-amber-800">Install the read-only Ithute Server Agent on {newToken.server} and place this token in /etc/ithute/server-agent.env.</p></section> : null}
       {message ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">{message}</div> : null}
       {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700">{error}</div> : null}
 
@@ -255,6 +291,23 @@ export default function InfrastructureServersPage() {
             {server.configuration_required.length ? <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[10px] font-semibold text-amber-800"><AlertTriangle size={14} className="mt-0.5 shrink-0"/>Role selected but workload setup is still required for: {server.configuration_required.join(", ")}.</div> : null}
 
             <div className="mt-4 grid grid-cols-3 gap-2 text-center text-[9px]"><div className="rounded-xl bg-[#f5f8f6] p-2.5"><b className="text-sm">{server.workloads.mailboxes}</b><br/>mailboxes</div><div className="rounded-xl bg-[#f5f8f6] p-2.5"><b className="text-sm">{server.workloads.projects}</b><br/>apps</div><div className="rounded-xl bg-[#f5f8f6] p-2.5"><b className="text-sm">{server.workloads.databases}</b><br/>databases</div></div>
+
+            <div className="mt-4 rounded-xl border border-[#dfe7e2] bg-[#f8fbf9] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div><p className="text-[10px] font-black">Physical server agent</p><p className="mt-1 text-[9px] text-[var(--admin-muted)]">{server.agent.configured ? (server.agent.online ? `Online · ${server.agent.version || "version unknown"}` : "Configured · awaiting heartbeat") : "Not configured"}</p></div>
+                <button className="btn-secondary" onClick={() => void rotateAgentToken(server)}><KeyRound size={13}/>{server.agent.configured ? "Rotate token" : "Create token"}</button>
+              </div>
+              {server.agent.configured ? <div className="mt-3">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 text-[9px]">
+                  <div className="rounded-xl bg-white p-2.5"><Cpu size={12}/><b className="mt-1 block text-sm">{server.agent.telemetry.cpu?.used_percent ?? "—"}%</b>CPU</div>
+                  <div className="rounded-xl bg-white p-2.5"><MemoryStick size={12}/><b className="mt-1 block text-sm">{server.agent.telemetry.memory?.used_percent ?? "—"}%</b>RAM</div>
+                  <div className="rounded-xl bg-white p-2.5"><HardDrive size={12}/><b className="mt-1 block text-sm">{server.agent.telemetry.disks?.[0]?.used_percent ?? "—"}%</b>Primary disk</div>
+                  <div className="rounded-xl bg-white p-2.5"><Activity size={12}/><b className="mt-1 block text-sm">{server.agent.telemetry.docker?.containers_running ?? 0}</b>Containers running</div>
+                </div>
+                <p className="mt-2 text-[9px] text-[var(--admin-muted)]">{server.agent.os_name || "OS unknown"} · last seen {heartbeat(server.agent.last_seen_at)}</p>
+                <div className="mt-2 flex flex-wrap gap-1">{Object.entries(server.agent.capabilities || {}).filter(([,enabled]) => enabled).map(([name]) => <span key={name} className="rounded-full bg-emerald-50 px-2 py-1 text-[8px] font-black text-emerald-700">{name}</span>)}</div>
+              </div> : null}
+            </div>
 
             <div className="mt-4 grid gap-3 lg:grid-cols-2">
               <div className="rounded-xl border border-[#e4e9e6] p-3">
