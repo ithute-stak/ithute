@@ -446,8 +446,7 @@ def node_onboarding_status(
     node = db.get(HostingNode, node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="Hosting node not found")
-    health = reconcile_node_health(db, node)
-    db.commit()
+    health = node_health_snapshot(db, node)
     return {
         "node_id": str(node.id),
         "ready": health["healthy"],
@@ -476,9 +475,7 @@ def hosting_node_health(
     node = db.get(HostingNode, node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="Hosting node not found")
-    result = reconcile_node_health(db, node)
-    db.commit()
-    return result
+    return node_health_snapshot(db, node)
 
 
 @router.post("/platform/hosting/nodes/{node_id}/automation")
@@ -505,8 +502,9 @@ def set_hosting_node_automation(
         str(node.id),
         metadata={"enabled": payload.enabled},
     )
+    result = reconcile_node_health(db, node)
     db.commit()
-    return reconcile_node_health(db, node)
+    return result
 
 
 @router.post("/platform/hosting/nodes/{node_id}/activate")
