@@ -3,6 +3,7 @@
 import Link from "next/link";
 import {
   Archive,
+  Building2,
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
