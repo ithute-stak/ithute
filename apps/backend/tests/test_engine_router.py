@@ -38,3 +38,23 @@ def test_routing_status_keeps_python_as_fallback():
 
     assert status["mail.mime_scan"] == {"preferred": "rust", "fallback": "python"}
     assert status["network.concurrent"] == {"preferred": "go", "fallback": "python"}
+
+
+def test_network_router_uses_runtime_result(monkeypatch):
+    monkeypatch.setattr(
+        engine_router.engine_runtime,
+        "network_probe",
+        lambda targets, concurrency: (
+            {"engine": "go", "checked": len(targets), "results": []},
+            "go",
+        ),
+    )
+
+    result = engine_router.execute_network(
+        [{"id": "node:https", "host": "127.0.0.1", "port": 443}],
+        concurrency=8,
+    )
+
+    assert result.operation == "network.concurrent"
+    assert result.engine == "go"
+    assert result.value["checked"] == 1
