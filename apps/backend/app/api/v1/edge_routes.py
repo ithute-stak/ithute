@@ -13,6 +13,7 @@ from app.db.session import get_db
 from app.models import EdgeApplication, EdgeInspection, EdgeOrigin, EdgeRouteDeployment, User
 from app.services.caddy_routes import CaddyRouteError, activate_route, deactivate_route, propagation_state
 from app.services.edge_inspection import EdgeInspectionError, inspect_public_origin
+from app.services.hosting_edge_handoff import HostingOriginError, inspect_trusted_origin
 
 router = APIRouter(prefix="/tenants/{tenant_id}/edge", tags=["edge-routes"])
 
@@ -118,8 +119,20 @@ def reconcile_route(
         return _out(row, app)
 
     try:
-        inspection = inspect_public_origin(origin.url, origin.health_path, origin.expected_status, origin.timeout_seconds)
-    except EdgeInspectionError as exc:
+        if origin.name == "ithute-hosting":
+            inspection = inspect_trusted_origin(origin.url, origin.health_path, origin.expected_status, origin.timeout_seconds)
+            inspection = {
+                **inspection,
+                "resolved_ip": origin.url.split("//", 1)[-1].split(":", 1)[0],
+                "tls_version": None,
+                "cipher": None,
+                "certificate_issuer": None,
+                "certificate_not_after": None,
+                "certificate_days_remaining": None,
+            }
+        else:
+            inspection = inspect_public_origin(origin.url, origin.health_path, origin.expected_status, origin.timeout_seconds)
+    except (EdgeInspectionError, HostingOriginError) as exc:
         row.status = "pending_origin"; row.error = str(exc)
         db.commit(); db.refresh(row)
         return _out(row, app)

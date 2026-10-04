@@ -17,6 +17,7 @@ from app.db.session import get_db
 from app.models import DnsZoneAnalyticsSnapshot, EdgeApplication, EdgeInspection, EdgeOrigin, EdgeRule, User
 from app.models.domains import DomainStatus
 from app.services.edge_inspection import EdgeInspectionError, inspect_public_origin, summarize_powerdns_zone
+from app.services.hosting_edge_handoff import HostingOriginError, inspect_trusted_origin
 from app.services.powerdns import PowerDNSClient, PowerDNSError
 
 router = APIRouter(prefix="/tenants/{tenant_id}/edge", tags=["edge-security"])
@@ -352,8 +353,20 @@ def inspect_application(tenant_id: UUID, app_id: UUID, db: Session = Depends(get
     results: list[dict] = []
     for origin, url, path, expected, timeout in targets:
         try:
-            observed = inspect_public_origin(url, path, expected, timeout)
-        except EdgeInspectionError as exc:
+            if origin is not None and origin.name == "ithute-hosting":
+                private = inspect_trusted_origin(url, path, expected, timeout)
+                observed = {
+                    **private,
+                    "resolved_ip": url.split("//", 1)[-1].split(":", 1)[0],
+                    "tls_version": None,
+                    "cipher": None,
+                    "certificate_issuer": None,
+                    "certificate_not_after": None,
+                    "certificate_days_remaining": None,
+                }
+            else:
+                observed = inspect_public_origin(url, path, expected, timeout)
+        except (EdgeInspectionError, HostingOriginError) as exc:
             observed = {
                 "healthy": False, "resolved_ip": None, "status_code": None, "latency_ms": None,
                 "tls_version": None, "cipher": None, "certificate_issuer": None,

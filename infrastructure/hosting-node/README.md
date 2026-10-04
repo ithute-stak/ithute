@@ -132,3 +132,32 @@ These files make node setup reproducible and fail-closed, but they do not claim 
 - Caddy/public ingress from verified domains to healthy private containers;
 - off-node backup credentials, lifecycle/versioning policy and an actual node-loss/remote-rehydration restore drill;
 - resource pressure and abuse tests.
+
+
+## Private origin handoff to Ithute Edge
+
+Hosted containers still do **not** receive arbitrary public host ports. When
+automatic edge provisioning is enabled, the hosting node may expose a narrowly
+controlled HTTP origin on a dedicated **private/VPN IPv4 address**.
+
+Configure:
+
+- `ITHUTE_HOSTING_ORIGIN_BIND_IP` to a private/VPN address assigned to the hosting node;
+- `ITHUTE_HOSTING_ORIGIN_PORT_START` / `ITHUTE_HOSTING_ORIGIN_PORT_END` to the reserved range;
+- `ITHUTE_EDGE_ORIGIN_CIDRS` to the exact private/VPN CIDRs of the Ithute edge hosts;
+- the control plane's `ITHUTE_HOSTING_ORIGIN_CIDRS` to the trusted hosting-origin network.
+
+The node agent deterministically allocates a port inside the reserved range,
+binds only to the configured private address, health-checks the container on its
+isolated Docker network, and reports the origin to the control plane only after
+the deployment is healthy.
+
+`apply-egress-firewall.sh` also creates `ITHUTE-HOSTING-INGRESS`. Docker
+published-origin traffic is matched using the connection's original destination
+and is accepted only from the configured edge CIDRs; every other source is
+rejected.
+
+The control plane refuses public, hostname-based, loopback, link-local, wildcard
+or out-of-CIDR origin reports. Edge routing is not marked complete until DNS
+points to Ithute Edge, the trusted origin is reachable, Caddy accepts the route,
+and public HTTPS responds successfully.

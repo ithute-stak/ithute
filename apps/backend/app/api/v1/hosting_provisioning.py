@@ -34,6 +34,7 @@ from app.models import (
 )
 from app.services.hosting_metering import database_allocation_allowed
 from app.services.hosting_placement import select_node
+from app.services.hosting_edge_handoff import HostingOriginError, reconcile_project_edge
 
 router = APIRouter(tags=["hosting-provisioning"])
 _ENV_KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]{0,127}$")
@@ -139,6 +140,18 @@ def _stage_out(db: Session, workflow: HostingProvisioningWorkflow) -> dict:
     route = db.scalar(select(EdgeRouteDeployment).where(EdgeRouteDeployment.application_id == edge.id)) if edge else None
     origin = db.scalar(select(EdgeOrigin).where(EdgeOrigin.application_id == edge.id, EdgeOrigin.enabled.is_(True)).limit(1)) if edge else None
 
+    # A healthy deployment can hand its controlled private/VPN origin directly
+    # to the edge layer. Reconciliation is safe to repeat while DNS/TLS settles.
+    edge_state = None
+    if project and deployment and deployment.status == "healthy" and deployment.origin_url and project.hostname:
+        try:
+            edge_state = reconcile_project_edge(db, project, deployment.origin_url)
+            edge = _edge_application(db, project)
+            route = db.scalar(select(EdgeRouteDeployment).where(EdgeRouteDeployment.application_id == edge.id)) if edge else None
+            origin = db.scalar(select(EdgeOrigin).where(EdgeOrigin.application_id == edge.id, EdgeOrigin.enabled.is_(True)).limit(1)) if edge else None
+        except HostingOriginError as exc:
+            edge_state = {"status": "pending_origin", "error": str(exc), "hostname": project.hostname}
+
     stages = {
         "placement": {"status": "ready" if project and project.node_id else "pending"},
         "source": {"status": source.status if source else "pending"},
@@ -148,6 +161,7 @@ def _stage_out(db: Session, workflow: HostingProvisioningWorkflow) -> dict:
         "edge": {
             "status": (
                 "not_requested" if not project or not project.hostname
+                else edge_state.get("status") if edge_state
                 else route.status if route
                 else "pending_origin" if edge and not origin
                 else "pending_route" if edge
@@ -155,6 +169,8 @@ def _stage_out(db: Session, workflow: HostingProvisioningWorkflow) -> dict:
             ),
             "hostname": project.hostname if project else None,
             "application_id": str(edge.id) if edge else None,
+            "origin_url": deployment.origin_url if deployment else None,
+            "error": edge_state.get("error") if edge_state else (route.error if route else None),
         },
     }
 

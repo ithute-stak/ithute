@@ -50,6 +50,7 @@ class AgentHeartbeat(BaseModel):
 class AgentStatusUpdate(BaseModel):
     status: str = Field(pattern=r"^(running|healthy|failed)$")
     message: str | None = Field(default=None, max_length=2000)
+    origin_url: str | None = Field(default=None, max_length=1000)
 
 
 def _now() -> datetime:
@@ -107,6 +108,8 @@ def _deployment_out(row: HostingDeployment) -> dict:
         "started_at": row.started_at.isoformat() if row.started_at else None,
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
         "last_health_at": row.last_health_at.isoformat() if row.last_health_at else None,
+        "origin_url": row.origin_url,
+        "origin_reported_at": row.origin_reported_at.isoformat() if row.origin_reported_at else None,
     }
 
 
@@ -584,6 +587,19 @@ def report_deployment_status(
         deployment.completed_at = deployment.completed_at or now
         deployment.last_health_at = now
         deployment.failure_message = None
+        if payload.origin_url:
+            from app.services.hosting_edge_handoff import HostingOriginError, validate_trusted_origin
+            try:
+                deployment.origin_url = validate_trusted_origin(payload.origin_url)
+            except HostingOriginError as exc:
+                deployment.status = "failed"
+                deployment.completed_at = now
+                deployment.failure_message = f"Hosting origin handoff rejected: {exc}"
+                project.status = "failed"
+                db.commit()
+                db.refresh(deployment)
+                return _deployment_out(deployment)
+            deployment.origin_reported_at = now
         project.image_ref = deployment.image_ref
         project.status = "running"
     else:

@@ -14,6 +14,10 @@ ok "Docker daemon reachable"
 
 NETWORK_POOL="${ITHUTE_HOSTING_NETWORK_POOL:-10.240.0.0/12}"
 NETWORK_PREFIX="${ITHUTE_HOSTING_NETWORK_PREFIX:-28}"
+ORIGIN_BIND_IP="${ITHUTE_HOSTING_ORIGIN_BIND_IP:-}"
+ORIGIN_PORT_START="${ITHUTE_HOSTING_ORIGIN_PORT_START:-22000}"
+ORIGIN_PORT_END="${ITHUTE_HOSTING_ORIGIN_PORT_END:-29999}"
+EDGE_ORIGIN_CIDRS="${ITHUTE_EDGE_ORIGIN_CIDRS:-}"
 
 python3 - "$NETWORK_POOL" "$NETWORK_PREFIX" <<'PY'
 import ipaddress, sys
@@ -61,6 +65,23 @@ for port, name in ports.items():
 PY
 ok "Database listeners are not wildcard/public"
 
+if [[ -n "$ORIGIN_BIND_IP" ]]; then
+  [[ -n "$EDGE_ORIGIN_CIDRS" ]] || fail "ITHUTE_EDGE_ORIGIN_CIDRS is required when private origin handoff is enabled"
+  python3 - "$ORIGIN_BIND_IP" "$ORIGIN_PORT_START" "$ORIGIN_PORT_END" "$EDGE_ORIGIN_CIDRS" <<'PY'
+import ipaddress, sys
+address = ipaddress.ip_address(sys.argv[1])
+start = int(sys.argv[2]); end = int(sys.argv[3])
+if not address.is_private or address.is_unspecified or address.is_multicast or address.is_link_local:
+    raise SystemExit("origin bind address must be private/VPN")
+if not (1024 <= start <= end <= 65535):
+    raise SystemExit("origin port range invalid")
+for item in [x.strip() for x in sys.argv[4].split(",") if x.strip()]:
+    ipaddress.ip_network(item, strict=False)
+PY
+  ip -o addr show | grep -Fq " $ORIGIN_BIND_IP/" || fail "ITHUTE_HOSTING_ORIGIN_BIND_IP is not assigned to this host"
+  ok "Private origin bind address is valid and assigned: $ORIGIN_BIND_IP"
+fi
+
 iptables -S DOCKER-USER >/dev/null 2>&1 || fail "DOCKER-USER chain is unavailable"
 iptables -S ITHUTE-HOSTING-EGRESS >/dev/null 2>&1 || fail "ITHUTE-HOSTING-EGRESS chain is missing; run apply-egress-firewall.sh"
 iptablestest="$(iptables -S ITHUTE-HOSTING-EGRESS)"
@@ -69,6 +90,14 @@ grep -Fq -- '-j REJECT' <<<"$iptablestest" || fail "Hosted egress chain has no d
 grep -Fq -- '169.254.0.0/16' <<<"$iptablestest" || fail "Hosted egress chain does not block link-local/cloud metadata range"
 iptables -C DOCKER-USER -s "$NETWORK_POOL" -j ITHUTE-HOSTING-EGRESS >/dev/null 2>&1 || fail "Reserved hosted pool bypasses Ithute egress chain"
 ok "Reserved hosted pool is attached to deny-by-default egress policy"
+
+if [[ -n "$ORIGIN_BIND_IP" ]]; then
+  iptables -S ITHUTE-HOSTING-INGRESS >/dev/null 2>&1 || fail "ITHUTE-HOSTING-INGRESS chain is missing"
+  ingresstest="$(iptables -S ITHUTE-HOSTING-INGRESS)"
+  grep -Fq -- '-j REJECT' <<<"$ingresstest" || fail "Private origin ingress chain has no default reject"
+  iptables -C DOCKER-USER -p tcp -m conntrack --ctorigdst "$ORIGIN_BIND_IP" --ctorigdstport "$ORIGIN_PORT_START:$ORIGIN_PORT_END" -j ITHUTE-HOSTING-INGRESS >/dev/null 2>&1 || fail "Private origin range bypasses Ithute edge-source allowlist"
+  ok "Private origin ingress is restricted to configured edge CIDRs"
+fi
 
 systemctl cat ithute-hosting-egress.service >/dev/null 2>&1 || fail "ithute-hosting-egress.service is not installed"
 systemctl is-enabled --quiet ithute-hosting-egress.service || fail "ithute-hosting-egress.service is not enabled for reboot persistence"

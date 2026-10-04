@@ -157,6 +157,25 @@ export default function HostingPage() {
     void loadTenant(tenantId);
   }, [tenantId]);
 
+  useEffect(() => {
+    if (!tenantId) return;
+    const active = Object.values(provisioning).some((workflow) =>
+      workflow && ["queued", "provisioning", "building", "deploying", "edge_pending"].includes(workflow.status)
+    );
+    if (!active) return;
+    const timer = window.setInterval(() => {
+      void (async () => {
+        const rows = await Promise.all(projects.map(async (project) => {
+          const response = await api(`/tenants/${tenantId}/hosting/projects/${project.id}/provisioning`);
+          const body = response.ok ? await response.json() : { workflow: null };
+          return [project.id, body.workflow || null] as const;
+        }));
+        setProvisioning(Object.fromEntries(rows));
+      })();
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, [tenantId, projects, provisioning]);
+
   async function createProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!tenantId) return;
