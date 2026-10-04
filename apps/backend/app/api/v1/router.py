@@ -49,6 +49,7 @@ from app.api.v1 import (
     hosting_git_webhooks,
     hosting_metering,
     hosting_operations,
+    hosting_provisioning,
     hosting_project_operations,
     hosting_source_credentials,
     hosting_uploads,
@@ -152,6 +153,7 @@ api_router.include_router(business.router)
 api_router.include_router(hosting.router)
 api_router.include_router(application_hosting.router)
 api_router.include_router(hosting_operations.router)
+api_router.include_router(hosting_provisioning.router)
 api_router.include_router(hosting_project_operations.router)
 api_router.include_router(hosting_database_backups.router)
 api_router.include_router(hosting_build_settings.router)
