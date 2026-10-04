@@ -11,6 +11,7 @@ REQUIRE_PTR="${ITHUTE_REQUIRE_PTR:-false}"
 REQUIRE_INDEPENDENT_DNS="${ITHUTE_REQUIRE_INDEPENDENT_DNS:-false}"
 HOSTED_TEST_DOMAIN="${ITHUTE_TEST_HOSTED_DOMAIN:-}"
 COMPOSE_FILE="${ITHUTE_COMPOSE_FILE:-compose.production.yml}"
+ENV_FILE="${ITHUTE_ENV_FILE:-.env.production}"
 
 failures=0
 warnings=0
@@ -97,6 +98,34 @@ if command -v dig >/dev/null 2>&1; then
   else
     warn "ITHUTE_TEST_HOSTED_DOMAIN is unset; live customer-domain Caddy/TLS route was not exercised"
   fi
+fi
+
+if [[ -f "$ENV_FILE" ]] && grep -q '^ITHUTE_WIREGUARD_EDGE_PUBLIC_KEY=' "$ENV_FILE"; then
+  wg_public="$(sed -n 's/^ITHUTE_WIREGUARD_EDGE_PUBLIC_KEY=//p' "$ENV_FILE" | tail -n1)"
+  wg_address="$(sed -n 's/^ITHUTE_WIREGUARD_EDGE_ADDRESS=//p' "$ENV_FILE" | tail -n1)"
+  wg_port="$(sed -n 's/^ITHUTE_WIREGUARD_LISTEN_PORT=//p' "$ENV_FILE" | tail -n1)"
+  wg_endpoint="$(sed -n 's/^ITHUTE_WIREGUARD_EDGE_ENDPOINT=//p' "$ENV_FILE" | tail -n1)"
+
+  require_command wg || true
+  require_command ip || true
+  require_command systemctl || true
+
+  if command -v wg >/dev/null 2>&1 && command -v ip >/dev/null 2>&1; then
+    if ip link show ithute0 >/dev/null 2>&1; then pass "Managed private-network interface ithute0 exists"; else fail "Managed private-network interface ithute0 is missing"; fi
+    if [[ -n "$wg_address" ]] && ip -4 -o addr show dev ithute0 2>/dev/null | grep -Fq " $wg_address/"; then pass "ithute0 owns configured edge address $wg_address"; else fail "ithute0 does not own configured edge address ${wg_address:-unset}"; fi
+    actual_public="$(wg show ithute0 public-key 2>/dev/null || true)"
+    if [[ -n "$wg_public" && "$actual_public" == "$wg_public" ]]; then pass "WireGuard edge public key matches production configuration"; else fail "WireGuard edge public key does not match production configuration"; fi
+    actual_port="$(wg show ithute0 listen-port 2>/dev/null || true)"
+    if [[ -n "$wg_port" && "$actual_port" == "$wg_port" ]]; then pass "WireGuard edge is listening on configured UDP port $wg_port"; else fail "WireGuard edge listen port does not match production configuration"; fi
+  fi
+
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet wg-quick@ithute0; then pass "WireGuard edge interface service is active"; else fail "wg-quick@ithute0 is not active"; fi
+    if systemctl is-active --quiet ithute-wireguard-edge-reconciler.timer; then pass "WireGuard peer reconciler timer is active"; else fail "WireGuard peer reconciler timer is not active"; fi
+  fi
+
+  if [[ -s /etc/ithute-wireguard/reconciler.env ]]; then pass "Private-network reconciler credential file exists"; else fail "Private-network reconciler credential file is missing"; fi
+  if [[ "$wg_endpoint" == "$PUBLIC_IPV4:$wg_port" ]]; then pass "WireGuard advertised endpoint matches Ithute public edge"; else fail "WireGuard advertised endpoint is '${wg_endpoint:-unset}', expected '$PUBLIC_IPV4:${wg_port:-unset}'"; fi
 fi
 
 if command -v docker >/dev/null 2>&1 && [[ -f "$COMPOSE_FILE" ]]; then
