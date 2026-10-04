@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.models import (
     HostingDeployment,
@@ -143,7 +143,14 @@ def test_stateless_project_stages_replacement_then_cuts_over(db, tenant_admin, p
     assert project.node_id == target.id
     assert project.status == "running"
     assert attempt.status == "completed"
-    db.rollback()
+
+    db.execute(delete(HostingFailoverAttempt).where(HostingFailoverAttempt.project_id == project.id))
+    db.execute(delete(HostingDeployment).where(HostingDeployment.project_id == project.id))
+    db.execute(delete(HostingNodeHealthState).where(HostingNodeHealthState.node_id == source.id))
+    db.execute(delete(HostingNodeAgent).where(HostingNodeAgent.node_id == target.id))
+    db.execute(delete(HostingProject).where(HostingProject.id == project.id))
+    db.execute(delete(HostingNode).where(HostingNode.id.in_([source.id, target.id])))
+    db.commit()
 
 
 def test_stateful_default_never_auto_relocates(db, tenant_admin, platform_owner, monkeypatch):
@@ -161,4 +168,10 @@ def test_stateful_default_never_auto_relocates(db, tenant_admin, platform_owner,
     assert attempt.deployment_id is None
     assert "local /data" in (attempt.reason or "")
     assert result["recovery_required"] >= 1
-    db.rollback()
+
+    db.execute(delete(HostingFailoverAttempt).where(HostingFailoverAttempt.project_id == project.id))
+    db.execute(delete(HostingDeployment).where(HostingDeployment.project_id == project.id))
+    db.execute(delete(HostingNodeHealthState).where(HostingNodeHealthState.node_id == source.id))
+    db.execute(delete(HostingProject).where(HostingProject.id == project.id))
+    db.execute(delete(HostingNode).where(HostingNode.id == source.id))
+    db.commit()
