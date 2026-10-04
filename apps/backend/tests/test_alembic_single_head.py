@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0068_hosting_node_bootstrap"
+LATEST_MIGRATION_HEAD = "0069_managed_private_network"
 
 
 def test_alembic_has_one_consolidated_head():
