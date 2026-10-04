@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
+from app.services.managed_network import update_peer_telemetry
 from app.models import (
     AuditLog,
     HostingDatabase,
@@ -487,6 +488,22 @@ def infrastructure_agent_heartbeat(
     agent.uptime_seconds = payload.uptime_seconds
     agent.telemetry_json = json.dumps(payload.telemetry, separators=(",", ":"), sort_keys=True)
     agent.capabilities_json = json.dumps(payload.capabilities, separators=(",", ":"), sort_keys=True)
+
+    wireguard = payload.telemetry.get("wireguard") if isinstance(payload.telemetry.get("wireguard"), dict) else {}
+    handshake = wireguard.get("latest_handshake_unix")
+    handshake_at = None
+    try:
+        if handshake:
+            handshake_at = datetime.fromtimestamp(int(handshake), tz=timezone.utc)
+    except (TypeError, ValueError, OSError):
+        handshake_at = None
+    update_peer_telemetry(
+        db,
+        server.id,
+        latest_handshake_at=handshake_at,
+        rx_bytes=int(wireguard["rx_bytes"]) if wireguard.get("rx_bytes") is not None else None,
+        tx_bytes=int(wireguard["tx_bytes"]) if wireguard.get("tx_bytes") is not None else None,
+    )
 
     now = agent.last_seen_at
     latest = db.scalar(
