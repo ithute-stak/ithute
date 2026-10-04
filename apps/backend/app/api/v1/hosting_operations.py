@@ -23,6 +23,7 @@ from app.models import (
     HostingNode,
     HostingNodeAgent,
     HostingNodeBootstrap,
+    HostingNodeHealthState,
     HostingProject,
     InfrastructureServer,
     InfrastructureServerAgent,
@@ -59,6 +60,10 @@ class HostingNodeBootstrapCreate(BaseModel):
     origin_bind_ip: str | None = Field(default=None, max_length=64)
     edge_origin_cidrs: str = Field(default="", max_length=1000)
     backup_remote: str | None = Field(default=None, max_length=1000)
+
+
+class HostingNodeAutomationUpdate(BaseModel):
+    enabled: bool
 
 
 class AgentStatusUpdate(BaseModel):
@@ -294,6 +299,9 @@ def create_node_bootstrap(
         created_by_user_id=current.id,
     )
     db.add(bootstrap)
+    state = ensure_health_state(db, node, enable=True, reset=True)
+    state.last_transition = "bootstrap_started"
+    state.last_transition_at = now
     node.status = "draining"
     node.accepts_new_projects = False
     _audit(db, current, "hosting.node_bootstrap.create", "hosting_node", str(node.id), metadata={
@@ -411,6 +419,9 @@ def exchange_node_bootstrap(
         server_agent.capabilities_json = "{}"
 
     bootstrap.used_at = now
+    state = ensure_health_state(db, node, enable=True, reset=True)
+    state.last_transition = "bootstrap_exchanged"
+    state.last_transition_at = now
     node.status = "draining"
     node.accepts_new_projects = False
     script = render_hosting_node_bootstrap(
@@ -435,52 +446,67 @@ def node_onboarding_status(
     node = db.get(HostingNode, node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="Hosting node not found")
-    now = _now()
-    hosting_agent = db.get(HostingNodeAgent, node.id)
-    server = db.scalar(select(InfrastructureServer).where(InfrastructureServer.hosting_node_id == node.id))
-    server_agent = db.get(InfrastructureServerAgent, server.id) if server else None
-    network_peer = db.scalar(select(InfrastructureWireGuardPeer).where(InfrastructureWireGuardPeer.server_id == server.id)) if server else None
-    telemetry = {}
-    if server_agent:
-        try:
-            telemetry = json.loads(server_agent.telemetry_json or "{}")
-        except (TypeError, ValueError, json.JSONDecodeError):
-            telemetry = {}
-    wireguard = telemetry.get("wireguard") if isinstance(telemetry.get("wireguard"), dict) else {}
-
-    def fresh(value):
-        if value is None:
-            return False
-        observed = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-        return observed >= now - timedelta(minutes=3)
-
-    hosting_online = bool(hosting_agent and fresh(hosting_agent.last_seen_at))
-    server_online = bool(server_agent and fresh(server_agent.last_seen_at))
-    origin_ready = bool(hosting_agent and hosting_agent.origin_bind_ip)
-    managed_network_connected = bool(
-        network_peer
-        and wireguard.get("connected")
-        and wireguard.get("address") == network_peer.assigned_ipv4
-    )
-    checks = {
-        "hosting_agent_online": hosting_online,
-        "server_agent_online": server_online,
-        "private_origin_configured": origin_ready,
-        "infrastructure_linked": server is not None,
-        "managed_network_connected": managed_network_connected if network_peer else True,
-    }
-    ready = all(checks.values())
+    health = reconcile_node_health(db, node)
+    db.commit()
     return {
         "node_id": str(node.id),
-        "ready": ready,
+        "ready": health["healthy"],
         "active": node.status == "active" and node.accepts_new_projects,
-        "checks": checks,
-        "origin_bind_ip": hosting_agent.origin_bind_ip if hosting_agent else None,
-        "managed_network_ip": network_peer.assigned_ipv4 if network_peer else None,
-        "managed_network_last_handshake_at": network_peer.last_handshake_at.isoformat() if network_peer and network_peer.last_handshake_at else None,
-        "hosting_agent_version": hosting_agent.agent_version if hosting_agent else None,
-        "server_agent_version": server_agent.agent_version if server_agent else None,
+        "checks": health["checks"],
+        "origin_bind_ip": db.get(HostingNodeAgent, node.id).origin_bind_ip if db.get(HostingNodeAgent, node.id) else None,
+        "managed_network_ip": health["managed_network_ip"],
+        "managed_network_last_handshake_at": health["last_handshake_at"],
+        "automation_enabled": health["automation_enabled"],
+        "health_status": health["health_status"],
+        "healthy_since": health["healthy_since"],
+        "unhealthy_since": health["unhealthy_since"],
+        "last_transition": health["last_transition"],
+        "last_transition_at": health["last_transition_at"],
+        "last_reason": health["last_reason"],
+        "thresholds": health["thresholds"],
     }
+
+
+@router.get("/platform/hosting/nodes/{node_id}/health")
+def hosting_node_health(
+    node_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    node = db.get(HostingNode, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Hosting node not found")
+    result = reconcile_node_health(db, node)
+    db.commit()
+    return result
+
+
+@router.post("/platform/hosting/nodes/{node_id}/automation")
+def set_hosting_node_automation(
+    node_id: UUID,
+    payload: HostingNodeAutomationUpdate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    node = db.get(HostingNode, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Hosting node not found")
+    state = ensure_health_state(db, node, enable=payload.enabled, reset=payload.enabled)
+    now = _now()
+    state.last_transition = "automation_enabled" if payload.enabled else "manual_hold"
+    state.last_transition_at = now
+    if not payload.enabled:
+        state.last_reason = "Automation disabled by platform owner"
+    _audit(
+        db,
+        current,
+        "hosting.node_health.automation_enabled" if payload.enabled else "hosting.node_health.manual_hold",
+        "hosting_node",
+        str(node.id),
+        metadata={"enabled": payload.enabled},
+    )
+    db.commit()
+    return reconcile_node_health(db, node)
 
 
 @router.post("/platform/hosting/nodes/{node_id}/activate")
@@ -489,16 +515,25 @@ def activate_onboarded_node(
     db: Session = Depends(get_db),
     current: User = Depends(require_platform_owner),
 ):
-    status = node_onboarding_status(node_id, db, current)
-    if not status["ready"]:
-        missing = [key for key, value in status["checks"].items() if not value]
-        raise HTTPException(status_code=409, detail="Node onboarding is not complete: " + ", ".join(missing))
     node = db.get(HostingNode, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Hosting node not found")
+    health = evaluate_node_health(db, node)
+    if not health["healthy"]:
+        missing = [key for key, value in health["checks"].items() if not value]
+        raise HTTPException(status_code=409, detail="Node onboarding is not complete: " + ", ".join(missing))
     node.status = "active"
     node.accepts_new_projects = True
-    _audit(db, current, "hosting.node_bootstrap.activate", "hosting_node", str(node.id), metadata=status["checks"])
+    state = ensure_health_state(db, node, enable=True)
+    state.health_status = "healthy"
+    state.healthy_since = _now()
+    state.unhealthy_since = None
+    state.last_transition = "manual_activated"
+    state.last_transition_at = _now()
+    state.last_reason = None
+    _audit(db, current, "hosting.node_bootstrap.activate", "hosting_node", str(node.id), metadata=health["checks"])
     db.commit()
-    return {"ok": True, "node_id": str(node.id), "status": node.status, "accepts_new_projects": node.accepts_new_projects}
+    return {"ok": True, "node_id": str(node.id), "status": node.status, "accepts_new_projects": node.accepts_new_projects, "automation_enabled": True}
 
 
 @router.post("/platform/hosting/nodes/{node_id}/agent-token")
