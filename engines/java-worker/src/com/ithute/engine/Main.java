@@ -153,7 +153,17 @@ public final class Main {
             if (maxDepth > 128) {
                 throw new IllegalArgumentException("XML document nesting is too deep");
             }
-            attributeCount += element.getAttributes().getLength();
+            var attributes = element.getAttributes();
+            for (int i = 0; i < attributes.getLength(); i++) {
+                Node attribute = attributes.item(i);
+                String name = attribute.getNodeName();
+                String namespaceUri = attribute.getNamespaceURI();
+                if ("xmlns".equals(name) || (name != null && name.startsWith("xmlns:"))
+                    || XMLConstants.XMLNS_ATTRIBUTE_NS_URI.equals(namespaceUri)) {
+                    continue;
+                }
+                attributeCount++;
+            }
 
             String local = element.getLocalName();
             String name = (local == null || local.isBlank()) ? element.getTagName() : local;
