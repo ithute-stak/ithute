@@ -123,13 +123,23 @@ def score_node(
     eligible = True
 
     agent = db.get(HostingNodeAgent, node.id)
+    server, server_agent = _infrastructure_for_hosting_node(db, node.id)
     if node.status != "active":
         eligible = False
         reasons.append(f"hosting node status is {node.status}")
     if not node.accepts_new_projects:
         eligible = False
         reasons.append("node is not accepting new workloads")
-    if agent is None or not _fresh(agent.last_seen_at):
+
+    # Application allocations historically existed before a runtime agent was
+    # installed. Preserve that bootstrap path only for legacy nodes that have
+    # not yet joined the unified infrastructure registry. Once linked, both
+    # workload and physical-server health are mandatory. Databases always need
+    # a live hosting agent because provisioning is an immediate agent operation.
+    if workload == "database" and (agent is None or not _fresh(agent.last_seen_at)):
+        eligible = False
+        reasons.append("hosting agent is offline")
+    elif server is not None and (agent is None or not _fresh(agent.last_seen_at)):
         eligible = False
         reasons.append("hosting agent is offline")
 
@@ -143,7 +153,6 @@ def score_node(
         eligible = False
         reasons.append("insufficient CPU")
 
-    server, server_agent = _infrastructure_for_hosting_node(db, node.id)
     telemetry: dict = {}
     capabilities: dict = {}
     if server is not None:
@@ -189,6 +198,8 @@ def score_node(
     # Older hosting nodes without a linked infrastructure record remain eligible
     # while migration is in progress, but receive a conservative scoring penalty.
     telemetry_penalty = 25.0 if server is None else 0.0
+    if server is None and agent is None:
+        telemetry_penalty += 10.0
 
     cpu_pct = _percent(telemetry, "cpu", "used_percent") or 0.0
     memory_pct = _percent(telemetry, "memory", "used_percent") or 0.0
