@@ -115,3 +115,26 @@ def test_go_network_probe_falls_back_to_python(monkeypatch):
     assert body["engine"] == "python-fallback"
     assert body["checked"] == 1
     assert body["results"][0]["reachable"] is True
+
+
+def test_python_enterprise_xml_inspection_summary():
+    xml = b'<invoice xmlns="urn:ithute:test" id="A1"><line qty="2">Service</line><line qty="1">Hosting</line></invoice>'
+    result = engine_runtime.python_enterprise_xml_inspect(xml)
+
+    assert result["engine"] == "python-fallback"
+    assert result["root"] == "invoice"
+    assert result["namespace"] == "urn:ithute:test"
+    assert result["element_count"] == 3
+    assert result["attribute_count"] == 3
+    assert result["max_depth"] == 2
+    assert result["top_elements"][0] == {"name": "line", "count": 2}
+
+
+def test_enterprise_xml_rejects_doctype_in_python_fallback():
+    xml = b'<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>'
+    try:
+        engine_runtime.python_enterprise_xml_inspect(xml)
+    except ValueError as exc:
+        assert "DTD/entities" in str(exc)
+    else:
+        raise AssertionError("DOCTYPE payload should be rejected")
