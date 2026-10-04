@@ -120,6 +120,7 @@ if [[ -f "$ENV_FILE" ]] && grep -q '^ITHUTE_WIREGUARD_EDGE_PUBLIC_KEY=' "$ENV_FI
   fi
 
   if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet ithute-wireguard-edge-firewall.service; then pass "WireGuard edge firewall service is active"; else fail "ithute-wireguard-edge-firewall.service is not active"; fi
     if systemctl is-active --quiet wg-quick@ithute0; then pass "WireGuard edge interface service is active"; else fail "wg-quick@ithute0 is not active"; fi
     if systemctl is-active --quiet ithute-wireguard-edge-reconciler.timer; then pass "WireGuard peer reconciler timer is active"; else fail "WireGuard peer reconciler timer is not active"; fi
   fi
