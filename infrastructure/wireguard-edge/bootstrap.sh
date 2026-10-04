@@ -110,44 +110,30 @@ ITHUTE_WIREGUARD_RECONCILER_TOKEN=$RECONCILER_TOKEN
 EOF
 chmod 0600 "$RECONCILER_ENV"
 
-cat > /etc/wireguard/ithute0.conf <<EOF
-[Interface]
-PrivateKey = $(cat "$WG_PRIVATE_KEY")
-Address = $EDGE_ADDRESS/$(python3 - "$SUBNET" <<'PY'
+EDGE_PREFIX="$(python3 - "$SUBNET" <<'PY'
 import ipaddress, sys
 print(ipaddress.ip_network(sys.argv[1], strict=False).prefixlen)
 PY
-)
+)"
+
+cat > /etc/wireguard/ithute0.conf <<EOF
+[Interface]
+PrivateKey = $(cat "$WG_PRIVATE_KEY")
+Address = $EDGE_ADDRESS/$EDGE_PREFIX
 ListenPort = $LISTEN_PORT
 EOF
 chmod 0600 /etc/wireguard/ithute0.conf
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 install -m 0755 "$SCRIPT_DIR/reconcile.sh" /opt/ithute-wireguard/reconcile.sh
+install -m 0755 "$SCRIPT_DIR/firewall.sh" /opt/ithute-wireguard/firewall.sh
+install -m 0644 "$SCRIPT_DIR/ithute-wireguard-edge-firewall.service" /etc/systemd/system/ithute-wireguard-edge-firewall.service
 install -m 0644 "$SCRIPT_DIR/ithute-wireguard-edge-reconciler.service" /etc/systemd/system/ithute-wireguard-edge-reconciler.service
 install -m 0644 "$SCRIPT_DIR/ithute-wireguard-edge-reconciler.timer" /etc/systemd/system/ithute-wireguard-edge-reconciler.timer
 
-open_udp_port() {
-  local port="$1"
-  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
-    ufw allow "${port}/udp" comment 'Ithute managed private network' >/dev/null
-    return
-  fi
-  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    firewall-cmd --permanent --add-port="${port}/udp" >/dev/null
-    firewall-cmd --reload >/dev/null
-    return
-  fi
-  if command -v iptables >/dev/null 2>&1; then
-    iptables -C INPUT -p udp --dport "$port" -j ACCEPT >/dev/null 2>&1 || iptables -I INPUT 1 -p udp --dport "$port" -j ACCEPT
-    info "Opened UDP $port with iptables. Ensure your provider firewall/security group also permits this port."
-    return
-  fi
-  fail "No supported host firewall tool found to permit UDP $port"
-}
-open_udp_port "$LISTEN_PORT"
-
 systemctl daemon-reload
+ITHUTE_WIREGUARD_LISTEN_PORT="$LISTEN_PORT" /opt/ithute-wireguard/firewall.sh
+systemctl enable --now ithute-wireguard-edge-firewall.service >/dev/null
 systemctl enable --now wg-quick@ithute0 >/dev/null
 systemctl enable --now ithute-wireguard-edge-reconciler.timer >/dev/null
 
@@ -157,4 +143,5 @@ test "$(wg show ithute0 listen-port)" = "$LISTEN_PORT" || fail "ithute0 is not l
 info "Ithute Edge managed private network configured."
 info "Edge address: $EDGE_ADDRESS"
 info "Edge endpoint: $PUBLIC_IPV4:$LISTEN_PORT"
+info "Host firewall rule is persistent. Also allow UDP $LISTEN_PORT in any provider/cloud firewall."
 info "The reconciler timer is enabled and will become active after the Ithute API is deployed."
