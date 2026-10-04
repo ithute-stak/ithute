@@ -68,19 +68,22 @@ def _load_rust() -> ctypes.CDLL | None:
         return _rust
     if not RUST_LIBRARY.is_file():
         return None
-    library = ctypes.CDLL(str(RUST_LIBRARY))
-    library.ithute_rust_byte_stats.argtypes = [
-        ctypes.POINTER(ctypes.c_ubyte),
-        ctypes.c_size_t,
-        ctypes.POINTER(_RustByteStats),
-    ]
-    library.ithute_rust_byte_stats.restype = ctypes.c_int
-    library.ithute_rust_mime_scan.argtypes = [
-        ctypes.POINTER(ctypes.c_ubyte),
-        ctypes.c_size_t,
-        ctypes.POINTER(_RustMimeScan),
-    ]
-    library.ithute_rust_mime_scan.restype = ctypes.c_int
+    try:
+        library = ctypes.CDLL(str(RUST_LIBRARY))
+        library.ithute_rust_byte_stats.argtypes = [
+            ctypes.POINTER(ctypes.c_ubyte),
+            ctypes.c_size_t,
+            ctypes.POINTER(_RustByteStats),
+        ]
+        library.ithute_rust_byte_stats.restype = ctypes.c_int
+        library.ithute_rust_mime_scan.argtypes = [
+            ctypes.POINTER(ctypes.c_ubyte),
+            ctypes.c_size_t,
+            ctypes.POINTER(_RustMimeScan),
+        ]
+        library.ithute_rust_mime_scan.restype = ctypes.c_int
+    except (OSError, AttributeError):
+        return None
     _rust = library
     return library
 
@@ -91,9 +94,12 @@ def _load_cpp() -> ctypes.CDLL | None:
         return _cpp
     if not CPP_LIBRARY.is_file():
         return None
-    library = ctypes.CDLL(str(CPP_LIBRARY))
-    library.ithute_cpp_fnv1a64.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t]
-    library.ithute_cpp_fnv1a64.restype = ctypes.c_uint64
+    try:
+        library = ctypes.CDLL(str(CPP_LIBRARY))
+        library.ithute_cpp_fnv1a64.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t]
+        library.ithute_cpp_fnv1a64.restype = ctypes.c_uint64
+    except (OSError, AttributeError):
+        return None
     _cpp = library
     return library
 
@@ -164,7 +170,10 @@ def mime_scan(data: bytes) -> tuple[MimeScan, str]:
         pointer = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte))
     else:
         pointer = ctypes.POINTER(ctypes.c_ubyte)()
-    code = library.ithute_rust_mime_scan(pointer, len(data), ctypes.byref(output))
+    try:
+        code = library.ithute_rust_mime_scan(pointer, len(data), ctypes.byref(output))
+    except (OSError, ValueError, ctypes.ArgumentError):
+        return python_mime_scan(data), "python-fallback"
     if code != 0:
         return python_mime_scan(data), "python-fallback"
     return MimeScan(
