@@ -13,10 +13,12 @@ on:
       - "apps/backend/tests/test_engine_runtime.py"
       - "apps/backend/tests/test_engine_router.py"
       - "apps/backend/tests/test_webmail_message_resilience.py"
+      - "apps/backend/tests/test_platform_mail_attachments.py"
       - "apps/backend/tests/test_dmarc_reports.py"
       - "apps/backend/app/services/dmarc_reports.py"
       - "apps/backend/app/api/v1/deliverability.py"
       - "apps/backend/app/services/webmail.py"
+      - "apps/backend/app/services/platform_mail_attachments.py"
       - "apps/backend/app/services/metrics.py"
       - "apps/backend/benchmarks/**"
       - ".github/workflows/multi-engine-ci.yml"
@@ -90,7 +92,7 @@ jobs:
         working-directory: apps/backend
         run: |
           python -m pip install --disable-pip-version-check -r requirements.txt
-          pytest -q tests/test_engine_runtime.py tests/test_engine_router.py tests/test_webmail_message_resilience.py tests/test_dmarc_reports.py
+          pytest -q tests/test_engine_runtime.py tests/test_engine_router.py tests/test_webmail_message_resilience.py tests/test_platform_mail_attachments.py tests/test_dmarc_reports.py
 
       - name: Build API with native engines
         run: |
