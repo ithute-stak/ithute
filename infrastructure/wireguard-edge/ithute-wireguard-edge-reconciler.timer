@@ -1,0 +1,12 @@
+[Unit]
+Description=Reconcile Ithute managed private-network peers
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+RandomizedDelaySec=5
+Persistent=true
+Unit=ithute-wireguard-edge-reconciler.service
+
+[Install]
+WantedBy=timers.target
