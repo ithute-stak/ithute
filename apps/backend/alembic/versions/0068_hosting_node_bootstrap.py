@@ -15,6 +15,7 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.add_column("hosting_node_agents", sa.Column("origin_bind_ip", sa.String(length=64), nullable=True))
     op.create_table(
         "hosting_node_bootstraps",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
@@ -35,3 +36,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_hosting_node_bootstraps_node_id", table_name="hosting_node_bootstraps")
     op.drop_table("hosting_node_bootstraps")
+    op.drop_column("hosting_node_agents", "origin_bind_ip")
