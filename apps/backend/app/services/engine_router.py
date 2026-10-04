@@ -65,3 +65,9 @@ def execute_network(targets: list[dict], concurrency: int = 16) -> EngineExecuti
     """Route bounded concurrent network probes to Go with Python fallback."""
     value, engine = engine_runtime.network_probe(targets, concurrency)
     return EngineExecution(operation="network.concurrent", engine=engine, value=value)
+
+
+def execute_enterprise_xml(xml_bytes: bytes) -> EngineExecution:
+    """Route standards-heavy XML inspection to Java with Python fallback."""
+    value, engine = engine_runtime.enterprise_xml_inspect(xml_bytes)
+    return EngineExecution(operation="enterprise.xml", engine=engine, value=value)
