@@ -126,7 +126,7 @@ tmpdir="$(mktemp -d /tmp/ithute-release.XXXXXX)"
 cleanup() { rm -rf "$tmpdir"; }
 trap cleanup EXIT
 
-mkdir -p "$tmpdir/infrastructure/caddy" "$tmpdir/infrastructure/dns/zones" "$tmpdir/scripts"
+mkdir -p "$tmpdir/infrastructure/caddy" "$tmpdir/infrastructure/dns/zones" "$tmpdir/infrastructure/wireguard-edge" "$tmpdir/scripts"
 fetch_runtime() {
   local path="$1"
   local destination="$2"
@@ -141,21 +141,37 @@ fetch_runtime compose.production.yml "$tmpdir/compose.production.yml"
 fetch_runtime infrastructure/caddy/Caddyfile "$tmpdir/infrastructure/caddy/Caddyfile"
 fetch_runtime infrastructure/dns/zones/db.ithute.co.ls "$tmpdir/infrastructure/dns/zones/db.ithute.co.ls"
 fetch_runtime scripts/deploy-production.sh "$tmpdir/scripts/deploy-production.sh"
+fetch_runtime infrastructure/wireguard-edge/bootstrap.sh "$tmpdir/infrastructure/wireguard-edge/bootstrap.sh"
+fetch_runtime infrastructure/wireguard-edge/reconcile.sh "$tmpdir/infrastructure/wireguard-edge/reconcile.sh"
+fetch_runtime infrastructure/wireguard-edge/firewall.sh "$tmpdir/infrastructure/wireguard-edge/firewall.sh"
+fetch_runtime infrastructure/wireguard-edge/ithute-wireguard-edge-firewall.service "$tmpdir/infrastructure/wireguard-edge/ithute-wireguard-edge-firewall.service"
+fetch_runtime infrastructure/wireguard-edge/ithute-wireguard-edge-reconciler.service "$tmpdir/infrastructure/wireguard-edge/ithute-wireguard-edge-reconciler.service"
+fetch_runtime infrastructure/wireguard-edge/ithute-wireguard-edge-reconciler.timer "$tmpdir/infrastructure/wireguard-edge/ithute-wireguard-edge-reconciler.timer"
 bash -n "$tmpdir/scripts/deploy-production.sh"
+bash -n "$tmpdir/infrastructure/wireguard-edge/bootstrap.sh"
+bash -n "$tmpdir/infrastructure/wireguard-edge/reconcile.sh"
+bash -n "$tmpdir/infrastructure/wireguard-edge/firewall.sh"
 
 if [ ! -s "$APP_DIR/.last-known-good-runtime.tgz" ] && valid_tag "$current"; then
   echo "[Ithute] Preserving current runtime for rollback"
-  tar -czf "$APP_DIR/.last-known-good-runtime.tgz" -C "$APP_DIR" \
-    compose.production.yml \
-    infrastructure/caddy/Caddyfile \
+  runtime_paths=(
+    compose.production.yml
+    infrastructure/caddy/Caddyfile
     infrastructure/dns/zones/db.ithute.co.ls
+  )
+  if [ -d "$APP_DIR/infrastructure/wireguard-edge" ]; then
+    runtime_paths+=(infrastructure/wireguard-edge)
+  fi
+  tar -czf "$APP_DIR/.last-known-good-runtime.tgz" -C "$APP_DIR" "${runtime_paths[@]}"
   chmod 600 "$APP_DIR/.last-known-good-runtime.tgz"
 fi
 
-mkdir -p "$APP_DIR/infrastructure/caddy" "$APP_DIR/infrastructure/dns/zones"
+mkdir -p "$APP_DIR/infrastructure/caddy" "$APP_DIR/infrastructure/dns/zones" "$APP_DIR/infrastructure/wireguard-edge"
 cp "$tmpdir/compose.production.yml" "$APP_DIR/compose.production.yml"
 cp "$tmpdir/infrastructure/caddy/Caddyfile" "$APP_DIR/infrastructure/caddy/Caddyfile"
 cp "$tmpdir/infrastructure/dns/zones/db.ithute.co.ls" "$APP_DIR/infrastructure/dns/zones/db.ithute.co.ls"
+cp "$tmpdir/infrastructure/wireguard-edge/"* "$APP_DIR/infrastructure/wireguard-edge/"
+chmod 700 "$APP_DIR/infrastructure/wireguard-edge/bootstrap.sh" "$APP_DIR/infrastructure/wireguard-edge/reconcile.sh" "$APP_DIR/infrastructure/wireguard-edge/firewall.sh"
 
 echo "[Ithute] Starting candidate through the existing rollback-safe deployment engine"
 ITHUTE_APP_DIR="$APP_DIR" \

@@ -1,0 +1,19 @@
+[Unit]
+Description=Ithute managed private-network firewall
+Before=wg-quick@ithute0.service
+After=network-pre.target ufw.service firewalld.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/ithute-wireguard/reconciler.env
+ExecStart=/opt/ithute-wireguard/firewall.sh
+RemainAfterExit=yes
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

@@ -101,6 +101,44 @@ path.write_text("\n".join(kept) + "\n", encoding="utf-8")
 PY
 chmod 600 "$ENV_FILE"
 
+configure_edge_private_network() {
+  local helper="$APP_DIR/infrastructure/wireguard-edge/bootstrap.sh"
+  test -f "$helper" || {
+    echo "Missing managed private-network bootstrap helper: $helper" >&2
+    return 1
+  }
+  local public_ip
+  public_ip="$(sed -n 's/^ITHUTE_PUBLIC_IPV4=//p' "$ENV_FILE" | tail -n1)"
+  test -n "$public_ip" || {
+    echo "ITHUTE_PUBLIC_IPV4 is missing from $ENV_FILE" >&2
+    return 1
+  }
+  ITHUTE_APP_DIR="$APP_DIR" \
+  ITHUTE_ENV_FILE="$ENV_FILE" \
+  ITHUTE_PUBLIC_IPV4="$public_ip" \
+  ITHUTE_API_URL="https://ithute.co.ls" \
+    bash "$helper"
+}
+
+verify_edge_private_network() {
+  test -s /etc/ithute-wireguard/private.key || return 1
+  test -s /etc/ithute-wireguard/reconciler.env || return 1
+  systemctl is-active --quiet ithute-wireguard-edge-firewall.service || return 1
+  systemctl is-active --quiet wg-quick@ithute0 || return 1
+  systemctl is-active --quiet ithute-wireguard-edge-reconciler.timer || return 1
+  local edge_address listen_port
+  edge_address="$(sed -n 's/^ITHUTE_WIREGUARD_EDGE_ADDRESS=//p' "$ENV_FILE" | tail -n1)"
+  listen_port="$(sed -n 's/^ITHUTE_WIREGUARD_LISTEN_PORT=//p' "$ENV_FILE" | tail -n1)"
+  ip -4 -o addr show dev ithute0 | grep -Fq " $edge_address/" || return 1
+  test "$(wg show ithute0 listen-port)" = "$listen_port" || return 1
+}
+
+configure_edge_private_network || exit 1
+verify_edge_private_network || {
+  echo "Managed private-network edge readiness failed." >&2
+  exit 1
+}
+
 valid_tag() {
   local tag="${1:-}"
   [[ "$tag" =~ ^[0-9a-f]{40}$ ]]
@@ -259,7 +297,8 @@ record_last_good() {
   tar -czf "$LAST_GOOD_RUNTIME_ARCHIVE.tmp" \
     compose.production.yml \
     infrastructure/caddy/Caddyfile \
-    infrastructure/dns/zones/db.ithute.co.ls
+    infrastructure/dns/zones/db.ithute.co.ls \
+    infrastructure/wireguard-edge
   mv "$LAST_GOOD_RUNTIME_ARCHIVE.tmp" "$LAST_GOOD_RUNTIME_ARCHIVE"
   chmod 600 "$LAST_GOOD_RUNTIME_ARCHIVE"
 }
@@ -292,6 +331,7 @@ rollback_to_last_good() {
   }
   ensure_edge_and_reload || return 1
   verify_core_health || return 1
+  verify_edge_private_network || return 1
   verify_public_health || return 1
 
   mv "$ROLLBACK_IMAGE_ENV_FILE" "$IMAGE_ENV_FILE"
@@ -341,6 +381,20 @@ fi
 if ! verify_core_health; then
   fail_release
 fi
+if ! verify_edge_private_network; then
+  echo "Managed private-network edge readiness failed after deployment." >&2
+  fail_release
+fi
+
+# Peer reconciliation can only succeed after the public API name is reachable.
+# The timer remains active either way and will retry automatically.
+if getent ahostsv4 ithute.co.ls 2>/dev/null | awk '{print $1}' | grep -Fxq "$(sed -n 's/^ITHUTE_PUBLIC_IPV4=//p' "$ENV_FILE" | tail -n1)"; then
+  systemctl start ithute-wireguard-edge-reconciler.service || {
+    systemctl status --no-pager ithute-wireguard-edge-reconciler.service >&2 || true
+    fail_release
+  }
+fi
+
 if ! verify_public_health; then
   echo "Candidate failed public health verification." >&2
   fail_release
