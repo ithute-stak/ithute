@@ -94,11 +94,12 @@ for line in lines:
                 seen.add(key)
             continue
     out.append(line)
-if out and out[-1].strip():
-    out.append("")
-out.append("# Ithute-managed private hosting network")
-for key, value in pairs.items():
-    if key not in seen:
+missing = [(key, value) for key, value in pairs.items() if key not in seen]
+if missing:
+    if out and out[-1].strip():
+        out.append("")
+    out.append("# Ithute-managed private hosting network")
+    for key, value in missing:
         out.append(f"{key}={value}")
 path.write_text("\n".join(out) + "\n", encoding="utf-8")
 PY
