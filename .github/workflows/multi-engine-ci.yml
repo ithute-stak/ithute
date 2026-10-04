@@ -10,6 +10,10 @@ on:
       - "apps/backend/app/api/v1/engine_operations.py"
       - "apps/backend/app/api/v1/router.py"
       - "apps/backend/tests/test_engine_runtime.py"
+      - "apps/backend/tests/test_webmail_message_resilience.py"
+      - "apps/backend/app/services/webmail.py"
+      - "apps/backend/app/services/metrics.py"
+      - "apps/backend/benchmarks/**"
       - ".github/workflows/multi-engine-ci.yml"
       - ".github/workflows/release-images.yml"
   push:
@@ -70,7 +74,7 @@ jobs:
         working-directory: apps/backend
         run: |
           python -m pip install --disable-pip-version-check -r requirements.txt
-          pytest -q tests/test_engine_runtime.py
+          pytest -q tests/test_engine_runtime.py tests/test_webmail_message_resilience.py
 
       - name: Build API with native engines
         run: |
@@ -83,9 +87,11 @@ jobs:
           assert status["engines"]["cpp"]["available"] is True
           result = sample_native_result(b"Subject: engine\\n\\nbody")
           assert result["stats_engine"] == "rust"
+          assert result["mime_engine"] == "rust"
           assert result["fingerprint_engine"] == "cpp"
           print(result)
           PY
+          docker run --rm --entrypoint python ithute-app-api:engine-ci benchmarks/benchmark_mime_scan.py
 
       - name: Build Go worker image
         run: |
