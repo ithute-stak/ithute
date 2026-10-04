@@ -68,8 +68,13 @@ def process_project_operation(work: dict[str, Any]) -> None:
     if operation == "retire":
         if project.get("discard_local_data") is not True:
             raise RuntimeError("Retire operation is missing the explicit disposable-data contract")
-        if base.exists("container", container):
-            base.docker("rm", "-f", container)
+        stale_ids = base.docker(
+            "ps", "-aq", "--filter", f"label=ithute.project={project_id}", check=False
+        ).stdout.splitlines()
+        for container_id in stale_ids:
+            container_id = container_id.strip()
+            if container_id:
+                base.docker("rm", "-f", container_id)
         if base.exists("network", network):
             base.docker("network", "rm", network, check=False)
         if base.exists("volume", volume):
