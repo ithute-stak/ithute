@@ -252,7 +252,7 @@ public final class Main {
         for (int i = 0; i < value.length(); i++) {
             char ch = value.charAt(i);
             switch (ch) {
-                case '"' -> out.append("\\"");
+                case '"' -> out.append("\\\"");
                 case '\\' -> out.append("\\\\");
                 case '\n' -> out.append("\\n");
                 case '\r' -> out.append("\\r");
