@@ -10,7 +10,7 @@ import uuid
 from datetime import timedelta
 
 import jwt
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -99,6 +99,17 @@ def _require_csrf(request: Request, submitted: str, settings: Settings) -> None:
     raw = request.cookies.get(settings.browser_cookie_name)
     if not raw or not hmac.compare_digest(_csrf(raw, settings), submitted):
         raise HTTPException(status_code=403, detail="invalid CSRF token")
+
+
+def _safe_return_to(value: str | None) -> str:
+    if not value:
+        return "/account"
+    candidate = value.strip()
+    if candidate == "/account":
+        return candidate
+    if candidate.startswith("/oauth/authorize?") and not candidate.startswith("//"):
+        return candidate
+    return "/account"
 
 
 def _set_sso_cookie(response, user: User, settings: Settings) -> None:
@@ -257,11 +268,18 @@ def portal_remove_passkey(passkey_id: uuid.UUID, request: Request, password: str
 
 
 @router.get("/account/passkey-login", response_class=HTMLResponse)
-def portal_passkey_login_page(request: Request, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+def portal_passkey_login_page(
+    request: Request,
+    return_to: str = Query(default="/account", max_length=4096),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
     step_up = request.query_params.get("step_up") == "1"
-    if _cookie_user(request,db,settings) is not None and not step_up: return RedirectResponse("/account",status_code=303)
-    js=_webauthn_js()+"""
-async function signInPasskey(){try{message('Waiting for your passkey…');const s=await fetch('/account/passkey-login/options',{method:'POST'});const d=await s.json();if(!s.ok)throw new Error(d.detail||'Could not start sign-in');const c=await navigator.credentials.get({publicKey:requestOptions(d.options)});if(!c)throw new Error('No passkey was selected');const v=await fetch('/account/passkey-login/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({challenge_id:d.challenge_id,credential:authenticationJSON(c)})});const r=await v.json();if(!v.ok)throw new Error(r.detail||'Passkey sign-in failed');location.href='/account';}catch(err){message(err.message||String(err),true);}}
+    destination = _safe_return_to(return_to)
+    if _cookie_user(request,db,settings) is not None and not step_up:
+        return RedirectResponse(destination,status_code=303)
+    js=_webauthn_js()+f"""
+async function signInPasskey(){{try{{message('Waiting for your passkey…');const s=await fetch('/account/passkey-login/options',{{method:'POST'}});const d=await s.json();if(!s.ok)throw new Error(d.detail||'Could not start sign-in');const c=await navigator.credentials.get({{publicKey:requestOptions(d.options)}});if(!c)throw new Error('No passkey was selected');const v=await fetch('/account/passkey-login/verify',{{method:'POST',headers:{{'content-type':'application/json'}},body:JSON.stringify({{challenge_id:d.challenge_id,credential:authenticationJSON(c)}})}});const r=await v.json();if(!v.ok)throw new Error(r.detail||'Passkey sign-in failed');location.href={json.dumps(destination)};}}catch(err){{message(err.message||String(err),true);}}}}
 """
     body=f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Passkey sign-in · !thute</title><style>{_STYLE}</style></head><body><div class="shell"><div class="top"><div class="brand"><span>!</span>thute Identity</div><a href="/account/login">Use password instead</a></div><div class="card" style="max-width:520px;margin:8vh auto"><h1>Sign in with a passkey</h1><p>Your device will ask for its biometric, PIN, or security key. Your biometric data never leaves your device.</p><div id="passkey-notice" class="notice"></div><button type="button" onclick="signInPasskey()">Continue with passkey</button></div></div><script>{js}</script></body></html>"""
     return HTMLResponse(body)

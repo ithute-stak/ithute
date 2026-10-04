@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+from urllib.parse import urlencode
 
 from . import oauth
 
@@ -16,6 +17,11 @@ def _login_html(
         for key, value in fields.items()
     )
     identifier_value = html.escape(identifier, quote=True)
+    authorize_query = urlencode(fields)
+    passkey_href = "/account/passkey-login?" + urlencode({
+        "step_up": "1",
+        "return_to": f"/oauth/authorize?{authorize_query}",
+    })
     error_html = (
         f'<div class="alert" role="alert"><span class="alert-dot">!</span><span>{html.escape(error)}</span></div>'
         if error
@@ -118,6 +124,10 @@ def _login_html(
           </div>
           <button class="submit" type="submit">Continue securely →</button>
         </form>
+        <div style="display:grid;gap:10px;margin-top:14px">
+          <a href="{html.escape(passkey_href, quote=True)}" style="display:flex;min-height:50px;align-items:center;justify-content:center;border:1px solid #b9cec5;border-radius:12px;background:#f4f9f6;color:#173a34;font-size:13px;font-weight:900;text-decoration:none">Continue with passkey</a>
+          <div style="font-size:10px;line-height:1.5;color:#74867d;text-align:center">Required for privileged/system-owner accounts. You will return automatically to the requesting service.</div>
+        </div>
         <div class="foot"><span>auth.ithute.co.ls</span><strong>Ithute Digital Solutions</strong></div>
       </section>
     </main>

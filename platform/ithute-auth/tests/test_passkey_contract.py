@@ -56,3 +56,13 @@ def test_authentication_requires_user_verification_and_is_rp_scoped() -> None:
     assert payload["rpId"] == "auth.ithute.co.ls"
     assert payload["userVerification"] == "required"
     assert payload["allowCredentials"] == []
+
+
+def test_portal_passkey_return_target_is_restricted_to_account_or_oauth() -> None:
+    from app.portal_passkeys import _safe_return_to
+
+    assert _safe_return_to("/account") == "/account"
+    assert _safe_return_to("/oauth/authorize?client_id=ithute-mail&state=abc") == "/oauth/authorize?client_id=ithute-mail&state=abc"
+    assert _safe_return_to("https://evil.example/") == "/account"
+    assert _safe_return_to("//evil.example/oauth/authorize") == "/account"
+    assert _safe_return_to("/admin") == "/account"
