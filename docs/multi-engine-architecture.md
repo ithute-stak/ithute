@@ -14,6 +14,7 @@ checks, product rules or database policy.
 | Rust | memory-safe CPU-heavy parsing/transformation | native shared library with Python fallback |
 | Go | concurrent/network workers | isolated internal worker image |
 | C++ | benchmark-proven hot paths only | native shared library with Python fallback |
+| Java | enterprise XML/report/integration processing | isolated internal worker with Python fallback |
 
 The API exposes platform-owner engine status at `GET /api/v1/platform/engines`.
 The native libraries are loaded from `/opt/ithute-engines` in the immutable API
@@ -58,3 +59,17 @@ continues normally.
 Prometheus exposes engine/attachment-walk counters and message-size histograms.
 CI also runs a parity benchmark but deliberately does not enforce a fixed speed
 ratio because runner performance varies.
+
+
+## Java enterprise engine
+
+Java is introduced for bounded enterprise integration/report workloads where its
+mature XML and protocol ecosystem is useful. The first production capability is
+DMARC aggregate XML parsing. The Java worker has no database credentials and no
+tenant/business authority. Python verifies the tenant/domain, bounds and
+decompresses uploads, invokes Java, validates the returned domain/report data,
+and persists the resulting summary.
+
+The parser disables DTDs, external entities, external schemas and XInclude to
+avoid XXE-style behavior. If Java is unavailable, Ithute falls back to the
+bounded Python reference parser.
