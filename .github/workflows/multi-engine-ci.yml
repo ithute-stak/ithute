@@ -141,6 +141,22 @@ jobs:
           printf '%s' '<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><feedback>&xxe;</feedback>' > /tmp/xxe.xml
           code="$(curl -sS -o /tmp/xxe-response.json -w '%{http_code}' -X POST -H 'Content-Type: application/xml' --data-binary @/tmp/xxe.xml http://127.0.0.1:18081/v1/dmarc/parse)"
           test "$code" = "422"
+          printf '%s' '<invoice xmlns="urn:ithute:test" id="A1"><line qty="2">Service</line><line qty="1">Hosting</line></invoice>' > /tmp/enterprise.xml
+          curl -fsS -X POST -H 'Content-Type: application/xml' --data-binary @/tmp/enterprise.xml \
+            http://127.0.0.1:18081/v1/xml/inspect > /tmp/enterprise-java.json
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/enterprise-java.json'))
+          assert body['engine']=='java'
+          assert body['root']=='invoice'
+          assert body['namespace']=='urn:ithute:test'
+          assert body['element_count']==3
+          assert body['attribute_count']==3
+          assert body['max_depth']==2
+          assert body['top_elements'][0]=={'name':'line','count':2}
+          PY
+          code="$(curl -sS -o /tmp/xml-xxe.json -w '%{http_code}' -X POST -H 'Content-Type: application/xml' --data-binary @/tmp/xxe.xml http://127.0.0.1:18081/v1/xml/inspect)"
+          test "$code" = "422"
 
       - name: Build Go worker image
         run: |
