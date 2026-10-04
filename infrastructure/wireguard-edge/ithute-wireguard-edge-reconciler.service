@@ -1,0 +1,16 @@
+[Unit]
+Description=Ithute managed private-network edge reconciler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/ithute-wireguard/reconcile.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/ithute-wireguard
+ReadWritePaths=/etc/wireguard
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
