@@ -30,8 +30,8 @@ def edge_address() -> str:
     configured = os.getenv("ITHUTE_WIREGUARD_EDGE_ADDRESS", "").strip()
     if configured:
         address = ipaddress.ip_address(configured)
-        if not isinstance(address, ipaddress.IPv4Address) or address not in network:
-            raise RuntimeError("ITHUTE_WIREGUARD_EDGE_ADDRESS must be inside ITHUTE_WIREGUARD_SUBNET")
+        if not isinstance(address, ipaddress.IPv4Address) or address not in network or address in {network.network_address, network.broadcast_address}:
+            raise RuntimeError("ITHUTE_WIREGUARD_EDGE_ADDRESS must be a usable host address inside ITHUTE_WIREGUARD_SUBNET")
         return str(address)
     return str(next(network.hosts()))
 
@@ -45,8 +45,14 @@ def _edge_public_key() -> str:
 
 def _edge_endpoint() -> str:
     value = os.getenv("ITHUTE_WIREGUARD_EDGE_ENDPOINT", "").strip()
-    if not value or ":" not in value or len(value) > 300:
+    if not value or len(value) > 300 or "\r" in value or "\n" in value:
         raise HTTPException(status_code=503, detail="Managed private networking edge endpoint is not configured")
+    match = re.fullmatch(r"([A-Za-z0-9.-]+):(\d{1,5})", value)
+    if not match:
+        raise HTTPException(status_code=503, detail="Managed private networking edge endpoint must be host:port")
+    port = int(match.group(2))
+    if not 1 <= port <= 65535:
+        raise HTTPException(status_code=503, detail="Managed private networking edge endpoint port is invalid")
     return value
 
 
