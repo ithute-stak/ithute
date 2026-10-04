@@ -4,7 +4,6 @@ set -Eeuo pipefail
 APP_DIR="${ITHUTE_APP_DIR:-/home/administrator/ithute-platform}"
 REPO="ithute-stak/ithute"
 API="https://api.github.com/repos/$REPO"
-LOCAL_HELPER="$APP_DIR/scripts/deploy-production-manual.sh"
 REPO_RAW="https://raw.githubusercontent.com/$REPO"
 
 if [ "$APP_DIR" != "/home/administrator/ithute-platform" ]; then
