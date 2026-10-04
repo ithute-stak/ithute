@@ -15,6 +15,7 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.add_column("hosting_node_bootstraps", sa.Column("managed_private_network", sa.Boolean(), nullable=False, server_default=sa.true()))
     op.create_table(
         "infrastructure_wireguard_peers",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
@@ -39,3 +40,4 @@ def downgrade() -> None:
     op.drop_index("ix_infrastructure_wireguard_peers_status", table_name="infrastructure_wireguard_peers")
     op.drop_index("ix_infrastructure_wireguard_peers_server_id", table_name="infrastructure_wireguard_peers")
     op.drop_table("infrastructure_wireguard_peers")
+    op.drop_column("hosting_node_bootstraps", "managed_private_network")
