@@ -290,6 +290,7 @@ export function HostedMailWorkspace() {
       setMessages(items);
       setTotal(items.length);
       setOffset(0);
+      setFolder("INBOX");
       setQuery(contact.email);
       setInboxView("primary");
       const url = new URL(window.location.href);
