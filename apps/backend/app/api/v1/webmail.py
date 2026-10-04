@@ -31,7 +31,7 @@ from app.services.webmail import (
     session_credentials,
     set_flags,
 )
-from app.services.webmail_polish import contacts, folder_counts, save_contact, save_signature, send_rich_message, signature
+from app.services.webmail_polish import contact_presence, contacts, folder_counts, save_contact, save_signature, send_rich_message, signature
 
 router = APIRouter(prefix="/webmail", tags=["webmail"])
 UID_RE = re.compile(r"^[0-9]+$")
@@ -392,6 +392,63 @@ def get_contacts(q: str = Query(default="", max_length=255), token: Annotated[st
     address, _ = _credentials(token)
     try:
         return {"items": contacts(address, q)}
+    except WebmailError as exc:
+        raise _failure(exc) from exc
+
+
+@router.get("/business-contacts")
+def get_business_contacts(
+    limit: int = Query(default=12, ge=1, le=50),
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+):
+    address, _ = _credentials(token)
+    try:
+        rows = contacts(address)
+        presence = contact_presence([str(row.get("email") or "") for row in rows])
+        enriched = []
+        for row in rows:
+            email_address = str(row.get("email") or "").lower()
+            interactions = int(row.get("interactions") or 0)
+            last_seen = str(row.get("last_seen") or "")
+            source_set = {str(item) for item in row.get("sources", [])}
+            enriched.append({
+                **row,
+                "online": bool(presence.get(email_address, False)),
+                "business": bool("incoming" in source_set or "outgoing" in source_set),
+                "score": interactions * 10 + (100000 if presence.get(email_address, False) else 0),
+                "last_seen": last_seen,
+            })
+        enriched.sort(
+            key=lambda row: (
+                bool(row["online"]),
+                int(row["score"]),
+                str(row["last_seen"]),
+                str(row.get("name") or "").lower(),
+                str(row.get("email") or "").lower(),
+            ),
+            reverse=True,
+        )
+        return {"items": enriched[:limit]}
+    except WebmailError as exc:
+        raise _failure(exc) from exc
+
+
+@router.get("/business-conversation")
+def get_business_conversation(
+    email: WebmailAddress,
+    limit: int = Query(default=25, ge=1, le=50),
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+):
+    address, password = _credentials(token)
+    try:
+        inbox = messages(address, password, folder="INBOX", limit=limit, offset=0, query=email)
+        sent = messages(address, password, folder="Sent", limit=limit, offset=0, query=email)
+        rows = [
+            *[{**row, "folder": "INBOX"} for row in inbox.get("items", [])],
+            *[{**row, "folder": "Sent"} for row in sent.get("items", [])],
+        ]
+        rows.sort(key=lambda row: str(row.get("date") or ""), reverse=True)
+        return {"items": rows[:limit], "email": email}
     except WebmailError as exc:
         raise _failure(exc) from exc
 
