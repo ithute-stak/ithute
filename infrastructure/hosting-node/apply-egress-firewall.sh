@@ -30,10 +30,30 @@ ALLOW_HTTPS="${ITHUTE_HOSTING_EGRESS_ALLOW_HTTPS:-true}"
 ALLOW_DNS="${ITHUTE_HOSTING_EGRESS_ALLOW_DNS:-true}"
 POSTGRES_PORT="${ITHUTE_HOSTING_POSTGRES_PORT:-5432}"
 MYSQL_PORT="${ITHUTE_HOSTING_MYSQL_PORT:-3306}"
+ORIGIN_BIND_IP="${ITHUTE_HOSTING_ORIGIN_BIND_IP:-}"
+ORIGIN_PORT_START="${ITHUTE_HOSTING_ORIGIN_PORT_START:-22000}"
+ORIGIN_PORT_END="${ITHUTE_HOSTING_ORIGIN_PORT_END:-29999}"
+EDGE_ORIGIN_CIDRS="${ITHUTE_EDGE_ORIGIN_CIDRS:-}"
+INGRESS_CHAIN="ITHUTE-HOSTING-INGRESS"
 
 if [[ -z "$DB_GATEWAY_IP" ]]; then
   echo "Unable to resolve Docker host gateway. Set ITHUTE_HOSTING_DB_GATEWAY_IP explicitly." >&2
   exit 1
+fi
+
+if [[ -n "$ORIGIN_BIND_IP" ]]; then
+  [[ -n "$EDGE_ORIGIN_CIDRS" ]] || { echo "ITHUTE_EDGE_ORIGIN_CIDRS is required when private origin handoff is enabled." >&2; exit 1; }
+  python3 - "$ORIGIN_BIND_IP" "$ORIGIN_PORT_START" "$ORIGIN_PORT_END" "$EDGE_ORIGIN_CIDRS" <<'PY'
+import ipaddress, sys
+address = ipaddress.ip_address(sys.argv[1])
+start = int(sys.argv[2]); end = int(sys.argv[3])
+if not address.is_private or address.is_unspecified or address.is_multicast or address.is_link_local:
+    raise SystemExit("ITHUTE_HOSTING_ORIGIN_BIND_IP must be a private/VPN address")
+if not (1024 <= start <= end <= 65535):
+    raise SystemExit("Private origin port range is invalid")
+for item in [x.strip() for x in sys.argv[4].split(",") if x.strip()]:
+    ipaddress.ip_network(item, strict=False)
+PY
 fi
 
 python3 - "$DB_GATEWAY_IP" "$NETWORK_POOL" "$NETWORK_PREFIX" <<'PY'
@@ -138,5 +158,27 @@ while iptables -C DOCKER-USER -s "$NETWORK_POOL" -j "$CHAIN" 2>/dev/null; do
   iptables -D DOCKER-USER -s "$NETWORK_POOL" -j "$CHAIN"
 done
 iptables -I DOCKER-USER 1 -s "$NETWORK_POOL" -j "$CHAIN"
+
+if [[ -n "$ORIGIN_BIND_IP" ]]; then
+  if ! iptables -S "$INGRESS_CHAIN" >/dev/null 2>&1; then
+    iptables -N "$INGRESS_CHAIN"
+  fi
+  iptables -F "$INGRESS_CHAIN"
+  iptables -A "$INGRESS_CHAIN" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  IFS=',' read -ra EDGE_CIDR_LIST <<<"$EDGE_ORIGIN_CIDRS"
+  for cidr in "${EDGE_CIDR_LIST[@]}"; do
+    cidr="${cidr//[[:space:]]/}"
+    [[ -n "$cidr" ]] || continue
+    iptables -A "$INGRESS_CHAIN" -s "$cidr" -j ACCEPT
+  done
+  iptables -A "$INGRESS_CHAIN" -j REJECT --reject-with icmp-port-unreachable
+
+  # Docker DNAT occurs before DOCKER-USER. Match the original destination so
+  # the rule protects only the reserved private-origin bind IP/port range.
+  while iptables -C DOCKER-USER -p tcp -m conntrack --ctorigdst "$ORIGIN_BIND_IP" --ctorigdstport "$ORIGIN_PORT_START:$ORIGIN_PORT_END" -j "$INGRESS_CHAIN" 2>/dev/null; do
+    iptables -D DOCKER-USER -p tcp -m conntrack --ctorigdst "$ORIGIN_BIND_IP" --ctorigdstport "$ORIGIN_PORT_START:$ORIGIN_PORT_END" -j "$INGRESS_CHAIN"
+  done
+  iptables -I DOCKER-USER 1 -p tcp -m conntrack --ctorigdst "$ORIGIN_BIND_IP" --ctorigdstport "$ORIGIN_PORT_START:$ORIGIN_PORT_END" -j "$INGRESS_CHAIN"
+fi
 
 echo "Ithute hosted-workload egress policy active for $NETWORK_POOL. DB gateway: $DB_GATEWAY_IP"
