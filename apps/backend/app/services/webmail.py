@@ -18,7 +18,8 @@ import redis
 
 from app.core.config import settings
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
-from app.services.engine_runtime import MimeScan, mime_scan
+from app.services.engine_router import execute_binary
+from app.services.engine_runtime import MimeScan
 from app.services.metrics import MAIL_MIME_SCAN_BYTES, MAIL_MIME_SCAN_TOTAL
 
 
@@ -297,12 +298,14 @@ def _attachments(message, scan: MimeScan | None = None) -> list[dict]:
         disposition = part.get_content_disposition()
         if filename or disposition == "attachment":
             payload = part.get_payload(decode=True) or b""
+            digest = execute_binary("mail.sha256", payload)
             rows.append(
                 {
                     "index": attachment_index,
                     "filename": filename or f"attachment-{attachment_index + 1}",
                     "content_type": part.get_content_type(),
                     "size": len(payload),
+                    "sha256": digest.value,
                 }
             )
             attachment_index += 1
@@ -310,7 +313,9 @@ def _attachments(message, scan: MimeScan | None = None) -> list[dict]:
 
 
 def _message_json(uid: str, raw: bytes, meta: bytes | str = b"", include_body: bool = False) -> dict:
-    scan, scan_engine = mime_scan(raw)
+    scan_execution = execute_binary("mail.mime_scan", raw)
+    scan = scan_execution.value
+    scan_engine = scan_execution.engine
     parsed = BytesParser(policy=policy.default).parsebytes(raw)
     meta_text = meta.decode(errors="replace") if isinstance(meta, bytes) else str(meta)
     body = _plain_body(parsed)
