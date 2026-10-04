@@ -53,6 +53,7 @@ class HostingDeployment(Base):
     image_ref: Mapped[str] = mapped_column(String(500), nullable=False)
     image_digest: Mapped[str] = mapped_column(String(80), nullable=False)
     source_commit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reset_data_volume: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     runtime_manifest_version: Mapped[str] = mapped_column(String(16), default=HOSTING_RUNTIME_MANIFEST_VERSION, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False, index=True)
     failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
