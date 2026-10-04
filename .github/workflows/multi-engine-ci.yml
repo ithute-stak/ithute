@@ -1,0 +1,102 @@
+name: Multi-Engine CI
+
+on:
+  pull_request:
+    paths:
+      - "contracts/**"
+      - "engines/**"
+      - "apps/backend/Dockerfile"
+      - "apps/backend/app/services/engine_runtime.py"
+      - "apps/backend/app/api/v1/engine_operations.py"
+      - "apps/backend/app/api/v1/router.py"
+      - "apps/backend/tests/test_engine_runtime.py"
+      - ".github/workflows/multi-engine-ci.yml"
+      - ".github/workflows/release-images.yml"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  engines:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SECRET_KEY: ci-multiengine-secret-key-000000000000000000000000
+      DATABASE_URL: postgresql+psycopg://ithute:unused@127.0.0.1:5432/ithute_unused
+      ENVIRONMENT: test
+      PLATFORM_MODE: bootstrap
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Validate shared engine contract
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          schema = json.loads(Path("contracts/engine-task.schema.json").read_text())
+          assert schema["properties"]["engine"]["enum"] == ["python", "rust", "go", "cpp"]
+          assert set(schema["required"]) == {"version", "task_id", "engine", "operation", "payload"}
+          PY
+
+      - name: Test Rust safe core
+        working-directory: engines/rust-core
+        run: cargo test --release --locked
+
+      - name: Test Go worker
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23.x"
+
+      - name: Build and test Go worker
+        working-directory: engines/go-worker
+        run: |
+          go test ./...
+          go vet ./...
+          go build ./cmd/worker
+
+      - name: Test C++ turbo library
+        run: |
+          cmake -S engines/cpp-native -B /tmp/ithute-cpp-build -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/ithute-cpp-build --parallel 2
+          ctest --test-dir /tmp/ithute-cpp-build --output-on-failure
+
+      - name: Test Python engine fallback
+        working-directory: apps/backend
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          pytest -q tests/test_engine_runtime.py
+
+      - name: Build API with native engines
+        run: |
+          docker build --pull -f apps/backend/Dockerfile -t ithute-app-api:engine-ci .
+          docker run --rm -i --entrypoint python ithute-app-api:engine-ci - <<'PY'
+          from app.services.engine_runtime import engine_status, sample_native_result
+          status = engine_status()
+          assert status["brain"]["authoritative"] is True
+          assert status["engines"]["rust"]["available"] is True
+          assert status["engines"]["cpp"]["available"] is True
+          result = sample_native_result(b"Subject: engine\\n\\nbody")
+          assert result["stats_engine"] == "rust"
+          assert result["fingerprint_engine"] == "cpp"
+          print(result)
+          PY
+
+      - name: Build Go worker image
+        run: |
+          docker build --pull -t ithute-go-worker:engine-ci engines/go-worker
+          container="$(docker run -d -p 18080:8080 ithute-go-worker:engine-ci)"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:18080/healthz | grep -q '"engine":"go"'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "$container"
+          exit 1

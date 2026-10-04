@@ -82,6 +82,7 @@ jobs:
           require_success security-ci.yml 'Security CI'
           require_success backup-assurance-ci.yml 'Backup Assurance CI'
           require_success production-readiness-ci.yml 'Production Readiness CI'
+          require_success multi-engine-ci.yml 'Multi-Engine CI'
           echo "publish=true" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
@@ -116,10 +117,23 @@ jobs:
         id: app_api
         uses: docker/build-push-action@v7
         with:
-          context: apps/backend
+          context: .
           file: apps/backend/Dockerfile
           push: true
           tags: ${{ env.REGISTRY }}/ithute-app-api:${{ env.RELEASE_SHA }}
+          provenance: mode=max
+          sbom: true
+
+
+      - name: Publish Go worker image
+        if: steps.gates.outputs.publish == 'true'
+        id: go_worker
+        uses: docker/build-push-action@v7
+        with:
+          context: engines/go-worker
+          file: engines/go-worker/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/ithute-go-worker:${{ env.RELEASE_SHA }}
           provenance: mode=max
           sbom: true
 
@@ -175,6 +189,15 @@ jobs:
           subject-digest: ${{ steps.app_api.outputs.digest }}
           push-to-registry: true
 
+
+      - name: Attest Go worker image provenance
+        if: steps.gates.outputs.publish == 'true'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/ithute-go-worker
+          subject-digest: ${{ steps.go_worker.outputs.digest }}
+          push-to-registry: true
+
       - name: Attest auth image provenance
         if: steps.gates.outputs.publish == 'true'
         uses: actions/attest-build-provenance@v2
@@ -204,7 +227,7 @@ jobs:
         run: |
           echo "Ithute images are published only; no VPS deployment is performed."
           echo "Release SHA: $RELEASE_SHA"
-          for image in ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime; do
+          for image in ithute-web ithute-app-api ithute-go-worker ithute-auth ithute-push ithute-realtime; do
             echo "$REGISTRY/$image:$RELEASE_SHA"
           done
           echo "Production changes only when an operator deploys this exact SHA from the VPS."

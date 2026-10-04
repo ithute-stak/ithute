@@ -260,7 +260,7 @@ jobs:
           docker build --pull --target runner \
             --build-arg NEXT_PUBLIC_API_URL=/api/v1 \
             -t "ithute-web:$tag" ./apps/frontend
-          docker build --pull -t "ithute-app-api:$tag" ./apps/backend
+          docker build --pull -f apps/backend/Dockerfile -t "ithute-app-api:$tag" .
           docker build --pull -t "ithute-auth:$tag" ./platform/ithute-auth
           docker build --pull -t "ithute-push:$tag" ./platform/ithute-push
           docker build --pull -t "ithute-realtime:$tag" ./platform/ithute-realtime
