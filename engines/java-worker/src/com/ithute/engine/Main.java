@@ -248,7 +248,7 @@ public final class Main {
     }
 
     private static String quote(String value) {
-        StringBuilder out = new StringBuilder(""");
+        StringBuilder out = new StringBuilder("\"");
         for (int i = 0; i < value.length(); i++) {
             char ch = value.charAt(i);
             switch (ch) {
