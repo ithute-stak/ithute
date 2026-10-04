@@ -10,6 +10,7 @@ def test_python_fallback_matches_engine_contract(monkeypatch):
 
     assert result["stats_engine"] == "python-fallback"
     assert result["fingerprint_engine"] == "python-fallback"
+    assert result["sha256_engine"] == "python-fallback"
     assert result["stats"]["bytes"] == len(raw)
     assert result["stats"]["lines"] == 3
     assert result["stats"]["non_ascii"] == len("📧".encode("utf-8"))
@@ -18,6 +19,7 @@ def test_python_fallback_matches_engine_contract(monkeypatch):
     assert result["mime"]["body_bytes"] > 0
     assert result["mime"]["attachment_signals"] == 0
     assert int(result["fingerprint"]) > 0
+    assert result["sha256"] == engine_runtime.python_sha256(raw)
 
 
 def test_engine_status_keeps_python_authoritative(monkeypatch):
@@ -65,3 +67,10 @@ def test_python_mime_scan_plain_message_allows_attachment_walk_skip():
 
     assert scan.attachment_signals == 0
     assert scan.boundary_markers == 0
+
+
+def test_python_sha256_matches_known_vector():
+    assert engine_runtime.python_sha256(b"abc") == (
+        "ba7816bf8f01cfea414140de5dae2223"
+        "b00361a396177a9cb410ff61f20015ad"
+    )
