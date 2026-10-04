@@ -34,8 +34,7 @@ def test_source_commit_accepts_git_hex_and_rejects_untrusted_text():
 
 
 def test_edge_private_network_bootstrap_contract_and_shell_syntax():
-    root = Path(__file__).parents[2].parents[0]
-    repo = root.parent.parent
+    repo = Path(__file__).resolve().parents[3]
     scripts = [
         repo / "infrastructure" / "wireguard-edge" / "bootstrap.sh",
         repo / "infrastructure" / "wireguard-edge" / "reconcile.sh",
