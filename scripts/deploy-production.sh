@@ -237,7 +237,9 @@ verify_core_health() {
   wait_service ithute-dns "python3 -c 'import os,urllib.request; request=urllib.request.Request(\"http://127.0.0.1:8081/api/v1/servers/localhost\", headers={\"X-API-Key\": os.environ[\"PDNS_AUTH_API_KEY\"]}); urllib.request.urlopen(request, timeout=3).read()'" || return 1
   wait_service ithute-auth "curl -fsS http://127.0.0.1:8080/healthz | grep -q ithute-auth" || return 1
   wait_service ithute-app-api "curl -fsS http://127.0.0.1:8000/health/ready | grep -q '\"status\":\"ready\"'" || return 1
+  if compose config --services | grep -Fxq ithute-hosting-health-controller; then
   wait_service ithute-hosting-health-controller "python -c 'import app.services.hosting_node_health,app.services.hosting_node_health_daemon'" || return 1
+  fi
   wait_service ithute-web "wget -qO- http://127.0.0.1:3000/health | grep -q ithute-web" || return 1
   wait_service ithute-push "curl -fsS http://127.0.0.1:8080/readyz | grep -q '\"status\":\"ready\"'" || return 1
   wait_service ithute-realtime "curl -fsS http://127.0.0.1:8080/readyz | grep -q '\"status\":\"ready\"'" || return 1
