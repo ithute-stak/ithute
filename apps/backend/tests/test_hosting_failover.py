@@ -131,6 +131,7 @@ def test_stateless_project_stages_replacement_then_cuts_over(db, tenant_admin, p
     assert replacement is not None
     assert replacement.node_id == target.id
     assert replacement.image_digest == "sha256:" + "a" * 64
+    assert replacement.reset_data_volume is True
 
     replacement.status = "healthy"
     replacement.origin_url = "http://10.70.0.2:22001"
