@@ -99,7 +99,7 @@ def _next_release_number(db: Session, project_id) -> int:
     return int(current) + 1
 
 
-def _eligible_target(db: Session, project: HostingProject, source_node_id) -> tuple[HostingNode | None, str | None]:
+def _eligible_target(db: Session, project: HostingProject, source_node_id, preferred_target_node_id=None) -> tuple[HostingNode | None, str | None]:
     ranked = rank_nodes(
         db,
         workload="application",
@@ -108,6 +108,16 @@ def _eligible_target(db: Session, project: HostingProject, source_node_id) -> tu
         cpu_millicores=project.cpu_millicores,
         lock=True,
     )
+    if preferred_target_node_id is not None:
+        match = next((row for row in ranked if row["node"].id == preferred_target_node_id), None)
+        if match is None:
+            return None, "Requested replacement node does not exist."
+        if match["node"].id == source_node_id:
+            return None, "Replacement node must be different from the current node."
+        if not match["eligible"]:
+            return None, "Requested replacement node is not eligible: " + "; ".join(match["reasons"])
+        return match["node"], None
+
     for row in ranked:
         if row["node"].id == source_node_id:
             continue
@@ -172,7 +182,7 @@ def _prepare_attempt(db: Session, project: HostingProject, source_node_id, now: 
     return row
 
 
-def _queue_replacement(db: Session, attempt: HostingFailoverAttempt, project: HostingProject, now: datetime) -> None:
+def _queue_replacement(db: Session, attempt: HostingFailoverAttempt, project: HostingProject, now: datetime, preferred_target_node_id=None) -> None:
     if _active_deployment(db, project.id) is not None:
         attempt.reason = "Waiting for the project's current deployment operation to finish."
         return
@@ -183,7 +193,7 @@ def _queue_replacement(db: Session, attempt: HostingFailoverAttempt, project: Ho
         attempt.reason = "No previously healthy immutable deployment is available for relocation."
         return
 
-    target, error = _eligible_target(db, project, attempt.source_node_id)
+    target, error = _eligible_target(db, project, attempt.source_node_id, preferred_target_node_id)
     if target is None:
         attempt.reason = error
         return
@@ -361,4 +371,56 @@ def run_application_failover_reconcile(db: Session, limit: int = 200) -> dict:
         "recovery_required": recovery_required,
         "pending": pending,
         "failover_after_seconds": FAILOVER_AFTER_SECONDS,
+    }
+
+
+
+def request_project_relocation(
+    db: Session,
+    project: HostingProject,
+    *,
+    preferred_target_node_id=None,
+    reason: str = "manual_rebalance",
+) -> HostingFailoverAttempt:
+    now = datetime.now(timezone.utc)
+    if project.node_id is None:
+        raise ValueError("Project is not assigned to a hosting node")
+    if project.failover_policy != "stateless_auto":
+        raise ValueError("Project must explicitly use stateless_auto before it can be relocated")
+    if project.status == "suspended":
+        raise ValueError("Suspended projects cannot be relocated")
+    existing = _attempt(db, project.id, project.node_id)
+    if existing is not None:
+        raise ValueError("A failover or recovery action already exists for this project")
+    local_database = _managed_database_on_source(db, project, project.node_id)
+    if local_database is not None:
+        raise ValueError("Project has a managed database on its current node and cannot use application-only relocation")
+    previous = _last_healthy(db, project.id)
+    if previous is None:
+        raise ValueError("Project has no healthy immutable deployment to relocate")
+
+    attempt = _create_attempt(db, project, project.node_id, "pending", reason)
+    attempt.started_at = now
+    _queue_replacement(db, attempt, project, now, preferred_target_node_id)
+    if attempt.deployment_id is None:
+        if attempt.reason:
+            raise ValueError(attempt.reason)
+        raise ValueError("Replacement deployment could not be queued")
+    return attempt
+
+
+def failover_attempt_out(row: HostingFailoverAttempt) -> dict:
+    return {
+        "id": str(row.id),
+        "project_id": str(row.project_id),
+        "source_node_id": str(row.source_node_id),
+        "target_node_id": str(row.target_node_id) if row.target_node_id else None,
+        "deployment_id": str(row.deployment_id) if row.deployment_id else None,
+        "status": row.status,
+        "reason": row.reason,
+        "edge_status": row.edge_status,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
