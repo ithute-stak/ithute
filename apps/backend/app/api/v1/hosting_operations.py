@@ -20,6 +20,7 @@ from app.models import (
     AuditLog,
     HostingDeployment,
     HostingEnvironmentVariable,
+    HostingFailoverAttempt,
     HostingNode,
     HostingNodeAgent,
     HostingNodeBootstrap,
@@ -913,21 +914,38 @@ def report_deployment_status(
                 deployment.status = "failed"
                 deployment.completed_at = now
                 deployment.failure_message = f"Hosting origin handoff rejected: {exc}"
-                project.status = "failed"
+                failover = db.scalar(select(HostingFailoverAttempt).where(
+                    HostingFailoverAttempt.deployment_id == deployment.id,
+                    HostingFailoverAttempt.status.in_(["pending", "deploying", "edge_pending"]),
+                ))
+                source = db.get(HostingNode, failover.source_node_id) if failover else None
+                project.status = "running" if source and source.status == "active" else "failed"
                 db.commit()
                 db.refresh(deployment)
                 return _deployment_out(deployment)
             deployment.origin_reported_at = now
         project.image_ref = deployment.image_ref
-        project.status = "running"
+        failover = db.scalar(select(HostingFailoverAttempt).where(
+            HostingFailoverAttempt.deployment_id == deployment.id,
+            HostingFailoverAttempt.status.in_(["pending", "deploying", "edge_pending"]),
+        ))
+        project.status = "deploying" if failover is not None else "running"
     else:
         if deployment.status not in {"claimed", "running"}:
             raise HTTPException(status_code=409, detail="Deployment cannot fail from its current state")
         deployment.status = "failed"
         deployment.completed_at = now
         deployment.failure_message = (payload.message or "Node agent reported deployment failure").strip()[:2000]
-        previous = _last_healthy(db, project.id)
-        project.status = "running" if previous is not None else "failed"
+        failover = db.scalar(select(HostingFailoverAttempt).where(
+            HostingFailoverAttempt.deployment_id == deployment.id,
+            HostingFailoverAttempt.status.in_(["pending", "deploying", "edge_pending"]),
+        ))
+        if failover is not None:
+            source = db.get(HostingNode, failover.source_node_id)
+            project.status = "running" if source and source.status == "active" else "failed"
+        else:
+            previous = _last_healthy(db, project.id)
+            project.status = "running" if previous is not None else "failed"
 
     db.commit()
     db.refresh(deployment)
