@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0065_infrastructure_monitoring"
+LATEST_MIGRATION_HEAD = "0066_hosting_provisioning"
 
 
 def test_alembic_has_one_consolidated_head():
