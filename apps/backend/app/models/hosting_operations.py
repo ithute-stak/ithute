@@ -61,6 +61,8 @@ class HostingDeployment(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_health_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    origin_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    origin_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class HostingProjectOperation(Base):
