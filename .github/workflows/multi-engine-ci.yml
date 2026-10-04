@@ -70,7 +70,7 @@ jobs:
       - name: Build API with native engines
         run: |
           docker build --pull -f apps/backend/Dockerfile -t ithute-app-api:engine-ci .
-          docker run --rm --entrypoint python ithute-app-api:engine-ci - <<'PY'
+          docker run --rm -i --entrypoint python ithute-app-api:engine-ci - <<'PY'
           from app.services.engine_runtime import engine_status, sample_native_result
           status = engine_status()
           assert status["brain"]["authoritative"] is True
