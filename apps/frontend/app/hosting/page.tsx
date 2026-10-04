@@ -48,6 +48,12 @@ type Project = {
   rules_version: string;
 };
 type Rules = { version: string; title: string; service_type: string; allowed_runtimes: string[]; rules: string[] };
+type ProvisioningWorkflow = {
+  id: string;
+  status: string;
+  failure_message?: string | null;
+  stages: Record<string, { status: string; hostname?: string | null; application_id?: string | null }>;
+};
 type HostingNode = { id: string; name: string; hostname: string; status: string; accepts_new_projects: boolean; available: { storage_mb: number; memory_mb: number; cpu_millicores: number } };
 
 async function api(path: string, init?: RequestInit) {
@@ -80,6 +86,8 @@ export default function HostingPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [provisioning, setProvisioning] = useState<Record<string, ProvisioningWorkflow | null>>({});
+  const [databaseEngine, setDatabaseEngine] = useState<Record<string, string>>({});
 
   const selected = useMemo(() => contexts.find((row) => row.tenant_id === tenantId), [contexts, tenantId]);
   const canManage = Boolean(
@@ -107,8 +115,15 @@ export default function HostingPage() {
       return;
     }
     setSummary(await summaryResponse.json());
-    setProjects(projectsResponse.ok ? (await projectsResponse.json()).items || [] : []);
+    const projectRows: Project[] = projectsResponse.ok ? (await projectsResponse.json()).items || [] : [];
+    setProjects(projectRows);
     setDomains(domainsResponse.ok ? (await domainsResponse.json()).items || [] : []);
+    const workflowRows = await Promise.all(projectRows.map(async (project) => {
+      const response = await api(`/tenants/${id}/hosting/projects/${project.id}/provisioning`);
+      const body = response.ok ? await response.json() : { workflow: null };
+      return [project.id, body.workflow || null] as const;
+    }));
+    setProvisioning(Object.fromEntries(workflowRows));
     setLoading(false);
   }
 
@@ -181,6 +196,33 @@ export default function HostingPage() {
     setSaving(false);
   }
 
+  async function provisionProject(project: Project) {
+    if (!tenantId) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    const engine = databaseEngine[project.id] || "";
+    const response = await api(`/tenants/${tenantId}/hosting/projects/${project.id}/provision`, {
+      method: "POST",
+      body: JSON.stringify({
+        database_engine: engine || null,
+        database_name: engine ? `${project.slug}_db` : null,
+        database_storage_mb: 1024,
+        environment: {},
+        create_edge_application: true,
+      }),
+    });
+    if (!response.ok) {
+      setError(await errorText(response, "Unable to start automatic provisioning."));
+      setSaving(false);
+      return;
+    }
+    const workflow = await response.json();
+    setProvisioning((current) => ({ ...current, [project.id]: workflow }));
+    setMessage(`Automatic provisioning started for ${project.name}. Ithute will build, provision dependencies and track deployment readiness.`);
+    setSaving(false);
+  }
+
   async function setStatus(project: Project, status: "configured" | "suspended") {
     const response = await api(`/tenants/${tenantId}/hosting/projects/${project.id}`, { method: "PATCH", body: JSON.stringify({ status }) });
     if (!response.ok) { setError(await errorText(response, "Unable to change project status.")); return; }
@@ -205,7 +247,20 @@ export default function HostingPage() {
 
       {showCreate && summary ? <form className="surface-card p-5" onSubmit={createProject}><div className="flex items-start justify-between gap-4"><div><h2 className="text-sm font-black">Allocate a hosted project</h2><p className="mt-1 text-[10px] leading-5 text-[var(--admin-muted)]">The scheduler reserves capacity on a system-owner approved hosting node. A project cannot exceed its package limits.</p></div><a className="text-xs font-black text-[#285b55]" href="/docs#hosting" target="_blank">Rules <ExternalLink size={12} className="inline"/></a></div><div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3"><label><span className="eyebrow-label">Project name</span><input className="input mt-1" name="name" placeholder="Company website" required/></label><label><span className="eyebrow-label">Slug</span><input className="input mt-1" name="slug" placeholder="company-website"/></label><label><span className="eyebrow-label">Runtime</span><select className="input mt-1" name="runtime">{(rules?.allowed_runtimes || ["static","node","python","php","dotnet","java","go","ruby","rust","dockerfile"]).map((runtime) => <option key={runtime} value={runtime}>{runtime}</option>)}</select></label><label><span className="eyebrow-label">Source repository</span><input className="input mt-1" name="source_repository" type="url" placeholder="https://github.com/company/site"/></label><label><span className="eyebrow-label">Source branch</span><input className="input mt-1" name="source_branch" defaultValue="main"/></label><label><span className="eyebrow-label">Verified domain</span><select className="input mt-1" name="domain_id"><option value="">No public hostname yet</option>{verifiedDomains.map((domain) => <option key={domain.id} value={domain.id}>{domain.ascii_name}</option>)}</select></label><label><span className="eyebrow-label">Hostname</span><input className="input mt-1" name="hostname" placeholder="www.example.co.ls"/></label><label><span className="eyebrow-label">App port</span><input className="input mt-1" name="container_port" type="number" min="1024" max="65535" defaultValue="8080"/></label><label><span className="eyebrow-label">Health path</span><input className="input mt-1" name="health_path" defaultValue="/"/></label><label><span className="eyebrow-label">Storage (GB)</span><input className="input mt-1" name="storage_gb" type="number" min="0.125" max={summary.package.hosting_storage_mb / 1024} step="0.125" defaultValue="1"/></label><label><span className="eyebrow-label">RAM (MB)</span><input className="input mt-1" name="memory_mb" type="number" min="128" max={summary.package.memory_mb_per_project} step="128" defaultValue={Math.min(512, summary.package.memory_mb_per_project)}/></label><label><span className="eyebrow-label">CPU (millicores)</span><input className="input mt-1" name="cpu_millicores" type="number" min="100" max={summary.package.cpu_millicores_per_project} step="100" defaultValue={Math.min(500, summary.package.cpu_millicores_per_project)}/></label><label><span className="eyebrow-label">Process limit</span><input className="input mt-1" name="pid_limit" type="number" min="32" max={summary.package.pids_per_project} step="16" defaultValue={Math.min(128, summary.package.pids_per_project)}/></label>{me?.is_platform_owner ? <label><span className="eyebrow-label">Workload placement</span><select className="input mt-1" name="node_id"><option value="">Automatic · healthiest available node</option>{hostingNodes.map((node) => <option key={node.id} value={node.id} disabled={node.status !== "active" || !node.accepts_new_projects}>{node.name} · {node.hostname} · {(node.available.storage_mb / 1024).toFixed(1)} GB free</option>)}</select><span className="mt-1 block text-[9px] text-[var(--admin-muted)]">Automatic placement considers live CPU, RAM, disk pressure, role capability and remaining sellable capacity.</span></label> : null}</div><label className="mt-5 flex items-start gap-3 rounded-2xl border border-[#dce5e0] bg-[#f6f9f7] p-4 text-xs leading-5"><input className="mt-1" type="checkbox" name="accept_rules" required/><span><b>I accept Hosting Rules v{rules?.version || summary.rules_version} for this project.</b> No root/SSH/Docker-socket access, no privileged workloads, no arbitrary public ports, no spam/mining/malware/open proxies, and resources remain inside the package limits.</span></label><button className="btn-primary mt-5" disabled={saving}><ShieldCheck size={14}/>{saving ? "Allocating…" : "Accept rules & allocate project"}</button></form> : null}
 
-      <section className="surface-card overflow-hidden"><div className="border-b border-[#e4e9e6] p-4"><h2 className="text-sm font-black">Projects on shared hosting</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">Each allocation reserves sellable node capacity even while suspended, so resource accounting remains predictable.</p></div><div className="grid gap-3 p-4 lg:grid-cols-2">{projects.map((project) => <article key={project.id} className="rounded-2xl border border-[#dce5e0] bg-white p-4"><div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-black">{project.name}</h3><p className="mt-1 text-[9px] font-bold uppercase tracking-[.08em] text-[var(--admin-muted)]">{project.runtime} · {project.status} · rules {project.rules_version}</p></div><span className={`rounded-full px-2 py-1 text-[9px] font-black ${project.status === "suspended" ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{project.status}</span></div>{project.hostname ? <p className="mt-3 flex items-center gap-2 text-xs"><Globe2 size={14}/>{project.hostname}</p> : <p className="mt-3 text-xs text-[var(--admin-muted)]">No public hostname assigned yet.</p>}<div className="mt-3 grid grid-cols-4 gap-2 text-[9px]"><div className="rounded-xl bg-[#f4f7f5] p-2"><b>{(project.storage_mb / 1024).toFixed(1)} GB</b><br/>storage</div><div className="rounded-xl bg-[#f4f7f5] p-2"><b>{project.memory_mb} MB</b><br/>RAM</div><div className="rounded-xl bg-[#f4f7f5] p-2"><b>{(project.cpu_millicores / 1000).toFixed(2)}</b><br/>CPU</div><div className="rounded-xl bg-[#f4f7f5] p-2"><b>{project.pid_limit}</b><br/>PIDs</div></div>{project.source_repository ? <p className="mt-3 truncate text-[10px] text-[var(--admin-muted)]">Source: {project.source_repository} · {project.source_branch}</p> : null}{canManage ? <div className="mt-4"><button className="btn-secondary" onClick={() => void setStatus(project, project.status === "suspended" ? "configured" : "suspended")}>{project.status === "suspended" ? "Enable" : "Suspend"}</button></div> : null}</article>)}{!loading && !projects.length ? <div className="rounded-2xl border border-dashed border-[#d6dfda] p-6 text-center text-xs text-[var(--admin-muted)]">No hosted projects yet. Create one after the system owner has registered sellable hosting-node capacity.</div> : null}</div></section>
+      <section className="surface-card overflow-hidden"><div className="border-b border-[#e4e9e6] p-4"><h2 className="text-sm font-black">Projects on shared hosting</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">Each allocation reserves sellable node capacity even while suspended, so resource accounting remains predictable.</p></div><div className="grid gap-3 p-4 lg:grid-cols-2">{projects.map((project) => <article key={project.id} className="rounded-2xl border border-[#dce5e0] bg-white p-4"><div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-black">{project.name}</h3><p className="mt-1 text-[9px] font-bold uppercase tracking-[.08em] text-[var(--admin-muted)]">{project.runtime} · {project.status} · rules {project.rules_version}</p></div><span className={`rounded-full px-2 py-1 text-[9px] font-black ${project.status === "suspended" ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>{project.status}</span></div>{project.hostname ? <p className="mt-3 flex items-center gap-2 text-xs"><Globe2 size={14}/>{project.hostname}</p> : <p className="mt-3 text-xs text-[var(--admin-muted)]">No public hostname assigned yet.</p>}<div className="mt-3 grid grid-cols-4 gap-2 text-[9px]"><div className="rounded-xl bg-[#f4f7f5] p-2"><b>{(project.storage_mb / 1024).toFixed(1)} GB</b><br/>storage</div><div className="rounded-xl bg-[#f4f7f5] p-2"><b>{project.memory_mb} MB</b><br/>RAM</div><div className="rounded-xl bg-[#f4f7f5] p-2"><b>{(project.cpu_millicores / 1000).toFixed(2)}</b><br/>CPU</div><div className="rounded-xl bg-[#f4f7f5] p-2"><b>{project.pid_limit}</b><br/>PIDs</div></div>{project.source_repository ? <p className="mt-3 truncate text-[10px] text-[var(--admin-muted)]">Source: {project.source_repository} · {project.source_branch}</p> : null}{canManage ? <div className="mt-4 space-y-3">
+  <div className="rounded-xl border border-[#dce5e0] bg-[#f8fbf9] p-3">
+    <div className="flex flex-wrap items-end gap-2">
+      <label className="min-w-44 flex-1"><span className="eyebrow-label">Automatic provisioning</span><select className="input mt-1" value={databaseEngine[project.id] || ""} onChange={(event) => setDatabaseEngine((current) => ({ ...current, [project.id]: event.target.value }))}><option value="">Application only</option><option value="postgresql">Application + PostgreSQL</option><option value="mysql">Application + MySQL</option></select></label>
+      <button className="btn-primary" disabled={saving || ["provisioning","building","deploying","edge_pending"].includes(provisioning[project.id]?.status || "")} onClick={() => void provisionProject(project)}><ShieldCheck size={14}/>{provisioning[project.id] ? "Continue provisioning" : "Provision automatically"}</button>
+    </div>
+    {provisioning[project.id] ? <div className="mt-3">
+      <div className="flex flex-wrap gap-1.5">{Object.entries(provisioning[project.id]?.stages || {}).map(([name, stage]) => <span key={name} className="rounded-full border border-[#dce5e0] bg-white px-2 py-1 text-[8px] font-black capitalize">{name}: {stage.status.replaceAll("_", " ")}</span>)}</div>
+      <p className="mt-2 text-[9px] font-bold text-[#285b55]">Workflow: {provisioning[project.id]?.status.replaceAll("_", " ")}</p>
+      {provisioning[project.id]?.failure_message ? <p className="mt-1 text-[9px] font-semibold text-red-700">{provisioning[project.id]?.failure_message}</p> : null}
+    </div> : <p className="mt-2 text-[9px] text-[var(--admin-muted)]">Creates/uses source, queues the build, optionally provisions a managed database, injects credentials securely and prepares protected edge/TLS state for hosted domains.</p>}
+  </div>
+  <button className="btn-secondary" onClick={() => void setStatus(project, project.status === "suspended" ? "configured" : "suspended")}>{project.status === "suspended" ? "Enable" : "Suspend"}</button>
+</div> : null}</article>)}{!loading && !projects.length ? <div className="rounded-2xl border border-dashed border-[#d6dfda] p-6 text-center text-xs text-[var(--admin-muted)]">No hosted projects yet. Create one after the system owner has registered sellable hosting-node capacity.</div> : null}</div></section>
 
       <section className="rounded-3xl bg-[#123a38] p-6 text-white"><div className="flex items-start gap-4"><ShieldCheck size={22} className="mt-1 shrink-0 text-[#f1de8b]"/><div><h2 className="text-lg font-black">Hosting is isolated by policy and quota.</h2><p className="mt-2 max-w-3xl text-xs leading-6 text-white/65">Customer projects never receive host SSH, root access or Docker control. Public traffic must pass through Ithute ingress, builds must happen through an approved isolated build pipeline, and every project is bounded by package CPU, memory, storage and PID allocations.</p><a href="/docs#hosting" className="mt-3 inline-flex text-xs font-black text-[#f1de8b]">Read the complete hosting rules →</a></div></div></section>
     </div>
