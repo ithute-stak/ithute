@@ -26,6 +26,7 @@ from app.models import (
     HostingProject,
     InfrastructureServer,
     InfrastructureServerAgent,
+    InfrastructureWireGuardPeer,
     User,
 )
 
@@ -54,6 +55,7 @@ class AgentHeartbeat(BaseModel):
 
 
 class HostingNodeBootstrapCreate(BaseModel):
+    managed_private_network: bool = True
     origin_bind_ip: str | None = Field(default=None, max_length=64)
     edge_origin_cidrs: str = Field(default="", max_length=1000)
     backup_remote: str | None = Field(default=None, max_length=1000)
@@ -265,10 +267,14 @@ def create_node_bootstrap(
     if node is None:
         raise HTTPException(status_code=404, detail="Hosting node not found")
 
-    origin_bind_ip = _private_ipv4(payload.origin_bind_ip)
-    edge_cidrs = _cidr_list(payload.edge_origin_cidrs)
-    if origin_bind_ip and not edge_cidrs:
-        raise HTTPException(status_code=422, detail="Edge origin CIDRs are required when private origin routing is enabled")
+    if payload.managed_private_network:
+        origin_bind_ip = None
+        edge_cidrs = ""
+    else:
+        origin_bind_ip = _private_ipv4(payload.origin_bind_ip)
+        edge_cidrs = _cidr_list(payload.edge_origin_cidrs)
+        if not origin_bind_ip or not edge_cidrs:
+            raise HTTPException(status_code=422, detail="Manual private networking requires both an origin IP and edge CIDRs")
 
     raw = "ith_boot_" + secrets.token_urlsafe(36)
     now = _now()
@@ -280,6 +286,7 @@ def create_node_bootstrap(
         node_id=node.id,
         token_hash=hash_token(raw),
         token_hint=raw[:18],
+        managed_private_network=payload.managed_private_network,
         origin_bind_ip=origin_bind_ip,
         edge_origin_cidrs=edge_cidrs,
         backup_remote=payload.backup_remote.strip() if payload.backup_remote else None,
@@ -290,6 +297,7 @@ def create_node_bootstrap(
     node.status = "draining"
     node.accepts_new_projects = False
     _audit(db, current, "hosting.node_bootstrap.create", "hosting_node", str(node.id), metadata={
+        "managed_private_network": payload.managed_private_network,
         "origin_bind_ip": origin_bind_ip,
         "edge_origin_cidrs": edge_cidrs,
         "expires_minutes": 15,
@@ -412,6 +420,7 @@ def exchange_node_bootstrap(
         origin_bind_ip=bootstrap.origin_bind_ip,
         edge_origin_cidrs=bootstrap.edge_origin_cidrs,
         backup_remote=bootstrap.backup_remote,
+        managed_private_network=bootstrap.managed_private_network,
     )
     db.commit()
     return PlainTextResponse(script, media_type="text/x-shellscript", headers={"Cache-Control": "no-store"})
@@ -430,6 +439,14 @@ def node_onboarding_status(
     hosting_agent = db.get(HostingNodeAgent, node.id)
     server = db.scalar(select(InfrastructureServer).where(InfrastructureServer.hosting_node_id == node.id))
     server_agent = db.get(InfrastructureServerAgent, server.id) if server else None
+    network_peer = db.scalar(select(InfrastructureWireGuardPeer).where(InfrastructureWireGuardPeer.server_id == server.id)) if server else None
+    telemetry = {}
+    if server_agent:
+        try:
+            telemetry = json.loads(server_agent.telemetry_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            telemetry = {}
+    wireguard = telemetry.get("wireguard") if isinstance(telemetry.get("wireguard"), dict) else {}
 
     def fresh(value):
         if value is None:
@@ -440,11 +457,17 @@ def node_onboarding_status(
     hosting_online = bool(hosting_agent and fresh(hosting_agent.last_seen_at))
     server_online = bool(server_agent and fresh(server_agent.last_seen_at))
     origin_ready = bool(hosting_agent and hosting_agent.origin_bind_ip)
+    managed_network_connected = bool(
+        network_peer
+        and wireguard.get("connected")
+        and wireguard.get("address") == network_peer.assigned_ipv4
+    )
     checks = {
         "hosting_agent_online": hosting_online,
         "server_agent_online": server_online,
         "private_origin_configured": origin_ready,
         "infrastructure_linked": server is not None,
+        "managed_network_connected": managed_network_connected if network_peer else True,
     }
     ready = all(checks.values())
     return {
@@ -453,6 +476,8 @@ def node_onboarding_status(
         "active": node.status == "active" and node.accepts_new_projects,
         "checks": checks,
         "origin_bind_ip": hosting_agent.origin_bind_ip if hosting_agent else None,
+        "managed_network_ip": network_peer.assigned_ipv4 if network_peer else None,
+        "managed_network_last_handshake_at": network_peer.last_handshake_at.isoformat() if network_peer and network_peer.last_handshake_at else None,
         "hosting_agent_version": hosting_agent.agent_version if hosting_agent else None,
         "server_agent_version": server_agent.agent_version if server_agent else None,
     }
