@@ -109,6 +109,7 @@ class HostingNodeBootstrap(Base):
     node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_nodes.id", ondelete="CASCADE"), nullable=False, index=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     token_hint: Mapped[str] = mapped_column(String(24), nullable=False)
+    managed_private_network: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     origin_bind_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     edge_origin_cidrs: Mapped[str] = mapped_column(Text, default="", nullable=False)
     backup_remote: Mapped[str | None] = mapped_column(String(1000), nullable=True)
