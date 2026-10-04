@@ -102,6 +102,7 @@ def enrollment_response(peer: InfrastructureWireGuardPeer) -> dict:
         "edge_public_key": _edge_public_key(),
         "edge_endpoint": _edge_endpoint(),
         "allowed_ips": f"{network.network_address}/{network.prefixlen}",
+        "edge_source_cidrs": f"{edge_address()}/32",
         "persistent_keepalive": 25,
     }
 
