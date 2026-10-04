@@ -45,7 +45,20 @@ type Project = {
   cpu_millicores: number;
   pid_limit: number;
   status: string;
+  node_id?: string | null;
+  failover_policy: "manual" | "stateless_auto";
   rules_version: string;
+};
+type FailoverAttempt = {
+  id: string;
+  source_node_id: string;
+  target_node_id?: string | null;
+  deployment_id?: string | null;
+  status: string;
+  reason?: string | null;
+  edge_status?: string | null;
+  created_at?: string | null;
+  completed_at?: string | null;
 };
 type Rules = { version: string; title: string; service_type: string; allowed_runtimes: string[]; rules: string[] };
 type ProvisioningWorkflow = {
@@ -88,6 +101,8 @@ export default function HostingPage() {
   const [error, setError] = useState("");
   const [provisioning, setProvisioning] = useState<Record<string, ProvisioningWorkflow | null>>({});
   const [databaseEngine, setDatabaseEngine] = useState<Record<string, string>>({});
+  const [failovers, setFailovers] = useState<Record<string, FailoverAttempt[]>>({});
+  const [relocationTarget, setRelocationTarget] = useState<Record<string, string>>({});
 
   const selected = useMemo(() => contexts.find((row) => row.tenant_id === tenantId), [contexts, tenantId]);
   const canManage = Boolean(
@@ -119,11 +134,16 @@ export default function HostingPage() {
     setProjects(projectRows);
     setDomains(domainsResponse.ok ? (await domainsResponse.json()).items || [] : []);
     const workflowRows = await Promise.all(projectRows.map(async (project) => {
-      const response = await api(`/tenants/${id}/hosting/projects/${project.id}/provisioning`);
-      const body = response.ok ? await response.json() : { workflow: null };
-      return [project.id, body.workflow || null] as const;
+      const [workflowResponse, failoverResponse] = await Promise.all([
+        api(`/tenants/${id}/hosting/projects/${project.id}/provisioning`),
+        api(`/tenants/${id}/hosting/projects/${project.id}/failovers`),
+      ]);
+      const workflowBody = workflowResponse.ok ? await workflowResponse.json() : { workflow: null };
+      const failoverBody = failoverResponse.ok ? await failoverResponse.json() : { items: [] };
+      return { projectId: project.id, workflow: workflowBody.workflow || null, failovers: failoverBody.items || [] };
     }));
-    setProvisioning(Object.fromEntries(workflowRows));
+    setProvisioning(Object.fromEntries(workflowRows.map((row) => [row.projectId, row.workflow])));
+    setFailovers(Object.fromEntries(workflowRows.map((row) => [row.projectId, row.failovers])));
     setLoading(false);
   }
 
@@ -242,6 +262,34 @@ export default function HostingPage() {
     setSaving(false);
   }
 
+  async function setFailoverPolicy(project: Project, policy: "manual" | "stateless_auto") {
+    setError(""); setMessage("");
+    const response = await api(`/tenants/${tenantId}/hosting/projects/${project.id}/failover-policy`, {
+      method: "PUT",
+      body: JSON.stringify({
+        policy,
+        confirm_local_data_disposable: policy === "stateless_auto",
+      }),
+    });
+    if (!response.ok) { setError(await errorText(response, "Unable to update failover policy.")); return; }
+    setMessage(policy === "stateless_auto"
+      ? `${project.name} can now be automatically relocated after a sustained node failure. Its local /data is treated as disposable.`
+      : `${project.name} now requires manual recovery; Ithute will not discard its local /data automatically.`);
+    await loadTenant(tenantId);
+  }
+
+  async function relocateProject(project: Project) {
+    setError(""); setMessage("");
+    const target = relocationTarget[project.id] || "";
+    const response = await api(`/tenants/${tenantId}/hosting/projects/${project.id}/relocate`, {
+      method: "POST",
+      body: JSON.stringify({ target_node_id: target || null }),
+    });
+    if (!response.ok) { setError(await errorText(response, "Unable to queue project relocation.")); return; }
+    setMessage(`Replacement deployment queued for ${project.name}. Ithute will switch traffic only after the new instance and edge route are healthy.`);
+    await loadTenant(tenantId);
+  }
+
   async function setStatus(project: Project, status: "configured" | "suspended") {
     const response = await api(`/tenants/${tenantId}/hosting/projects/${project.id}`, { method: "PATCH", body: JSON.stringify({ status }) });
     if (!response.ok) { setError(await errorText(response, "Unable to change project status.")); return; }
@@ -277,6 +325,17 @@ export default function HostingPage() {
       <p className="mt-2 text-[9px] font-bold text-[#285b55]">Workflow: {provisioning[project.id]?.status.replaceAll("_", " ")}</p>
       {provisioning[project.id]?.failure_message ? <p className="mt-1 text-[9px] font-semibold text-red-700">{provisioning[project.id]?.failure_message}</p> : null}
     </div> : <p className="mt-2 text-[9px] text-[var(--admin-muted)]">Creates/uses source, queues the build, optionally provisions a managed database, injects credentials securely and prepares protected edge/TLS state for hosted domains.</p>}
+  </div>
+  <div className="rounded-xl border border-[#dce5e0] bg-white p-3">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0 flex-1"><p className="text-[10px] font-black">Failover & rebalancing</p><p className="mt-1 text-[9px] leading-4 text-[var(--admin-muted)]">{project.failover_policy === "stateless_auto" ? "Stateless auto-failover is enabled. Local /data is considered disposable; managed databases on the failed node still block automatic application relocation." : "Manual recovery is the safe default. Ithute will not discard this project's local /data automatically."}</p></div>
+      <button className="btn-secondary" onClick={() => void setFailoverPolicy(project, project.failover_policy === "stateless_auto" ? "manual" : "stateless_auto")}>{project.failover_policy === "stateless_auto" ? "Require manual recovery" : "Enable stateless failover"}</button>
+    </div>
+    {project.failover_policy === "stateless_auto" ? <div className="mt-3 flex flex-wrap items-end gap-2">
+      {me?.is_platform_owner ? <label className="min-w-48 flex-1"><span className="eyebrow-label">Rebalance target</span><select className="input mt-1" value={relocationTarget[project.id] || ""} onChange={(event) => setRelocationTarget((current) => ({ ...current, [project.id]: event.target.value }))}><option value="">Automatic · healthiest other node</option>{hostingNodes.filter((node) => node.id !== project.node_id).map((node) => <option key={node.id} value={node.id} disabled={node.status !== "active" || !node.accepts_new_projects}>{node.name} · {(node.available.storage_mb / 1024).toFixed(1)} GB free</option>)}</select></label> : null}
+      <button className="btn-secondary" onClick={() => void relocateProject(project)}>Move safely</button>
+    </div> : null}
+    {(failovers[project.id] || []).slice(0, 3).map((attempt) => <div key={attempt.id} className="mt-2 rounded-lg bg-[#f6f9f7] px-3 py-2 text-[8px]"><b className="capitalize">{attempt.status.replaceAll("_", " ")}</b>{attempt.edge_status ? ` · edge ${attempt.edge_status.replaceAll("_", " ")}` : ""}{attempt.reason ? <span className="block mt-1 text-[var(--admin-muted)]">{attempt.reason}</span> : null}</div>)}
   </div>
   <button className="btn-secondary" onClick={() => void setStatus(project, project.status === "suspended" ? "configured" : "suspended")}>{project.status === "suspended" ? "Enable" : "Suspend"}</button>
 </div> : null}</article>)}{!loading && !projects.length ? <div className="rounded-2xl border border-dashed border-[#d6dfda] p-6 text-center text-xs text-[var(--admin-muted)]">No hosted projects yet. Create one after the system owner has registered sellable hosting-node capacity.</div> : null}</div></section>
