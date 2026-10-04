@@ -154,7 +154,8 @@ if [ ! -s "$APP_DIR/.last-known-good-runtime.tgz" ] && valid_tag "$current"; the
   tar -czf "$APP_DIR/.last-known-good-runtime.tgz" -C "$APP_DIR" \
     compose.production.yml \
     infrastructure/caddy/Caddyfile \
-    infrastructure/dns/zones/db.ithute.co.ls
+    infrastructure/dns/zones/db.ithute.co.ls \
+    infrastructure/wireguard-edge
   chmod 600 "$APP_DIR/.last-known-good-runtime.tgz"
 fi
 
