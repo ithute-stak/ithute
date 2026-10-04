@@ -25,6 +25,7 @@ IMAGE_SRC_RE = re.compile(r'src="(data:image/(png|jpeg|gif|webp);base64,[A-Za-z0
 CONTACT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 CONTACT_SCAN_LIMIT = 100
 MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024
+PRESENCE_TTL_SECONDS = 90
 
 
 def _redis():
@@ -151,6 +152,28 @@ def learn_contacts_from_headers(address: str, headers: list[str], source: str) -
         if _learn_contact(address, email_address, display_name, source):
             learned += 1
     return learned
+
+
+def _presence_key(address: str) -> str:
+    return f"webmail:presence:{_normal_contact(address)}"
+
+
+def touch_presence(address: str) -> None:
+    try:
+        _redis().setex(_presence_key(address), PRESENCE_TTL_SECONDS, datetime.now(timezone.utc).isoformat())
+    except redis.RedisError:
+        pass
+
+
+def contact_presence(addresses: list[str]) -> dict[str, bool]:
+    clean = [_normal_contact(value) for value in addresses if _normal_contact(value)]
+    if not clean:
+        return {}
+    try:
+        values = _redis().mget([_presence_key(value) for value in clean])
+    except redis.RedisError:
+        return {value: False for value in clean}
+    return {value: bool(values[index]) for index, value in enumerate(clean)}
 
 
 def contacts(address: str, query: str = "") -> list[dict]:
