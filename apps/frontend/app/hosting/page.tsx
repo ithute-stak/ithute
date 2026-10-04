@@ -113,9 +113,9 @@ export default function HostingPage() {
   );
   const verifiedDomains = domains.filter((domain) => domain.status === "verified" && domain.ownership_verified_at);
 
-  async function loadTenant(id: string) {
+  async function loadTenant(id: string, silent = false) {
     if (!id) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     setError("");
     const [summaryResponse, projectsResponse, domainsResponse] = await Promise.all([
       api(`/tenants/${id}/hosting/summary`),
@@ -179,22 +179,16 @@ export default function HostingPage() {
 
   useEffect(() => {
     if (!tenantId) return;
-    const active = Object.values(provisioning).some((workflow) =>
+    const activeProvisioning = Object.values(provisioning).some((workflow) =>
       workflow && ["queued", "provisioning", "building", "deploying", "edge_pending"].includes(workflow.status)
     );
-    if (!active) return;
-    const timer = window.setInterval(() => {
-      void (async () => {
-        const rows = await Promise.all(projects.map(async (project) => {
-          const response = await api(`/tenants/${tenantId}/hosting/projects/${project.id}/provisioning`);
-          const body = response.ok ? await response.json() : { workflow: null };
-          return [project.id, body.workflow || null] as const;
-        }));
-        setProvisioning(Object.fromEntries(rows));
-      })();
-    }, 10000);
+    const activeFailover = Object.values(failovers).some((rows) =>
+      rows.some((attempt) => ["pending", "deploying", "edge_pending"].includes(attempt.status))
+    );
+    if (!activeProvisioning && !activeFailover) return;
+    const timer = window.setInterval(() => void loadTenant(tenantId, true), 10000);
     return () => window.clearInterval(timer);
-  }, [tenantId, projects, provisioning]);
+  }, [tenantId, provisioning, failovers]);
 
   async function createProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
