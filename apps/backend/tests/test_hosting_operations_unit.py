@@ -138,7 +138,7 @@ def _healthy_node_graph(db, owner):
         last_transition="bootstrap_exchanged",
     )
     db.add_all([peer, hosting_agent, server_agent, state])
-    db.commit()
+    db.flush()
     return now, node, server, peer, hosting_agent, server_agent, state
 
 
