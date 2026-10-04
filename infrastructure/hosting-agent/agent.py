@@ -324,6 +324,7 @@ def activate(work: dict[str, Any]) -> None:
     image_ref = str(work["image_ref"])
     resources = project["resources"]
     previous_exists = exists("container", current)
+    previous_origin_port = _existing_origin_port(current, int(project["container_port"])) if previous_exists and ORIGIN_BIND_IP else None
 
     try:
         ensure_network(network, project_id)
@@ -335,7 +336,6 @@ def activate(work: dict[str, Any]) -> None:
             docker("rename", current, backup)
 
         container_port = int(project["container_port"])
-        previous_origin_port = _existing_origin_port(current, container_port) if previous_exists else None
         origin_port = _run_candidate(
             current=current,
             network=network,
