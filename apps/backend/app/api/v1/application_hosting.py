@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timezone
 from uuid import UUID
@@ -355,6 +356,36 @@ def placement_preview(
             }
             for row in ranked
         ]
+    }
+
+
+@router.get("/platform/hosting/failovers")
+def list_platform_failovers(
+    status: str | None = None,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    query = select(HostingFailoverAttempt).order_by(HostingFailoverAttempt.created_at.desc()).limit(200)
+    if status:
+        query = query.where(HostingFailoverAttempt.status == status)
+    rows = db.scalars(query).all()
+    items = []
+    for row in rows:
+        project = db.get(HostingProject, row.project_id)
+        source = db.get(HostingNode, row.source_node_id)
+        target = db.get(HostingNode, row.target_node_id) if row.target_node_id else None
+        item = failover_attempt_out(row)
+        item.update({
+            "project_name": project.name if project else None,
+            "tenant_id": str(project.tenant_id) if project else None,
+            "source_node_name": source.name if source else None,
+            "target_node_name": target.name if target else None,
+            "failover_policy": project.failover_policy if project else None,
+        })
+        items.append(item)
+    return {
+        "items": items,
+        "failover_after_seconds": int(os.getenv("ITHUTE_HOSTING_FAILOVER_AFTER_SECONDS", "300")),
     }
 
 
