@@ -154,11 +154,15 @@ bash -n "$tmpdir/infrastructure/wireguard-edge/firewall.sh"
 
 if [ ! -s "$APP_DIR/.last-known-good-runtime.tgz" ] && valid_tag "$current"; then
   echo "[Ithute] Preserving current runtime for rollback"
-  tar -czf "$APP_DIR/.last-known-good-runtime.tgz" -C "$APP_DIR" \
-    compose.production.yml \
-    infrastructure/caddy/Caddyfile \
-    infrastructure/dns/zones/db.ithute.co.ls \
-    infrastructure/wireguard-edge
+  runtime_paths=(
+    compose.production.yml
+    infrastructure/caddy/Caddyfile
+    infrastructure/dns/zones/db.ithute.co.ls
+  )
+  if [ -d "$APP_DIR/infrastructure/wireguard-edge" ]; then
+    runtime_paths+=(infrastructure/wireguard-edge)
+  fi
+  tar -czf "$APP_DIR/.last-known-good-runtime.tgz" -C "$APP_DIR" "${runtime_paths[@]}"
   chmod 600 "$APP_DIR/.last-known-good-runtime.tgz"
 fi
 
