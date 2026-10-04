@@ -111,6 +111,7 @@ jobs:
               'Security CI',
               'Backup Assurance CI',
               'Production Readiness CI',
+              'Multi-Engine CI',
           )
           missing_release_gates = [gate for gate in required_release_gates if gate not in release]
           if missing_release_gates:
