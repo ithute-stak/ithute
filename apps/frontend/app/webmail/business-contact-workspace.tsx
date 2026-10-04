@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { BellRing, Building2, FileText, Mail, MessageCircle, NotebookPen, Pin, Plus, Send, Star, UsersRound } from "lucide-react";
+import { BellRing, Building2, FileText, Mail, MessageCircle, NotebookPen, Pin, Plus, Search, Send, UsersRound } from "lucide-react";
 
 import { API, humanBytes, initials, senderName, shortDate, webmail, type MessageRow } from "./mail-types";
 
@@ -53,6 +53,7 @@ export function BusinessContactWorkspace({
   const [task, setTask] = useState("");
   const [dueAt, setDueAt] = useState("");
   const [chatText, setChatText] = useState("");
+  const [search, setSearch] = useState("");
 
   async function load(silent = false) {
     if (!silent) setLoading(true);
@@ -79,6 +80,20 @@ export function BusinessContactWorkspace({
   }, [data?.overview.internal_chat, email]);
 
   const title = data?.contact.name || senderName(email);
+  const normalizedSearch = search.trim().toLowerCase();
+  const matches = (value: unknown) => !normalizedSearch || String(value || "").toLowerCase().includes(normalizedSearch);
+  const filteredEmails = (data?.emails || []).filter((row) =>
+    [row.from, row.to, row.cc, row.subject, row.snippet, row.date, row.direction].some(matches),
+  );
+  const filteredDocuments = (data?.documents || []).filter((item) =>
+    [item.filename, item.content_type, item.subject, item.date, item.direction].some(matches),
+  );
+  const filteredPeople = (data?.company.people || []).filter((person) =>
+    [person.name, person.email, person.domain].some(matches),
+  );
+  const filteredTimeline = (data?.timeline || []).filter((item) =>
+    [item.subject, item.date, item.direction, item.folder].some(matches),
+  );
   const tabs = useMemo<Tab[]>(() => {
     const base: Tab[] = ["overview", "emails", "documents", "people", "notes", "activity"];
     if (data?.overview.internal_chat) base.push("chat");
@@ -148,7 +163,11 @@ export function BusinessContactWorkspace({
           <button type="button" onClick={() => void togglePin()} className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-slate-100" title={data?.contact.pinned ? "Unpin contact" : "Pin contact"}><Pin size={17} fill={data?.contact.pinned ? "currentColor" : "none"} /></button>
           <button type="button" onClick={() => onCompose(email)} className="inline-flex h-9 items-center gap-2 rounded-xl bg-[#0b57d0] px-3 text-xs font-black text-white"><Mail size={15}/> Email</button>
         </div>
-        <div className="mt-4 flex gap-1 overflow-x-auto">
+        <div className="mt-4 flex items-center gap-2 rounded-xl border border-slate-200 px-3 dark:border-white/10">
+          <Search size={15} className="shrink-0 text-slate-400"/>
+          <input value={search} onChange={(event) => setSearch(event.target.value)} className="h-10 min-w-0 flex-1 bg-transparent text-xs outline-none" placeholder="Search this relationship: sender, subject, document, date, domain…"/>
+        </div>
+        <div className="mt-3 flex gap-1 overflow-x-auto">
           {tabs.map((item) => <button key={item} type="button" onClick={() => setTab(item)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-black capitalize ${tab === item ? "bg-[#eaf1fb] text-[#174ea6]" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-white/5"}`}>{item}</button>)}
         </div>
       </div>
@@ -169,15 +188,15 @@ export function BusinessContactWorkspace({
           </div>
         </div> : null}
 
-        {tab === "emails" && data ? <div className="space-y-2">{data.emails.map((row) => <button key={`${row.folder}-${row.uid}`} type="button" onClick={() => onOpenMessage(row)} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-3 text-left hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"><span className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-slate-500 dark:bg-white/10">{row.direction === "outgoing" ? <Send size={15}/> : <Mail size={15}/>}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-black text-slate-800 dark:text-white">{row.subject || "(no subject)"}</span><span className="block truncate text-xs text-slate-500">{row.snippet}</span></span><time className="text-[10px] font-bold text-slate-400">{shortDate(row.date)}</time></button>)}</div> : null}
+        {tab === "emails" && data ? <div className="space-y-2">{filteredEmails.map((row) => <button key={`${row.folder}-${row.uid}`} type="button" onClick={() => onOpenMessage(row)} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-3 text-left hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"><span className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-slate-500 dark:bg-white/10">{row.direction === "outgoing" ? <Send size={15}/> : <Mail size={15}/>}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-black text-slate-800 dark:text-white">{row.subject || "(no subject)"}</span><span className="block truncate text-xs text-slate-500">{row.snippet}</span></span><time className="text-[10px] font-bold text-slate-400">{shortDate(row.date)}</time></button>)}</div> : null}
 
-        {tab === "documents" && data ? <div className="grid gap-3 md:grid-cols-2">{data.documents.map((item, index) => <button key={`${item.message_uid}-${item.index}-${index}`} type="button" onClick={() => downloadDocument(item)} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 text-left hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"><FileText size={18} className="text-[#174ea6]"/><span className="min-w-0 flex-1"><span className="block truncate text-sm font-black text-slate-800 dark:text-white">{item.filename}</span><span className="block truncate text-[10px] text-slate-500">{item.subject || "(no subject)"} · {humanBytes(item.size || 0)}</span></span></button>)}</div> : null}
+        {tab === "documents" && data ? <div className="grid gap-3 md:grid-cols-2">{filteredDocuments.map((item, index) => <button key={`${item.message_uid}-${item.index}-${index}`} type="button" onClick={() => downloadDocument(item)} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 text-left hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"><FileText size={18} className="text-[#174ea6]"/><span className="min-w-0 flex-1"><span className="block truncate text-sm font-black text-slate-800 dark:text-white">{item.filename}</span><span className="block truncate text-[10px] text-slate-500">{item.subject || "(no subject)"} · {humanBytes(item.size || 0)}</span></span></button>)}</div> : null}
 
-        {tab === "people" && data ? <div className="space-y-4"><div><p className="mb-2 text-xs font-black uppercase tracking-[.12em] text-slate-500">People at {data.company.domain}</p><div className="grid gap-2 md:grid-cols-2">{data.company.people.map((person) => <button key={person.email} type="button" onClick={() => onCompose(person.email)} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 text-left dark:border-white/10"><span className="grid h-9 w-9 place-items-center rounded-full bg-[#eaf1fb] text-xs font-black text-[#174ea6]">{initials(person.name || person.email)}</span><span className="min-w-0"><span className="block truncate text-sm font-black">{person.name || senderName(person.email)}</span><span className="block truncate text-xs text-slate-500">{person.email}</span></span></button>)}</div></div><div><p className="mb-2 text-xs font-black uppercase tracking-[.12em] text-slate-500">Shared company contacts</p><p className="text-xs text-slate-500">{data.shared_contacts.length} contact{data.shared_contacts.length === 1 ? "" : "s"} available to mailboxes on your company domain.</p></div></div> : null}
+        {tab === "people" && data ? <div className="space-y-4"><div><p className="mb-2 text-xs font-black uppercase tracking-[.12em] text-slate-500">People at {data.company.domain}</p><div className="grid gap-2 md:grid-cols-2">{filteredPeople.map((person) => <button key={person.email} type="button" onClick={() => onCompose(person.email)} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 text-left dark:border-white/10"><span className="grid h-9 w-9 place-items-center rounded-full bg-[#eaf1fb] text-xs font-black text-[#174ea6]">{initials(person.name || person.email)}</span><span className="min-w-0"><span className="block truncate text-sm font-black">{person.name || senderName(person.email)}</span><span className="block truncate text-xs text-slate-500">{person.email}</span></span></button>)}</div></div><div><p className="mb-2 text-xs font-black uppercase tracking-[.12em] text-slate-500">Shared company contacts</p><p className="text-xs text-slate-500">{data.shared_contacts.length} contact{data.shared_contacts.length === 1 ? "" : "s"} available to mailboxes on your company domain.</p></div></div> : null}
 
         {tab === "notes" && data ? <div className="space-y-4"><form onSubmit={addNote} className="flex gap-2"><input value={note} onChange={(e) => setNote(e.target.value)} className="h-10 min-w-0 flex-1 rounded-xl border border-slate-200 bg-transparent px-3 text-sm dark:border-white/10" placeholder="Add a note…"/><button className="rounded-xl bg-[#0b57d0] px-3 text-xs font-black text-white"><Plus size={15}/></button></form>{data.notes.map((item, index) => <div key={`${item.created_at}-${index}`} className="rounded-xl border border-slate-200 p-3 dark:border-white/10"><p className="text-sm font-medium text-slate-800 dark:text-slate-100">{item.text}</p><p className="mt-2 text-[10px] font-bold text-slate-400">{shortDate(item.created_at)}</p></div>)}</div> : null}
 
-        {tab === "activity" && data ? <div className="space-y-2">{data.tasks.map((item) => <div key={item.id} className="rounded-xl border border-slate-200 p-3 dark:border-white/10"><p className="text-sm font-black text-slate-800 dark:text-white">{item.text}</p><p className="mt-1 text-[10px] text-slate-500">{item.due_at ? `Due ${item.due_at}` : "No due date"}</p></div>)}{data.timeline.map((item) => <div key={`${item.folder}-${item.uid}`} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 dark:border-white/10"><Mail size={15} className="text-slate-400"/><span className="min-w-0 flex-1 truncate text-xs font-bold text-slate-700 dark:text-slate-200">{item.direction === "outgoing" ? "Sent" : "Received"} · {item.subject}</span><span className="text-[10px] text-slate-400">{shortDate(item.date)}</span></div>)}</div> : null}
+        {tab === "activity" && data ? <div className="space-y-2">{data.tasks.map((item) => <div key={item.id} className="rounded-xl border border-slate-200 p-3 dark:border-white/10"><p className="text-sm font-black text-slate-800 dark:text-white">{item.text}</p><p className="mt-1 text-[10px] text-slate-500">{item.due_at ? `Due ${item.due_at}` : "No due date"}</p></div>)}{filteredTimeline.map((item) => <div key={`${item.folder}-${item.uid}`} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3 dark:border-white/10"><Mail size={15} className="text-slate-400"/><span className="min-w-0 flex-1 truncate text-xs font-bold text-slate-700 dark:text-slate-200">{item.direction === "outgoing" ? "Sent" : "Received"} · {item.subject}</span><span className="text-[10px] text-slate-400">{shortDate(item.date)}</span></div>)}</div> : null}
 
         {tab === "chat" && data?.overview.internal_chat ? <div className="flex min-h-[420px] flex-col"><div className="mb-3 flex items-center gap-2 rounded-xl bg-emerald-50 p-3 text-xs font-bold text-emerald-800"><MessageCircle size={15}/> Internal iMail chat is available because both addresses use {data.company.domain}.</div><div className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 p-3 dark:border-white/10">{data.chat.map((item, index) => <div key={`${item.created_at}-${index}`} className={`flex ${item.from.toLowerCase() === mailboxAddress.toLowerCase() ? "justify-end" : "justify-start"}`}><div className={`max-w-[78%] rounded-2xl px-3 py-2 text-sm ${item.from.toLowerCase() === mailboxAddress.toLowerCase() ? "bg-[#0b57d0] text-white" : "bg-slate-100 text-slate-800 dark:bg-white/10 dark:text-white"}`}><p>{item.text}</p><p className="mt-1 text-[9px] opacity-70">{shortDate(item.created_at)}</p></div></div>)}</div><form onSubmit={sendChat} className="mt-3 flex gap-2"><input value={chatText} onChange={(e) => setChatText(e.target.value)} className="h-11 min-w-0 flex-1 rounded-xl border border-slate-200 bg-transparent px-3 text-sm dark:border-white/10" placeholder="Message this colleague…"/><button className="grid h-11 w-11 place-items-center rounded-xl bg-[#0b57d0] text-white"><Send size={16}/></button></form></div> : null}
       </div>
