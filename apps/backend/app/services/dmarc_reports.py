@@ -99,7 +99,7 @@ def _float_rate(passed: int, total: int) -> float:
 def python_parse_dmarc_xml(xml_bytes: bytes) -> dict:
     if len(xml_bytes) > MAX_DMARC_XML_BYTES:
         raise DmarcReportError("DMARC XML exceeds the maximum size")
-    upper = xml_bytes[:262144].upper()
+    upper = xml_bytes.upper()
     if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
         raise DmarcReportError("DMARC XML DTD/entities are not allowed")
 
@@ -114,7 +114,7 @@ def python_parse_dmarc_xml(xml_bytes: bytes) -> dict:
     metadata = {
         "org_name": _text(root, "report_metadata", "org_name")[:255],
         "email": _text(root, "report_metadata", "email")[:320],
-        "report_id": _text(root, "report_metadata", "report_id")[:512],
+        "report_id": _text(root, "report_metadata", "report_id")[:255],
         "begin": max(0, _int(_text(root, "report_metadata", "date_range", "begin"))),
         "end": max(0, _int(_text(root, "report_metadata", "date_range", "end"))),
     }
@@ -217,7 +217,7 @@ def normalized_report(result: dict, expected_domain: str) -> dict:
             f"DMARC report policy domain '{policy_domain or 'missing'}' does not match '{expected}'"
         )
 
-    report_id = str(metadata.get("report_id") or "").strip()[:512]
+    report_id = str(metadata.get("report_id") or "").strip()[:255]
     reporter_org = str(metadata.get("org_name") or "").strip()[:255]
     if not report_id or not reporter_org:
         raise DmarcReportError("DMARC report metadata must include org_name and report_id")
