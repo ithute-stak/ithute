@@ -654,7 +654,7 @@ export function HostedMailWorkspace() {
 
             <div className="mt-5"><MailPrivacyNote /></div>
             <div className="mt-6 min-h-[220px]">
-              <div className="whitespace-pre-wrap break-words leading-7 text-slate-800 dark:text-slate-100" style={{ fontSize }}>{selected.body_text || selected.snippet || ""}</div>
+              <div data-imail-message-body="true" data-imail-sender={addressOnly(selected.from)} className="whitespace-pre-wrap break-words leading-7 text-slate-800 dark:text-slate-100" style={{ fontSize }}>{selected.body_text || selected.snippet || ""}</div>
             </div>
 
             {selected.attachments?.length ? (

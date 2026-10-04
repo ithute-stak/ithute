@@ -48,16 +48,26 @@
 
 .imail-route-webmail article .imail-rich-message a,
 .imail-route-webmail article .imail-rich-message .imail-detected-link {
-  color: #0869d7 !important;
-  font-weight: 650;
-  text-decoration: underline;
+  color: #0869d7;
   text-decoration-color: rgba(8, 105, 215, 0.32);
   text-underline-offset: 2px;
 }
 
 .imail-route-webmail article .imail-rich-message a:hover {
-  color: #064ca4 !important;
   text-decoration-color: currentColor;
+}
+
+.imail-route-webmail article .imail-rich-message a.imail-suspicious-link {
+  border-radius: 4px;
+  outline: 2px solid rgba(217, 119, 6, 0.35);
+  outline-offset: 2px;
+}
+
+.imail-route-webmail article .imail-rich-message img.imail-remote-image {
+  display: block;
+  max-width: 100% !important;
+  height: auto;
+  object-fit: contain;
 }
 
 .imail-route-webmail article .imail-rich-message blockquote {
@@ -147,5 +157,65 @@
   .imail-route-webmail article .imail-rich-message {
     font-size: 14px;
     line-height: 1.68;
+  }
+}
+
+
+/* Privacy controls are injected only when a message contains remote images. */
+.imail-route-webmail article .imail-image-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 9px 11px;
+  border: 1px solid #d8e6df;
+  border-radius: 10px;
+  background: #f5faf7;
+  color: #52655c;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.imail-route-webmail article .imail-image-controls > span {
+  flex: 1 1 280px;
+}
+
+.imail-route-webmail article .imail-image-controls button {
+  flex: 0 0 auto;
+  border: 1px solid #b9cec5;
+  border-radius: 8px;
+  background: #fff;
+  padding: 6px 9px;
+  color: #17483d;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.imail-route-webmail article .imail-image-controls button:hover {
+  border-color: #6f9c8c;
+  background: #eef7f2;
+}
+
+.imail-route-webmail article .imail-rich-message center,
+.imail-route-webmail article .imail-rich-message div,
+.imail-route-webmail article .imail-rich-message td,
+.imail-route-webmail article .imail-rich-message table {
+  box-sizing: border-box;
+}
+
+.imail-route-webmail article .imail-rich-message table[width] {
+  max-width: 100% !important;
+}
+
+@media (max-width: 639.98px) {
+  .imail-route-webmail article .imail-image-controls {
+    align-items: stretch;
+  }
+
+  .imail-route-webmail article .imail-image-controls button {
+    width: 100%;
   }
 }
