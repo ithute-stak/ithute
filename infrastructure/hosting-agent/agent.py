@@ -75,8 +75,8 @@ if ORIGIN_BIND_IP:
         origin_address = ipaddress.ip_address(ORIGIN_BIND_IP)
     except ValueError as exc:
         raise RuntimeError("ITHUTE_HOSTING_ORIGIN_BIND_IP must be a literal private/VPN IP address") from exc
-    if not origin_address.is_private or origin_address.is_unspecified or origin_address.is_multicast or origin_address.is_link_local:
-        raise RuntimeError("ITHUTE_HOSTING_ORIGIN_BIND_IP must be a private/VPN address, never a public or wildcard address")
+    if not isinstance(origin_address, ipaddress.IPv4Address) or not origin_address.is_private or origin_address.is_unspecified or origin_address.is_multicast or origin_address.is_link_local:
+        raise RuntimeError("ITHUTE_HOSTING_ORIGIN_BIND_IP must be a private/VPN IPv4 address, never a public or wildcard address")
     if not (1024 <= ORIGIN_PORT_START <= ORIGIN_PORT_END <= 65535):
         raise RuntimeError("ITHUTE_HOSTING_ORIGIN_PORT_START/END must define a valid non-privileged port range")
 for port_name, port in (
