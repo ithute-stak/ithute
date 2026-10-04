@@ -23,6 +23,11 @@ jobs:
   engines:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      SECRET_KEY: ci-multiengine-secret-key-000000000000000000000000
+      DATABASE_URL: postgresql+psycopg://ithute:unused@127.0.0.1:5432/ithute_unused
+      ENVIRONMENT: test
+      PLATFORM_MODE: bootstrap
     steps:
       - name: Checkout
         uses: actions/checkout@v5
