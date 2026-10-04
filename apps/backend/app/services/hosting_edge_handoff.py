@@ -63,7 +63,8 @@ def inspect_trusted_origin(origin_url: str, health_path: str, expected_status: i
     url = origin + path
     started = datetime.now(timezone.utc)
     try:
-        response = httpx.get(url, timeout=timeout_seconds, follow_redirects=False)
+        with httpx.Client(trust_env=False, follow_redirects=False, timeout=timeout_seconds) as client:
+            response = client.get(url)
     except httpx.HTTPError as exc:
         raise HostingOriginError(f"Trusted hosting origin is unreachable: {exc.__class__.__name__}") from exc
     elapsed = max(0, int((datetime.now(timezone.utc) - started).total_seconds() * 1000))
@@ -169,7 +170,8 @@ def reconcile_project_edge(db: Session, project: HostingProject, origin_url: str
 
     # Caddy has the route now, but certificate issuance can be asynchronous.
     try:
-        response = httpx.get(f"https://{app.hostname}{project.health_path}", timeout=8, follow_redirects=False)
+        with httpx.Client(trust_env=False, follow_redirects=False, timeout=8) as client:
+            response = client.get(f"https://{app.hostname}{project.health_path}")
         if 200 <= response.status_code < 400:
             route.status = "active"
             route.error = None
