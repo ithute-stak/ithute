@@ -8,6 +8,7 @@ MIN_FREE_KB="${ITHUTE_MIN_FREE_KB:-15728640}"
 REPO_RAW="https://raw.githubusercontent.com/ithute-stak/ithute"
 REPO_GIT="https://github.com/ithute-stak/ithute.git"
 IMAGES=(ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime)
+CANDIDATE_ONLY_IMAGES=(ithute-java-worker)
 
 if [ "$RELEASE_SELECTOR" = "latest" ]; then
   echo "[Ithute] Resolving latest main release"
@@ -68,7 +69,7 @@ df -h / /tmp || true
 docker system df || true
 
 running_images="$(docker ps --format '{{.Image}}' | sort -u)"
-for repo in "${IMAGES[@]}"; do
+for repo in "${IMAGES[@]}" "${CANDIDATE_ONLY_IMAGES[@]}"; do
   docker image ls "$repo" --format '{{.Repository}}:{{.Tag}}' | sort -u | while IFS= read -r image; do
     [ -n "$image" ] || continue
     if printf '%s\n' "$running_images" | grep -Fxq "$image"; then
@@ -115,7 +116,7 @@ pull_as_local() {
   docker image inspect "$local_ref" >/dev/null
 }
 
-for repo in "${IMAGES[@]}"; do
+for repo in "${IMAGES[@]}" "${CANDIDATE_ONLY_IMAGES[@]}"; do
   pull_as_local "$repo" "$RELEASE_SHA"
 done
 for repo in "${IMAGES[@]}"; do
@@ -188,6 +189,7 @@ compose=(docker compose --env-file "$APP_DIR/.env.production" --env-file "$APP_D
 for service_repo in \
   "ithute-web:ithute-web" \
   "ithute-app-api:ithute-app-api" \
+  "ithute-java-worker:ithute-java-worker" \
   "ithute-auth:ithute-auth" \
   "ithute-push:ithute-push" \
   "ithute-realtime:ithute-realtime"; do

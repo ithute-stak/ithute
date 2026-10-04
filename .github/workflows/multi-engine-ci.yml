@@ -11,6 +11,9 @@ on:
       - "apps/backend/app/api/v1/router.py"
       - "apps/backend/tests/test_engine_runtime.py"
       - "apps/backend/tests/test_webmail_message_resilience.py"
+      - "apps/backend/tests/test_dmarc_reports.py"
+      - "apps/backend/app/services/dmarc_reports.py"
+      - "apps/backend/app/api/v1/deliverability.py"
       - "apps/backend/app/services/webmail.py"
       - "apps/backend/app/services/metrics.py"
       - "apps/backend/benchmarks/**"
@@ -44,7 +47,7 @@ jobs:
           import json
           from pathlib import Path
           schema = json.loads(Path("contracts/engine-task.schema.json").read_text())
-          assert schema["properties"]["engine"]["enum"] == ["python", "rust", "go", "cpp"]
+          assert schema["properties"]["engine"]["enum"] == ["python", "rust", "go", "cpp", "java"]
           assert set(schema["required"]) == {"version", "task_id", "engine", "operation", "payload"}
           PY
 
@@ -64,6 +67,17 @@ jobs:
           go vet ./...
           go build ./cmd/worker
 
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Compile Java worker
+        run: |
+          mkdir -p /tmp/ithute-java/classes
+          javac --release 21 --add-modules jdk.httpserver -d /tmp/ithute-java/classes $(find engines/java-worker/src -name '*.java')
+
       - name: Test C++ turbo library
         run: |
           cmake -S engines/cpp-native -B /tmp/ithute-cpp-build -DCMAKE_BUILD_TYPE=Release
@@ -74,7 +88,7 @@ jobs:
         working-directory: apps/backend
         run: |
           python -m pip install --disable-pip-version-check -r requirements.txt
-          pytest -q tests/test_engine_runtime.py tests/test_webmail_message_resilience.py
+          pytest -q tests/test_engine_runtime.py tests/test_webmail_message_resilience.py tests/test_dmarc_reports.py
 
       - name: Build API with native engines
         run: |
@@ -92,6 +106,33 @@ jobs:
           print(result)
           PY
           docker run --rm --entrypoint python ithute-app-api:engine-ci -m benchmarks.benchmark_mime_scan
+
+      - name: Build and test Java worker image
+        run: |
+          docker build --pull -t ithute-java-worker:engine-ci engines/java-worker
+          container="$(docker run -d -p 18081:8080 ithute-java-worker:engine-ci)"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18081/healthz | grep -q '"engine":"java"'; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS -X POST -H 'Content-Type: application/xml' --data-binary @engines/java-worker/testdata/dmarc-sample.xml             http://127.0.0.1:18081/v1/dmarc/parse > /tmp/dmarc-java.json
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/dmarc-java.json'))
+          assert body['engine']=='java'
+          assert body['policy']['domain']=='example.com'
+          assert body['summary']['total_messages']==10
+          assert body['summary']['passed_messages']==8
+          assert body['summary']['failed_messages']==2
+          assert body['summary']['pass_rate_percent']==80.0
+          assert len(body['records'])==2
+          PY
+          printf '%s' '<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><feedback>&xxe;</feedback>' > /tmp/xxe.xml
+          code="$(curl -sS -o /tmp/xxe-response.json -w '%{http_code}' -X POST -H 'Content-Type: application/xml' --data-binary @/tmp/xxe.xml http://127.0.0.1:18081/v1/dmarc/parse)"
+          test "$code" = "422"
 
       - name: Build Go worker image
         run: |

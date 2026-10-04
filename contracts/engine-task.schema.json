@@ -8,7 +8,7 @@
   "properties": {
     "version": {"const": "1"},
     "task_id": {"type": "string", "minLength": 1, "maxLength": 128},
-    "engine": {"enum": ["python", "rust", "go", "cpp"]},
+    "engine": {"enum": ["python", "rust", "go", "cpp", "java"]},
     "operation": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,127}$"},
     "tenant_id": {"type": ["string", "null"], "format": "uuid"},
     "payload": {"type": "object"},

@@ -24,6 +24,7 @@ def test_engine_status_keeps_python_authoritative(monkeypatch):
     monkeypatch.setattr(engine_runtime, "_load_rust", lambda: None)
     monkeypatch.setattr(engine_runtime, "_load_cpp", lambda: None)
     monkeypatch.setattr(engine_runtime, "go_worker_status", lambda: {"available": False, "engine": "go", "capabilities": []})
+    monkeypatch.setattr(engine_runtime, "java_worker_status", lambda: {"available": False, "engine": "java", "capabilities": []})
 
     status = engine_runtime.engine_status()
 
@@ -32,6 +33,7 @@ def test_engine_status_keeps_python_authoritative(monkeypatch):
     assert "authorization" in status["brain"]["responsibilities"]
     assert status["engines"]["rust"]["fallback"] == "python"
     assert status["engines"]["cpp"]["fallback"] == "python"
+    assert status["engines"]["java"]["engine"] == "java"
 
 
 

@@ -11,6 +11,7 @@ import httpx
 RUST_LIBRARY = Path(os.getenv("ITHUTE_RUST_CORE_LIBRARY", "/opt/ithute-engines/libithute_rust_core.so"))
 CPP_LIBRARY = Path(os.getenv("ITHUTE_CPP_NATIVE_LIBRARY", "/opt/ithute-engines/libithute_cpp_native.so"))
 GO_WORKER_URL = os.getenv("ITHUTE_GO_WORKER_URL", "http://ithute-go-worker:8080").rstrip("/")
+JAVA_WORKER_URL = os.getenv("ITHUTE_JAVA_WORKER_URL", "http://ithute-java-worker:8080").rstrip("/")
 ENGINE_HTTP_TIMEOUT_SECONDS = float(os.getenv("ITHUTE_ENGINE_HTTP_TIMEOUT_SECONDS", "1.5"))
 
 
@@ -229,10 +230,30 @@ def go_worker_status() -> dict:
         }
 
 
+def java_worker_status() -> dict:
+    try:
+        with httpx.Client(timeout=ENGINE_HTTP_TIMEOUT_SECONDS, trust_env=False) as client:
+            response = client.get(f"{JAVA_WORKER_URL}/v1/capabilities")
+            response.raise_for_status()
+            body = response.json()
+        if not isinstance(body, dict) or body.get("engine") != "java":
+            raise ValueError("invalid Java worker capability response")
+        return {"available": True, **body}
+    except (httpx.HTTPError, ValueError, TypeError):
+        return {
+            "available": False,
+            "service": "ithute-java-worker",
+            "engine": "java",
+            "version": None,
+            "capabilities": [],
+        }
+
+
 def engine_status() -> dict:
     rust_available = _load_rust() is not None
     cpp_available = _load_cpp() is not None
     go = go_worker_status()
+    java = java_worker_status()
     return {
         "brain": {
             "engine": "python",
@@ -255,6 +276,7 @@ def engine_status() -> dict:
                 "fallback": "python",
             },
             "go": go,
+            "java": java,
             "cpp": {
                 "available": cpp_available,
                 "mode": "native",

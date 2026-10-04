@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feedback>
+  <report_metadata>
+    <org_name>Example Mail</org_name>
+    <email>dmarc@example.test</email>
+    <report_id>report-2026-10-04</report_id>
+    <date_range>
+      <begin>1791072000</begin>
+      <end>1791158400</end>
+    </date_range>
+  </report_metadata>
+  <policy_published>
+    <domain>example.com</domain>
+    <adkim>s</adkim>
+    <aspf>s</aspf>
+    <p>reject</p>
+    <sp>reject</sp>
+    <pct>100</pct>
+  </policy_published>
+  <record>
+    <row>
+      <source_ip>192.0.2.10</source_ip>
+      <count>8</count>
+      <policy_evaluated>
+        <disposition>none</disposition>
+        <dkim>pass</dkim>
+        <spf>pass</spf>
+      </policy_evaluated>
+    </row>
+    <identifiers>
+      <header_from>example.com</header_from>
+      <envelope_from>example.com</envelope_from>
+    </identifiers>
+  </record>
+  <record>
+    <row>
+      <source_ip>198.51.100.5</source_ip>
+      <count>2</count>
+      <policy_evaluated>
+        <disposition>reject</disposition>
+        <dkim>fail</dkim>
+        <spf>fail</spf>
+      </policy_evaluated>
+    </row>
+    <identifiers>
+      <header_from>example.com</header_from>
+      <envelope_from>spoof.example.net</envelope_from>
+    </identifiers>
+  </record>
+</feedback>

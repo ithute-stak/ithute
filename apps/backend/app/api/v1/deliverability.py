@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_tenant_permission
 from app.core.config import settings
 from app.db.session import get_db
-from app.models import AuditLog, DkimKey, User
+from app.models import AuditLog, DkimKey, DmarcAggregateReport, User
 from app.models.domains import Domain, DomainDnsMode, DomainStatus
 from app.services.deliverability import (
     deliverability_readiness,
@@ -22,6 +22,15 @@ from app.services.deliverability import (
     recommended_records,
 )
 from app.services.dkim_sync import sync_active_dkim_keys
+from app.services.dmarc_reports import (
+    DmarcReportError,
+    MAX_DMARC_COMPRESSED_BYTES,
+    epoch_datetime,
+    extract_dmarc_xml,
+    normalized_report,
+    parse_dmarc_xml,
+    report_sha256,
+)
 from app.services.powerdns import PowerDNSClient, PowerDNSError, validate_record
 from app.services.caddy_routes import CaddyRouteError
 from app.services.mail_security_policy import activate_mta_sts_route, mta_sts_route_status
@@ -339,6 +348,169 @@ def enforce_dmarc_reject(
         "policy": "reject",
         "record": record,
         "detail": "DMARC reject is now enforced for Ithute-managed DNS.",
+    }
+
+
+def _dmarc_report_json(report: DmarcAggregateReport) -> dict:
+    metadata = report.raw_summary_json or {}
+    return {
+        "id": str(report.id),
+        "domain": report.domain,
+        "reporter_org": report.reporter,
+        "reporter_email": metadata.get("reporter_email"),
+        "report_id": report.report_id,
+        "period_begin": report.period_begin,
+        "period_end": report.period_end,
+        "total_messages": report.total_messages,
+        "passed_messages": report.aligned_messages,
+        "failed_messages": report.failed_messages,
+        "pass_rate_percent": metadata.get("pass_rate_percent", 0.0),
+        "parser_engine": metadata.get("parser_engine", "unknown"),
+        "parser_version": metadata.get("parser_version", "1"),
+        "report_sha256": metadata.get("report_sha256"),
+        "policy": metadata.get("policy") or {},
+        "created_at": report.created_at,
+    }
+
+
+@router.post("/dmarc/reports")
+async def upload_dmarc_report(
+    tenant_id: UUID,
+    domain_id: UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "mail.manage", db, current)
+    domain = _domain(db, tenant_id, domain_id)
+
+    raw = await file.read(MAX_DMARC_COMPRESSED_BYTES + 1)
+    if len(raw) > MAX_DMARC_COMPRESSED_BYTES:
+        raise HTTPException(status_code=413, detail="DMARC report exceeds the maximum upload size")
+    try:
+        xml_bytes = extract_dmarc_xml(raw, file.filename or "")
+        parsed, engine = parse_dmarc_xml(xml_bytes)
+        result = normalized_report(parsed, domain.ascii_name)
+    except DmarcReportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    metadata = result["metadata"]
+    existing = db.scalar(
+        select(DmarcAggregateReport).where(
+            DmarcAggregateReport.tenant_id == tenant_id,
+            DmarcAggregateReport.report_id == metadata["report_id"],
+        )
+    )
+    if existing is not None:
+        if existing.domain != domain.ascii_name:
+            raise HTTPException(status_code=409, detail="DMARC report ID already belongs to another domain in this organization")
+        return {**_dmarc_report_json(existing), "duplicate": True}
+
+    begin = epoch_datetime(metadata["begin"])
+    end_at = epoch_datetime(metadata["end"])
+    if begin is None or end_at is None or end_at < begin:
+        raise HTTPException(status_code=422, detail="DMARC report contains an invalid reporting period")
+
+    policy = result["policy"]
+    summary = result["summary"]
+    report = DmarcAggregateReport(
+        tenant_id=tenant_id,
+        domain=domain.ascii_name,
+        report_id=metadata["report_id"],
+        reporter=metadata["org_name"],
+        period_begin=begin,
+        period_end=end_at,
+        total_messages=summary["total_messages"],
+        aligned_messages=summary["passed_messages"],
+        failed_messages=summary["failed_messages"],
+        sources_json=result["records"],
+        raw_summary_json={
+            "reporter_email": metadata["email"] or None,
+            "policy": policy,
+            "pass_rate_percent": summary["pass_rate_percent"],
+            "parser_engine": engine,
+            "parser_version": result["parser_version"],
+            "report_sha256": report_sha256(xml_bytes),
+        },
+    )
+    db.add(report)
+    db.flush()
+    _audit(
+        db,
+        tenant_id,
+        current,
+        "deliverability.dmarc.report_ingest",
+        str(report.id),
+        {
+            "domain": domain.ascii_name,
+            "reporter_org": report.reporter,
+            "report_id": report.report_id,
+            "parser_engine": engine,
+            "records": len(result["records"]),
+            "total_messages": report.total_messages,
+            "failed_messages": report.failed_messages,
+        },
+    )
+    db.commit()
+    db.refresh(report)
+    return {
+        **_dmarc_report_json(report),
+        "duplicate": False,
+        "sources": len(result["records"]),
+    }
+
+
+@router.get("/dmarc/reports")
+def list_dmarc_reports(
+    tenant_id: UUID,
+    domain_id: UUID,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "mail.read", db, current)
+    domain = _domain(db, tenant_id, domain_id)
+    rows = db.scalars(
+        select(DmarcAggregateReport)
+        .where(
+            DmarcAggregateReport.tenant_id == tenant_id,
+            DmarcAggregateReport.domain == domain.ascii_name,
+        )
+        .order_by(DmarcAggregateReport.period_end.desc(), DmarcAggregateReport.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    ).all()
+    return {
+        "domain": domain.ascii_name,
+        "items": [_dmarc_report_json(row) for row in rows],
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/dmarc/reports/{report_id}")
+def get_dmarc_report(
+    tenant_id: UUID,
+    domain_id: UUID,
+    report_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "mail.read", db, current)
+    domain = _domain(db, tenant_id, domain_id)
+    report = db.scalar(
+        select(DmarcAggregateReport).where(
+            DmarcAggregateReport.id == report_id,
+            DmarcAggregateReport.tenant_id == tenant_id,
+            DmarcAggregateReport.domain == domain.ascii_name,
+        )
+    )
+    if report is None:
+        raise HTTPException(status_code=404, detail="DMARC report not found")
+    return {
+        **_dmarc_report_json(report),
+        "sources": report.sources_json or [],
     }
 
 

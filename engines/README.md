@@ -8,6 +8,7 @@ Ithute uses a strict multi-engine model:
   and data transformations.
 - **Go worker** — concurrent/network-oriented workers and service probes.
 - **C++ native** — narrow benchmark-proven hot paths only.
+- **Java worker** — enterprise XML/report/integration processing with hardened parsers.
 
 No specialist engine is allowed to independently authorize a tenant action or
 reimplement billing/permission rules. Python decides **what** may happen;

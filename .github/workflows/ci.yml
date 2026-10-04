@@ -98,7 +98,7 @@ jobs:
           compose = Path('compose.production.yml').read_text(encoding='utf-8')
           if '\n    build:' in compose or '\n      build:' in compose:
               failures.append('Production compose must not contain application build contexts.')
-          for image in ('ithute-web:', 'ithute-app-api:', 'ithute-auth:', 'ithute-push:', 'ithute-realtime:'):
+          for image in ('ithute-web:', 'ithute-app-api:', 'ithute-java-worker:', 'ithute-auth:', 'ithute-push:', 'ithute-realtime:'):
               if f'image: {image}' not in compose:
                   failures.append(f'Missing immutable runtime image declaration for {image}')
           if 'image: powerdns/pdns-auth-49:4.9.17' not in compose:
@@ -176,6 +176,7 @@ jobs:
           set -euo pipefail
           docker compose -f compose.production.yml config > /tmp/ithute-production.yml
           grep -q 'ithute-app-api:' /tmp/ithute-production.yml
+          grep -q 'ithute-java-worker:' /tmp/ithute-production.yml
           grep -q 'ithute-app-db:' /tmp/ithute-production.yml
           grep -q 'ithute-app-redis:' /tmp/ithute-production.yml
           grep -q 'ithute-web:' /tmp/ithute-production.yml
@@ -261,11 +262,13 @@ jobs:
             --build-arg NEXT_PUBLIC_API_URL=/api/v1 \
             -t "ithute-web:$tag" ./apps/frontend
           docker build --pull -f apps/backend/Dockerfile -t "ithute-app-api:$tag" .
+          docker build --pull -t "ithute-java-worker:$tag" ./engines/java-worker
           docker build --pull -t "ithute-auth:$tag" ./platform/ithute-auth
           docker build --pull -t "ithute-push:$tag" ./platform/ithute-push
           docker build --pull -t "ithute-realtime:$tag" ./platform/ithute-realtime
           docker image inspect "ithute-web:$tag" >/dev/null
           docker image inspect "ithute-app-api:$tag" >/dev/null
+          docker image inspect "ithute-java-worker:$tag" >/dev/null
           docker image inspect "ithute-auth:$tag" >/dev/null
           docker image inspect "ithute-push:$tag" >/dev/null
           docker image inspect "ithute-realtime:$tag" >/dev/null
