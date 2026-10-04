@@ -137,6 +137,35 @@ def _audit(db: Session, node: HostingNode, action: str, metadata: dict) -> None:
     )
 
 
+def node_health_snapshot(db: Session, node: HostingNode, *, now: datetime | None = None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    state = db.get(HostingNodeHealthState, node.id)
+    health = evaluate_node_health(db, node, now=now)
+    return {
+        "node_id": str(node.id),
+        "automation_enabled": bool(state.automation_enabled) if state else False,
+        "health_status": state.health_status if state else ("healthy" if health["healthy"] else "unhealthy"),
+        "healthy": health["healthy"],
+        "checks": health["checks"],
+        "reasons": health["reasons"],
+        "node_status": node.status,
+        "accepts_new_projects": node.accepts_new_projects,
+        "healthy_since": _utc(state.healthy_since).isoformat() if state and state.healthy_since else None,
+        "unhealthy_since": _utc(state.unhealthy_since).isoformat() if state and state.unhealthy_since else None,
+        "last_evaluated_at": _utc(state.last_evaluated_at).isoformat() if state and state.last_evaluated_at else None,
+        "last_transition": state.last_transition if state else None,
+        "last_transition_at": _utc(state.last_transition_at).isoformat() if state and state.last_transition_at else None,
+        "last_reason": state.last_reason if state else None,
+        "thresholds": {
+            "heartbeat_grace_seconds": HEARTBEAT_GRACE_SECONDS,
+            "auto_activate_seconds": AUTO_ACTIVATE_SECONDS,
+            "auto_drain_seconds": AUTO_DRAIN_SECONDS,
+            "auto_recover_seconds": AUTO_RECOVER_SECONDS,
+        },
+        **{key: health[key] for key in ("server_id", "managed_network_ip", "last_handshake_at", "disk_percent")},
+    }
+
+
 def reconcile_node_health(db: Session, node: HostingNode, *, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     state = ensure_health_state(db, node)
