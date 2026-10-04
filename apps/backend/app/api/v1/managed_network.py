@@ -58,8 +58,16 @@ def private_network_status(
     current: User = Depends(require_platform_owner),
 ):
     rows = db.scalars(select(InfrastructureWireGuardPeer).order_by(InfrastructureWireGuardPeer.assigned_ipv4.asc())).all()
+    edge_public_key = os.getenv("ITHUTE_WIREGUARD_EDGE_PUBLIC_KEY", "").strip()
+    edge_endpoint = os.getenv("ITHUTE_WIREGUARD_EDGE_ENDPOINT", "").strip()
+    reconciler_configured = bool(os.getenv("ITHUTE_WIREGUARD_RECONCILER_TOKEN", "").strip())
+    base = peer_list(db)
     return {
-        **peer_list(db),
+        **base,
+        "configured": bool(edge_public_key and edge_endpoint and reconciler_configured),
+        "edge_public_key": edge_public_key or None,
+        "edge_endpoint": edge_endpoint or None,
+        "reconciler_configured": reconciler_configured,
         "items": [
             {
                 "id": str(row.id),
