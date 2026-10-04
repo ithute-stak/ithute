@@ -24,6 +24,7 @@ import {
   Send,
   Settings2,
   Star,
+  UsersRound,
   Trash2,
   X,
 } from "lucide-react";
@@ -62,6 +63,15 @@ type SessionInfo = {
 };
 
 type ComposeKind = "new" | "reply" | "reply-all" | "forward";
+type BusinessContact = {
+  email: string;
+  name?: string;
+  online?: boolean;
+  interactions?: number;
+  last_seen?: string;
+  sources?: string[];
+};
+type ConversationMessage = MessageRow & { folder?: string };
 
 function folderIcon(name: string) {
   const kind = folderKind(name);
@@ -149,6 +159,8 @@ export function HostedMailWorkspace() {
   const [offset, setOffset] = useState(0);
   const [total, setTotal] = useState(0);
   const [inboxView, setInboxView] = useState<InboxView>("primary");
+  const [businessContacts, setBusinessContacts] = useState<BusinessContact[]>([]);
+  const [activeBusinessContact, setActiveBusinessContact] = useState("");
 
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeKind, setComposeKind] = useState<ComposeKind>("new");
@@ -194,6 +206,17 @@ export function HostedMailWorkspace() {
     setSignatureDraft(value);
   }, []);
 
+  const loadBusinessContacts = useCallback(async () => {
+    try {
+      const response = await webmail("/business-contacts?limit=10");
+      if (!response.ok) return;
+      const payload = await response.json();
+      setBusinessContacts((payload.items || []) as BusinessContact[]);
+    } catch {
+      // Presence/contact enrichment is helpful but must never block mailbox use.
+    }
+  }, []);
+
   const loadMessages = useCallback(async (target: string, search = "", nextOffset = 0) => {
     setLoading(true);
     setError("");
@@ -219,8 +242,8 @@ export function HostedMailWorkspace() {
   }, []);
 
   const refresh = useCallback(async () => {
-    await Promise.all([loadFolders(), loadCounts(), loadMessages(folder, query, offset)]);
-  }, [folder, loadCounts, loadFolders, loadMessages, offset, query]);
+    await Promise.all([loadFolders(), loadCounts(), loadMessages(folder, query, offset), loadBusinessContacts()]);
+  }, [folder, loadBusinessContacts, loadCounts, loadFolders, loadMessages, offset, query]);
 
   async function openMessageByUid(uid: string, targetFolder: string, pushHistory: boolean, preview?: MessageRow) {
     if (preview) setSelected(preview);
@@ -249,7 +272,36 @@ export function HostedMailWorkspace() {
   }
 
   async function openMessage(row: MessageRow) {
-    await openMessageByUid(row.uid, folder, true, row);
+    const targetFolder = (row as ConversationMessage).folder || folder;
+    await openMessageByUid(row.uid, targetFolder, true, row);
+  }
+
+  async function openBusinessContact(contact: BusinessContact) {
+    setLoading(true);
+    setError("");
+    setSelected(null);
+    setActiveBusinessContact(contact.email);
+    setMobileFolders(false);
+    try {
+      const response = await webmail(`/business-conversation?email=${encodeURIComponent(contact.email)}&limit=40`);
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Unable to load conversation history");
+      const payload = await response.json();
+      const items = (payload.items || []) as ConversationMessage[];
+      setMessages(items);
+      setTotal(items.length);
+      setOffset(0);
+      setQuery(contact.email);
+      setInboxView("primary");
+      const url = new URL(window.location.href);
+      url.search = "";
+      url.searchParams.set("folder", "INBOX");
+      url.searchParams.set("q", contact.email);
+      window.history.pushState({ folder: "INBOX", q: contact.email }, "", `${url.pathname}?${url.searchParams}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to load conversation history");
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -269,7 +321,7 @@ export function HostedMailWorkspace() {
         setFolder(initialFolder);
         setQuery(initialQuery);
 
-        await Promise.all([loadFolders(), loadCounts(), loadIdentity(), loadSignature()]);
+        await Promise.all([loadFolders(), loadCounts(), loadIdentity(), loadSignature(), loadBusinessContacts()]);
         const items = await loadMessages(initialFolder, initialQuery, 0);
         if (!active) return;
         if (initialMessage) {
@@ -283,7 +335,7 @@ export function HostedMailWorkspace() {
       }
     })();
     return () => { active = false; };
-  }, [loadCounts, loadFolders, loadIdentity, loadMessages, loadSignature]);
+  }, [loadBusinessContacts, loadCounts, loadFolders, loadIdentity, loadMessages, loadSignature]);
 
   useEffect(() => {
     const onPopState = () => {
@@ -314,6 +366,16 @@ export function HostedMailWorkspace() {
     const timer = window.setTimeout(() => setNotice(""), 3200);
     return () => window.clearTimeout(timer);
   }, [notice]);
+
+  useEffect(() => {
+    const refreshContacts = () => void loadBusinessContacts();
+    const timer = window.setInterval(refreshContacts, 45000);
+    window.addEventListener("ithute:mailbox-refreshed", refreshContacts);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("ithute:mailbox-refreshed", refreshContacts);
+    };
+  }, [loadBusinessContacts]);
 
   useEffect(() => {
     if (!composeOpen || !address) return;
@@ -364,6 +426,7 @@ export function HostedMailWorkspace() {
     setOnlyAttachments(false);
     setSelected(null);
     setSelectedUids(new Set());
+    setActiveBusinessContact("");
     setMobileFolders(false);
     const url = new URL(window.location.href);
     url.search = "";
@@ -768,6 +831,29 @@ export function HostedMailWorkspace() {
                 const count = countFor(item.name);
                 return <button key={item.name} type="button" onClick={() => openFolder(item.name)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm ${active ? "bg-[#eaf1fb] font-black text-[#174ea6]" : "font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5"}`} title={item.name}>{folderIcon(item.name)}<span className="min-w-0 flex-1 truncate">{item.name}</span>{count ? <span className={`text-[10px] ${active ? "font-black text-[#174ea6]" : "font-bold text-slate-400"}`}>{count}</span> : null}</button>;
               })}
+
+              {businessContacts.length ? <div className="mt-4 border-t border-slate-200 pt-3 dark:border-white/10">
+                <div className="mb-1 flex items-center justify-between px-2">
+                  <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.12em] text-slate-500"><UsersRound size={13}/> Business contacts</span>
+                  <span className="text-[9px] font-bold text-slate-400">{businessContacts.filter((item) => item.online).length} online</span>
+                </div>
+                <div className="space-y-0.5">
+                  {businessContacts.map((contact) => {
+                    const active = activeBusinessContact === contact.email;
+                    const title = contact.name || senderName(contact.email);
+                    return <button key={contact.email} type="button" onClick={() => void openBusinessContact(contact)} className={`flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition ${active ? "bg-[#eaf1fb] text-[#174ea6]" : "hover:bg-slate-100 dark:hover:bg-white/5"}`} title={`${contact.email} · ${contact.interactions || 0} interactions`}>
+                      <span className="relative grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white text-[10px] font-black text-slate-600 shadow-sm ring-1 ring-slate-200 dark:bg-white/10 dark:text-slate-100 dark:ring-white/10">
+                        {initials(title)}
+                        <span className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-[#f8fafd] dark:border-[#0e1514] ${contact.online ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}`} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[11px] font-black text-slate-700 dark:text-slate-100">{title}</span>
+                        <span className="block truncate text-[9px] font-medium text-slate-400">{contact.online ? "Online now" : `${contact.interactions || 0} interactions`}</span>
+                      </span>
+                    </button>;
+                  })}
+                </div>
+              </div> : null}
             </nav>
             <div className="mt-2 rounded-2xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-white/[.035]"><p className="truncate text-xs font-black text-slate-800 dark:text-white">{displayName || address}</p>{displayName ? <p className="mt-0.5 truncate text-[10px] font-medium text-slate-500">{address}</p> : null}<Link href="/webmail/settings" className="mt-2 inline-flex text-[10px] font-black text-[#174ea6] hover:underline">Full mailbox settings</Link></div>
           </div>
