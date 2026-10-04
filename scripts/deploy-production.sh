@@ -296,7 +296,8 @@ record_last_good() {
   tar -czf "$LAST_GOOD_RUNTIME_ARCHIVE.tmp" \
     compose.production.yml \
     infrastructure/caddy/Caddyfile \
-    infrastructure/dns/zones/db.ithute.co.ls
+    infrastructure/dns/zones/db.ithute.co.ls \
+    infrastructure/wireguard-edge
   mv "$LAST_GOOD_RUNTIME_ARCHIVE.tmp" "$LAST_GOOD_RUNTIME_ARCHIVE"
   chmod 600 "$LAST_GOOD_RUNTIME_ARCHIVE"
 }
@@ -329,6 +330,7 @@ rollback_to_last_good() {
   }
   ensure_edge_and_reload || return 1
   verify_core_health || return 1
+  verify_edge_private_network || return 1
   verify_public_health || return 1
 
   mv "$ROLLBACK_IMAGE_ENV_FILE" "$IMAGE_ENV_FILE"
