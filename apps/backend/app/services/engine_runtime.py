@@ -3,6 +3,9 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import os
+import socket
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -262,6 +265,58 @@ def go_worker_status() -> dict:
             "capabilities": [],
         }
 
+
+
+def _python_tcp_probe(target: dict) -> dict:
+    host = str(target["host"]).strip()
+    port = int(target["port"])
+    timeout_ms = int(target.get("timeout_ms") or 1200)
+    started = time.perf_counter()
+    reachable = False
+    error = ""
+    try:
+        with socket.create_connection((host, port), timeout=timeout_ms / 1000):
+            reachable = True
+    except OSError:
+        error = "unreachable"
+    latency_ms = (time.perf_counter() - started) * 1000
+    return {
+        "id": str(target["id"]),
+        "host": host,
+        "port": port,
+        "reachable": reachable,
+        "latency_ms": round(latency_ms, 3),
+        **({"error": error} if error else {}),
+    }
+
+
+def python_network_probe(targets: list[dict], concurrency: int = 16) -> dict:
+    workers = max(1, min(int(concurrency or 16), 32))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(_python_tcp_probe, targets))
+    return {"engine": "python-fallback", "checked": len(results), "results": results}
+
+
+def network_probe(targets: list[dict], concurrency: int = 16) -> tuple[dict, str]:
+    """Use Go for bounded concurrent TCP reachability checks with Python fallback."""
+    if not targets:
+        return {"engine": "python-fallback", "checked": 0, "results": []}, "python-fallback"
+
+    payload = {"targets": targets[:64], "concurrency": max(1, min(int(concurrency or 16), 32))}
+    try:
+        with httpx.Client(timeout=max(ENGINE_HTTP_TIMEOUT_SECONDS, 6.0), trust_env=False) as client:
+            response = client.post(f"{GO_WORKER_URL}/v1/network/probe", json=payload)
+            response.raise_for_status()
+            body = response.json()
+        if not isinstance(body, dict) or body.get("engine") != "go":
+            raise ValueError("invalid Go network probe response")
+        results = body.get("results")
+        if not isinstance(results, list) or int(body.get("checked") or -1) != len(results):
+            raise ValueError("invalid Go network probe result set")
+        return body, "go"
+    except (httpx.HTTPError, ValueError, TypeError):
+        body = python_network_probe(payload["targets"], payload["concurrency"])
+        return body, "python-fallback"
 
 def java_worker_status() -> dict:
     try:

@@ -59,3 +59,9 @@ def routing_status() -> dict[str, dict[str, str]]:
         }
         for operation, engine in PREFERRED_ENGINES.items()
     }
+
+
+def execute_network(targets: list[dict], concurrency: int = 16) -> EngineExecution:
+    """Route bounded concurrent network probes to Go with Python fallback."""
+    value, engine = engine_runtime.network_probe(targets, concurrency)
+    return EngineExecution(operation="network.concurrent", engine=engine, value=value)
