@@ -322,7 +322,7 @@ export default function HostingPage() {
   </div>
   <div className="rounded-xl border border-[#dce5e0] bg-white p-3">
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div className="min-w-0 flex-1"><p className="text-[10px] font-black">Failover & rebalancing</p><p className="mt-1 text-[9px] leading-4 text-[var(--admin-muted)]">{project.failover_policy === "stateless_auto" ? "Stateless auto-failover is enabled. Local /data is considered disposable; managed databases on the failed node still block automatic application relocation." : "Manual recovery is the safe default. Ithute will not discard this project's local /data automatically."}</p></div>
+      <div className="min-w-0 flex-1"><p className="text-[10px] font-black">Failover & rebalancing</p><p className="mt-1 text-[9px] leading-4 text-[var(--admin-muted)]">{project.failover_policy === "stateless_auto" ? "Stateless auto-failover is enabled. Local /data is considered disposable; any Ithute-managed database still blocks application relocation until database failover is available." : "Manual recovery is the safe default. Ithute will not discard this project's local /data automatically."}</p></div>
       <button className="btn-secondary" onClick={() => void setFailoverPolicy(project, project.failover_policy === "stateless_auto" ? "manual" : "stateless_auto")}>{project.failover_policy === "stateless_auto" ? "Require manual recovery" : "Enable stateless failover"}</button>
     </div>
     {project.failover_policy === "stateless_auto" ? <div className="mt-3 flex flex-wrap items-end gap-2">
