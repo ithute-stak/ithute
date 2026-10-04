@@ -17,6 +17,7 @@ import {
   LogOut,
   Mail,
   Menu,
+  Network,
   Plus,
   Search,
   Send,
@@ -67,6 +68,7 @@ const navigation: NavGroup[] = [
     icon: Server,
     children: [
       { label: "Servers & VPS nodes", href: "/infrastructure/servers", icon: Server },
+      { label: "Private network", href: "/infrastructure/network", icon: Network },
       { label: "Mail nodes", href: "/mail-nodes", icon: Mail },
       { label: "Hosting nodes", href: "/hosting-nodes", icon: Server },
     ],
