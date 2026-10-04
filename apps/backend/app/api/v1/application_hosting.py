@@ -19,6 +19,7 @@ from app.models import (
     Domain,
     DomainStatus,
     HOSTING_RULES_VERSION,
+    HostingDatabase,
     HostingNode,
     HostingProject,
     SubscriptionStatus,
@@ -26,6 +27,7 @@ from app.models import (
     User,
 )
 from app.services.billing import entitlement_decision, get_subscription
+from app.services.hosting_placement import rank_nodes, select_node
 
 router = APIRouter(tags=["application-hosting"])
 
@@ -79,6 +81,7 @@ class HostingProjectCreate(BaseModel):
     cpu_millicores: int = Field(default=500, ge=100, le=4000)
     pid_limit: int = Field(default=128, ge=32, le=2048)
     accept_hosting_rules: bool
+    node_id: UUID | None = None
 
 
 class HostingProjectUpdate(BaseModel):
@@ -146,7 +149,23 @@ def _node_allocated(db: Session, node_id: UUID) -> dict:
             func.count(HostingProject.id),
         ).where(HostingProject.node_id == node_id)
     ).one()
-    return {"storage_mb": int(row[0]), "memory_mb": int(row[1]), "cpu_millicores": int(row[2]), "projects": int(row[3])}
+    database_storage = int(
+        db.scalar(
+            select(func.coalesce(func.sum(HostingDatabase.storage_mb), 0)).where(
+                HostingDatabase.node_id == node_id,
+                HostingDatabase.status != "deleting",
+            )
+        )
+        or 0
+    )
+    return {
+        "storage_mb": int(row[0]) + database_storage,
+        "application_storage_mb": int(row[0]),
+        "database_storage_mb": database_storage,
+        "memory_mb": int(row[1]),
+        "cpu_millicores": int(row[2]),
+        "projects": int(row[3]),
+    }
 
 
 def _node_out(db: Session, node: HostingNode) -> dict:
@@ -170,27 +189,6 @@ def _node_out(db: Session, node: HostingNode) -> dict:
             "cpu_millicores": max(0, node.allocatable_cpu_millicores - allocated["cpu_millicores"]),
         },
     }
-
-
-def _select_node(db: Session, *, storage_mb: int, memory_mb: int, cpu_millicores: int) -> HostingNode:
-    nodes = db.scalars(
-        select(HostingNode)
-        .where(HostingNode.status == "active", HostingNode.accepts_new_projects.is_(True))
-        .order_by(HostingNode.created_at.asc())
-        .with_for_update()
-    ).all()
-    for node in nodes:
-        allocated = _node_allocated(db, node.id)
-        if (
-            allocated["storage_mb"] + storage_mb <= node.allocatable_storage_mb
-            and allocated["memory_mb"] + memory_mb <= node.allocatable_memory_mb
-            and allocated["cpu_millicores"] + cpu_millicores <= node.allocatable_cpu_millicores
-        ):
-            return node
-    raise HTTPException(
-        status_code=409,
-        detail="No hosting node has enough allocatable CPU, memory and storage. The system owner must add capacity or drain fewer resources.",
-    )
 
 
 def _project_out(project: HostingProject) -> dict:
@@ -288,6 +286,38 @@ def update_hosting_node(node_id: UUID, payload: HostingNodeUpdate, db: Session =
     return _node_out(db, node)
 
 
+@router.get("/platform/hosting/placement-preview")
+def placement_preview(
+    workload: str = "application",
+    storage_mb: int = 1024,
+    memory_mb: int = 512,
+    cpu_millicores: int = 500,
+    database_engine: str | None = None,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    if workload not in {"application", "database"}:
+        raise HTTPException(status_code=422, detail="workload must be application or database")
+    ranked = rank_nodes(
+        db,
+        workload=workload,
+        storage_mb=max(0, storage_mb),
+        memory_mb=max(0, memory_mb),
+        cpu_millicores=max(0, cpu_millicores),
+        database_engine=database_engine,
+    )
+    return {
+        "items": [
+            {
+                key: value
+                for key, value in row.items()
+                if key != "node"
+            }
+            for row in ranked
+        ]
+    }
+
+
 @router.get("/tenants/{tenant_id}/hosting/summary")
 def hosting_summary(tenant_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "hosting.read", db, current)
@@ -364,11 +394,16 @@ def create_hosting_project(
     if hostname and db.scalar(select(HostingProject.id).where(HostingProject.hostname == hostname)) is not None:
         raise HTTPException(status_code=409, detail="This public hostname is already assigned to another hosted project")
 
-    node = _select_node(
+    preferred_node_id = payload.node_id if current.is_platform_owner else None
+    if payload.node_id is not None and not current.is_platform_owner:
+        raise HTTPException(status_code=403, detail="Only the platform owner can override automatic workload placement")
+    node, placement = select_node(
         db,
+        workload="application",
         storage_mb=payload.storage_mb,
         memory_mb=payload.memory_mb,
         cpu_millicores=payload.cpu_millicores,
+        preferred_node_id=preferred_node_id,
     )
     now = datetime.now(timezone.utc)
     project = HostingProject(
@@ -413,6 +448,9 @@ def create_hosting_project(
             "memory_mb": project.memory_mb,
             "cpu_millicores": project.cpu_millicores,
             "rules_version": project.rules_version,
+            "placement_mode": "manual_override" if preferred_node_id else "automatic",
+            "placement_score": placement["score"],
+            "placement_server_id": placement["infrastructure_server_id"],
         },
     )
     db.commit()

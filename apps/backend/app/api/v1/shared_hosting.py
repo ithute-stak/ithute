@@ -17,6 +17,7 @@ from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
 from app.models import AuditLog, HostingDatabase, HostingNode, HostingNodeAgent, HostingProject, HostingSource, User
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
+from app.services.hosting_placement import select_node
 
 router = APIRouter(tags=["shared-hosting"])
 
@@ -45,6 +46,7 @@ class HostingDatabaseCreate(BaseModel):
     project_id: UUID | None = None
     storage_mb: int = Field(default=1024, ge=128, le=102400)
     engine_version: str | None = Field(default=None, max_length=32)
+    node_id: UUID | None = None
 
 
 class DatabaseAgentStatus(BaseModel):
@@ -165,23 +167,6 @@ def _safe_git_source(repository_url: str, branch: str) -> tuple[str, str]:
     return repository_url, branch
 
 
-def _select_database_node(db: Session, project: HostingProject | None) -> HostingNode:
-    if project is not None and project.node_id is not None:
-        node = db.get(HostingNode, project.node_id)
-        if node is None or node.status == "offline" or db.get(HostingNodeAgent, node.id) is None:
-            raise HTTPException(status_code=409, detail="The project's hosting node is not available for database provisioning")
-        return node
-    nodes = db.scalars(
-        select(HostingNode)
-        .where(HostingNode.status == "active", HostingNode.accepts_new_projects.is_(True))
-        .order_by(HostingNode.created_at.asc())
-    ).all()
-    for node in nodes:
-        if db.get(HostingNodeAgent, node.id) is not None:
-            return node
-    raise HTTPException(status_code=409, detail="No active hosting node with an agent is available for database provisioning")
-
-
 def _queue_database_operation(row: HostingDatabase, operation: str) -> None:
     if operation not in _DATABASE_OPERATIONS:
         raise RuntimeError("Unsupported internal database operation")
@@ -229,7 +214,28 @@ def create_hosting_database(tenant_id: UUID, payload: HostingDatabaseCreate, db:
     if not allowed:
         raise HTTPException(status_code=402, detail=reason)
     project = _project(db, tenant_id, payload.project_id) if payload.project_id else None
-    node = _select_database_node(db, project)
+    if payload.node_id is not None and not current.is_platform_owner:
+        raise HTTPException(status_code=403, detail="Only the platform owner can override automatic database placement")
+    if project is not None and project.node_id is not None:
+        if payload.node_id is not None and payload.node_id != project.node_id:
+            raise HTTPException(status_code=409, detail="A project database must remain on the same hosting node as its application")
+        node, placement = select_node(
+            db,
+            workload="database",
+            storage_mb=payload.storage_mb,
+            database_engine=payload.engine,
+            preferred_node_id=project.node_id,
+        )
+        placement_mode = "project_colocation"
+    else:
+        node, placement = select_node(
+            db,
+            workload="database",
+            storage_mb=payload.storage_mb,
+            database_engine=payload.engine,
+            preferred_node_id=payload.node_id if current.is_platform_owner else None,
+        )
+        placement_mode = "manual_override" if payload.node_id else "automatic"
     database_name = _safe_db_name(payload.name)
     duplicate = db.scalar(select(HostingDatabase.id).where(HostingDatabase.tenant_id == tenant_id, HostingDatabase.engine == payload.engine, HostingDatabase.database_name == database_name))
     if duplicate is not None:
@@ -257,7 +263,7 @@ def create_hosting_database(tenant_id: UUID, payload: HostingDatabaseCreate, db:
     )
     db.add(row)
     db.flush()
-    _audit(db, current, tenant_id, "hosting.database.create", "hosting_database", row.id, {"engine": row.engine, "database_name": row.database_name, "project_id": str(row.project_id) if row.project_id else None, "node_id": str(node.id), "storage_mb": row.storage_mb})
+    _audit(db, current, tenant_id, "hosting.database.create", "hosting_database", row.id, {"engine": row.engine, "database_name": row.database_name, "project_id": str(row.project_id) if row.project_id else None, "node_id": str(node.id), "storage_mb": row.storage_mb, "placement_mode": placement_mode, "placement_score": placement["score"], "placement_server_id": placement["infrastructure_server_id"]})
     db.commit()
     db.refresh(row)
     result = _db_out(row)
