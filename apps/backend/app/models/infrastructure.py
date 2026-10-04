@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -39,3 +39,20 @@ class InfrastructureServer(Base):
     created_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class InfrastructureServerAgent(Base):
+    __tablename__ = "infrastructure_server_agents"
+
+    server_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("infrastructure_servers.id", ondelete="CASCADE"), primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    token_hint: Mapped[str] = mapped_column(String(24), nullable=False)
+    agent_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    os_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    kernel_version: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    uptime_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    telemetry_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    capabilities_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    rotated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    rotated_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
