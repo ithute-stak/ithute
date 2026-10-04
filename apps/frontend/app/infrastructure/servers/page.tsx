@@ -227,12 +227,12 @@ export default function InfrastructureServersPage() {
       <section className="surface-card p-4 sm:p-5">
         <div className="mb-4"><h2 className="text-sm font-black">Register physical server / VPS</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">This records the machine itself. Workload-specific agents and capacity remain controlled by their dedicated Mail Nodes and Hosting Nodes modules.</p></div>
         <form onSubmit={createServer} className="grid gap-3 lg:grid-cols-2">
-          <input name="name" required minLength={2} maxLength={120} className="admin-input" placeholder="Server name, e.g. Maseru VPS 01"/>
-          <input name="hostname" required className="admin-input" placeholder="Hostname, e.g. vps01.ithute.co.ls"/>
-          <input name="public_ip" className="admin-input" placeholder="Public IP (optional)"/>
-          <input name="provider" className="admin-input" placeholder="Provider, e.g. DataBank / Oracle"/>
-          <input name="region" defaultValue="lesotho" className="admin-input" placeholder="Region"/>
-          <input name="notes" className="admin-input" placeholder="Notes (optional)"/>
+          <input name="name" required minLength={2} maxLength={120} className="input" placeholder="Server name, e.g. Maseru VPS 01"/>
+          <input name="hostname" required className="input" placeholder="Hostname, e.g. vps01.ithute.co.ls"/>
+          <input name="public_ip" className="input" placeholder="Public IP (optional)"/>
+          <input name="provider" className="input" placeholder="Provider, e.g. DataBank / Oracle"/>
+          <input name="region" defaultValue="lesotho" className="input" placeholder="Region"/>
+          <input name="notes" className="input" placeholder="Notes (optional)"/>
           <div className="lg:col-span-2">
             <p className="mb-2 text-[10px] font-black uppercase tracking-[.1em] text-[var(--admin-muted)]">Server roles</p>
             <div className="flex flex-wrap gap-2">{roles.map((role) => <label key={role} className="flex items-center gap-2 rounded-xl border border-[#dce5e0] bg-white px-3 py-2 text-[10px] font-bold"><input name={`role_${role}`} type="checkbox" defaultChecked={role === "application"}/>{ROLE_LABELS[role] || role}</label>)}</div>
