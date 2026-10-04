@@ -130,6 +130,14 @@ EOF
 chmod 600 "$ENV_FILE"
 unset OWNER_PASSWORD ITHUTE_SYSTEM_OWNER_PASSWORD ITHUTE_SYSTEM_OWNER_PASSWORD_B64
 
+EDGE_BOOTSTRAP="$APP_DIR/infrastructure/wireguard-edge/bootstrap.sh"
+test -x "$EDGE_BOOTSTRAP" || { echo "Missing Ithute Edge private-network bootstrap: $EDGE_BOOTSTRAP" >&2; exit 2; }
+ITHUTE_APP_DIR="$APP_DIR" \
+ITHUTE_ENV_FILE="$ENV_FILE" \
+ITHUTE_PUBLIC_IPV4="$PUBLIC_IPV4" \
+ITHUTE_API_URL="https://ithute.co.ls" \
+  bash "$EDGE_BOOTSTRAP"
+
 ITHUTE_APP_DIR="$APP_DIR" ITHUTE_IMAGE_TAG="$IMAGE_TAG" bash "$DEPLOY_SCRIPT"
 touch "$BOOTSTRAP_MARKER"
 chmod 600 "$BOOTSTRAP_MARKER"
@@ -140,4 +148,5 @@ printf 'Image tag: %s\n' "$IMAGE_TAG"
 printf 'Owner login: %s\n' "$OWNER_EMAIL"
 printf 'Auth portal: https://auth.ithute.co.ls/account/login\n'
 printf 'Authoritative DNS: ns1.ithute.co.ls and ns2.ithute.co.ls -> %s\n' "$PUBLIC_IPV4"
+printf 'Managed private network: Ithute Edge WireGuard configured on UDP 51820.\n'
 printf 'Application source code was not cloned to the VPS.\n'
