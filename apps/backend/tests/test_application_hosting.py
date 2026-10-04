@@ -156,7 +156,23 @@ def test_hosted_project_requires_rules_and_both_capacity_gates(client, db, tenan
     project = created.json()
     assert project["node_id"] == str(node_id)
     assert project["rules_version"] == "2026-09-13"
+    assert project["failover_policy"] == "manual"
     assert project["isolation"]["root_access"] is False
+
+    unsafe_failover = client.put(
+        f"/api/v1/tenants/{tenant.id}/hosting/projects/{project['id']}/failover-policy",
+        headers=headers,
+        json={"policy": "stateless_auto", "confirm_local_data_disposable": False},
+    )
+    assert unsafe_failover.status_code == 422
+
+    safe_failover = client.put(
+        f"/api/v1/tenants/{tenant.id}/hosting/projects/{project['id']}/failover-policy",
+        headers=headers,
+        json={"policy": "stateless_auto", "confirm_local_data_disposable": True},
+    )
+    assert safe_failover.status_code == 200, safe_failover.text
+    assert safe_failover.json()["failover_policy"] == "stateless_auto"
     assert project["isolation"]["docker_socket"] is False
 
     # Package allows only one project, even though the node still has capacity.

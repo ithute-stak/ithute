@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0070_hosting_node_health"
+LATEST_MIGRATION_HEAD = "0071_application_failover"
 
 
 def test_alembic_has_one_consolidated_head():

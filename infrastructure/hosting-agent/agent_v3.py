@@ -56,13 +56,33 @@ def process_project_operation(work: dict[str, Any]) -> None:
     project = work.get("project")
     if not operation_id:
         raise RuntimeError("Project operation is missing its id")
-    if operation not in {"restart", "logs"}:
+    if operation not in {"restart", "logs", "retire"}:
         raise RuntimeError("Unknown project runtime operation")
     if not isinstance(project, dict):
         raise RuntimeError("Project operation is missing its project manifest")
 
     project_id = str(project.get("id") or "")
     container, network = _project_names(project_id)
+    volume = f"ithute-project-{uuid.UUID(project_id).hex}-data"
+
+    if operation == "retire":
+        if project.get("discard_local_data") is not True:
+            raise RuntimeError("Retire operation is missing the explicit disposable-data contract")
+        stale_ids = base.docker(
+            "ps", "-aq", "--filter", f"label=ithute.project={project_id}", check=False
+        ).stdout.splitlines()
+        for container_id in stale_ids:
+            container_id = container_id.strip()
+            if container_id:
+                base.docker("rm", "-f", container_id)
+        if base.exists("network", network):
+            base.docker("network", "rm", network, check=False)
+        if base.exists("volume", volume):
+            base.docker("volume", "rm", "-f", volume)
+        report_project_operation(operation_id, True, message="Stale source placement and disposable local data removed")
+        base.log(f"project operation {operation_id} retire complete")
+        return
+
     if not base.exists("container", container):
         raise RuntimeError("Hosted project container is not present on this node")
 

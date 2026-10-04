@@ -64,6 +64,7 @@ class HostingProject(Base):
     cpu_millicores: Mapped[int] = mapped_column(Integer, nullable=False)
     pid_limit: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="configured", nullable=False, index=True)
+    failover_policy: Mapped[str] = mapped_column(String(32), default="manual", nullable=False, index=True)
     rules_version: Mapped[str] = mapped_column(String(32), default=HOSTING_RULES_VERSION, nullable=False)
     rules_accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     rules_accepted_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)

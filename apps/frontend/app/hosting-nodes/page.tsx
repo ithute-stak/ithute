@@ -46,6 +46,16 @@ type Onboarding = {
   };
 };
 type Bootstrap = { node_id: string; node: string; token: string; script_path: string; expires_at: string };
+type PlatformFailover = {
+  id: string;
+  project_name?: string | null;
+  source_node_name?: string | null;
+  target_node_name?: string | null;
+  status: string;
+  reason?: string | null;
+  edge_status?: string | null;
+  created_at?: string | null;
+};
 
 async function api(path: string, init?: RequestInit) {
   const options: RequestInit = { credentials: "include", ...init, headers: { "Content-Type": "application/json", ...(init?.headers || {}) } };
@@ -77,12 +87,22 @@ export default function HostingNodesPage() {
   const [newToken, setNewToken] = useState<{ node: string; token: string } | null>(null);
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [backupRemotes, setBackupRemotes] = useState<Record<string, string>>({});
+  const [failovers, setFailovers] = useState<PlatformFailover[]>([]);
+  const [failoverAfterSeconds, setFailoverAfterSeconds] = useState(300);
 
   async function load(silent = false) {
     if (!silent) setLoading(true); setError("");
-    const response = await api("/platform/hosting/nodes");
+    const [response, failoverResponse] = await Promise.all([
+      api("/platform/hosting/nodes"),
+      api("/platform/hosting/failovers"),
+    ]);
     if (!response.ok) { setError(await detail(response, "Unable to load hosting nodes.")); setLoading(false); return; }
     const rows: Node[] = (await response.json()).items || [];
+    if (failoverResponse.ok) {
+      const body = await failoverResponse.json();
+      setFailovers(body.items || []);
+      setFailoverAfterSeconds(body.failover_after_seconds || 300);
+    }
     setNodes(rows);
     const states = await Promise.all(rows.map(async (node) => {
       const [agentResponse, onboardingResponse] = await Promise.all([
@@ -195,6 +215,11 @@ export default function HostingNodesPage() {
 
       {message ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800">{message}</div> : null}
       {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700">{error}</div> : null}
+
+      {failovers.length ? <section className="surface-card p-4 sm:p-5">
+        <div><h2 className="text-sm font-black">Workload failover & recovery</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">Automatic stateless relocation begins after a node remains auto-drained for {failoverAfterSeconds}s. Stateful/local-data workloads are held for recovery instead of being moved destructively.</p></div>
+        <div className="mt-4 grid gap-2 lg:grid-cols-2">{failovers.slice(0, 12).map((row) => <article key={row.id} className="rounded-xl border border-[#e4e9e6] bg-[#f8fbf9] p-3"><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-black">{row.project_name || "Hosted project"}</p><p className="mt-1 text-[9px] text-[var(--admin-muted)]">{row.source_node_name || "unknown source"} → {row.target_node_name || "awaiting target"}</p></div><span className={`rounded-full px-2 py-1 text-[8px] font-black ${row.status === "completed" ? "bg-emerald-50 text-emerald-700" : row.status === "recovery_required" || row.status === "failed" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800"}`}>{row.status.replaceAll("_", " ")}</span></div>{row.edge_status ? <p className="mt-2 text-[8px] font-bold text-[#285b55]">Edge: {row.edge_status.replaceAll("_", " ")}</p> : null}{row.reason ? <p className="mt-1 text-[8px] leading-4 text-[var(--admin-muted)]">{row.reason}</p> : null}</article>)}</div>
+      </section> : null}
 
       <section className="surface-card p-4 sm:p-5"><div className="flex items-center justify-between gap-3"><div><h2 className="text-sm font-black">Registered hosting nodes</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">Capacity is configured under Packages & Capacity. Ithute can automatically remove unhealthy nodes from new placement and restore them after sustained recovery.</p></div><button className="icon-button" aria-label="Refresh hosting nodes" disabled={!me?.is_platform_owner} onClick={() => void load()}><RefreshCw size={15}/></button></div>{loading ? <p className="mt-6 text-xs text-[var(--admin-muted)]">Loading hosting nodes…</p> : <div className="mt-5 grid gap-4 xl:grid-cols-2">{nodes.map((node) => { const agent = agents[node.id]; return <article key={node.id} className="rounded-2xl border border-[#dce5e0] bg-white p-4"><div className="flex items-start justify-between gap-3"><div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-[#edf4f1] text-[#285b55]"><Server size={18}/></span><div><h3 className="text-sm font-black">{node.name}</h3><p className="mt-0.5 text-[9px] text-[var(--admin-muted)]">{node.hostname}{node.public_ip ? ` · ${node.public_ip}` : ""}</p></div></div><span className={`rounded-full px-2 py-1 text-[9px] font-black ${node.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{node.status}</span></div><div className="mt-4 grid grid-cols-3 gap-2 text-[9px]"><div className="rounded-xl bg-[#f5f8f6] p-2.5"><b>{gb(node.available.storage_mb)}</b><br/>storage free</div><div className="rounded-xl bg-[#f5f8f6] p-2.5"><b>{node.available.memory_mb} MB</b><br/>RAM free</div><div className="rounded-xl bg-[#f5f8f6] p-2.5"><b>{cpu(node.available.cpu_millicores)}</b><br/>CPU free</div></div><div className="mt-4 rounded-xl border border-[#e4e9e6] p-3"><div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black">Node agent</p><p className="mt-1 text-[9px] text-[var(--admin-muted)]">{agent?.configured ? `Configured · ${agent.token_hint || "credential hidden"}` : "No agent credential yet"}</p><p className="mt-1 text-[9px] text-[var(--admin-muted)]">{agent?.last_seen_at ? `Last seen ${new Date(agent.last_seen_at).toLocaleString()}${agent.agent_version ? ` · ${agent.agent_version}` : ""}` : "No heartbeat received yet"}</p></div><button className="btn-secondary shrink-0" onClick={() => void rotate(node)}><KeyRound size={13}/>{agent?.configured ? "Rotate" : "Create credential"}</button></div></div>
 <div className="mt-3 rounded-xl border border-[#e4e9e6] bg-[#f8fbf9] p-3">

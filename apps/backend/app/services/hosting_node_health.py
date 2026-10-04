@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -12,6 +12,7 @@ from app.models import (
     HostingNode,
     HostingNodeAgent,
     HostingNodeHealthState,
+    HostingProjectOperation,
     InfrastructureServer,
     InfrastructureServerAgent,
     InfrastructureWireGuardPeer,
@@ -102,6 +103,17 @@ def evaluate_node_health(db: Session, node: HostingNode, *, now: datetime | None
     docker_ready = bool(docker.get("installed") and docker.get("reachable"))
     disk_percent = _max_disk_percent(telemetry)
     disk_safe = bool(server and (disk_percent is None or disk_percent < float(server.disk_alert_percent)))
+    stale_retirements = int(
+        db.scalar(
+            select(func.count(HostingProjectOperation.id)).where(
+                HostingProjectOperation.node_id == node.id,
+                HostingProjectOperation.operation == "retire",
+                HostingProjectOperation.status.in_(["queued", "claimed"]),
+            )
+        )
+        or 0
+    )
+    stale_retirements_cleared = stale_retirements == 0
 
     checks = {
         "hosting_agent_online": hosting_agent_online,
@@ -112,6 +124,7 @@ def evaluate_node_health(db: Session, node: HostingNode, *, now: datetime | None
         "managed_network_connected": managed_network_connected,
         "docker_ready": docker_ready,
         "disk_safe": disk_safe,
+        "stale_retirements_cleared": stale_retirements_cleared,
     }
     reasons = [name for name, passed in checks.items() if not passed]
     return {

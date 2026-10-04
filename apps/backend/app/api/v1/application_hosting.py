@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timezone
 from uuid import UUID
@@ -20,6 +21,7 @@ from app.models import (
     DomainStatus,
     HOSTING_RULES_VERSION,
     HostingDatabase,
+    HostingFailoverAttempt,
     HostingNode,
     HostingNodeHealthState,
     HostingProject,
@@ -29,6 +31,7 @@ from app.models import (
 )
 from app.services.billing import entitlement_decision, get_subscription
 from app.services.hosting_placement import rank_nodes, select_node
+from app.services.hosting_failover import failover_attempt_out, request_project_relocation
 
 router = APIRouter(tags=["application-hosting"])
 
@@ -91,6 +94,15 @@ class HostingProjectUpdate(BaseModel):
     health_path: str | None = Field(default=None, min_length=1, max_length=500)
     container_port: int | None = Field(default=None, ge=1024, le=65535)
     status: str | None = Field(default=None, pattern=r"^(configured|suspended)$")
+
+
+class HostingFailoverPolicyUpdate(BaseModel):
+    policy: str = Field(pattern=r"^(manual|stateless_auto)$")
+    confirm_local_data_disposable: bool = False
+
+
+class HostingRelocationRequest(BaseModel):
+    target_node_id: UUID | None = None
 
 
 def _slug(value: str) -> str:
@@ -159,13 +171,28 @@ def _node_allocated(db: Session, node_id: UUID) -> dict:
         )
         or 0
     )
+    reserved = db.execute(
+        select(
+            func.coalesce(func.sum(HostingProject.storage_mb), 0),
+            func.coalesce(func.sum(HostingProject.memory_mb), 0),
+            func.coalesce(func.sum(HostingProject.cpu_millicores), 0),
+            func.count(HostingProject.id),
+        )
+        .join(HostingFailoverAttempt, HostingFailoverAttempt.project_id == HostingProject.id)
+        .where(
+            HostingFailoverAttempt.target_node_id == node_id,
+            HostingFailoverAttempt.status.in_(["pending", "deploying", "edge_pending"]),
+            HostingProject.node_id != node_id,
+        )
+    ).one()
     return {
-        "storage_mb": int(row[0]) + database_storage,
+        "storage_mb": int(row[0]) + database_storage + int(reserved[0]),
         "application_storage_mb": int(row[0]),
         "database_storage_mb": database_storage,
-        "memory_mb": int(row[1]),
-        "cpu_millicores": int(row[2]),
-        "projects": int(row[3]),
+        "failover_reserved_storage_mb": int(reserved[0]),
+        "memory_mb": int(row[1]) + int(reserved[1]),
+        "cpu_millicores": int(row[2]) + int(reserved[2]),
+        "projects": int(row[3]) + int(reserved[3]),
     }
 
 
@@ -211,6 +238,7 @@ def _project_out(project: HostingProject) -> dict:
         "cpu_millicores": project.cpu_millicores,
         "pid_limit": project.pid_limit,
         "status": project.status,
+        "failover_policy": project.failover_policy,
         "rules_version": project.rules_version,
         "rules_accepted_at": project.rules_accepted_at.isoformat(),
         "created_at": project.created_at.isoformat() if project.created_at else None,
@@ -330,6 +358,151 @@ def placement_preview(
             for row in ranked
         ]
     }
+
+
+@router.get("/platform/hosting/failovers")
+def list_platform_failovers(
+    status: str | None = None,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    query = select(HostingFailoverAttempt).order_by(HostingFailoverAttempt.created_at.desc()).limit(200)
+    if status:
+        query = query.where(HostingFailoverAttempt.status == status)
+    rows = db.scalars(query).all()
+    items = []
+    for row in rows:
+        project = db.get(HostingProject, row.project_id)
+        source = db.get(HostingNode, row.source_node_id)
+        target = db.get(HostingNode, row.target_node_id) if row.target_node_id else None
+        item = failover_attempt_out(row)
+        item.update({
+            "project_name": project.name if project else None,
+            "tenant_id": str(project.tenant_id) if project else None,
+            "source_node_name": source.name if source else None,
+            "target_node_name": target.name if target else None,
+            "failover_policy": project.failover_policy if project else None,
+        })
+        items.append(item)
+    return {
+        "items": items,
+        "failover_after_seconds": int(os.getenv("ITHUTE_HOSTING_FAILOVER_AFTER_SECONDS", "300")),
+    }
+
+
+@router.put("/tenants/{tenant_id}/hosting/projects/{project_id}/failover-policy")
+def update_project_failover_policy(
+    tenant_id: UUID,
+    project_id: UUID,
+    payload: HostingFailoverPolicyUpdate,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "hosting.manage", db, current)
+    project = db.scalar(
+        select(HostingProject)
+        .where(HostingProject.id == project_id, HostingProject.tenant_id == tenant_id)
+        .with_for_update()
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="Hosted project not found")
+    if payload.policy == "stateless_auto" and not payload.confirm_local_data_disposable:
+        raise HTTPException(
+            status_code=422,
+            detail="Confirm that project-local /data is disposable before enabling stateless automatic failover",
+        )
+    project.failover_policy = payload.policy
+    if payload.policy == "stateless_auto" and project.node_id is not None:
+        recovery_rows = db.scalars(
+            select(HostingFailoverAttempt).where(
+                HostingFailoverAttempt.project_id == project.id,
+                HostingFailoverAttempt.source_node_id == project.node_id,
+                HostingFailoverAttempt.status == "recovery_required",
+            )
+        ).all()
+        for row in recovery_rows:
+            row.status = "superseded"
+            row.completed_at = datetime.now(timezone.utc)
+            row.reason = "Superseded after explicit stateless auto-failover opt-in."
+    _audit(
+        db,
+        current,
+        "hosting.project.failover_policy.update",
+        "hosting_project",
+        str(project.id),
+        tenant_id=tenant_id,
+        metadata={"policy": payload.policy},
+    )
+    db.commit()
+    return {
+        "project_id": str(project.id),
+        "failover_policy": project.failover_policy,
+        "local_data_contract": "disposable" if project.failover_policy == "stateless_auto" else "preserve/manual recovery",
+    }
+
+
+@router.get("/tenants/{tenant_id}/hosting/projects/{project_id}/failovers")
+def list_project_failovers(
+    tenant_id: UUID,
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "hosting.read", db, current)
+    project = db.scalar(select(HostingProject).where(HostingProject.id == project_id, HostingProject.tenant_id == tenant_id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Hosted project not found")
+    rows = db.scalars(
+        select(HostingFailoverAttempt)
+        .where(HostingFailoverAttempt.project_id == project.id)
+        .order_by(HostingFailoverAttempt.created_at.desc())
+        .limit(100)
+    ).all()
+    return {"items": [failover_attempt_out(row) for row in rows]}
+
+
+@router.post("/tenants/{tenant_id}/hosting/projects/{project_id}/relocate", status_code=202)
+def relocate_project(
+    tenant_id: UUID,
+    project_id: UUID,
+    payload: HostingRelocationRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "hosting.manage", db, current)
+    project = db.scalar(
+        select(HostingProject)
+        .where(HostingProject.id == project_id, HostingProject.tenant_id == tenant_id)
+        .with_for_update()
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="Hosted project not found")
+    try:
+        attempt = request_project_relocation(
+            db,
+            project,
+            preferred_target_node_id=payload.target_node_id,
+            reason="manual_rebalance",
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _audit(
+        db,
+        current,
+        "hosting.project.relocation.request",
+        "hosting_project",
+        str(project.id),
+        tenant_id=tenant_id,
+        metadata={
+            "attempt_id": str(attempt.id),
+            "source_node_id": str(attempt.source_node_id),
+            "target_node_id": str(attempt.target_node_id) if attempt.target_node_id else None,
+        },
+    )
+    db.commit()
+    db.refresh(attempt)
+    return failover_attempt_out(attempt)
 
 
 @router.get("/tenants/{tenant_id}/hosting/summary")

@@ -53,6 +53,7 @@ class HostingDeployment(Base):
     image_ref: Mapped[str] = mapped_column(String(500), nullable=False)
     image_digest: Mapped[str] = mapped_column(String(80), nullable=False)
     source_commit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reset_data_volume: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     runtime_manifest_version: Mapped[str] = mapped_column(String(16), default=HOSTING_RUNTIME_MANIFEST_VERSION, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False, index=True)
     failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -131,3 +132,20 @@ class HostingNodeHealthState(Base):
     last_transition_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_transition: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class HostingFailoverAttempt(Base):
+    __tablename__ = "hosting_failover_attempts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_nodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_node_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_nodes.id", ondelete="SET NULL"), nullable=True, index=True)
+    deployment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_deployments.id", ondelete="SET NULL"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    edge_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

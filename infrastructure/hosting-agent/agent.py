@@ -324,17 +324,27 @@ def activate(work: dict[str, Any]) -> None:
     image_ref = str(work["image_ref"])
     resources = project["resources"]
     previous_exists = exists("container", current)
-    previous_origin_port = _existing_origin_port(current, int(project["container_port"])) if previous_exists and ORIGIN_BIND_IP else None
+    reset_data_volume = bool(work.get("reset_data_volume"))
+    previous_origin_port = _existing_origin_port(current, int(project["container_port"])) if previous_exists and ORIGIN_BIND_IP and not reset_data_volume else None
 
     try:
         ensure_network(network, project_id)
-        ensure_volume(volume, project_id)
         if exists("container", backup):
             docker("rm", "-f", backup)
-        if previous_exists:
+
+        if reset_data_volume:
+            # Explicit stateless relocation contract: never reuse an old local
+            # /data volume or stale container from a previous placement.
+            if previous_exists:
+                docker("rm", "-f", current)
+                previous_exists = False
+            if exists("volume", volume):
+                docker("volume", "rm", "-f", volume)
+        elif previous_exists:
             docker("stop", "--time", "20", current, timeout=45)
             docker("rename", current, backup)
 
+        ensure_volume(volume, project_id)
         container_port = int(project["container_port"])
         origin_port = _run_candidate(
             current=current,

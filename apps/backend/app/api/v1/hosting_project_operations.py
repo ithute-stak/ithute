@@ -190,7 +190,20 @@ def claim_project_operation(
         db.commit()
         return {"operation": None}
     project = db.get(HostingProject, row.project_id)
-    if project is None or project.node_id != node.id:
+    if project is None:
+        row.status = "failed"
+        row.failure_message = "Project is unavailable"
+        row.completed_at = _now()
+        db.commit()
+        return {"operation": None}
+    if row.operation == "retire":
+        if project.node_id == node.id:
+            row.status = "failed"
+            row.failure_message = "Refusing to retire the project's active placement"
+            row.completed_at = _now()
+            db.commit()
+            return {"operation": None}
+    elif project.node_id != node.id:
         row.status = "failed"
         row.failure_message = "Project is unavailable on this hosting node"
         row.completed_at = _now()
@@ -209,6 +222,7 @@ def claim_project_operation(
                 "container_port": project.container_port,
                 "health_path": project.health_path,
                 "status": project.status,
+                "discard_local_data": row.operation == "retire",
             },
         }
     }
