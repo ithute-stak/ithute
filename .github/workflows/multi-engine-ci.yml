@@ -10,11 +10,13 @@ on:
       - "apps/backend/app/services/engine_router.py"
       - "apps/backend/app/api/v1/engine_operations.py"
       - "apps/backend/app/api/v1/router.py"
+      - "apps/backend/app/api/v1/infrastructure_servers.py"
       - "apps/backend/tests/test_engine_runtime.py"
       - "apps/backend/tests/test_engine_router.py"
       - "apps/backend/tests/test_webmail_message_resilience.py"
       - "apps/backend/tests/test_platform_mail_attachments.py"
       - "apps/backend/tests/test_dmarc_reports.py"
+      - "apps/backend/tests/test_infrastructure_monitoring.py"
       - "apps/backend/app/services/dmarc_reports.py"
       - "apps/backend/app/api/v1/deliverability.py"
       - "apps/backend/app/services/webmail.py"
@@ -92,7 +94,7 @@ jobs:
         working-directory: apps/backend
         run: |
           python -m pip install --disable-pip-version-check -r requirements.txt
-          pytest -q tests/test_engine_runtime.py tests/test_engine_router.py tests/test_webmail_message_resilience.py tests/test_platform_mail_attachments.py tests/test_dmarc_reports.py
+          pytest -q tests/test_engine_runtime.py tests/test_engine_router.py tests/test_webmail_message_resilience.py tests/test_platform_mail_attachments.py tests/test_dmarc_reports.py tests/test_infrastructure_monitoring.py
 
       - name: Build API with native engines
         run: |
@@ -147,9 +149,18 @@ jobs:
           trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
           for attempt in $(seq 1 20); do
             if curl -fsS http://127.0.0.1:18080/healthz | grep -q '"engine":"go"'; then
-              exit 0
+              break
             fi
             sleep 1
           done
-          docker logs "$container"
-          exit 1
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            --data '{"targets":[{"id":"self","host":"127.0.0.1","port":8080,"timeout_ms":500}],"concurrency":4}' \
+            http://127.0.0.1:18080/v1/network/probe > /tmp/go-network-probe.json
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/go-network-probe.json'))
+          assert body['engine']=='go'
+          assert body['checked']==1
+          assert body['results'][0]['id']=='self'
+          assert body['results'][0]['reachable'] is True
+          PY
