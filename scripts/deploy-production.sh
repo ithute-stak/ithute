@@ -123,6 +123,7 @@ configure_edge_private_network() {
 verify_edge_private_network() {
   test -s /etc/ithute-wireguard/private.key || return 1
   test -s /etc/ithute-wireguard/reconciler.env || return 1
+  systemctl is-active --quiet ithute-wireguard-edge-firewall.service || return 1
   systemctl is-active --quiet wg-quick@ithute0 || return 1
   systemctl is-active --quiet ithute-wireguard-edge-reconciler.timer || return 1
   local edge_address listen_port
