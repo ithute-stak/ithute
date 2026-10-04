@@ -117,3 +117,17 @@ class HostingNodeBootstrap(Base):
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class HostingNodeHealthState(Base):
+    __tablename__ = "hosting_node_health_states"
+
+    node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_nodes.id", ondelete="CASCADE"), primary_key=True)
+    automation_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    health_status: Mapped[str] = mapped_column(String(24), default="unknown", nullable=False, index=True)
+    healthy_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    unhealthy_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_transition_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_transition: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
