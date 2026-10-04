@@ -26,3 +26,16 @@ def normalized_route(request) -> str:
     route = request.scope.get("route")
     path = getattr(route, "path", None)
     return path or request.url.path
+
+
+MAIL_MIME_SCAN_TOTAL = Counter(
+    "mailbox_dns_mail_mime_scan_total",
+    "Raw webmail MIME pre-scans by engine and attachment-walk decision",
+    ["engine", "attachment_walk"],
+)
+MAIL_MIME_SCAN_BYTES = Histogram(
+    "mailbox_dns_mail_mime_scan_bytes",
+    "Raw webmail message bytes processed by the MIME pre-scan",
+    ["engine"],
+    buckets=(1024, 4096, 16384, 65536, 262144, 1048576, 5242880, 15728640, 52428800),
+)
