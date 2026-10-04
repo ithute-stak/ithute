@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from app.services import webmail
@@ -121,7 +123,11 @@ def test_message_json_uses_prescan_but_keeps_python_parser_authoritative(monkeyp
         boundary_markers=0,
         attachment_signals=0,
     )
-    monkeypatch.setattr(webmail, "mime_scan", lambda value: (scan, "rust"))
+    monkeypatch.setattr(
+        webmail,
+        "execute_binary",
+        lambda operation, value: SimpleNamespace(value=scan, engine="rust"),
+    )
 
     row = webmail._message_json("77", raw, b"")
 
@@ -129,3 +135,55 @@ def test_message_json_uses_prescan_but_keeps_python_parser_authoritative(monkeyp
     assert row["subject"] == "Native pre-scan"
     assert row["snippet"] == "hello"
     assert row["attachments"] == []
+
+
+def test_attachment_metadata_includes_engine_routed_sha256(monkeypatch):
+    raw = (
+        b"From: sender@example.com\r\n"
+        b"To: person@example.com\r\n"
+        b"Subject: Attachment digest\r\n"
+        b"MIME-Version: 1.0\r\n"
+        b"Content-Type: multipart/mixed; boundary=x\r\n"
+        b"\r\n"
+        b"--x\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n\r\nhello\r\n"
+        b"--x\r\n"
+        b"Content-Type: application/octet-stream\r\n"
+        b"Content-Disposition: attachment; filename=\"proof.bin\"\r\n"
+        b"Content-Transfer-Encoding: base64\r\n\r\n"
+        b"aXRodXRl\r\n"
+        b"--x--\r\n"
+    )
+    scan = MimeScan(
+        bytes=len(raw),
+        header_bytes=150,
+        body_bytes=max(0, len(raw) - 150),
+        lines=16,
+        crlf_lines=15,
+        non_ascii=0,
+        nul_bytes=0,
+        boundary_markers=3,
+        attachment_signals=1,
+    )
+
+    def fake_execute(operation, value):
+        if operation == "mail.mime_scan":
+            return SimpleNamespace(value=scan, engine="rust")
+        if operation == "mail.sha256":
+            assert value == b"ithute"
+            return SimpleNamespace(value="digest-from-rust", engine="rust")
+        raise AssertionError(operation)
+
+    monkeypatch.setattr(webmail, "execute_binary", fake_execute)
+
+    row = webmail._message_json("88", raw, b"")
+
+    assert row["attachments"] == [
+        {
+            "index": 0,
+            "filename": "proof.bin",
+            "content_type": "application/octet-stream",
+            "size": 6,
+            "sha256": "digest-from-rust",
+        }
+    ]
