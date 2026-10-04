@@ -20,6 +20,7 @@ class HostingNodeAgent(Base):
     token_hint: Mapped[str] = mapped_column(String(24), nullable=False)
     agent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    origin_bind_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     rotated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     rotated_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
 
