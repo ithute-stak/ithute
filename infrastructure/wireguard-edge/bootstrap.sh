@@ -110,6 +110,18 @@ ITHUTE_WIREGUARD_RECONCILER_TOKEN=$RECONCILER_TOKEN
 EOF
 chmod 0600 "$RECONCILER_ENV"
 
+cat > /etc/wireguard/ithute0.conf <<EOF
+[Interface]
+PrivateKey = $(cat "$WG_PRIVATE_KEY")
+Address = $EDGE_ADDRESS/$(python3 - "$SUBNET" <<'PY'
+import ipaddress, sys
+print(ipaddress.ip_network(sys.argv[1], strict=False).prefixlen)
+PY
+)
+ListenPort = $LISTEN_PORT
+EOF
+chmod 0600 /etc/wireguard/ithute0.conf
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 install -m 0755 "$SCRIPT_DIR/reconcile.sh" /opt/ithute-wireguard/reconcile.sh
 install -m 0644 "$SCRIPT_DIR/ithute-wireguard-edge-reconciler.service" /etc/systemd/system/ithute-wireguard-edge-reconciler.service
@@ -136,7 +148,11 @@ open_udp_port() {
 open_udp_port "$LISTEN_PORT"
 
 systemctl daemon-reload
-systemctl enable ithute-wireguard-edge-reconciler.timer >/dev/null
+systemctl enable --now wg-quick@ithute0 >/dev/null
+systemctl enable --now ithute-wireguard-edge-reconciler.timer >/dev/null
+
+ip -4 -o addr show dev ithute0 | grep -Fq " $EDGE_ADDRESS/" || fail "ithute0 did not receive the configured edge address"
+test "$(wg show ithute0 listen-port)" = "$LISTEN_PORT" || fail "ithute0 is not listening on the configured UDP port"
 
 info "Ithute Edge managed private network configured."
 info "Edge address: $EDGE_ADDRESS"
