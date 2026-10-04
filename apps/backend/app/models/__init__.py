@@ -45,7 +45,7 @@ from app.models.finance_control import FinanceAccountingPeriod, FinanceRefund, F
 from app.models.finance_governance import FinanceApprovalRequest, FinanceGovernanceSetting
 from app.models.finance_completion import FinanceDeliveryEvent, FinancePortalAccess, FinanceRoleGrant
 from app.models.hosting import HOSTING_RULES_VERSION, HostingNode, HostingProject
-from app.models.infrastructure import InfrastructureServer, InfrastructureServerAgent, InfrastructureTelemetrySnapshot
+from app.models.infrastructure import InfrastructureServer, InfrastructureServerAgent, InfrastructureTelemetrySnapshot, InfrastructureWireGuardPeer
 from app.models.hosting_operations import (
     HOSTING_RUNTIME_MANIFEST_VERSION,
     HostingDeployment,
@@ -130,7 +130,7 @@ __all__ = [
     "PlatformMailboxBinding", "PlatformMailOutboundDelivery", "DkimKey", "BillingPlan", "TenantSubscription", "UsageSnapshot", "BillingInvoice",
     "BillingPaymentEvent", "SubscriptionStatus", "InvoiceStatus", "BillingAddon", "TenantAddon", "EdgeRouteDeployment",
     "BillingContract", "UptimeMonitor", "UptimeCheck",
-    "FinanceClient", "FinanceInvoice", "FinanceInvoiceItem", "FinanceInvoiceSchedule", "FinancePayment", "FinanceCreditNote", "FinanceDocument", "FinanceDocumentItem", "FinanceSenderConfiguration", "FinanceExpense", "FinanceBankTransaction", "FinanceServiceBillingLink", "FinanceAccountingPeriod", "FinanceRefund", "FinanceTaxRate", "FinanceApprovalRequest", "FinanceGovernanceSetting", "FinanceRoleGrant", "FinancePortalAccess", "FinanceDeliveryEvent", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject", "InfrastructureServer", "InfrastructureServerAgent", "InfrastructureTelemetrySnapshot",
+    "FinanceClient", "FinanceInvoice", "FinanceInvoiceItem", "FinanceInvoiceSchedule", "FinancePayment", "FinanceCreditNote", "FinanceDocument", "FinanceDocumentItem", "FinanceSenderConfiguration", "FinanceExpense", "FinanceBankTransaction", "FinanceServiceBillingLink", "FinanceAccountingPeriod", "FinanceRefund", "FinanceTaxRate", "FinanceApprovalRequest", "FinanceGovernanceSetting", "FinanceRoleGrant", "FinancePortalAccess", "FinanceDeliveryEvent", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject", "InfrastructureServer", "InfrastructureServerAgent", "InfrastructureTelemetrySnapshot", "InfrastructureWireGuardPeer",
     "HOSTING_RUNTIME_MANIFEST_VERSION", "HostingDeployment", "HostingEnvironmentVariable", "HostingNodeAgent", "HostingNodeBootstrap", "HostingProjectOperation", "HostingProvisioningWorkflow",
     "HostingBuild", "HostingBuilderAgent", "HostingBuildLog", "HostingDatabaseBackup", "HostingSourceWebhook", "HostingWebhookDelivery", "HostingDatabase", "HostingSource", "HostingSourceCredential",
     "CustomerProfile", "Notification", "ServiceIncident", "ServiceIncidentImpact", "ServiceIncidentStatus",

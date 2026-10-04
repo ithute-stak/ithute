@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -74,3 +74,23 @@ class InfrastructureTelemetrySnapshot(Base):
     docker_running: Mapped[int | None] = mapped_column(Integer, nullable=True)
     docker_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+
+class InfrastructureWireGuardPeer(Base):
+    __tablename__ = "infrastructure_wireguard_peers"
+    __table_args__ = (
+        UniqueConstraint("server_id", name="uq_infrastructure_wireguard_server"),
+        UniqueConstraint("public_key", name="uq_infrastructure_wireguard_public_key"),
+        UniqueConstraint("assigned_ipv4", name="uq_infrastructure_wireguard_ipv4"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    server_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("infrastructure_servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    public_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    assigned_ipv4: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="active", nullable=False, index=True)
+    last_handshake_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    latest_rx_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    latest_tx_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

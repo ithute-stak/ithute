@@ -60,6 +60,7 @@ from app.api.v1 import (
     ithute_platform,
     mail_intelligence,
     mail_node_agent,
+    managed_network,
     mail_node_operations,
     mail_node_provisioning,
     mail_operations,
@@ -113,6 +114,7 @@ api_router.include_router(edge.router)
 api_router.include_router(edge_routes.router)
 api_router.include_router(mailboxes.router)
 api_router.include_router(mail_node_agent.router)
+api_router.include_router(managed_network.router)
 api_router.include_router(mail_node_operations.router)
 api_router.include_router(mail_node_provisioning.router)
 api_router.include_router(mail_routing.router)
