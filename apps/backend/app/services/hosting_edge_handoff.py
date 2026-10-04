@@ -42,7 +42,9 @@ def validate_trusted_origin(value: str) -> str:
         address = ipaddress.ip_address(parsed.hostname)
     except ValueError as exc:
         raise HostingOriginError("Hosting origin must use a literal private/VPN IP address") from exc
-    if not any(address in network for network in _allowed_origin_networks()):
+    if not isinstance(address, ipaddress.IPv4Address):
+        raise HostingOriginError("Hosting origin must use a private/VPN IPv4 address")
+    if not any(address in network for network in _allowed_origin_networks() if network.version == 4):
         raise HostingOriginError("Hosting origin IP is outside the configured trusted origin networks")
     try:
         port = parsed.port
