@@ -116,7 +116,7 @@ jobs:
         id: app_api
         uses: docker/build-push-action@v7
         with:
-          context: apps/backend
+          context: .
           file: apps/backend/Dockerfile
           push: true
           tags: ${{ env.REGISTRY }}/ithute-app-api:${{ env.RELEASE_SHA }}
