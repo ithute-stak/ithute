@@ -16,6 +16,7 @@ from app.models import (
     HostingNodeAgent,
     HostingNodeHealthState,
     HostingProject,
+    HostingProjectOperation,
 )
 from app.services.hosting_edge_handoff import HostingOriginError, reconcile_project_edge
 from app.services.hosting_placement import rank_nodes
@@ -231,6 +232,32 @@ def _queue_replacement(db: Session, attempt: HostingFailoverAttempt, project: Ho
     })
 
 
+def _queue_source_retirement(db: Session, project: HostingProject, source_node_id) -> HostingProjectOperation:
+    existing = db.scalar(
+        select(HostingProjectOperation)
+        .where(
+            HostingProjectOperation.project_id == project.id,
+            HostingProjectOperation.node_id == source_node_id,
+            HostingProjectOperation.operation == "retire",
+            HostingProjectOperation.status.in_(["queued", "claimed"]),
+        )
+        .order_by(HostingProjectOperation.created_at.desc())
+    )
+    if existing is not None:
+        return existing
+    row = HostingProjectOperation(
+        tenant_id=project.tenant_id,
+        project_id=project.id,
+        node_id=source_node_id,
+        operation="retire",
+        status="queued",
+        requested_by_user_id=project.created_by_user_id,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
 def _finalize_attempt(db: Session, attempt: HostingFailoverAttempt, project: HostingProject, now: datetime) -> None:
     deployment = db.get(HostingDeployment, attempt.deployment_id) if attempt.deployment_id else None
     if deployment is None:
@@ -277,6 +304,7 @@ def _finalize_attempt(db: Session, attempt: HostingFailoverAttempt, project: Hos
     attempt.status = "completed"
     attempt.reason = None
     attempt.completed_at = now
+    retirement = _queue_source_retirement(db, project, attempt.source_node_id)
     _audit(db, project, "hosting.failover.completed", {
         "attempt_id": str(attempt.id),
         "source_node_id": str(attempt.source_node_id),
@@ -284,6 +312,7 @@ def _finalize_attempt(db: Session, attempt: HostingFailoverAttempt, project: Hos
         "previous_project_node_id": str(old_node_id) if old_node_id else None,
         "deployment_id": str(deployment.id),
         "edge_status": edge_status,
+        "source_retirement_operation_id": str(retirement.id),
     })
 
 
