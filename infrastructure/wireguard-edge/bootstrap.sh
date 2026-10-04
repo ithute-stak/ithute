@@ -27,10 +27,10 @@ for cmd in curl python3 openssl; do
   command -v "$cmd" >/dev/null 2>&1 || fail "Missing required command: $cmd"
 done
 
-if ! command -v wg >/dev/null 2>&1 || ! command -v wg-quick >/dev/null 2>&1; then
-  command -v apt-get >/dev/null 2>&1 || fail "wireguard-tools is required"
+if ! command -v wg >/dev/null 2>&1 || ! command -v wg-quick >/dev/null 2>&1 || ! command -v iptables >/dev/null 2>&1; then
+  command -v apt-get >/dev/null 2>&1 || fail "wireguard-tools and iptables are required"
   apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard-tools
+  DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard-tools iptables
 fi
 
 python3 - "$PUBLIC_IPV4" "$SUBNET" "$EDGE_ADDRESS" "$LISTEN_PORT" <<'PY'
