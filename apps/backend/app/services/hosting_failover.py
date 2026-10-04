@@ -210,6 +210,7 @@ def _queue_replacement(db: Session, attempt: HostingFailoverAttempt, project: Ho
         image_ref=previous.image_ref,
         image_digest=previous.image_digest,
         source_commit=previous.source_commit,
+        reset_data_volume=True,
         status="queued",
         requested_by_user_id=project.created_by_user_id,
     )
