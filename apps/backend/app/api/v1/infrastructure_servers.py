@@ -43,10 +43,6 @@ class InfrastructureServerCreate(BaseModel):
     provider: str | None = Field(default=None, max_length=80)
     roles: list[str] = Field(default_factory=lambda: ["application"], min_length=1, max_length=6)
     notes: str | None = Field(default=None, max_length=2000)
-    cpu_alert_percent: int | None = Field(default=None, ge=50, le=100)
-    memory_alert_percent: int | None = Field(default=None, ge=50, le=100)
-    disk_alert_percent: int | None = Field(default=None, ge=50, le=100)
-    offline_alert_minutes: int | None = Field(default=None, ge=2, le=1440)
 
 
 class InfrastructureAgentHeartbeat(BaseModel):
@@ -66,6 +62,10 @@ class InfrastructureServerUpdate(BaseModel):
     roles: list[str] | None = Field(default=None, min_length=1, max_length=6)
     status: str | None = Field(default=None, pattern=r"^(active|maintenance|disabled)$")
     notes: str | None = Field(default=None, max_length=2000)
+    cpu_alert_percent: int | None = Field(default=None, ge=50, le=100)
+    memory_alert_percent: int | None = Field(default=None, ge=50, le=100)
+    disk_alert_percent: int | None = Field(default=None, ge=50, le=100)
+    offline_alert_minutes: int | None = Field(default=None, ge=2, le=1440)
 
 
 def _hostname(value: str) -> str:
