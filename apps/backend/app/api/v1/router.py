@@ -22,6 +22,7 @@ from app.api.v1 import (
     domains,
     edge,
     edge_routes,
+    engine_operations,
     external_webmail,
     external_webmail_counts,
     external_webmail_events,
@@ -112,6 +113,7 @@ api_router.include_router(dns.router)
 api_router.include_router(dns_phase5.router)
 api_router.include_router(edge.router)
 api_router.include_router(edge_routes.router)
+api_router.include_router(engine_operations.router)
 api_router.include_router(mailboxes.router)
 api_router.include_router(mail_node_agent.router)
 api_router.include_router(managed_network.router)
