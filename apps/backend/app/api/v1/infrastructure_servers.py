@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,7 @@ from app.models import (
     HostingProject,
     InfrastructureServer,
     InfrastructureServerAgent,
+    InfrastructureTelemetrySnapshot,
     MailNode,
     Mailbox,
     User,
@@ -61,6 +62,10 @@ class InfrastructureServerUpdate(BaseModel):
     roles: list[str] | None = Field(default=None, min_length=1, max_length=6)
     status: str | None = Field(default=None, pattern=r"^(active|maintenance|disabled)$")
     notes: str | None = Field(default=None, max_length=2000)
+    cpu_alert_percent: int | None = Field(default=None, ge=50, le=100)
+    memory_alert_percent: int | None = Field(default=None, ge=50, le=100)
+    disk_alert_percent: int | None = Field(default=None, ge=50, le=100)
+    offline_alert_minutes: int | None = Field(default=None, ge=2, le=1440)
 
 
 def _hostname(value: str) -> str:
@@ -110,6 +115,60 @@ def _audit(db: Session, current: User, action: str, server: InfrastructureServer
             metadata_json=json.dumps(metadata or {}, sort_keys=True),
         )
     )
+
+
+def _number(value) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _telemetry_values(payload: dict) -> dict:
+    cpu = payload.get("cpu") if isinstance(payload.get("cpu"), dict) else {}
+    memory = payload.get("memory") if isinstance(payload.get("memory"), dict) else {}
+    docker = payload.get("docker") if isinstance(payload.get("docker"), dict) else {}
+    disks = payload.get("disks") if isinstance(payload.get("disks"), list) else []
+    disk_values = [
+        _number(item.get("used_percent"))
+        for item in disks
+        if isinstance(item, dict) and _number(item.get("used_percent")) is not None
+    ]
+    return {
+        "cpu_percent": _number(cpu.get("used_percent")),
+        "memory_percent": _number(memory.get("used_percent")),
+        "disk_percent": max(disk_values) if disk_values else None,
+        "load_1m": _number(cpu.get("load_1m")),
+        "docker_running": int(docker.get("containers_running") or 0) if docker else None,
+        "docker_total": int(docker.get("containers_total") or 0) if docker else None,
+    }
+
+
+def _current_alerts(server: InfrastructureServer, agent: InfrastructureServerAgent | None) -> list[dict]:
+    alerts: list[dict] = []
+    now = datetime.now(timezone.utc)
+    if agent is None:
+        return [{"code": "agent_missing", "severity": "warning", "message": "Server agent is not configured."}]
+    seen = agent.last_seen_at if agent.last_seen_at and agent.last_seen_at.tzinfo else (agent.last_seen_at.replace(tzinfo=timezone.utc) if agent.last_seen_at else None)
+    if seen is None or now - seen > timedelta(minutes=max(2, server.offline_alert_minutes)):
+        alerts.append({"code": "agent_offline", "severity": "critical", "message": f"No server heartbeat within {server.offline_alert_minutes} minutes."})
+    try:
+        telemetry = json.loads(agent.telemetry_json or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        telemetry = {}
+    values = _telemetry_values(telemetry)
+    if values["cpu_percent"] is not None and values["cpu_percent"] >= server.cpu_alert_percent:
+        alerts.append({"code": "cpu_high", "severity": "warning", "message": f"CPU usage is {values['cpu_percent']:.1f}% (threshold {server.cpu_alert_percent}%)."})
+    if values["memory_percent"] is not None and values["memory_percent"] >= server.memory_alert_percent:
+        alerts.append({"code": "memory_high", "severity": "warning", "message": f"RAM usage is {values['memory_percent']:.1f}% (threshold {server.memory_alert_percent}%)."})
+    if values["disk_percent"] is not None and values["disk_percent"] >= server.disk_alert_percent:
+        alerts.append({"code": "disk_pressure", "severity": "critical", "message": f"Disk usage reached {values['disk_percent']:.1f}% (threshold {server.disk_alert_percent}%)."})
+    docker = telemetry.get("docker") if isinstance(telemetry.get("docker"), dict) else {}
+    if "application" in _json_roles(server.roles_json) and docker.get("installed") and not docker.get("reachable"):
+        alerts.append({"code": "docker_unavailable", "severity": "critical", "message": "Docker is installed but the daemon is not reachable."})
+    return alerts
 
 
 def _hosting_allocated(db: Session, node_id: UUID) -> dict:
@@ -198,6 +257,12 @@ def _server_out(db: Session, server: InfrastructureServer) -> dict:
         "status": server.status,
         "health": health,
         "notes": server.notes,
+        "thresholds": {
+            "cpu_percent": server.cpu_alert_percent,
+            "memory_percent": server.memory_alert_percent,
+            "disk_percent": server.disk_alert_percent,
+            "offline_minutes": server.offline_alert_minutes,
+        },
         "created_at": server.created_at.isoformat() if server.created_at else None,
         "updated_at": server.updated_at.isoformat() if server.updated_at else None,
         "workloads": {
@@ -232,6 +297,7 @@ def _server_out(db: Session, server: InfrastructureServer) -> dict:
             "capacity": hosting_capacity,
         },
         "configuration_required": expected_missing,
+        "alerts": _current_alerts(server, server_agent),
         "agent": {
             "configured": bool(server_agent),
             "online": server_agent_online,
@@ -254,6 +320,55 @@ def list_servers(db: Session = Depends(get_db), current: User = Depends(require_
         "items": [_server_out(db, row) for row in rows],
         "roles": sorted(ALLOWED_ROLES),
         "heartbeat_grace_seconds": HEARTBEAT_GRACE_SECONDS,
+    }
+
+
+@router.get("/servers/{server_id}")
+def get_server(server_id: UUID, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
+    server = db.get(InfrastructureServer, server_id)
+    if server is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+    return _server_out(db, server)
+
+
+@router.get("/servers/{server_id}/history")
+def get_server_history(
+    server_id: UUID,
+    hours: int = 24,
+    limit: int = 288,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    server = db.get(InfrastructureServer, server_id)
+    if server is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+    hours = max(1, min(hours, 168))
+    limit = max(12, min(limit, 2000))
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    rows = db.scalars(
+        select(InfrastructureTelemetrySnapshot)
+        .where(
+            InfrastructureTelemetrySnapshot.server_id == server.id,
+            InfrastructureTelemetrySnapshot.created_at >= since,
+        )
+        .order_by(InfrastructureTelemetrySnapshot.created_at.asc())
+        .limit(limit)
+    ).all()
+    return {
+        "server_id": str(server.id),
+        "hours": hours,
+        "items": [
+            {
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "cpu_percent": row.cpu_percent,
+                "memory_percent": row.memory_percent,
+                "disk_percent": row.disk_percent,
+                "load_1m": row.load_1m,
+                "docker_running": row.docker_running,
+                "docker_total": row.docker_total,
+            }
+            for row in rows
+        ],
     }
 
 
@@ -361,6 +476,22 @@ def infrastructure_agent_heartbeat(
     agent.uptime_seconds = payload.uptime_seconds
     agent.telemetry_json = json.dumps(payload.telemetry, separators=(",", ":"), sort_keys=True)
     agent.capabilities_json = json.dumps(payload.capabilities, separators=(",", ":"), sort_keys=True)
+
+    now = agent.last_seen_at
+    latest = db.scalar(
+        select(InfrastructureTelemetrySnapshot)
+        .where(InfrastructureTelemetrySnapshot.server_id == server.id)
+        .order_by(InfrastructureTelemetrySnapshot.created_at.desc())
+    )
+    if latest is None or not latest.created_at or now - (latest.created_at if latest.created_at.tzinfo else latest.created_at.replace(tzinfo=timezone.utc)) >= timedelta(minutes=5):
+        values = _telemetry_values(payload.telemetry)
+        db.add(InfrastructureTelemetrySnapshot(server_id=server.id, **values))
+        db.execute(
+            delete(InfrastructureTelemetrySnapshot).where(
+                InfrastructureTelemetrySnapshot.server_id == server.id,
+                InfrastructureTelemetrySnapshot.created_at < now - timedelta(days=7),
+            )
+        )
     db.commit()
     return {"ok": True, "server_id": str(server.id), "status": server.status}
 
