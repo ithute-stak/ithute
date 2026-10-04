@@ -93,6 +93,7 @@ def reconcile_project_edge(db: Session, project: HostingProject, origin_url: str
         EdgeOrigin.application_id == app.id,
         EdgeOrigin.name == "ithute-hosting",
     ))
+    origin_changed = origin is None or origin.url != origin_url or origin.health_path != project.health_path
     if origin is None:
         origin = EdgeOrigin(
             application_id=app.id,
@@ -156,15 +157,15 @@ def reconcile_project_edge(db: Session, project: HostingProject, origin_url: str
         route.error = observed["error"]
         return {"status": route.status, "hostname": app.hostname, "application_id": str(app.id), "error": route.error}
 
-    try:
-        activate_route(str(app.id), app.hostname, origin.url)
-    except CaddyRouteError as exc:
-        route.status = "error"
-        route.error = str(exc)
-        return {"status": route.status, "hostname": app.hostname, "application_id": str(app.id), "error": route.error}
-
-    route.caddy_revision += 1
-    route.activated_at = datetime.now(timezone.utc)
+    if route.status != "pending_tls" or origin_changed:
+        try:
+            activate_route(str(app.id), app.hostname, origin.url)
+        except CaddyRouteError as exc:
+            route.status = "error"
+            route.error = str(exc)
+            return {"status": route.status, "hostname": app.hostname, "application_id": str(app.id), "error": route.error}
+        route.caddy_revision += 1
+        route.activated_at = datetime.now(timezone.utc)
 
     # Caddy has the route now, but certificate issuance can be asynchronous.
     try:
