@@ -50,3 +50,12 @@ def test_main_applies_auth_theme_before_router_registration() -> None:
     source = MAIN.read_text(encoding="utf-8")
     assert "from .portal_theme import apply_portal_theme" in source
     assert source.index("apply_portal_theme()") < source.index("app.include_router(portal_router)")
+
+
+def test_oauth_theme_exposes_passkey_continuation() -> None:
+    oauth_theme = Path(__file__).parents[1] / "app" / "oauth_theme.py"
+    source = oauth_theme.read_text(encoding="utf-8")
+    assert "Continue with passkey" in source
+    assert "/account/passkey-login?" in source
+    assert '"return_to": f"/oauth/authorize?{authorize_query}"' in source
+    assert "Required for privileged/system-owner accounts" in source
