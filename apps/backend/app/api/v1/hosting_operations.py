@@ -144,6 +144,7 @@ def _deployment_out(row: HostingDeployment) -> dict:
         "image_ref": row.image_ref,
         "image_digest": row.image_digest,
         "source_commit": row.source_commit,
+        "reset_data_volume": row.reset_data_volume,
         "runtime_manifest_version": row.runtime_manifest_version,
         "status": row.status,
         "failure_message": row.failure_message,
@@ -829,6 +830,7 @@ def claim_deployment(
             "image_ref": deployment.image_ref,
             "image_digest": deployment.image_digest,
             "source_commit": deployment.source_commit,
+            "reset_data_volume": deployment.reset_data_volume,
             "manifest_version": deployment.runtime_manifest_version,
             "project": {
                 "id": str(project.id),
