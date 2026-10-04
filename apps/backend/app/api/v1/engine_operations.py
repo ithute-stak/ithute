@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.api.deps import require_platform_owner
@@ -39,7 +39,10 @@ def platform_engine_xml_inspect(
     payload: EnterpriseXmlInspectRequest,
     current: User = Depends(require_platform_owner),
 ):
-    execution = execute_enterprise_xml(payload.xml.encode("utf-8"))
+    try:
+        execution = execute_enterprise_xml(payload.xml.encode("utf-8"))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
         "operation": execution.operation,
         "engine": execution.engine,
