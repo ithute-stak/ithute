@@ -235,8 +235,12 @@ def rank_nodes(
     memory_mb: int = 0,
     cpu_millicores: int = 0,
     database_engine: str | None = None,
+    lock: bool = False,
 ) -> list[dict]:
-    nodes = db.scalars(select(HostingNode).order_by(HostingNode.name.asc()).with_for_update()).all()
+    query = select(HostingNode).order_by(HostingNode.name.asc())
+    if lock:
+        query = query.with_for_update()
+    nodes = db.scalars(query).all()
     ranked = [
         score_node(
             db,
@@ -269,6 +273,7 @@ def select_node(
         memory_mb=memory_mb,
         cpu_millicores=cpu_millicores,
         database_engine=database_engine,
+        lock=True,
     )
 
     if preferred_node_id is not None:
