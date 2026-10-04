@@ -18,6 +18,8 @@ import redis
 
 from app.core.config import settings
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
+from app.services.engine_runtime import MimeScan, mime_scan
+from app.services.metrics import MAIL_MIME_SCAN_BYTES, MAIL_MIME_SCAN_TOTAL
 
 
 logger = logging.getLogger(__name__)
@@ -280,7 +282,14 @@ def _plain_body(message) -> str:
     return value
 
 
-def _attachments(message) -> list[dict]:
+def _attachments(message, scan: MimeScan | None = None) -> list[dict]:
+    # The Rust/Python pre-scan is deliberately conservative. A zero signal
+    # means there is no filename/name/Content-Disposition marker anywhere in
+    # the raw RFC822 bytes, so the authoritative Python MIME tree cannot expose
+    # an attachment through the fields this function uses.
+    if scan is not None and scan.attachment_signals == 0:
+        return []
+
     rows = []
     attachment_index = 0
     for part in message.walk():
@@ -301,10 +310,21 @@ def _attachments(message) -> list[dict]:
 
 
 def _message_json(uid: str, raw: bytes, meta: bytes | str = b"", include_body: bool = False) -> dict:
+    scan, scan_engine = mime_scan(raw)
     parsed = BytesParser(policy=policy.default).parsebytes(raw)
     meta_text = meta.decode(errors="replace") if isinstance(meta, bytes) else str(meta)
     body = _plain_body(parsed)
     normalized = " ".join(body.split())
+    attachment_walk = "skipped" if scan.attachment_signals == 0 else "walked"
+    MAIL_MIME_SCAN_TOTAL.labels(scan_engine, attachment_walk).inc()
+    MAIL_MIME_SCAN_BYTES.labels(scan_engine).observe(scan.bytes)
+    if scan.nul_bytes:
+        logger.debug(
+            "Webmail MIME pre-scan detected NUL bytes uid=%s engine=%s count=%s",
+            uid,
+            scan_engine,
+            scan.nul_bytes,
+        )
     row = {
         "uid": uid,
         "message_id": _decode(parsed.get("Message-ID")),
@@ -321,7 +341,7 @@ def _message_json(uid: str, raw: bytes, meta: bytes | str = b"", include_body: b
         "answered": "\\Answered" in meta_text,
         "draft": "\\Draft" in meta_text,
         "snippet": normalized[:240],
-        "attachments": _attachments(parsed),
+        "attachments": _attachments(parsed, scan),
     }
     if include_body:
         row["body_text"] = body
