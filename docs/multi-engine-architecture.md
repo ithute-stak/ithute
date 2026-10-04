@@ -38,3 +38,23 @@ changing page-level APIs.
 5. C++ enters a production hot path only after profiling/benchmark evidence.
 6. Go workers execute approved jobs; they do not decide whether a tenant is entitled to the job.
 7. Engine failure must degrade a bounded capability, not take down authentication or the control plane.
+
+
+## First production acceleration: iMail MIME pre-scan
+
+The first real workload moved behind the Rust boundary is the raw RFC822/MIME
+pre-scan used by hosted webmail message parsing.
+
+Rust now computes bounded structural facts such as message/header/body byte
+counts, line-ending counts, non-ASCII/NUL bytes, MIME boundary markers and a
+conservative attachment signal. Python's `email` parser remains authoritative
+for headers, body decoding and attachment metadata.
+
+When the pre-scan proves that no attachment signal exists, Ithute skips a
+redundant Python MIME-tree attachment walk. If Rust is unavailable or returns an
+error, the exact same pre-scan contract is implemented in Python and parsing
+continues normally.
+
+Prometheus exposes engine/attachment-walk counters and message-size histograms.
+CI also runs a parity benchmark but deliberately does not enforce a fixed speed
+ratio because runner performance varies.
