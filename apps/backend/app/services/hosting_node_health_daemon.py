@@ -7,6 +7,7 @@ import time
 
 from app.db.session import SessionLocal
 from app.services.hosting_node_health import run_hosting_node_health_reconcile
+from app.services.hosting_failover import run_application_failover_reconcile
 
 _running = True
 
@@ -26,6 +27,8 @@ def main() -> None:
         try:
             result = run_hosting_node_health_reconcile(db)
             print(json.dumps({"event": "hosting_node_health_reconcile", **result}, sort_keys=True), flush=True)
+            failover = run_application_failover_reconcile(db)
+            print(json.dumps({"event": "hosting_application_failover_reconcile", **failover}, sort_keys=True), flush=True)
         except Exception as exc:
             db.rollback()
             print(json.dumps({"event": "hosting_node_health_reconcile_error", "error": exc.__class__.__name__}, sort_keys=True), flush=True)
