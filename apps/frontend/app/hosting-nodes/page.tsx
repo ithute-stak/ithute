@@ -28,15 +28,22 @@ type Onboarding = {
   origin_bind_ip?: string | null;
   hosting_agent_version?: string | null;
   server_agent_version?: string | null;
-  checks: {
-    hosting_agent_online: boolean;
-    server_agent_online: boolean;
-    private_origin_configured: boolean;
-    infrastructure_linked: boolean;
-    managed_network_connected: boolean;
-  };
+  checks: Record<string, boolean>;
   managed_network_ip?: string | null;
   managed_network_last_handshake_at?: string | null;
+  automation_enabled?: boolean;
+  health_status?: string;
+  healthy_since?: string | null;
+  unhealthy_since?: string | null;
+  last_transition?: string | null;
+  last_transition_at?: string | null;
+  last_reason?: string | null;
+  thresholds?: {
+    auto_activate_seconds: number;
+    auto_drain_seconds: number;
+    auto_recover_seconds: number;
+    heartbeat_grace_seconds: number;
+  };
 };
 type Bootstrap = { node_id: string; node: string; token: string; script_path: string; expires_at: string };
 
@@ -71,8 +78,8 @@ export default function HostingNodesPage() {
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [backupRemotes, setBackupRemotes] = useState<Record<string, string>>({});
 
-  async function load() {
-    setLoading(true); setError("");
+  async function load(silent = false) {
+    if (!silent) setLoading(true); setError("");
     const response = await api("/platform/hosting/nodes");
     if (!response.ok) { setError(await detail(response, "Unable to load hosting nodes.")); setLoading(false); return; }
     const rows: Node[] = (await response.json()).items || [];
@@ -104,6 +111,25 @@ export default function HostingNodesPage() {
       await load();
     })();
   }, [router]);
+
+  useEffect(() => {
+    if (!me?.is_platform_owner) return;
+    const timer = window.setInterval(() => void load(true), 15000);
+    return () => window.clearInterval(timer);
+  }, [me?.is_platform_owner]);
+
+  async function setAutomation(node: Node, enabled: boolean) {
+    setMessage(""); setError("");
+    const response = await api(`/platform/hosting/nodes/${node.id}/automation`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    });
+    if (!response.ok) { setError(await detail(response, "Unable to update node automation.")); return; }
+    setMessage(enabled
+      ? `Automatic activation and self-healing enabled for ${node.name}.`
+      : `${node.name} is on manual hold. Ithute will not change its scheduling state automatically.`);
+    await load(true);
+  }
 
   async function createBootstrap(node: Node) {
     setMessage(""); setError(""); setBootstrap(null); setNewToken(null);
@@ -175,8 +201,16 @@ export default function HostingNodesPage() {
   <div className="flex items-center gap-2"><Network size={14}/><p className="text-[10px] font-black">Secure VPS onboarding</p></div>
   <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-[9px] text-emerald-800"><b>Ithute managed private network</b><br/>The installer generates the VPS key locally, Ithute allocates the tunnel IP automatically, and the private key never leaves the VPS.{onboarding[node.id]?.managed_network_ip ? <span className="mt-1 block font-black">Assigned IP: {onboarding[node.id]?.managed_network_ip}</span> : null}</div>
   <input className="input mt-2" value={backupRemotes[node.id] || ""} onChange={(event) => setBackupRemotes((current) => ({ ...current, [node.id]: event.target.value }))} placeholder="Optional rclone backup remote"/>
-  <div className="mt-3 flex flex-wrap gap-2"><button className="btn-primary" onClick={() => void createBootstrap(node)}><TerminalSquare size={13}/>Generate secure installer</button>{onboarding[node.id]?.ready && !onboarding[node.id]?.active ? <button className="btn-secondary" onClick={() => void activateNode(node)}><CheckCircle2 size={13}/>Activate node</button> : null}</div>
-  {onboarding[node.id] ? <div className="mt-3 grid grid-cols-2 gap-1.5 text-[8px]">{Object.entries(onboarding[node.id].checks).map(([name, passed]) => <span key={name} className={`rounded-lg px-2 py-1.5 font-black ${passed ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>{passed ? "✓" : "•"} {name.replaceAll("_", " ")}</span>)}</div> : null}
+  <div className="mt-3 flex flex-wrap gap-2"><button className="btn-primary" onClick={() => void createBootstrap(node)}><TerminalSquare size={13}/>Generate secure installer</button>{onboarding[node.id]?.ready && !onboarding[node.id]?.active ? <button className="btn-secondary" onClick={() => void activateNode(node)}><CheckCircle2 size={13}/>Activate now</button> : null}{onboarding[node.id] ? <button className="btn-secondary" onClick={() => void setAutomation(node, !onboarding[node.id]?.automation_enabled)}>{onboarding[node.id]?.automation_enabled ? "Pause automation" : "Enable automation"}</button> : null}</div>
+  {onboarding[node.id] ? <>
+    <div className={`mt-3 rounded-xl border p-3 text-[9px] ${onboarding[node.id]?.automation_enabled ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+      <b>{onboarding[node.id]?.automation_enabled ? "Automatic self-healing enabled" : "Manual hold"}</b>
+      <p className="mt-1">{onboarding[node.id]?.automation_enabled ? `Ithute activates after ${onboarding[node.id]?.thresholds?.auto_activate_seconds ?? 120}s healthy, drains after ${onboarding[node.id]?.thresholds?.auto_drain_seconds ?? 60}s unhealthy, and restores after ${onboarding[node.id]?.thresholds?.auto_recover_seconds ?? 180}s healthy.` : "Ithute will monitor health but will not change this node's scheduling state."}</p>
+      {onboarding[node.id]?.last_transition ? <p className="mt-1 font-bold">Last transition: {onboarding[node.id]?.last_transition?.replaceAll("_", " ")}{onboarding[node.id]?.last_transition_at ? ` · ${new Date(onboarding[node.id]!.last_transition_at!).toLocaleString()}` : ""}</p> : null}
+      {onboarding[node.id]?.last_reason ? <p className="mt-1">Reason: {onboarding[node.id]?.last_reason}</p> : null}
+    </div>
+    <div className="mt-3 grid grid-cols-2 gap-1.5 text-[8px]">{Object.entries(onboarding[node.id].checks).map(([name, passed]) => <span key={name} className={`rounded-lg px-2 py-1.5 font-black ${passed ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>{passed ? "✓" : "•"} {name.replaceAll("_", " ")}</span>)}</div>
+  </> : null}
 </div></article>; })}{!nodes.length ? <p className="text-xs text-[var(--admin-muted)]">No hosting nodes are registered yet. Create sellable capacity from Packages & Capacity first.</p> : null}</div>}</section>
     </div>
   </ControlShell>;
