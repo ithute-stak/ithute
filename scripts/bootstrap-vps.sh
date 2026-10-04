@@ -134,11 +134,11 @@ EDGE_DIR="$APP_DIR/infrastructure/wireguard-edge"
 EDGE_BOOTSTRAP="$EDGE_DIR/bootstrap.sh"
 mkdir -p "$EDGE_DIR"
 RAW_RELEASE="https://raw.githubusercontent.com/ithute-stak/ithute/$IMAGE_TAG"
-for edge_file in bootstrap.sh reconcile.sh ithute-wireguard-edge-reconciler.service ithute-wireguard-edge-reconciler.timer; do
+for edge_file in bootstrap.sh reconcile.sh firewall.sh ithute-wireguard-edge-firewall.service ithute-wireguard-edge-reconciler.service ithute-wireguard-edge-reconciler.timer; do
   curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL     "$RAW_RELEASE/infrastructure/wireguard-edge/$edge_file"     -o "$EDGE_DIR/$edge_file"
   test -s "$EDGE_DIR/$edge_file"
 done
-chmod 700 "$EDGE_DIR/bootstrap.sh" "$EDGE_DIR/reconcile.sh"
+chmod 700 "$EDGE_DIR/bootstrap.sh" "$EDGE_DIR/reconcile.sh" "$EDGE_DIR/firewall.sh"
 ITHUTE_APP_DIR="$APP_DIR" \
 ITHUTE_ENV_FILE="$ENV_FILE" \
 ITHUTE_PUBLIC_IPV4="$PUBLIC_IPV4" \
