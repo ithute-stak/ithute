@@ -73,7 +73,7 @@ def _attempt(db: Session, project_id, source_node_id) -> HostingFailoverAttempt 
         .where(
             HostingFailoverAttempt.project_id == project_id,
             HostingFailoverAttempt.source_node_id == source_node_id,
-            HostingFailoverAttempt.status.in_(list(ACTIVE_ATTEMPT_STATUSES) + ["recovery_required"]),
+            HostingFailoverAttempt.status.in_(list(ACTIVE_ATTEMPT_STATUSES) + ["recovery_required", "failed"]),
         )
         .order_by(HostingFailoverAttempt.created_at.desc())
     )
@@ -421,7 +421,7 @@ def request_project_relocation(
         raise ValueError("Suspended projects cannot be relocated")
     existing = _attempt(db, project.id, project.node_id)
     if existing is not None:
-        if existing.status == "recovery_required":
+        if existing.status in {"recovery_required", "failed"}:
             existing.status = "superseded"
             existing.completed_at = now
             existing.reason = "Superseded by an explicit stateless relocation request."
