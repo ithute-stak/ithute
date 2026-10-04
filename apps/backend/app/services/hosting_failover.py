@@ -79,12 +79,11 @@ def _attempt(db: Session, project_id, source_node_id) -> HostingFailoverAttempt 
     )
 
 
-def _managed_database_on_source(db: Session, project: HostingProject, source_node_id) -> HostingDatabase | None:
+def _managed_database_dependency(db: Session, project: HostingProject) -> HostingDatabase | None:
     return db.scalar(
         select(HostingDatabase)
         .where(
             HostingDatabase.project_id == project.id,
-            HostingDatabase.node_id == source_node_id,
             HostingDatabase.status.notin_(["deleting", "deleted", "failed"]),
         )
         .order_by(HostingDatabase.created_at.asc())
@@ -158,14 +157,14 @@ def _prepare_attempt(db: Session, project: HostingProject, source_node_id, now: 
             "Automatic relocation is disabled. Project local /data may contain state.",
         )
 
-    local_database = _managed_database_on_source(db, project, source_node_id)
+    local_database = _managed_database_dependency(db, project)
     if local_database is not None:
         return _create_attempt(
             db,
             project,
             source_node_id,
             "recovery_required",
-            f"Managed {local_database.engine} database is on the affected node and requires database recovery/failover first.",
+            f"Managed {local_database.engine} database is attached to this project. Database replication/failover must be resolved before application relocation.",
         )
 
     previous = _last_healthy(db, project.id)
@@ -454,9 +453,9 @@ def request_project_relocation(
             existing.reason = "Superseded by an explicit stateless relocation request."
         else:
             raise ValueError("A failover or recovery action already exists for this project")
-    local_database = _managed_database_on_source(db, project, project.node_id)
+    local_database = _managed_database_dependency(db, project)
     if local_database is not None:
-        raise ValueError("Project has a managed database on its current node and cannot use application-only relocation")
+        raise ValueError("Project has an Ithute-managed database and cannot use application-only relocation until database failover is available")
     previous = _last_healthy(db, project.id)
     if previous is None:
         raise ValueError("Project has no healthy immutable deployment to relocate")
