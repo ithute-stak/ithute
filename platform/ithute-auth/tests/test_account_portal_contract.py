@@ -16,6 +16,7 @@ def test_account_portal_keeps_security_routes_and_csrf_contract() -> None:
         '/account/verification/confirm',
         '/account/mfa/start',
         '/account/mfa/confirm',
+        '/account/mfa/recovery-codes',
         '/account/mfa/disable',
         '/account/sessions/{session_id}/revoke',
         '/account/sessions/revoke-all',
@@ -56,3 +57,16 @@ def test_login_screen_explains_central_identity_and_mfa_setup() -> None:
     assert "Account → Multi-factor authentication" in source
     assert "Set up authenticator" in source
     assert "Ithute will then show one-time recovery codes" in source
+
+
+def test_account_portal_exposes_secure_recovery_code_regeneration() -> None:
+    source = _source()
+    assert 'action="/account/mfa/recovery-codes"' in source
+    assert "Regenerate recovery codes" in source
+    assert "All previous recovery codes will stop working" in source
+    assert 'password: str = Form(...)' in source
+    assert 'code: str = Form(...)' in source
+    assert 'event_type="mfa_recovery_codes_regenerated"' in source
+    assert "db.execute(delete(MfaRecoveryCode)" in source
+    assert "new_recovery_codes()" in source
+    assert "Your previous recovery codes are now invalid" in source

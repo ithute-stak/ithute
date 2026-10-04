@@ -548,14 +548,26 @@ def account_home(request: Request, db: Session = Depends(get_db), settings: Sett
 
     if user.totp_enabled:
         mfa_controls = f"""
-        <form method="post" action="/account/mfa/disable" onsubmit="return confirm('Disable multi-factor authentication for this account?');">
-          <input type="hidden" name="csrf_token" value="{csrf}">
-          <label>Current password</label>
-          <input type="password" name="password" autocomplete="current-password" required>
-          <label>Authenticator or recovery code</label>
-          <input name="code" autocomplete="one-time-code" required>
-          <button class="danger" type="submit">Disable MFA</button>
-        </form>"""
+        <div style="display:grid;gap:16px">
+          <form method="post" action="/account/mfa/recovery-codes" onsubmit="return confirm('Generate a new set of recovery codes? All previous recovery codes will stop working.');">
+            <input type="hidden" name="csrf_token" value="{csrf}">
+            <label>Current password</label>
+            <input type="password" name="password" autocomplete="current-password" required>
+            <label>Authenticator or recovery code</label>
+            <input name="code" autocomplete="one-time-code" required>
+            <button type="submit">Regenerate recovery codes</button>
+            <div class="help">Creates a fresh one-time set and immediately invalidates every previous recovery code.</div>
+          </form>
+          <div class="divider"></div>
+          <form method="post" action="/account/mfa/disable" onsubmit="return confirm('Disable multi-factor authentication for this account?');">
+            <input type="hidden" name="csrf_token" value="{csrf}">
+            <label>Current password</label>
+            <input type="password" name="password" autocomplete="current-password" required>
+            <label>Authenticator or recovery code</label>
+            <input name="code" autocomplete="one-time-code" required>
+            <button class="danger" type="submit">Disable MFA</button>
+          </form>
+        </div>"""
     else:
         mfa_controls = f"""
         <form method="post" action="/account/mfa/start">
@@ -894,6 +906,47 @@ def portal_mfa_confirm(
     response = HTMLResponse(_page("Recovery codes", body, user=user))
     _set_sso_cookie(response, user, settings)
     return response
+
+
+@router.post("/account/mfa/recovery-codes", response_class=HTMLResponse)
+def portal_mfa_recovery_codes(
+    request: Request,
+    password: str = Form(...),
+    code: str = Form(...),
+    csrf_token: str = Form(...),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    user, _, _ = _require_portal_user(request, db, settings)
+    _require_csrf(request, csrf_token, settings)
+    if not user.totp_enabled or not user.totp_secret_encrypted:
+        raise HTTPException(status_code=400, detail="MFA is not enabled")
+    if not verify_password(password, user.password_hash):
+        record_audit(db, event_type="mfa_recovery_codes_regenerated", user=user, success=False, request=request)
+        db.commit()
+        raise HTTPException(status_code=401, detail="invalid credentials")
+    if not verify_second_factor(db, user=user, code=code, settings=settings):
+        record_audit(db, event_type="mfa_recovery_codes_regenerated", user=user, success=False, request=request)
+        db.commit()
+        raise HTTPException(status_code=401, detail="invalid MFA code")
+
+    codes = new_recovery_codes()
+    db.execute(delete(MfaRecoveryCode).where(MfaRecoveryCode.user_id == user.id))
+    for recovery_code in codes:
+        db.add(MfaRecoveryCode(user_id=user.id, code_hash=hash_recovery_code(recovery_code)))
+    record_audit(db, event_type="mfa_recovery_codes_regenerated", user=user, request=request)
+    db.commit()
+
+    code_html = "".join(f"<li><code>{_e(value)}</code></li>" for value in codes)
+    body = f"""
+    <div class="card setup-card">
+      <div class="eyebrow">Account protection</div>
+      <h1>New recovery codes</h1>
+      <p>Your previous recovery codes are now invalid. Save this new set somewhere secure and offline. These codes will not be shown again.</p>
+      <div class="callout" style="margin-top:18px"><ol class="recovery-list">{code_html}</ol></div>
+      <div class="actions" style="margin-top:18px"><a class="button" href="/account">I saved these codes</a></div>
+    </div>"""
+    return HTMLResponse(_page("Recovery codes", body, user=user))
 
 
 @router.post("/account/mfa/disable")
