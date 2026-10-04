@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import json
+import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_platform_owner
+from app.core.security import hash_token
 from app.db.session import get_db
 from app.models import (
     AuditLog,
@@ -19,6 +21,7 @@ from app.models import (
     HostingNodeAgent,
     HostingProject,
     InfrastructureServer,
+    InfrastructureServerAgent,
     MailNode,
     Mailbox,
     User,
@@ -39,6 +42,15 @@ class InfrastructureServerCreate(BaseModel):
     provider: str | None = Field(default=None, max_length=80)
     roles: list[str] = Field(default_factory=lambda: ["application"], min_length=1, max_length=6)
     notes: str | None = Field(default=None, max_length=2000)
+
+
+class InfrastructureAgentHeartbeat(BaseModel):
+    version: str = Field(min_length=1, max_length=80)
+    os_name: str | None = Field(default=None, max_length=160)
+    kernel_version: str | None = Field(default=None, max_length=160)
+    uptime_seconds: int | None = Field(default=None, ge=0)
+    telemetry: dict = Field(default_factory=dict)
+    capabilities: dict = Field(default_factory=dict)
 
 
 class InfrastructureServerUpdate(BaseModel):
@@ -122,6 +134,7 @@ def _server_out(db: Session, server: InfrastructureServer) -> dict:
     mail = db.get(MailNode, server.mail_node_id) if server.mail_node_id else None
     hosting = db.get(HostingNode, server.hosting_node_id) if server.hosting_node_id else None
     hosting_agent = db.get(HostingNodeAgent, hosting.id) if hosting else None
+    server_agent = db.get(InfrastructureServerAgent, server.id)
 
     mailbox_count = int(db.scalar(select(func.count(Mailbox.id)).where(Mailbox.mail_node_id == mail.id)) or 0) if mail else 0
     project_count = int(db.scalar(select(func.count(HostingProject.id)).where(HostingProject.node_id == hosting.id)) or 0) if hosting else 0
@@ -145,6 +158,7 @@ def _server_out(db: Session, server: InfrastructureServer) -> dict:
     if hosting:
         linked_health.append(hosting_online)
 
+    server_agent_online = bool(server_agent and _fresh(server_agent.last_seen_at))
     if server.status != "active":
         health = server.status
     elif expected_missing:
@@ -218,6 +232,18 @@ def _server_out(db: Session, server: InfrastructureServer) -> dict:
             "capacity": hosting_capacity,
         },
         "configuration_required": expected_missing,
+        "agent": {
+            "configured": bool(server_agent),
+            "online": server_agent_online,
+            "token_hint": server_agent.token_hint if server_agent else None,
+            "version": server_agent.agent_version if server_agent else None,
+            "last_seen_at": server_agent.last_seen_at.isoformat() if server_agent and server_agent.last_seen_at else None,
+            "os_name": server_agent.os_name if server_agent else None,
+            "kernel_version": server_agent.kernel_version if server_agent else None,
+            "uptime_seconds": server_agent.uptime_seconds if server_agent else None,
+            "telemetry": json.loads(server_agent.telemetry_json or "{}") if server_agent else {},
+            "capabilities": json.loads(server_agent.capabilities_json or "{}") if server_agent else {},
+        },
     }
 
 
@@ -270,6 +296,73 @@ def update_server(server_id: UUID, payload: InfrastructureServerUpdate, db: Sess
     db.commit()
     db.refresh(server)
     return _server_out(db, server)
+
+
+def _server_agent_from_token(db: Session, token: str | None) -> tuple[InfrastructureServerAgent, InfrastructureServer]:
+    raw = (token or "").strip()
+    if not raw or not raw.startswith("ith_srv_"):
+        raise HTTPException(status_code=401, detail="Infrastructure server agent credential required")
+    agent = db.scalar(select(InfrastructureServerAgent).where(InfrastructureServerAgent.token_hash == hash_token(raw)))
+    if agent is None:
+        raise HTTPException(status_code=401, detail="Invalid infrastructure server agent credential")
+    server = db.get(InfrastructureServer, agent.server_id)
+    if server is None or server.status == "disabled":
+        raise HTTPException(status_code=403, detail="Infrastructure server is unavailable")
+    return agent, server
+
+
+@router.post("/servers/{server_id}/agent-token")
+def rotate_server_agent_token(server_id: UUID, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
+    server = db.get(InfrastructureServer, server_id)
+    if server is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+    raw = "ith_srv_" + secrets.token_urlsafe(36)
+    now = datetime.now(timezone.utc)
+    agent = db.get(InfrastructureServerAgent, server.id)
+    if agent is None:
+        agent = InfrastructureServerAgent(
+            server_id=server.id,
+            token_hash=hash_token(raw),
+            token_hint=raw[:18],
+            rotated_at=now,
+            rotated_by_user_id=current.id,
+        )
+        db.add(agent)
+    else:
+        agent.token_hash = hash_token(raw)
+        agent.token_hint = raw[:18]
+        agent.rotated_at = now
+        agent.rotated_by_user_id = current.id
+        agent.agent_version = None
+        agent.last_seen_at = None
+        agent.telemetry_json = "{}"
+        agent.capabilities_json = "{}"
+    _audit(db, current, "infrastructure.server_agent.rotate", server)
+    db.commit()
+    return {
+        "server_id": str(server.id),
+        "token": raw,
+        "token_hint": raw[:18],
+        "warning": "This credential is shown once. Store it only on the Ithute Server Agent host.",
+    }
+
+
+@router.post("/agent/heartbeat")
+def infrastructure_agent_heartbeat(
+    payload: InfrastructureAgentHeartbeat,
+    x_ithute_server_agent: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    agent, server = _server_agent_from_token(db, x_ithute_server_agent)
+    agent.agent_version = payload.version.strip()
+    agent.last_seen_at = datetime.now(timezone.utc)
+    agent.os_name = payload.os_name.strip() if payload.os_name else None
+    agent.kernel_version = payload.kernel_version.strip() if payload.kernel_version else None
+    agent.uptime_seconds = payload.uptime_seconds
+    agent.telemetry_json = json.dumps(payload.telemetry, separators=(",", ":"), sort_keys=True)
+    agent.capabilities_json = json.dumps(payload.capabilities, separators=(",", ":"), sort_keys=True)
+    db.commit()
+    return {"ok": True, "server_id": str(server.id), "status": server.status}
 
 
 @router.post("/servers/import-existing")
