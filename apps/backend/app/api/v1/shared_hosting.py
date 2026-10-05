@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import secrets
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_platform_owner, require_tenant_permission
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
-from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingDatabaseGateway, HostingDatabaseGatewayPool, HostingDatabaseGatewayPoolMember, HostingNode, HostingNodeAgent, HostingNodeHealthState, HostingPostgresEndpoint, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingPostgresRpoPolicyOperation, HostingPostgresTopologyRepair, HostingProject, HostingSource, User
+from app.models import AuditLog, Domain, DomainDnsMode, DomainStatus, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingDatabaseGateway, HostingDatabaseGatewayPool, HostingDatabaseGatewayPoolMember, HostingNode, HostingNodeAgent, HostingNodeHealthState, HostingPostgresEndpoint, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingPostgresRpoPolicyOperation, HostingPostgresTopologyRepair, HostingProject, HostingSource, User
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
 from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
 from app.services.database_replication import build_database_failover_plan
@@ -75,11 +76,14 @@ class PostgresReplicationGroupCreate(BaseModel):
 class DatabaseGatewayCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     hostname: str = Field(min_length=1, max_length=253)
+    advertise_ipv4: str | None = Field(default=None, max_length=45)
+    advertise_ipv6: str | None = Field(default=None, max_length=64)
 
 
 class DatabaseGatewayPoolCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     frontend_hostname: str = Field(min_length=1, max_length=253)
+    dns_domain_id: UUID
     gateway_ids: list[UUID] = Field(min_length=2, max_length=8)
     required_ready_gateways: int = Field(default=2, ge=1, le=8)
 
@@ -412,10 +416,30 @@ def create_database_gateway(
     hostname = payload.hostname.strip().lower()
     if re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*", hostname) is None:
         raise HTTPException(status_code=422, detail="Database gateway hostname is invalid")
+    try:
+        advertise_ipv4 = (
+            str(ipaddress.ip_address(payload.advertise_ipv4.strip()))
+            if payload.advertise_ipv4 else None
+        )
+        advertise_ipv6 = (
+            str(ipaddress.ip_address(payload.advertise_ipv6.strip()))
+            if payload.advertise_ipv6 else None
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Database gateway advertised IP is invalid") from exc
+    if advertise_ipv4 and ipaddress.ip_address(advertise_ipv4).version != 4:
+        raise HTTPException(status_code=422, detail="advertise_ipv4 must be an IPv4 address")
+    if advertise_ipv6 and ipaddress.ip_address(advertise_ipv6).version != 6:
+        raise HTTPException(status_code=422, detail="advertise_ipv6 must be an IPv6 address")
+    if not advertise_ipv4 and not advertise_ipv6:
+        raise HTTPException(status_code=422, detail="Database gateway requires at least one advertised IP")
+
     raw = "ith_dbgw_" + secrets.token_urlsafe(36)
     row = HostingDatabaseGateway(
         name=payload.name.strip(),
         hostname=hostname,
+        advertise_ipv4=advertise_ipv4,
+        advertise_ipv6=advertise_ipv6,
         token_hash=hash_token(raw),
         token_hint=raw[-12:],
         status="active",
@@ -428,13 +452,20 @@ def create_database_gateway(
         action="hosting.database_gateway.create",
         resource_type="hosting_database_gateway",
         resource_id=str(row.id),
-        metadata_json=json.dumps({"name": row.name, "hostname": row.hostname}, sort_keys=True),
+        metadata_json=json.dumps({
+            "name": row.name,
+            "hostname": row.hostname,
+            "advertise_ipv4": row.advertise_ipv4,
+            "advertise_ipv6": row.advertise_ipv6,
+        }, sort_keys=True),
     ))
     db.commit()
     return {
         "id": str(row.id),
         "name": row.name,
         "hostname": row.hostname,
+        "advertise_ipv4": row.advertise_ipv4,
+        "advertise_ipv6": row.advertise_ipv6,
         "status": row.status,
         "token": raw,
     }
@@ -455,13 +486,32 @@ def create_database_gateway_pool(
     if re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*", hostname) is None:
         raise HTTPException(status_code=422, detail="Gateway pool frontend hostname is invalid")
 
+    domain = db.get(Domain, payload.dns_domain_id)
+    if (
+        domain is None
+        or domain.dns_mode != DomainDnsMode.platform
+        or domain.status != DomainStatus.verified
+        or domain.ownership_verified_at is None
+    ):
+        raise HTTPException(status_code=409, detail="Gateway pool requires a verified Ithute-managed DNS domain")
+    zone = domain.ascii_name.rstrip(".").lower()
+    if hostname == zone or not hostname.endswith("." + zone):
+        raise HTTPException(status_code=422, detail="Gateway pool frontend hostname must be below the selected managed DNS domain")
+
     gateways = [db.get(HostingDatabaseGateway, gateway_id) for gateway_id in gateway_ids]
     if any(gateway is None or gateway.status != "active" for gateway in gateways):
         raise HTTPException(status_code=409, detail="All database gateway pool members must be active")
+    advertised = [
+        gateway for gateway in gateways
+        if gateway.advertise_ipv4 or gateway.advertise_ipv6
+    ]
+    if len(advertised) < payload.required_ready_gateways:
+        raise HTTPException(status_code=409, detail="Gateway pool does not have enough advertised addresses for its readiness quorum")
 
     pool = HostingDatabaseGatewayPool(
         name=payload.name.strip(),
         frontend_hostname=hostname,
+        dns_domain_id=domain.id,
         required_ready_gateways=payload.required_ready_gateways,
         status="active",
         created_by_user_id=current.id,
@@ -477,6 +527,7 @@ def create_database_gateway_pool(
         resource_id=str(pool.id),
         metadata_json=json.dumps({
             "frontend_hostname": pool.frontend_hostname,
+            "dns_domain_id": str(pool.dns_domain_id),
             "gateway_ids": [str(value) for value in gateway_ids],
             "required_ready_gateways": pool.required_ready_gateways,
         }, sort_keys=True),
@@ -486,6 +537,7 @@ def create_database_gateway_pool(
         "id": str(pool.id),
         "name": pool.name,
         "frontend_hostname": pool.frontend_hostname,
+        "dns_domain_id": str(pool.dns_domain_id),
         "gateway_ids": [str(value) for value in gateway_ids],
         "required_ready_gateways": pool.required_ready_gateways,
         "status": pool.status,
