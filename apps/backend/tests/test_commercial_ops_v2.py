@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -5,11 +6,11 @@ from pydantic import ValidationError
 from sqlalchemy import delete
 
 from app.api.v1.commercial_ops_v2 import MonitorCreate
-from app.models import BillingAddon, BillingInvoice, BillingPlan, SubscriptionStatus, TenantAddon, TenantSubscription
+from app.models import BillingAddon, BillingInvoice, BillingPlan, HostingDatabase, SubscriptionStatus, TenantAddon, TenantSubscription, UsageSnapshot
 from app.models.commercial_ops_v2 import BillingContract
 from app.services.billing import assign_subscription
 from app.services.catalog_entitlements import rebuild_effective_plan
-from app.services.commercial_ops_v2 import request_plan_change, run_billing_cycle
+from app.services.commercial_ops_v2 import generate_contract_invoice, request_plan_change, run_billing_cycle
 
 
 def make_plan(code: str, *, annual: int = 100_000, storage: int = 2048, projects: int = 1) -> BillingPlan:
@@ -125,3 +126,66 @@ def test_monitor_rejects_local_and_private_targets():
         MonitorCreate(name="Localhost", url="https://127.0.0.1/health")
     with pytest.raises(ValidationError):
         MonitorCreate(name="Docker private", url="https://10.0.0.1/health")
+
+
+def test_recurring_invoice_includes_priced_metered_overage(db, tenant_admin):
+    user, tenant, _membership = tenant_admin
+    plan = make_plan(f"overage-{tenant.id.hex[:8]}", annual=100_000, storage=2048, projects=1)
+    plan.setup_fee_minor = 0
+    plan.hosting_database_limit = 0
+    plan.hosting_database_storage_mb = 0
+    plan.allow_metered_overages = True
+    plan.overage_database_minor = 2_500
+    db.add(plan)
+    db.commit()
+    db.refresh(plan)
+
+    subscription = assign_subscription(db, tenant.id, plan, SubscriptionStatus.active, period_days=30)
+    database = HostingDatabase(
+        tenant_id=tenant.id,
+        engine="postgresql",
+        database_name=f"overage_{tenant.id.hex[:8]}",
+        username=f"ith_overage_{tenant.id.hex[:10]}",
+        encrypted_password="encrypted-test-value",
+        internal_port=5432,
+        storage_mb=0,
+        status="ready",
+        operation="none",
+        created_by_user_id=user.id,
+    )
+    db.add(database)
+    contract = BillingContract(
+        tenant_id=tenant.id,
+        billing_interval="monthly",
+        auto_renew=True,
+        invoice_lead_days=14,
+        grace_days=7,
+        setup_fee_applied=True,
+    )
+    db.add(contract)
+    db.commit()
+
+    try:
+        invoice = generate_contract_invoice(db, subscription, contract)
+        assert invoice.base_amount_minor == 10_000
+        assert invoice.overage_amount_minor == 2_500
+        assert invoice.subtotal_minor == 12_500
+        assert invoice.total_minor == 12_500
+        breakdown = json.loads(invoice.usage_breakdown_json)
+        assert breakdown["fully_priced"] is True
+        database_line = next(item for item in breakdown["items"] if item["metric"] == "hosting_database_count")
+        assert database_line == {
+            "metric": "hosting_database_count",
+            "units": 1,
+            "rate_minor": 2_500,
+            "amount_minor": 2_500,
+        }
+    finally:
+        db.rollback()
+        db.execute(delete(BillingInvoice).where(BillingInvoice.subscription_id == subscription.id))
+        db.execute(delete(UsageSnapshot).where(UsageSnapshot.tenant_id == tenant.id))
+        db.execute(delete(HostingDatabase).where(HostingDatabase.tenant_id == tenant.id))
+        db.execute(delete(BillingContract).where(BillingContract.tenant_id == tenant.id))
+        db.execute(delete(TenantSubscription).where(TenantSubscription.id == subscription.id))
+        db.execute(delete(BillingPlan).where(BillingPlan.id == plan.id))
+        db.commit()
