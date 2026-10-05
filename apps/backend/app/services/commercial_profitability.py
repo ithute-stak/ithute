@@ -86,31 +86,34 @@ def _allocation_costs(db: Session) -> tuple[dict[UUID, int], dict[UUID, dict], l
             utilization[key] = round((allocated[key] / total) * 100, 1) if total > 0 else None
 
         allocated_cost = 0
-        if total_weight > 0 and monthly_cost > 0:
-            remaining = monthly_cost
-            ordered = sorted(allocations, key=lambda row: str(row.tenant_id))
-            for index, allocation in enumerate(ordered):
+        remaining = monthly_cost
+        ordered = sorted(allocations, key=lambda row: str(row.tenant_id))
+        for index, allocation in enumerate(ordered):
+            share = 0
+            if total_weight > 0 and monthly_cost > 0:
                 if index == len(ordered) - 1:
                     share = remaining
                 else:
                     share = (monthly_cost * max(1, int(allocation.allocation_weight or 1))) // total_weight
                     remaining -= share
-                allocated_cost += share
-                tenant_costs[allocation.tenant_id] += share
-                detail = {
-                    "server_id": str(server.id),
-                    "server_name": server.name,
-                    "hostname": server.hostname,
-                    "provider": server.provider,
-                    "allocation_weight": int(allocation.allocation_weight or 1),
-                    "allocated_cost_minor": share,
-                    "cpu_millicores": int(allocation.cpu_millicores or 0),
-                    "memory_mb": int(allocation.memory_mb or 0),
-                    "storage_mb": int(allocation.storage_mb or 0),
-                    "bandwidth_gb": int(allocation.bandwidth_gb or 0),
-                    "source": allocation.source,
-                }
-                tenant_server_details[allocation.tenant_id].append(detail)
+            allocated_cost += share
+            tenant_costs[allocation.tenant_id] += share
+            detail = {
+                "server_id": str(server.id),
+                "server_name": server.name,
+                "hostname": server.hostname,
+                "provider": server.provider,
+                "allocation_weight": int(allocation.allocation_weight or 1),
+                "allocated_cost_minor": share,
+                "target_margin_bps": int(profile.target_margin_bps or 3000) if profile else 3000,
+                "cost_profile_configured": profile is not None,
+                "cpu_millicores": int(allocation.cpu_millicores or 0),
+                "memory_mb": int(allocation.memory_mb or 0),
+                "storage_mb": int(allocation.storage_mb or 0),
+                "bandwidth_gb": int(allocation.bandwidth_gb or 0),
+                "source": allocation.source,
+            }
+            tenant_server_details[allocation.tenant_id].append(detail)
 
         server_rows.append(
             {
@@ -198,15 +201,19 @@ def customer_profitability(
             }
         )
 
-    if estimated_revenue_minor > 0 and margin_bps < 2000:
+    server_allocations = precomputed_servers.get(tenant_id, [])
+    target_margin_bps = max(
+        [int(item.get("target_margin_bps") or 3000) for item in server_allocations] or [3000]
+    )
+    if estimated_revenue_minor > 0 and margin_bps < target_margin_bps:
         alerts.append(
             {
-                "severity": "high" if margin_bps < 1000 else "medium",
+                "severity": "high" if margin_bps < max(1000, target_margin_bps // 2) else "medium",
                 "key": "margin.low",
-                "message": f"Estimated gross margin is {margin_bps / 100:.1f}%.",
+                "message": f"Estimated gross margin is {margin_bps / 100:.1f}% against a {target_margin_bps / 100:.1f}% target.",
             }
         )
-    if not precomputed_servers.get(tenant_id):
+    if not server_allocations:
         alerts.append(
             {
                 "severity": "medium",
