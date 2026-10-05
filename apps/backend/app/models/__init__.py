@@ -29,6 +29,7 @@ from app.models.billing import (
 )
 from app.models.catalog_extensions import BillingAddon, EdgeRouteDeployment, TenantAddon
 from app.models.commercial_ops_v2 import BillingContract, UptimeCheck, UptimeMonitor
+from app.models.commercial_profitability import InfrastructureCommercialProfile, TenantInfrastructureAllocation
 from app.models.finance import (
     FinanceClient,
     FinanceCreditNote,
@@ -131,7 +132,7 @@ __all__ = [
     "MailboxStatus", "MailboxStorageType", "MailAlias", "DistributionGroup", "DistributionGroupMember", "PlatformMailDomainGrant",
     "PlatformMailboxBinding", "PlatformMailOutboundDelivery", "DkimKey", "BillingPlan", "TenantSubscription", "UsageSnapshot", "BillingInvoice",
     "BillingPaymentEvent", "SubscriptionStatus", "InvoiceStatus", "BillingAddon", "TenantAddon", "EdgeRouteDeployment",
-    "BillingContract", "UptimeMonitor", "UptimeCheck",
+    "BillingContract", "UptimeMonitor", "UptimeCheck", "InfrastructureCommercialProfile", "TenantInfrastructureAllocation",
     "FinanceClient", "FinanceInvoice", "FinanceInvoiceItem", "FinanceInvoiceSchedule", "FinancePayment", "FinanceCreditNote", "FinanceDocument", "FinanceDocumentItem", "FinanceSenderConfiguration", "FinanceExpense", "FinanceBankTransaction", "FinanceServiceBillingLink", "FinanceAccountingPeriod", "FinanceRefund", "FinanceTaxRate", "FinanceApprovalRequest", "FinanceGovernanceSetting", "FinanceRoleGrant", "FinancePortalAccess", "FinanceDeliveryEvent", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject", "InfrastructureServer", "InfrastructureServerAgent", "InfrastructureTelemetrySnapshot", "InfrastructureWireGuardPeer", "InfrastructureAgentCommand", "InfrastructureContainerSnapshot", "InfrastructureSecuritySnapshot",
     "HOSTING_RUNTIME_MANIFEST_VERSION", "HostingDeployment", "HostingEnvironmentVariable", "HostingNodeAgent", "HostingNodeBootstrap", "HostingNodeHealthState", "HostingFailoverAttempt", "HostingProjectOperation", "HostingProvisioningWorkflow",
     "HostingBuild", "HostingBuilderAgent", "HostingBuildLog", "HostingDatabaseBackup", "HostingSourceWebhook", "HostingWebhookDelivery", "HostingDatabase", "HostingSource", "HostingSourceCredential",
