@@ -52,6 +52,11 @@ PY
 install -d -m 0700 "$WG_DIR" /etc/wireguard
 install -d -m 0755 /opt/ithute-wireguard
 
+cat > /etc/sysctl.d/90-ithute-wireguard-forward.conf <<'EOF'
+net.ipv4.ip_forward=1
+EOF
+sysctl --system >/dev/null
+
 if [ ! -s "$WG_PRIVATE_KEY" ]; then
   wg genkey > "$WG_PRIVATE_KEY"
   chmod 0600 "$WG_PRIVATE_KEY"
