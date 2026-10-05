@@ -363,6 +363,16 @@ func verifyRealtimeTicket(raw, secret string) (realtimeTicket, error) {
 	return ticket, nil
 }
 
+
+func realtimeTicketProtocol(r *http.Request) (string, string) {
+	for _, protocol := range websocket.Subprotocols(r) {
+		if strings.HasPrefix(protocol, "ithute-ticket.") {
+			return protocol, strings.TrimPrefix(protocol, "ithute-ticket.")
+		}
+	}
+	return "", ""
+}
+
 var websocketUpgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
@@ -807,13 +817,16 @@ func main() {
 	mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, engineStatus)
 	})
-	mux.HandleFunc("GET /v1/realtime/ws", func(w http.ResponseWriter, r *http.Request) {
-		ticket, err := verifyRealtimeTicket(strings.TrimSpace(r.URL.Query().Get("ticket")), realtimeToken)
+	mux.HandleFunc("GET /v1/native-ws", func(w http.ResponseWriter, r *http.Request) {
+		protocol, rawTicket := realtimeTicketProtocol(r)
+		ticket, err := verifyRealtimeTicket(rawTicket, realtimeToken)
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_ticket"})
 			return
 		}
-		conn, err := websocketUpgrader.Upgrade(w, r, nil)
+		upgrader := websocketUpgrader
+		upgrader.Subprotocols = []string{protocol}
+		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
