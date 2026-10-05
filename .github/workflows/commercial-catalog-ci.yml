@@ -9,12 +9,19 @@ on:
       - "apps/backend/app/api/v1/public_hosting.py"
       - "apps/backend/alembic/versions/*commercial*.py"
       - "apps/backend/alembic/versions/*overage*.py"
+      - "apps/backend/alembic/versions/*profitability*.py"
+      - "apps/backend/app/models/commercial_profitability.py"
+      - "apps/backend/app/services/commercial_profitability.py"
+      - "apps/backend/app/api/v1/commercial_profitability.py"
       - "apps/backend/tests/test_plan_catalog.py"
       - "apps/backend/tests/test_metered_overages.py"
       - "apps/backend/tests/test_hosting_metering.py"
       - "apps/backend/tests/test_commercial_ops_v2.py"
+      - "apps/backend/tests/test_commercial_profitability.py"
       - "apps/frontend/app/billing/**"
       - "apps/frontend/app/packages/**"
+      - "apps/frontend/app/commercial-profitability/**"
+      - "apps/frontend/components/control-shell.tsx"
       - "apps/frontend/app/pricing/**"
       - "apps/frontend/app/signup/**"
       - "apps/frontend/app/hosting-company/**"
@@ -72,4 +79,4 @@ jobs:
 
       - name: Run commercial catalog and metering regressions
         working-directory: apps/backend
-        run: pytest -q tests/test_plan_catalog.py tests/test_metered_overages.py tests/test_hosting_metering.py tests/test_commercial_ops_v2.py
+        run: pytest -q tests/test_plan_catalog.py tests/test_metered_overages.py tests/test_hosting_metering.py tests/test_commercial_ops_v2.py tests/test_commercial_profitability.py
