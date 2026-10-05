@@ -110,23 +110,34 @@ type pushDeliveryResponse struct {
 
 type pushBroker struct {
     mu      sync.Mutex
-    queues  map[string]chan pushEnvelope
+    waiters map[string]chan pushEnvelope
     counter uint64
 }
 
 func newPushBroker() *pushBroker {
-    return &pushBroker{queues: make(map[string]chan pushEnvelope)}
+    return &pushBroker{waiters: make(map[string]chan pushEnvelope)}
 }
 
-func (b *pushBroker) queue(endpoint string) chan pushEnvelope {
+func (b *pushBroker) register(endpoint string) chan pushEnvelope {
     b.mu.Lock()
     defer b.mu.Unlock()
-    queue, ok := b.queues[endpoint]
-    if !ok {
-        queue = make(chan pushEnvelope, 64)
-        b.queues[endpoint] = queue
+    waiter := make(chan pushEnvelope, 1)
+    b.waiters[endpoint] = waiter
+    return waiter
+}
+
+func (b *pushBroker) unregister(endpoint string, waiter chan pushEnvelope) {
+    b.mu.Lock()
+    defer b.mu.Unlock()
+    if current, ok := b.waiters[endpoint]; ok && current == waiter {
+        delete(b.waiters, endpoint)
     }
-    return queue
+}
+
+func (b *pushBroker) active(endpoint string) chan pushEnvelope {
+    b.mu.Lock()
+    defer b.mu.Unlock()
+    return b.waiters[endpoint]
 }
 
 func (b *pushBroker) nextID() string {
@@ -153,11 +164,15 @@ func (b *pushBroker) deliver(request pushDeliveryRequest) (pushDeliveryResponse,
         ExpiresAt: time.Now().Add(time.Duration(request.TTLSeconds) * time.Second).Unix(),
         Notification: request.Notification,
     }
+    waiter := b.active(endpoint)
+    if waiter == nil {
+        return pushDeliveryResponse{}, errors.New("endpoint is not actively connected")
+    }
     select {
-    case b.queue(endpoint) <- envelope:
+    case waiter <- envelope:
         return pushDeliveryResponse{Engine: "go", MessageID: envelope.MessageID, Queued: true}, nil
     default:
-        return pushDeliveryResponse{}, errors.New("endpoint queue is full")
+        return pushDeliveryResponse{}, errors.New("endpoint is not ready")
     }
 }
 
@@ -636,8 +651,8 @@ func main() {
 		response, err := broker.deliver(request)
 		if err != nil {
 			status := http.StatusUnprocessableEntity
-			if err.Error() == "endpoint queue is full" {
-				status = http.StatusTooManyRequests
+			if err.Error() == "endpoint is not actively connected" || err.Error() == "endpoint is not ready" {
+				status = http.StatusServiceUnavailable
 			}
 			writeJSON(w, status, map[string]string{"error": err.Error()})
 			return
@@ -661,7 +676,8 @@ func main() {
 		}
 		timer := time.NewTimer(timeout)
 		defer timer.Stop()
-		queue := broker.queue(endpoint)
+		waiter := broker.register(endpoint)
+		defer broker.unregister(endpoint, waiter)
 		for {
 			select {
 			case <-r.Context().Done():
@@ -669,7 +685,7 @@ func main() {
 			case <-timer.C:
 				w.WriteHeader(http.StatusNoContent)
 				return
-			case message := <-queue:
+			case message := <-waiter:
 				if message.ExpiresAt <= time.Now().Unix() {
 					continue
 				}
