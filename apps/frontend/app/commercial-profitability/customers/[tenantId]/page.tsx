@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
 import { ArrowLeft, Boxes, Database, Globe2, HardDrive, Mail, Server } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
 
@@ -20,9 +21,10 @@ type Environment={
   alerts:{severity:string;key:string;message:string}[];
 };
 
-export default function CustomerEnvironmentPage({params}:{params:{tenantId:string}}){
+export default function CustomerEnvironmentPage(){
+  const params=useParams<{tenantId:string}>(); const tenantId=params.tenantId;
   const[data,setData]=useState<Environment|null>(null);const[error,setError]=useState("");
-  useEffect(()=>{void(async()=>{const r=await fetch(API+"/platform/commercial/customers/"+params.tenantId,{credentials:"include",cache:"no-store"});const b=await r.json().catch(()=>({}));if(!r.ok)setError(String(b.detail||"Unable to load customer environment."));else setData(b);})();},[params.tenantId]);
+  useEffect(()=>{void(async()=>{const r=await fetch(API+"/platform/commercial/customers/"+tenantId,{credentials:"include",cache:"no-store"});const b=await r.json().catch(()=>({}));if(!r.ok)setError(String(b.detail||"Unable to load customer environment."));else setData(b);})();},[tenantId]);
   return <ControlShell title={data?.tenant.name||"Customer environment"} subtitle="Services, infrastructure placement, billing and profitability">
     <div className="space-y-5">
       <Link href="/commercial-profitability" className="inline-flex items-center gap-2 text-xs font-black text-[#285b55]"><ArrowLeft size={13}/>Profitability centre</Link>
