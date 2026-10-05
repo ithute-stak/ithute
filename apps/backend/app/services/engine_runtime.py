@@ -16,6 +16,8 @@ import dns.resolver
 import dns.reversename
 import httpx
 
+from app.services.cluster_engine import cluster_engine_status
+
 
 RUST_LIBRARY = Path(os.getenv("ITHUTE_RUST_CORE_LIBRARY", "/opt/ithute-engines/libithute_rust_core.so"))
 CPP_LIBRARY = Path(os.getenv("ITHUTE_CPP_NATIVE_LIBRARY", "/opt/ithute-engines/libithute_cpp_native.so"))
@@ -642,6 +644,7 @@ def java_worker_status() -> dict:
 def engine_status() -> dict:
     rust_available = _load_rust() is not None
     cpp_available = _load_cpp() is not None
+    cpp_cluster = cluster_engine_status()
     go = go_worker_status()
     java = java_worker_status()
     return {
@@ -668,10 +671,14 @@ def engine_status() -> dict:
             "go": go,
             "java": java,
             "cpp": {
-                "available": cpp_available,
+                "available": bool(cpp_available or cpp_cluster["available"]),
                 "mode": "native",
                 "library": str(CPP_LIBRARY),
-                "capabilities": ["fnv1a64", "blob-profile"] if cpp_available else [],
+                "cluster_library": cpp_cluster["library"],
+                "capabilities": (
+                    (["fnv1a64", "blob-profile"] if cpp_available else [])
+                    + list(cpp_cluster["capabilities"])
+                ),
                 "fallback": "python",
             },
         },

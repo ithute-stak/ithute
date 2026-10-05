@@ -16,6 +16,7 @@ from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
 from app.services.engine_router import execute_binary, execute_hmac_sha256, execute_network, routing_status
+from app.services.cluster_engine import cluster_graph_analysis
 from app.services.managed_network import update_peer_telemetry
 from app.models import (
     AuditLog,
@@ -1117,6 +1118,94 @@ def infrastructure_agent_cluster_state(
         "fingerprint_engine": digest.engine,
         "signature_hmac_sha256": str(signature.value),
         "signature_engine": signature.engine,
+    }
+
+
+@router.get("/cluster-graph/summary")
+def cluster_graph_summary(
+    source_server_id: UUID | None = None,
+    target_server_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    if (source_server_id is None) != (target_server_id is None):
+        raise HTTPException(status_code=422, detail="Provide both source_server_id and target_server_id for a reachability query")
+
+    rows = db.scalars(
+        select(InfrastructureServer)
+        .where(InfrastructureServer.status != "disabled")
+        .order_by(InfrastructureServer.name.asc())
+    ).all()
+
+    nodes: list[dict] = []
+    for server in rows:
+        agent = db.get(InfrastructureServerAgent, server.id)
+        try:
+            telemetry = json.loads(agent.telemetry_json or "{}") if agent else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            telemetry = {}
+        cpu = telemetry.get("cpu") if isinstance(telemetry.get("cpu"), dict) else {}
+        memory = telemetry.get("memory") if isinstance(telemetry.get("memory"), dict) else {}
+        disks = telemetry.get("disks") if isinstance(telemetry.get("disks"), list) else []
+        storage_total = 0
+        storage_used = 0
+        for disk in disks[:128]:
+            if not isinstance(disk, dict):
+                continue
+            try:
+                storage_total += max(0, int(disk.get("total_bytes") or 0))
+                storage_used += max(0, int(disk.get("used_bytes") or 0))
+            except (TypeError, ValueError, OverflowError):
+                continue
+        peer = db.scalar(
+            select(InfrastructureWireGuardPeer).where(
+                InfrastructureWireGuardPeer.server_id == server.id,
+                InfrastructureWireGuardPeer.status == "active",
+            )
+        )
+        online = bool(agent and agent.last_seen_at and _fresh(agent.last_seen_at))
+        nodes.append({
+            "id": str(server.id),
+            "name": server.name,
+            "private_ip": peer.assigned_ipv4 if peer else "",
+            "status": server.status,
+            "online": online,
+            "healthy": bool(online and server.status == "active"),
+            "cpu_used_percent": cpu.get("used_percent"),
+            "memory_total_bytes": memory.get("total_bytes"),
+            "memory_used_bytes": memory.get("used_bytes"),
+            "storage_total_bytes": storage_total,
+            "storage_used_bytes": storage_used,
+        })
+
+    grants = db.scalars(
+        select(InfrastructureNetworkGrant)
+        .where(InfrastructureNetworkGrant.enabled.is_(True))
+        .order_by(InfrastructureNetworkGrant.created_at.asc())
+    ).all()
+    edges = [
+        {
+            "source": str(grant.source_server_id),
+            "target": str(grant.target_server_id),
+            "relation": "communicates_with",
+            "service": grant.service,
+            "protocol": grant.protocol,
+            "port": grant.port,
+        }
+        for grant in grants
+    ]
+
+    analysis = cluster_graph_analysis(
+        nodes,
+        edges,
+        source=str(source_server_id) if source_server_id else None,
+        target=str(target_server_id) if target_server_id else None,
+    )
+    return {
+        "topology": "sanitized-operational",
+        "network_policy": "full_mesh",
+        "relationship_edges": "service_metadata",
+        **analysis,
     }
 
 

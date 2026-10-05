@@ -96,17 +96,20 @@ jobs:
           mkdir -p /tmp/ithute-java/classes
           javac --release 21 --add-modules jdk.httpserver -d /tmp/ithute-java/classes $(find engines/java-worker/src -name '*.java')
 
-      - name: Test C++ turbo library
+      - name: Test C++ engines
         run: |
           cmake -S engines/cpp-native -B /tmp/ithute-cpp-build -DCMAKE_BUILD_TYPE=Release
           cmake --build /tmp/ithute-cpp-build --parallel 2
           ctest --test-dir /tmp/ithute-cpp-build --output-on-failure
+          cmake -S engines/cpp-cluster -B /tmp/ithute-cpp-cluster-build -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/ithute-cpp-cluster-build --parallel 2
+          ctest --test-dir /tmp/ithute-cpp-cluster-build --output-on-failure
 
       - name: Test Python engine fallback
         working-directory: apps/backend
         run: |
           python -m pip install --disable-pip-version-check -r requirements.txt
-          pytest -q tests/test_engine_runtime.py tests/test_engine_router.py tests/test_engine_operations.py tests/test_webmail_message_resilience.py tests/test_platform_mail_attachments.py tests/test_dmarc_reports.py tests/test_infrastructure_monitoring.py
+          pytest -q tests/test_engine_runtime.py tests/test_engine_router.py tests/test_engine_operations.py tests/test_cluster_engine.py tests/test_webmail_message_resilience.py tests/test_platform_mail_attachments.py tests/test_dmarc_reports.py tests/test_infrastructure_monitoring.py
 
       - name: Build API with native engines
         run: |
@@ -117,6 +120,21 @@ jobs:
           assert status["brain"]["authoritative"] is True
           assert status["engines"]["rust"]["available"] is True
           assert status["engines"]["cpp"]["available"] is True
+          assert "cluster-graph" in status["engines"]["cpp"]["capabilities"]
+          from app.services.cluster_engine import cluster_graph_analysis
+          cluster = cluster_graph_analysis(
+              [
+                  {"id": "a", "name": "A", "online": True, "healthy": True, "memory_total_bytes": 8},
+                  {"id": "b", "name": "B", "online": True, "healthy": True, "memory_total_bytes": 16},
+              ],
+              [{"source": "a", "target": "b", "relation": "depends_on"}],
+              source="a",
+              target="b",
+          )
+          assert cluster["engine"] == "cpp"
+          assert cluster["reachable"] is True
+          assert cluster["summary"]["nodes"] == 2
+          assert cluster["summary"]["edges"] == 1
           from app.services.engine_runtime import hmac_sha256
           result = sample_native_result(b"Subject: engine\\n\\nbody")
           hmac_value, hmac_engine = hmac_sha256(b"key", b"audit")

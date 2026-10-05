@@ -12,6 +12,12 @@ COPY engines/cpp-native/src ./src
 RUN g++ -std=c++20 -O3 -fPIC -shared -Wall -Wextra -Wpedantic -Werror \
     -Iinclude src/ithute_cpp_native.cpp -o /libithute_cpp_native.so
 
+WORKDIR /cluster
+COPY engines/cpp-cluster/include ./include
+COPY engines/cpp-cluster/src ./src
+RUN g++ -std=c++20 -O3 -fPIC -shared -Wall -Wextra -Wpedantic -Werror \
+    -Iinclude src/cluster_graph.cpp src/c_api.cpp -o /libithute_cpp_cluster.so
+
 
 FROM python:3.12-slim
 
@@ -21,7 +27,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DEFAULT_TIMEOUT=120 \
     PIP_RETRIES=10 \
     ITHUTE_RUST_CORE_LIBRARY=/opt/ithute-engines/libithute_rust_core.so \
-    ITHUTE_CPP_NATIVE_LIBRARY=/opt/ithute-engines/libithute_cpp_native.so
+    ITHUTE_CPP_NATIVE_LIBRARY=/opt/ithute-engines/libithute_cpp_native.so \
+    ITHUTE_CPP_CLUSTER_LIBRARY=/opt/ithute-engines/libithute_cpp_cluster.so
 
 WORKDIR /app
 
@@ -44,6 +51,7 @@ RUN set -eux; \
 RUN mkdir -p /opt/ithute-engines
 COPY --from=rust-engine-build /src/target/release/libithute_rust_core.so /opt/ithute-engines/libithute_rust_core.so
 COPY --from=cpp-engine-build /libithute_cpp_native.so /opt/ithute-engines/libithute_cpp_native.so
+COPY --from=cpp-engine-build /libithute_cpp_cluster.so /opt/ithute-engines/libithute_cpp_cluster.so
 COPY apps/backend/ .
 
 EXPOSE 8000
