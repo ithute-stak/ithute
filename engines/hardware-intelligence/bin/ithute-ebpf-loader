@@ -89,14 +89,14 @@ def percpu_sum(rows, expected):
 def percentile(histogram, upper_us, pct):
     total = sum(histogram)
     if total <= 0:
-        return None
+        return None, False
     target = math.ceil(total * pct)
     running = 0
-    for count, upper in zip(histogram, upper_us):
+    for index, (count, upper) in enumerate(zip(histogram, upper_us)):
         running += count
         if running >= target:
-            return upper / 1000.0
-    return None
+            return upper / 1000.0, index == len(upper_us) - 1
+    return None, False
 
 events = percpu_sum(load_arg(1), 4)
 histogram = percpu_sum(load_arg(2), 16)
@@ -117,7 +117,10 @@ for row in stats_rows:
         latency_total_ns += int.from_bytes(bytes(value[8:16]), "little")
         latency_max_ns = max(latency_max_ns, int.from_bytes(bytes(value[16:24]), "little"))
 
-upper_us = [100,250,500,1000,2000,4000,8000,16000,32000,64000,128000,256000,512000,1000000,2000000,4000000]
+upper_us = [100,250,500,1000,2000,4000,8000,16000,32000,64000,128000,256000,512000,1000000,2000000,2000000]
+p50, p50_capped = percentile(histogram, upper_us, 0.50)
+p95, p95_capped = percentile(histogram, upper_us, 0.95)
+p99, p99_capped = percentile(histogram, upper_us, 0.99)
 
 print(json.dumps({
     "available": True,
@@ -129,9 +132,10 @@ print(json.dumps({
     "block_latency_count": latency_count,
     "block_latency_avg_ms": round((latency_total_ns / latency_count) / 1_000_000, 3) if latency_count else None,
     "block_latency_max_ms": round(latency_max_ns / 1_000_000, 3) if latency_count else None,
-    "block_latency_p50_ms": percentile(histogram, upper_us, 0.50),
-    "block_latency_p95_ms": percentile(histogram, upper_us, 0.95),
-    "block_latency_p99_ms": percentile(histogram, upper_us, 0.99),
+    "block_latency_p50_ms": p50,
+    "block_latency_p95_ms": p95,
+    "block_latency_p99_ms": p99,
+    "block_latency_percentiles_capped": bool(p50_capped or p95_capped or p99_capped),
     "block_latency_histogram": histogram,
 }, separators=(",", ":")))
 PY
