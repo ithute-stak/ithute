@@ -26,8 +26,8 @@ C hardware probe + eBPF kernel signals -> Rust validation/hardening -> Go long-r
 - [ ] Add hwmon/IPMI/EDAC/ECC adapters where the host exposes them.
 - [ ] Add eBPF loader with least-privilege capability checks.
 - [ ] Add local buffering, jitter, backoff and batch compression.
-- [ ] Sign agent identity and bind reports to an Ithute infrastructure-server record.
-- [ ] Add Rust telemetry normalisation/validation boundary.
+- [x] Sign agent identity with per-agent HMAC envelopes.\n- [ ] Bind signed agent identities to Ithute infrastructure-server records during backend ingestion.
+- [x] Add Rust telemetry safety validation boundary for core host signals.
 
 ### Phase 3 - Backend integration
 - [ ] Persist immutable telemetry samples with retention/downsampling policy.
