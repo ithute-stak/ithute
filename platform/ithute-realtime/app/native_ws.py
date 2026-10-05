@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import secrets
 import time
 
 
@@ -22,6 +23,7 @@ def issue_realtime_ticket(
         "application_id": application_id,
         "sub": sub,
         "device_key": device_key,
+        "nonce": secrets.token_urlsafe(12),
         "exp": int(time.time()) + lifetime,
     }
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
