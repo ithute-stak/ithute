@@ -38,7 +38,7 @@ x-push-environment: &push_environment
   PUSH_ALLOWED_ADMIN_CLIENTS: ${ITHUTE_PUSH_ALLOWED_ADMIN_CLIENTS:-mailbox-dns}
   PUSH_ENDPOINT_ENCRYPTION_KEY: ${ITHUTE_PUSH_ENDPOINT_ENCRYPTION_KEY}
   PUSH_REQUIRED_PROVIDERS: ${ITHUTE_PUSH_REQUIRED_PROVIDERS:-}
-  PUSH_ITHUTE_GATEWAY_URL: ${ITHUTE_PUSH_ITHUTE_GATEWAY_URL:-}
+  PUSH_ITHUTE_GATEWAY_URL: ${ITHUTE_PUSH_ITHUTE_GATEWAY_URL:-http://ithute-go-worker:8080}
   PUSH_ITHUTE_GATEWAY_TOKEN: ${ITHUTE_PUSH_ITHUTE_GATEWAY_TOKEN:-}
   PUSH_FCM_PROJECT_ID: ${ITHUTE_PUSH_FCM_PROJECT_ID:-}
   PUSH_FCM_CREDENTIALS_FILE: /run/secrets/fcm-service-account.json
@@ -201,6 +201,27 @@ services:
       timeout: 5s
       retries: 18
       start_period: 45s
+    networks: [ithute]
+
+  ithute-go-worker:
+    image: ithute-go-worker:${ITHUTE_IMAGE_TAG:?ITHUTE_IMAGE_TAG is required}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    environment:
+      ITHUTE_PUSH_GATEWAY_TOKEN: ${ITHUTE_PUSH_ITHUTE_GATEWAY_TOKEN:-}
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     networks: [ithute]
 
   ithute-java-worker:
