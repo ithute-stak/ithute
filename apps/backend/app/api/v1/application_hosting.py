@@ -337,6 +337,7 @@ def placement_preview(
     cpu_millicores: int = 500,
     database_engine: str | None = None,
     preferred_region: str | None = None,
+    tenant_id: UUID | None = None,
     db: Session = Depends(get_db),
     current: User = Depends(require_platform_owner),
 ):
@@ -350,6 +351,7 @@ def placement_preview(
         cpu_millicores=max(0, cpu_millicores),
         database_engine=database_engine,
         preferred_region=preferred_region,
+        tenant_id=tenant_id,
     )
     return {
         "items": [
