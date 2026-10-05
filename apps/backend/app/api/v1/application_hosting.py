@@ -595,6 +595,7 @@ def create_hosting_project(
         cpu_millicores=payload.cpu_millicores,
         preferred_node_id=preferred_node_id,
         preferred_region=payload.preferred_region,
+    tenant_id=tenant_id,
     )
     now = datetime.now(timezone.utc)
     project = HostingProject(
