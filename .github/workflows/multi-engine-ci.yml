@@ -117,11 +117,17 @@ jobs:
           assert status["brain"]["authoritative"] is True
           assert status["engines"]["rust"]["available"] is True
           assert status["engines"]["cpp"]["available"] is True
-          from app.services.engine_runtime import hmac_sha256
+          from app.services.engine_runtime import hmac_sha256, push_envelope_scan, route_shard
           result = sample_native_result(b"Subject: engine\\n\\nbody")
           hmac_value, hmac_engine = hmac_sha256(b"key", b"audit")
+          scan, scan_engine = push_envelope_scan(b'{"type":"event","body":"hello"}')
+          shard, shard_engine = route_shard(b"loanhub:user-1", 64)
           assert hmac_engine == "rust"
           assert len(hmac_value) == 64
+          assert scan_engine == "rust"
+          assert scan.utf8_valid and scan.json_object_shape
+          assert shard_engine == "cpp"
+          assert 0 <= shard < 64
           assert result["stats_engine"] == "rust"
           assert result["mime_engine"] == "rust"
           assert result["sha256_engine"] == "rust"
