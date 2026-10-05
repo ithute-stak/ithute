@@ -120,6 +120,24 @@ class InfrastructureNetworkGrant(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class InfrastructureNetworkObservation(Base):
+    __tablename__ = "infrastructure_network_observations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_server_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("infrastructure_servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_server_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("infrastructure_servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    port: Mapped[int] = mapped_column(Integer, nullable=False)
+    samples: Mapped[int] = mapped_column(Integer, nullable=False)
+    successes: Mapped[int] = mapped_column(Integer, nullable=False)
+    reachable: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    connect_loss_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    latency_min_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    latency_average_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    latency_max_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    jitter_average_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+
 class InfrastructureAgentCommand(Base):
     __tablename__ = "infrastructure_agent_commands"
 
