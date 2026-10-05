@@ -11,6 +11,7 @@ def test_router_prefers_specialist_engines_by_workload():
     assert engine_router.preferred_engine("network.concurrent") == "go"
     assert engine_router.preferred_engine("enterprise.xml") == "java"
     assert engine_router.preferred_engine("native.fingerprint") == "cpp"
+    assert engine_router.preferred_engine("native.blob_profile") == "cpp"
     assert engine_router.preferred_engine("unknown.operation") == "python"
 
 
