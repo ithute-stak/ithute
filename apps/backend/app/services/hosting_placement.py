@@ -22,6 +22,7 @@ from app.models import (
     TenantSubscription,
 )
 
+from app.services.cluster_engine import rank_placement_candidates
 from app.services.resource_manager import node_commitments
 
 HEARTBEAT_GRACE = timedelta(minutes=3)
@@ -493,7 +494,7 @@ def rank_nodes(
         )
         for node in nodes
     ]
-    return sorted(ranked, key=lambda row: (not row["eligible"], row["score"], row["name"].lower()))
+    return rank_placement_candidates(ranked)
 
 
 def select_node(

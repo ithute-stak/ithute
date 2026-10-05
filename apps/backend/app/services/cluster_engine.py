@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import math
 import os
 from collections import deque
 from pathlib import Path
@@ -76,6 +77,15 @@ def _load_cluster() -> ctypes.CDLL | None:
             ctypes.POINTER(_ClusterSummary),
         ]
         library.ithute_cluster_summary_read.restype = ctypes.c_int
+        library.ithute_cluster_rank_candidates.argtypes = [
+            ctypes.POINTER(ctypes.c_char_p),
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.c_size_t,
+        ]
+        library.ithute_cluster_rank_candidates.restype = ctypes.c_int
     except (OSError, AttributeError):
         return None
     _cluster = library
@@ -88,7 +98,7 @@ def cluster_engine_status() -> dict:
         "available": available,
         "mode": "native",
         "library": str(CLUSTER_LIBRARY),
-        "capabilities": ["cluster-graph", "graph-reachability", "cluster-summary"] if available else [],
+        "capabilities": ["cluster-graph", "graph-reachability", "cluster-summary", "placement-priority-queue"] if available else [],
         "fallback": "python",
     }
 
@@ -168,6 +178,62 @@ def _python_reachable(nodes: list[dict], edges: list[dict], source: str, target:
                 seen.add(neighbor)
                 pending.append(neighbor)
     return False
+
+
+def _placement_sort_key(row: dict) -> tuple:
+    try:
+        score = float(row.get("score", 0.0))
+    except (TypeError, ValueError, OverflowError):
+        score = math.inf
+    if not math.isfinite(score):
+        score = math.inf
+    name = str(row.get("name") or "").lower()
+    node_id = str(row.get("node_id") or "")
+    return (not bool(row.get("eligible")), score, name, node_id)
+
+
+def _python_rank_candidates(rows: list[dict]) -> list[dict]:
+    return sorted(rows, key=_placement_sort_key)
+
+
+def rank_placement_candidates(rows: list[dict]) -> list[dict]:
+    """Rank placement candidates with the native priority queue and an exact Python fallback."""
+    if len(rows) <= 1:
+        return list(rows)
+
+    library = _load_cluster()
+    if library is None:
+        return _python_rank_candidates(rows)
+
+    count = len(rows)
+    keys = (ctypes.c_char_p * count)()
+    scores = (ctypes.c_double * count)()
+    eligible = (ctypes.c_int * count)()
+    order = (ctypes.c_size_t * count)()
+
+    for index, row in enumerate(rows):
+        _, score, name, node_id = _placement_sort_key(row)
+        keys[index] = _b(f"{name}\x1f{node_id}")
+        scores[index] = score
+        eligible[index] = 1 if bool(row.get("eligible")) else 0
+
+    try:
+        code = library.ithute_cluster_rank_candidates(
+            keys,
+            scores,
+            eligible,
+            count,
+            order,
+            count,
+        )
+        if code != 0:
+            raise RuntimeError("native placement ranking failed")
+        ranked_indices = [int(order[index]) for index in range(count)]
+        if sorted(ranked_indices) != list(range(count)):
+            raise RuntimeError("native placement ranking returned invalid indices")
+        return [rows[index] for index in ranked_indices]
+    except (OSError, RuntimeError, ValueError, ctypes.ArgumentError):
+        return _python_rank_candidates(rows)
 
 
 def cluster_graph_analysis(

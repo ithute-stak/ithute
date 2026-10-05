@@ -65,3 +65,18 @@ def test_cluster_graph_rejects_unknown_path_in_fallback(monkeypatch):
         target="missing",
     )
     assert result["reachable"] is False
+
+
+
+def test_placement_ranking_fallback_matches_scheduler_contract(monkeypatch):
+    monkeypatch.setattr(cluster_engine, "_load_cluster", lambda: None)
+    rows = [
+        {"node_id": "c", "name": "Charlie", "eligible": True, "score": 20.0},
+        {"node_id": "b", "name": "Bravo", "eligible": True, "score": 10.0},
+        {"node_id": "a", "name": "Alpha", "eligible": True, "score": 10.0},
+        {"node_id": "z", "name": "Zulu", "eligible": False, "score": 1.0},
+    ]
+
+    ranked = cluster_engine.rank_placement_candidates(rows)
+
+    assert [row["node_id"] for row in ranked] == ["a", "b", "c", "z"]

@@ -16,7 +16,7 @@ WORKDIR /cluster
 COPY engines/cpp-cluster/include ./include
 COPY engines/cpp-cluster/src ./src
 RUN g++ -std=c++20 -O3 -fPIC -shared -Wall -Wextra -Wpedantic -Werror \
-    -Iinclude src/cluster_graph.cpp src/c_api.cpp -o /libithute_cpp_cluster.so
+    -Iinclude src/cluster_graph.cpp src/placement_scheduler.cpp src/c_api.cpp -o /libithute_cpp_cluster.so
 
 
 FROM python:3.12-slim

@@ -3,6 +3,7 @@ project(ithute_cpp_cluster LANGUAGES CXX)
 
 add_library(ithute_cpp_cluster SHARED
   src/cluster_graph.cpp
+  src/placement_scheduler.cpp
   src/c_api.cpp
 )
 

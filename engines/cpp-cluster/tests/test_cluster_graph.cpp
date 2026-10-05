@@ -1,5 +1,6 @@
 #include "cluster_graph.hpp"
 #include "ithute_cluster_c.h"
+#include "placement_scheduler.hpp"
 
 #include <cassert>
 #include <cstdint>
@@ -110,6 +111,25 @@ int main() {
     assert(native_summary.healthy_nodes == 2);
     assert(native_summary.memory_total_bytes == 24);
     ithute_cluster_destroy(handle);
+
+    const char* placement_keys[] = {"node-c", "node-a", "node-b", "node-z"};
+    const double placement_scores[] = {20.0, 10.0, 10.0, 1.0};
+    const int placement_eligible[] = {1, 1, 1, 0};
+    std::size_t placement_order[4] = {};
+    assert(
+        ithute_cluster_rank_candidates(
+            placement_keys,
+            placement_scores,
+            placement_eligible,
+            4,
+            placement_order,
+            4
+        ) == 0
+    );
+    assert(placement_order[0] == 1);
+    assert(placement_order[1] == 2);
+    assert(placement_order[2] == 0);
+    assert(placement_order[3] == 3);
 
     return 0;
 }
