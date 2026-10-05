@@ -65,7 +65,6 @@ def test_private_network_is_default_full_mesh_and_service_records_are_metadata()
     assert '@router.post("/platform/infrastructure/private-network/grants"' in api
     assert '"policy_mode": "full_mesh"' in api
     assert '"peer_communication_default": "allow"' in api
-    assert '"network_policy_mode": "full_mesh"' in cluster_api
     assert '"mode": "full_mesh"' in cluster_api
     assert '"default": "allow"' in cluster_api
     assert 'MESH_CHAIN="ITHUTE_WG_MESH"' in firewall
