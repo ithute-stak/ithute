@@ -271,7 +271,7 @@ def execute_structured_command(command: dict) -> tuple[bool, dict, str | None]:
             return False, {}, "unsupported service action"
         try:
             completed = subprocess.run(
-                ["sudo", "-n", "systemctl", verb, unit],
+                ["systemctl", verb, unit],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
