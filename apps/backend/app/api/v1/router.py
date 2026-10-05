@@ -11,6 +11,7 @@ from app.api.v1 import (
     business,
     canonical_pricing,
     commercial_ops_v2,
+    commercial_profitability,
     corporate_quotations,
     customer_applications,
     deliverability,
@@ -140,6 +141,7 @@ api_router.include_router(plan_admin.router)
 api_router.include_router(hosting_catalog.router)
 api_router.include_router(billing.router)
 api_router.include_router(commercial_ops_v2.router)
+api_router.include_router(commercial_profitability.router)
 api_router.include_router(finance.router)
 api_router.include_router(finance_documents.router)
 api_router.include_router(corporate_quotations.router)
