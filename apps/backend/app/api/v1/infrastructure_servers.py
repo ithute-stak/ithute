@@ -993,6 +993,42 @@ def rotate_server_agent_token(server_id: UUID, db: Session = Depends(get_db), cu
     }
 
 
+def _cluster_reachability(servers: list[InfrastructureServer]) -> tuple[str, dict[str, dict]]:
+    targets: list[dict] = []
+    labels: dict[str, tuple[str, str]] = {}
+    for server in servers:
+        for target in _network_probe_targets(server):
+            if len(targets) >= 64:
+                break
+            targets.append(target)
+            labels[str(target["id"])] = (str(server.id), str(target["id"]).rsplit(":", 1)[-1])
+        if len(targets) >= 64:
+            break
+
+    if not targets:
+        return "python", {}
+
+    execution = execute_network(targets, concurrency=min(24, len(targets)))
+    grouped: dict[str, dict] = {}
+    results = execution.value.get("results", []) if isinstance(execution.value, dict) else []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        mapping = labels.get(str(item.get("id") or ""))
+        if mapping is None:
+            continue
+        server_id, service = mapping
+        node = grouped.setdefault(server_id, {"services": {}, "reachable": True, "checked": 0})
+        reachable = bool(item.get("reachable"))
+        node["services"][service] = {
+            "reachable": reachable,
+            "latency_ms": item.get("latency_ms"),
+        }
+        node["reachable"] = bool(node["reachable"] and reachable)
+        node["checked"] += 1
+    return execution.engine, grouped
+
+
 @router.get("/agent/cluster-state")
 def infrastructure_agent_cluster_state(
     x_ithute_server_agent: str | None = Header(default=None),
@@ -1004,7 +1040,16 @@ def infrastructure_agent_cluster_state(
         .where(InfrastructureServer.status != "disabled")
         .order_by(InfrastructureServer.name.asc())
     ).all()
+    reachability_engine, reachability = _cluster_reachability(list(rows))
     nodes = [_cluster_node_out(db, row, self_server_id=current_server.id) for row in rows]
+    for node in nodes:
+        live = reachability.get(str(node["server_id"]), {"services": {}, "reachable": None, "checked": 0})
+        node["reachability"] = {
+            "engine": reachability_engine,
+            "reachable": live["reachable"],
+            "checked": live["checked"],
+            "services": live["services"],
+        }
     canonical = json.dumps(nodes, sort_keys=True, separators=(",", ":")).encode("utf-8")
     digest = execute_binary("crypto.sha256", canonical)
     return {
@@ -1014,6 +1059,7 @@ def infrastructure_agent_cluster_state(
         "node_count": len(nodes),
         "fingerprint_sha256": str(digest.value),
         "fingerprint_engine": digest.engine,
+        "reachability_engine": reachability_engine,
         "nodes": nodes,
     }
 
