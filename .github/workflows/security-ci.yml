@@ -153,3 +153,121 @@ jobs:
           path: ithute-sbom.spdx.json
           if-no-files-found: error
           retention-days: 30
+
+  compiled-codeql:
+    name: Compiled engines CodeQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23.x"
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Initialize compiled-language CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: go,java-kotlin,c-cpp
+          queries: security-extended
+          build-mode: manual
+      - name: Build Go engine
+        working-directory: engines/go-worker
+        run: go build ./cmd/worker
+      - name: Build Java engine
+        run: |
+          mkdir -p /tmp/ithute-java-codeql/classes
+          javac --release 21 --add-modules jdk.httpserver -d /tmp/ithute-java-codeql/classes $(find engines/java-worker/src -name '*.java')
+      - name: Build C++ engine
+        run: |
+          cmake -S engines/cpp-native -B /tmp/ithute-cpp-codeql -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build /tmp/ithute-cpp-codeql --parallel 2
+      - name: Analyze compiled engines
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:compiled-engines"
+
+  rust-security:
+    name: Rust audit and unsafe lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install Rust security tooling
+        run: |
+          rustup component add clippy
+          cargo install cargo-audit --locked
+      - name: Audit Rust dependencies
+        working-directory: engines/rust-core
+        run: cargo audit --deny warnings
+      - name: Clippy Rust core
+        working-directory: engines/rust-core
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - name: Test Rust core
+        working-directory: engines/rust-core
+        run: cargo test --release --locked
+
+  go-security:
+    name: Go vulnerability and static analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23.x"
+      - name: Install Go security tooling
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+      - name: Run Go vulnerability scan
+        working-directory: engines/go-worker
+        run: govulncheck ./...
+      - name: Run gosec
+        working-directory: engines/go-worker
+        run: gosec ./...
+      - name: Run staticcheck
+        working-directory: engines/go-worker
+        run: staticcheck ./...
+      - name: Run Go tests
+        working-directory: engines/go-worker
+        run: go test -race ./...
+
+  cpp-sanitizers:
+    name: C++ ASan and UBSan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Build with sanitizers
+        run: |
+          cmake -S engines/cpp-native -B /tmp/ithute-cpp-sanitized \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
+          cmake --build /tmp/ithute-cpp-sanitized --parallel 2
+      - name: Test under sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir /tmp/ithute-cpp-sanitized --output-on-failure
+
