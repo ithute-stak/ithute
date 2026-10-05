@@ -35,6 +35,17 @@ ORIGIN_PORT_START="${ITHUTE_HOSTING_ORIGIN_PORT_START:-22000}"
 ORIGIN_PORT_END="${ITHUTE_HOSTING_ORIGIN_PORT_END:-29999}"
 EDGE_ORIGIN_CIDRS="${ITHUTE_EDGE_ORIGIN_CIDRS:-}"
 INGRESS_CHAIN="ITHUTE-HOSTING-INGRESS"
+MESH_CIDR="${ITHUTE_WIREGUARD_SUBNET:-}"
+MESH_INPUT_CHAIN="ITHUTE-MESH-INPUT"
+
+if [[ -n "$MESH_CIDR" ]]; then
+  python3 - "$MESH_CIDR" <<'PY'
+import ipaddress, sys
+network = ipaddress.ip_network(sys.argv[1], strict=False)
+if not isinstance(network, ipaddress.IPv4Network) or not network.is_private:
+    raise SystemExit("ITHUTE_WIREGUARD_SUBNET must be a private IPv4 CIDR")
+PY
+fi
 
 if [[ -z "$DB_GATEWAY_IP" ]]; then
   echo "Unable to resolve Docker host gateway. Set ITHUTE_HOSTING_DB_GATEWAY_IP explicitly." >&2
@@ -151,6 +162,23 @@ fi
 # Everything else from the reserved hosted pool is denied by default. This
 # prevents direct SMTP, SSH, arbitrary database scanning and lateral movement.
 iptables -A "$CHAIN" -j REJECT --reject-with icmp-port-unreachable
+
+# Enrolled Ithute nodes trust traffic arriving over the private WireGuard
+# interface from the managed mesh CIDR. This does not open any public interface.
+if [[ -n "$MESH_CIDR" ]] && ip link show ithute0 >/dev/null 2>&1; then
+  if ! iptables -S "$MESH_INPUT_CHAIN" >/dev/null 2>&1; then
+    iptables -N "$MESH_INPUT_CHAIN"
+  fi
+  iptables -F "$MESH_INPUT_CHAIN"
+  iptables -A "$MESH_INPUT_CHAIN" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  iptables -A "$MESH_INPUT_CHAIN" -s "$MESH_CIDR" -j ACCEPT
+  iptables -A "$MESH_INPUT_CHAIN" -j RETURN
+
+  while iptables -C INPUT -i ithute0 -j "$MESH_INPUT_CHAIN" 2>/dev/null; do
+    iptables -D INPUT -i ithute0 -j "$MESH_INPUT_CHAIN"
+  done
+  iptables -I INPUT 1 -i ithute0 -j "$MESH_INPUT_CHAIN"
+fi
 
 # Replace stale Ithute pool jumps with exactly one rule at the top of
 # DOCKER-USER. Unrelated Docker forwarding rules are not flushed or rewritten.
