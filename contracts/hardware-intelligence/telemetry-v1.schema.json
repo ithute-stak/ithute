@@ -87,6 +87,26 @@
         "weighted_io_ms": {"type": "integer", "minimum": 0}
       }
     },
+    "storage_devices": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["device"],
+        "properties": {
+          "device": {"type": "string", "pattern": "^/dev/[A-Za-z0-9._-]+$"},
+          "protocol": {"type": "string", "maxLength": 32},
+          "model": {"type": "string", "maxLength": 256},
+          "serial": {"type": "string", "maxLength": 256},
+          "health_passed": {"type": "boolean"},
+          "temperature_celsius": {"type": "number", "minimum": -100, "maximum": 250},
+          "percentage_used": {"type": "integer", "minimum": 0},
+          "media_errors": {"type": "integer", "minimum": 0},
+          "critical_warning": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
     "capabilities": {
       "type": "object",
       "additionalProperties": false,
