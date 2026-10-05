@@ -27,11 +27,15 @@ on:
       - "apps/backend/app/services/hosting_metering.py"
       - "apps/backend/app/services/hosting_operation_scheduler.py"
       - "apps/backend/app/services/hosting_webhooks.py"
+      - "apps/backend/app/services/failure_domains.py"
+      - "apps/backend/app/services/hosting_failover.py"
       - "apps/backend/app/services/billing.py"
       - "apps/backend/alembic/versions/*hosting*.py"
       - "apps/backend/alembic/versions/*zip*.py"
       - "apps/backend/tests/test_application_hosting.py"
       - "apps/backend/tests/test_hosting_operations*.py"
+      - "apps/backend/tests/test_hosting_failover.py"
+      - "apps/backend/tests/test_failure_domains.py"
       - "apps/backend/tests/test_hosting_database_backup_contract.py"
       - "apps/backend/tests/test_hosting_project_operations_contract.py"
       - "apps/backend/tests/test_hosting_builds_contract.py"
@@ -106,6 +110,8 @@ jobs:
           tests/test_application_hosting.py
           tests/test_hosting_operations_unit.py
           tests/test_hosting_operations_integration.py
+          tests/test_hosting_failover.py
+          tests/test_failure_domains.py
           tests/test_hosting_operation_scheduler.py
           tests/test_hosting_database_backup_contract.py
           tests/test_hosting_project_operations_contract.py
