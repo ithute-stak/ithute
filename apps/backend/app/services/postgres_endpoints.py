@@ -13,6 +13,8 @@ from app.models import (
     HostingPostgresEndpoint,
     HostingPostgresReplicationGroup,
     HostingPostgresReplicationMember,
+    InfrastructureServer,
+    InfrastructureWireGuardPeer,
 )
 
 _ENDPOINT_PORT_START = int(os.getenv("ITHUTE_POSTGRES_ENDPOINT_PORT_START", "20000"))
@@ -39,7 +41,7 @@ def _allocate_listen_port(db: Session, gateway_id) -> int:
 
 
 
-def _target_for_group(db: Session, group: HostingPostgresReplicationGroup) -> tuple[HostingNode, int]:
+def _target_for_group(db: Session, group: HostingPostgresReplicationGroup) -> tuple[HostingNode, str, int]:
     node = db.get(HostingNode, group.primary_node_id)
     if node is None:
         raise RuntimeError("PostgreSQL replication-group primary hosting node is unavailable")
@@ -52,7 +54,23 @@ def _target_for_group(db: Session, group: HostingPostgresReplicationGroup) -> tu
     database = db.get(HostingDatabase, member_id) if member_id is not None else None
     if database is None:
         raise RuntimeError("PostgreSQL replication group has no database member for route port discovery")
-    return node, int(database.internal_port)
+    server = db.scalar(
+        select(InfrastructureServer).where(
+            InfrastructureServer.hosting_node_id == node.id
+        )
+    )
+    peer = (
+        db.scalar(
+            select(InfrastructureWireGuardPeer).where(
+                InfrastructureWireGuardPeer.server_id == server.id,
+                InfrastructureWireGuardPeer.status == "active",
+            )
+        )
+        if server is not None
+        else None
+    )
+    target_host = peer.assigned_ipv4 if peer is not None else node.hostname
+    return node, target_host, int(database.internal_port)
 
 
 def ensure_postgres_endpoint(
@@ -61,7 +79,7 @@ def ensure_postgres_endpoint(
     group: HostingPostgresReplicationGroup,
     gateway: HostingDatabaseGateway,
 ) -> HostingPostgresEndpoint:
-    node, port = _target_for_group(db, group)
+    node, target_host, port = _target_for_group(db, group)
     row = db.scalar(
         select(HostingPostgresEndpoint)
         .where(HostingPostgresEndpoint.group_id == group.id)
@@ -74,7 +92,7 @@ def ensure_postgres_endpoint(
             hostname=gateway.hostname,
             listen_port=_allocate_listen_port(db, gateway.id),
             current_node_id=node.id,
-            target_host=node.hostname,
+            target_host=target_host,
             target_port=port,
             generation=1,
             applied_generation=0,
@@ -88,13 +106,16 @@ def ensure_postgres_endpoint(
         row.gateway_id != gateway.id
         or row.hostname != gateway.hostname
         or row.current_node_id != node.id
-        or row.target_host != node.hostname
+        or row.target_host != target_host
         or int(row.target_port) != port
     )
+    gateway_changed = row.gateway_id != gateway.id
     row.gateway_id = gateway.id
     row.hostname = gateway.hostname
+    if gateway_changed:
+        row.listen_port = _allocate_listen_port(db, gateway.id)
     row.current_node_id = node.id
-    row.target_host = node.hostname
+    row.target_host = target_host
     row.target_port = port
     if changed:
         row.generation = int(row.generation) + 1
@@ -117,18 +138,17 @@ def switch_postgres_endpoint_to_primary(
     )
     if row is None:
         return None
-    node, port = _target_for_group(db, group)
+    node, target_host, port = _target_for_group(db, group)
     if (
         row.current_node_id != node.id
-        or row.target_host != node.hostname
+        or row.target_host != target_host
         or int(row.target_port) != port
     ):
         row.current_node_id = node.id
-        row.target_host = node.hostname
+        row.target_host = target_host
         row.target_port = port
         row.generation = int(row.generation) + 1
         row.status = "pending"
-        row.last_routed_at = now
     db.flush()
     return row
 
