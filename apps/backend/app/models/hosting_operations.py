@@ -89,6 +89,35 @@ class HostingProjectOperation(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+
+class HostingOperationResourceLock(Base):
+    __tablename__ = "hosting_operation_resource_locks"
+
+    resource_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    operation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("hosting_project_operations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    fencing_token: Mapped[str] = mapped_column(String(64), nullable=False)
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class HostingOperationResourceWait(Base):
+    __tablename__ = "hosting_operation_resource_waits"
+
+    operation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("hosting_project_operations.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    resource_key: Mapped[str] = mapped_column(String(255), primary_key=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class HostingProvisioningWorkflow(Base):
     __tablename__ = "hosting_provisioning_workflows"
 

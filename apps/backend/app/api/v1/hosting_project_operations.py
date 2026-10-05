@@ -18,6 +18,7 @@ from app.services.hosting_operation_scheduler import (
     claim_next_project_operation,
     renew_project_operation_lease,
 )
+from app.services.operation_resource_locks import release_operation_resources
 
 router = APIRouter(tags=["hosting-project-operations"])
 ACTIVE_STATUSES = {"queued", "claimed"}
@@ -318,6 +319,7 @@ def report_project_operation(
         row.fencing_token = None
         row.failure_message = (payload.message or "Hosting node reported project operation failure").strip()[:2000]
         _audit(db, None, row, f"hosting.project.{row.operation}.failed", {"message": row.failure_message})
+    release_operation_resources(db, row.id)
     db.commit()
     db.refresh(row)
     return _operation_out(row)

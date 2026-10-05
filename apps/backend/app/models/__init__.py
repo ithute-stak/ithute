@@ -55,6 +55,8 @@ from app.models.hosting_operations import (
     HostingNodeBootstrap,
     HostingNodeHealthState,
     HostingFailoverAttempt,
+    HostingOperationResourceLock,
+    HostingOperationResourceWait,
     HostingProjectOperation, HostingProvisioningWorkflow,
 )
 from app.models.hosting_builds import HostingBuild, HostingBuilderAgent
@@ -134,7 +136,7 @@ __all__ = [
     "BillingPaymentEvent", "SubscriptionStatus", "InvoiceStatus", "BillingAddon", "TenantAddon", "EdgeRouteDeployment",
     "BillingContract", "UptimeMonitor", "UptimeCheck", "InfrastructureCommercialProfile", "TenantInfrastructureAllocation",
     "FinanceClient", "FinanceInvoice", "FinanceInvoiceItem", "FinanceInvoiceSchedule", "FinancePayment", "FinanceCreditNote", "FinanceDocument", "FinanceDocumentItem", "FinanceSenderConfiguration", "FinanceExpense", "FinanceBankTransaction", "FinanceServiceBillingLink", "FinanceAccountingPeriod", "FinanceRefund", "FinanceTaxRate", "FinanceApprovalRequest", "FinanceGovernanceSetting", "FinanceRoleGrant", "FinancePortalAccess", "FinanceDeliveryEvent", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject", "HostingResourceReservation", "InfrastructureServer", "InfrastructureServerAgent", "InfrastructureTelemetrySnapshot", "InfrastructureWireGuardPeer", "InfrastructureAgentCommand", "InfrastructureContainerSnapshot", "InfrastructureNetworkGrant", "InfrastructureNetworkObservation", "InfrastructureSecuritySnapshot",
-    "HOSTING_RUNTIME_MANIFEST_VERSION", "HostingDeployment", "HostingEnvironmentVariable", "HostingNodeAgent", "HostingNodeBootstrap", "HostingNodeHealthState", "HostingFailoverAttempt", "HostingProjectOperation", "HostingProvisioningWorkflow",
+    "HOSTING_RUNTIME_MANIFEST_VERSION", "HostingDeployment", "HostingEnvironmentVariable", "HostingNodeAgent", "HostingNodeBootstrap", "HostingNodeHealthState", "HostingFailoverAttempt", "HostingOperationResourceLock", "HostingOperationResourceWait", "HostingProjectOperation", "HostingProvisioningWorkflow",
     "HostingBuild", "HostingBuilderAgent", "HostingBuildLog", "HostingDatabaseBackup", "HostingSourceWebhook", "HostingWebhookDelivery", "HostingDatabase", "HostingSource", "HostingSourceCredential",
     "CustomerProfile", "Notification", "ServiceIncident", "ServiceIncidentImpact", "ServiceIncidentStatus",
     "SupportTicket", "SupportTicketMessage", "SupportTicketPriority", "SupportTicketStatus", "DomainOrder",
