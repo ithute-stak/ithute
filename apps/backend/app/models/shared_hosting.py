@@ -220,6 +220,8 @@ class HostingDatabaseGateway(Base):
     status: Mapped[str] = mapped_column(String(24), default="active", nullable=False)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     agent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    advertise_ipv4: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    advertise_ipv6: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -231,6 +233,7 @@ class HostingDatabaseGatewayPool(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     frontend_hostname: Mapped[str] = mapped_column(String(253), nullable=False, unique=True)
+    dns_domain_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("domains.id", ondelete="RESTRICT"), nullable=False)
     required_ready_gateways: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="active", nullable=False)
     created_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
