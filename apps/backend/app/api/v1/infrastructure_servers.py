@@ -1052,7 +1052,27 @@ def infrastructure_agent_cluster_state(
             "checked": live["checked"],
             "services": live["services"],
         }
-        node["communication"] = {"outbound": [], "inbound": []}
+        node["communication"] = {
+            "mode": "full_mesh",
+            "default": "allow",
+            "peers": [],
+            "service_metadata": {"outbound": [], "inbound": []},
+        }
+
+    enrolled_nodes = [
+        node for node in nodes
+        if isinstance(node.get("private_network"), dict) and node["private_network"].get("ipv4")
+    ]
+    for node in enrolled_nodes:
+        node["communication"]["peers"] = [
+            {
+                "server_id": peer["server_id"],
+                "name": peer["name"],
+                "ipv4": peer["private_network"]["ipv4"],
+            }
+            for peer in enrolled_nodes
+            if peer["server_id"] != node["server_id"]
+        ]
 
     grants = db.scalars(
         select(InfrastructureNetworkGrant)
@@ -1073,8 +1093,8 @@ def infrastructure_agent_cluster_state(
             "port": grant.port,
             "service": grant.service,
         }
-        source_node["communication"]["outbound"].append(flow)
-        target_node["communication"]["inbound"].append({
+        source_node["communication"]["service_metadata"]["outbound"].append(flow)
+        target_node["communication"]["service_metadata"]["inbound"].append({
             **flow,
             "peer_server_id": source_id,
             "peer_name": source_node["name"],
@@ -1086,6 +1106,7 @@ def infrastructure_agent_cluster_state(
         "self_server_id": str(current_server.id),
         "node_count": len(nodes),
         "reachability_engine": reachability_engine,
+        "network_policy_mode": "full_mesh",
         "nodes": nodes,
     }
     canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
