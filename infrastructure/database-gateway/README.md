@@ -23,7 +23,9 @@ A route generation is acknowledged only after the local listener is active. Post
 
 For production, configure at least two independently hosted gateway instances and register them in one database gateway pool. The pool exposes one shared frontend hostname and one stable port per PostgreSQL replication group.
 
-The shared frontend hostname must resolve or route to every active gateway member (for example, multiple DNS A/AAAA records, an anycast address, or an external L4 load balancer). Ithute does not mark a generation ready until the configured number of independent gateway members have:
+For production pools created through the platform API, the shared frontend hostname must live below a verified Ithute-managed DNS domain. Each gateway registers at least one routable IPv4/IPv6 address. The hosting health daemon reconciles PowerDNS with the fresh pool members using TTL 60 records, automatically withdrawing stale gateway addresses and restoring them when health returns. An external anycast or L4 load balancer can still be used as an optional frontend architecture, but it is not required for the standard PowerDNS-backed HA path.
+
+Ithute does not mark a generation ready until the configured number of independent gateway members have:
 
 1. received the current route generation;
 2. installed the local TCP listener;
@@ -33,3 +35,16 @@ The shared frontend hostname must resolve or route to every active gateway membe
 The default production recommendation is two gateways with `required_ready_gateways=2`. This favors correctness and verified reachability over silent degradation. A lower quorum is available only as an explicit policy choice.
 
 Gateway heartbeats are continuously reconciled. If fresh gateway membership drops below quorum, the pool and its PostgreSQL endpoints become `degraded` even after an earlier successful cutover.
+
+
+### DNS failover safety
+
+PowerDNS publication state is persisted on the gateway pool. The health loop only writes DNS when the desired healthy address set changes, avoiding serial/record churn on every poll. The last reconciliation timestamp and DNS error are retained. A PowerDNS reconciliation failure degrades the pool instead of reporting healthy HA.
+
+The normal production sequence is:
+
+1. register at least two database gateways with distinct routable addresses;
+2. create a gateway pool bound to a verified Ithute-managed DNS domain;
+3. attach the PostgreSQL replication group endpoint to that pool;
+4. wait for every required router to install/probe/ACK the route generation;
+5. expose the pool frontend hostname and stable endpoint port to applications.
