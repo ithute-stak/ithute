@@ -236,8 +236,26 @@ def provision_project(
         raise HTTPException(status_code=404, detail="Hosted project not found")
     if project.status == "suspended":
         raise HTTPException(status_code=409, detail="Resume the project before provisioning it")
+
+    application_placement = None
     if project.node_id is None:
-        raise HTTPException(status_code=409, detail="Project has not been assigned to a hosting node")
+        node, application_placement = select_node(
+            db,
+            workload="application",
+            storage_mb=project.storage_mb,
+            memory_mb=project.memory_mb,
+            cpu_millicores=project.cpu_millicores,
+            tenant_id=tenant_id,
+        )
+        project.node_id = node.id
+        db.flush()
+        if application_placement["infrastructure_server_id"]:
+            sync_tenant_infrastructure_allocation(
+                db,
+                tenant_id=tenant_id,
+                server_id=UUID(application_placement["infrastructure_server_id"]),
+                actor_user_id=current.id,
+            )
 
     active = db.scalar(select(HostingProvisioningWorkflow).where(
         HostingProvisioningWorkflow.project_id == project.id,
@@ -303,6 +321,13 @@ def provision_project(
         )
         db.add(database)
         db.flush()
+        if placement["infrastructure_server_id"]:
+            sync_tenant_infrastructure_allocation(
+                db,
+                tenant_id=tenant_id,
+                server_id=UUID(placement["infrastructure_server_id"]),
+                actor_user_id=current.id,
+            )
         workflow.database_id = database.id
         _upsert_env(db, project.id, "DATABASE_ENGINE", database.engine, current, secret=False)
         _upsert_env(db, project.id, "DATABASE_NAME", database.database_name, current, secret=False)
@@ -357,6 +382,9 @@ def provision_project(
         "database_id": str(database.id) if database else None,
         "build_id": str(build.id),
         "hostname": project.hostname,
+        "placement_mode": "automatic" if application_placement else "existing",
+        "placement_score": application_placement["score"] if application_placement else None,
+        "placement_server_id": application_placement["infrastructure_server_id"] if application_placement else None,
     })
     db.commit()
     db.refresh(workflow)
