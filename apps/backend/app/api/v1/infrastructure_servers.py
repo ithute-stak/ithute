@@ -18,6 +18,7 @@ from app.db.session import get_db
 from app.services.engine_router import execute_binary, execute_hmac_sha256, execute_network, routing_status
 from app.services.cluster_engine import cluster_graph_analysis
 from app.services.managed_network import update_peer_telemetry
+from app.services.network_topology import persist_topology_observations
 from app.models import (
     AuditLog,
     HostingDatabase,
@@ -1241,6 +1242,12 @@ def infrastructure_agent_heartbeat(
     )
 
     now = agent.last_seen_at
+    topology_saved = persist_topology_observations(
+        db,
+        source_server=server,
+        payload=payload.telemetry.get("network_topology"),
+        now=now,
+    )
     latest = db.scalar(
         select(InfrastructureTelemetrySnapshot)
         .where(InfrastructureTelemetrySnapshot.server_id == server.id)
@@ -1303,6 +1310,7 @@ def infrastructure_agent_heartbeat(
             "findings": len(security["findings"]),
             "fingerprint_engine": security["fingerprint_engine"],
         },
+        "network_topology_observations_saved": topology_saved,
     }
 
 
