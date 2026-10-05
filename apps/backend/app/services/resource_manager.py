@@ -193,6 +193,19 @@ def reserve_capacity(
     if not any(request.values()):
         raise ValueError("reservation must request at least one resource")
 
+    if project_id is not None:
+        existing = db.scalar(
+            select(HostingResourceReservation)
+            .where(
+                HostingResourceReservation.project_id == project_id,
+                HostingResourceReservation.status == ACTIVE_RESERVATION_STATUS,
+                HostingResourceReservation.expires_at > now,
+            )
+            .with_for_update()
+        )
+        if existing is not None:
+            raise ValueError("project already has an active resource reservation")
+
     snapshot = node_resource_snapshot(db, node, now=now)
     insufficient = [
         key for key, value in request.items()
