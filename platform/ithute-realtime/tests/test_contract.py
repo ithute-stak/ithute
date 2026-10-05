@@ -11,6 +11,7 @@ from app.auth import AuthError, AuthVerifier
 from app.config import get_settings
 from app.db import Base, SessionLocal, engine
 from app.events import EventConflict, event_cursor, queue_event, replay_events
+from app.native_ws import issue_realtime_ticket
 from app.schemas import AttachmentRef, MessageCreate, PlatformEventRequest
 
 
@@ -180,3 +181,27 @@ def test_scheduled_event_is_not_immediately_queued():
             deliver_at=datetime.now(timezone.utc) + timedelta(minutes=5),
         )
         assert event.status == "scheduled"
+
+
+def test_native_websocket_ticket_is_bounded_and_signed():
+    ticket = issue_realtime_ticket(
+        secret="realtime-gateway-secret",
+        application_id="loanhub",
+        sub="00000000-0000-0000-0000-000000000001",
+        device_key="device-installation-123",
+        lifetime_seconds=60,
+    )
+    parts = ticket.split(".")
+    assert len(parts) == 2
+    assert all(parts)
+    assert "=" not in ticket
+
+
+def test_native_websocket_ticket_requires_gateway_secret():
+    with pytest.raises(ValueError, match="gateway secret"):
+        issue_realtime_ticket(
+            secret="",
+            application_id="loanhub",
+            sub="00000000-0000-0000-0000-000000000001",
+            device_key="device-installation-123",
+        )
