@@ -153,6 +153,8 @@ def _prediction_point_from_health(
         media_error_delta=rate.get("media_error_delta"),
         network_error_delta=rate.get("network_error_delta"),
         tcp_retrans_delta=rate.get("tcp_retrans_delta"),
+        ebpf_inflight_delta=rate.get("ebpf_inflight_delta"),
+        ebpf_oom_delta=rate.get("ebpf_oom_delta"),
     )
 
 
