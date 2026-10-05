@@ -6,7 +6,7 @@ from datetime import datetime
 from functools import lru_cache
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
@@ -370,13 +370,22 @@ def healthz() -> dict[str, str]:
 
 
 @app.get("/readyz")
-async def readyz(db: Annotated[Session, Depends(get_db)], settings: Annotated[Settings, Depends(get_settings)]) -> dict[str, object]:
+async def readyz(
+    response: Response,
+    db: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict[str, object]:
     db.execute(text("SELECT 1"))
     redis_ready = bool(await hub.redis.ping())
+    engines = await hub.engine_health()
+    ready = redis_ready and engines["go"] and engines["native"]
+    if not ready:
+        response.status_code = 503
     return {
-        "status": "ready" if redis_ready else "not_ready",
+        "status": "ready" if ready else "not_ready",
         "service": "ithute-realtime",
         "redis": redis_ready,
+        "engines": engines,
         "auth": settings.auth_issuer,
         "push_enabled": settings.push_enabled,
         "disabled_clients": sorted(settings.disabled_client_set),
