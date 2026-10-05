@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -295,7 +296,7 @@ def report_project_operation(
     now = _now()
     if (
         not row.fencing_token
-        or row.fencing_token != payload.fencing_token
+        or not secrets.compare_digest(row.fencing_token, payload.fencing_token)
         or row.lease_expires_at is None
         or row.lease_expires_at <= now
     ):
@@ -306,6 +307,7 @@ def report_project_operation(
         row.failure_message = None
         row.lease_expires_at = None
         row.lease_heartbeat_at = None
+        row.fencing_token = None
         row.output_text = (payload.output or "")[-MAX_LOG_OUTPUT:] if row.operation == "logs" else None
         _audit(db, None, row, f"hosting.project.{row.operation}.complete", {"output_chars": len(row.output_text or "")})
     else:
@@ -313,6 +315,7 @@ def report_project_operation(
         row.output_text = None
         row.lease_expires_at = None
         row.lease_heartbeat_at = None
+        row.fencing_token = None
         row.failure_message = (payload.message or "Hosting node reported project operation failure").strip()[:2000]
         _audit(db, None, row, f"hosting.project.{row.operation}.failed", {"message": row.failure_message})
     db.commit()
