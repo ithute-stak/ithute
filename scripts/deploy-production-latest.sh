@@ -49,38 +49,61 @@ check_workflow() {
   local workflow="$1"
   local label="$2"
   local output="$tmpdir/${workflow}.json"
+  local attempt
+  local max_attempts="${ITHUTE_GATE_DISCOVERY_ATTEMPTS:-12}"
+  local sleep_seconds="${ITHUTE_GATE_DISCOVERY_DELAY_SECONDS:-5}"
 
-  curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL \
-    "$API/actions/workflows/$workflow/runs?branch=main&per_page=100" \
-    -o "$output"
+  for attempt in $(seq 1 "$max_attempts"); do
+    curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL \
+      "$API/actions/workflows/$workflow/runs?branch=main&per_page=100" \
+      -o "$output"
 
-  python3 - "$MAIN_SHA" "$output" "$label" <<'PY'
+    if python3 - "$MAIN_SHA" "$output" "$label" "$attempt" "$max_attempts" <<'PY'
 import json
 import sys
 
-sha, path, label = sys.argv[1:]
+sha, path, label, attempt, max_attempts = sys.argv[1:]
 with open(path, encoding="utf-8") as handle:
     runs = json.load(handle).get("workflow_runs", [])
 matching = [run for run in runs if run.get("head_sha") == sha and run.get("head_branch") == "main"]
 matching.sort(key=lambda run: run.get("created_at") or "", reverse=True)
 if not matching:
-    raise SystemExit(f"[Ithute] {label} has no run for current main {sha}")
+    print(f"[Ithute] {label}: exact-SHA run not indexed yet ({attempt}/{max_attempts})")
+    raise SystemExit(10)
 
-# workflow_run based workflows can legitimately emit a newer skipped run for the
-# same SHA after an earlier successful publication. A skipped duplicate must not
-# mask the last real gate result, but a newer failure/cancellation still blocks
-# deployment.
 actionable = [run for run in matching if run.get("conclusion") != "skipped"]
 if not actionable:
-    raise SystemExit(f"[Ithute] {label} has no actionable run for current main {sha}")
+    print(f"[Ithute] {label}: exact-SHA run exists but is not actionable yet ({attempt}/{max_attempts})")
+    raise SystemExit(10)
+
 run = actionable[0]
 status = run.get("status")
 conclusion = run.get("conclusion")
 url = run.get("html_url") or ""
 print(f"[Ithute] {label}: status={status} conclusion={conclusion or 'pending'} {url}")
-if status != "completed" or conclusion != "success":
-    raise SystemExit(f"[Ithute] Refusing deployment: {label} is not green for current main {sha}")
+if status == "completed" and conclusion == "success":
+    raise SystemExit(0)
+if status == "completed":
+    raise SystemExit(20)
+raise SystemExit(10)
 PY
+    then
+      return 0
+    else
+      rc=$?
+    fi
+
+    if [ "$rc" -eq 20 ]; then
+      echo "[Ithute] Refusing deployment: $label is not green for current main $MAIN_SHA" >&2
+      return 1
+    fi
+    if [ "$attempt" -lt "$max_attempts" ]; then
+      sleep "$sleep_seconds"
+      continue
+    fi
+    echo "[Ithute] $label did not become visible and green for current main $MAIN_SHA after $max_attempts checks" >&2
+    return 1
+  done
 }
 
 check_workflow ci.yml "Ithute Standalone CI"
