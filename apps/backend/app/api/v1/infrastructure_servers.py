@@ -625,6 +625,13 @@ def _server_out(db: Session, server: InfrastructureServer) -> dict:
         "public_ip": server.public_ip,
         "region": server.region,
         "provider": server.provider,
+        "failure_domains": {
+            "provider": server.provider,
+            "region": server.region,
+            "datacenter": server.datacenter,
+            "physical_host": server.physical_host,
+            "network_segment": server.network_segment,
+        },
         "roles": roles,
         "status": server.status,
         "health": health,
@@ -837,6 +844,9 @@ def create_server(payload: InfrastructureServerCreate, db: Session = Depends(get
         public_ip=payload.public_ip.strip() if payload.public_ip else None,
         region=payload.region.strip().lower(),
         provider=payload.provider.strip() if payload.provider else None,
+        datacenter=payload.datacenter.strip() if payload.datacenter else None,
+        physical_host=payload.physical_host.strip() if payload.physical_host else None,
+        network_segment=payload.network_segment.strip() if payload.network_segment else None,
         roles_json=json.dumps(_roles(payload.roles), separators=(",", ":")),
         notes=payload.notes.strip() if payload.notes else None,
         created_by_user_id=current.id,
@@ -858,7 +868,7 @@ def update_server(server_id: UUID, payload: InfrastructureServerUpdate, db: Sess
     if "roles" in changes:
         server.roles_json = json.dumps(_roles(changes.pop("roles")), separators=(",", ":"))
     for key, value in changes.items():
-        if key in {"name", "region", "provider", "public_ip", "notes"} and isinstance(value, str):
+        if key in {"name", "region", "provider", "datacenter", "physical_host", "network_segment", "public_ip", "notes"} and isinstance(value, str):
             value = value.strip()
         setattr(server, key, value)
     _audit(db, current, "infrastructure.server.update", server, {"changed_fields": sorted(payload.model_dump(exclude_unset=True))})
