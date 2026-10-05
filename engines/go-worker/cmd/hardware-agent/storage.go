@@ -88,32 +88,38 @@ func collectSmartStorage(parent context.Context, smartctl string) []StorageHealt
 			continue
 		}
 
-		var payload smartPayload
-		if err := json.Unmarshal(output, &payload); err != nil {
+		health, err := parseSmartHealth(device, output)
+		if err != nil {
 			continue
-		}
-
-		health := StorageHealth{
-			Device:   device,
-			Protocol: payload.Device.Protocol,
-			Model:    payload.ModelName,
-			Serial:   payload.SerialNumber,
-		}
-		// smartctl emits smart_status for ATA/SCSI health-capable devices.
-		if bytesContainKey(output, `"smart_status"`) {
-			health.HealthPassed = boolPtr(payload.SmartStatus.Passed)
-		}
-		if bytesContainKey(output, `"temperature"`) {
-			health.TemperatureC = floatPtr(payload.Temperature.Current)
-		}
-		if bytesContainKey(output, `"nvme_smart_health_information_log"`) {
-			health.PercentageUsed = uintPtr(payload.NVMe.PercentageUsed)
-			health.MediaErrors = uintPtr(payload.NVMe.MediaErrors)
-			health.CriticalWarning = uintPtr(payload.NVMe.CriticalWarning)
 		}
 		results = append(results, health)
 	}
 	return results
+}
+
+func parseSmartHealth(device string, output []byte) (StorageHealth, error) {
+	var payload smartPayload
+	if err := json.Unmarshal(output, &payload); err != nil {
+		return StorageHealth{}, err
+	}
+	health := StorageHealth{
+		Device:   device,
+		Protocol: payload.Device.Protocol,
+		Model:    payload.ModelName,
+		Serial:   payload.SerialNumber,
+	}
+	if bytesContainKey(output, `"smart_status"`) {
+		health.HealthPassed = boolPtr(payload.SmartStatus.Passed)
+	}
+	if bytesContainKey(output, `"temperature"`) {
+		health.TemperatureC = floatPtr(payload.Temperature.Current)
+	}
+	if bytesContainKey(output, `"nvme_smart_health_information_log"`) {
+		health.PercentageUsed = uintPtr(payload.NVMe.PercentageUsed)
+		health.MediaErrors = uintPtr(payload.NVMe.MediaErrors)
+		health.CriticalWarning = uintPtr(payload.NVMe.CriticalWarning)
+	}
+	return health, nil
 }
 
 func bytesContainKey(raw []byte, key string) bool {
