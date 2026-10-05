@@ -9,6 +9,7 @@ Ithute uses a strict multi-engine model:
 - **Go worker** — concurrent/network-oriented workers and service probes.
 - **C++ native** — narrow benchmark-proven hot paths only.
 - **Java worker** — enterprise XML/report/integration processing with hardened parsers.
+- **C + eBPF hardware intelligence** — read-only Linux hardware probes and kernel observability counters for early-warning telemetry.
 
 No specialist engine is allowed to independently authorize a tenant action or
 reimplement billing/permission rules. Python decides **what** may happen;
