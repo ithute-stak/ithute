@@ -265,3 +265,38 @@ def test_prediction_detects_ebpf_p99_latency_drift():
     assert result["state"] in {"elevated", "high"}
     assert result["risk_score"] >= 50
     assert any("latency" in item.lower() for item in result["evidence"])
+
+
+
+def test_counter_delta_features_capture_ecc_growth():
+    previous = {"memory_reliability": {"corrected_errors": 2, "uncorrected_errors": 0}}
+    current = {"memory_reliability": {"corrected_errors": 5, "uncorrected_errors": 1}}
+    features = derive_rate_features(previous, current)
+    assert features["ecc_corrected_delta"] == 3.0
+    assert features["ecc_uncorrected_delta"] == 1.0
+
+
+def test_prediction_detects_ecc_growth():
+    history = [
+        MetricPoint(
+            temperature_celsius=45,
+            memory_pressure_avg10=1,
+            io_pressure_avg10=1,
+            filesystem_used_percent=50,
+            ecc_corrected_delta=0,
+            ecc_uncorrected_delta=0,
+        )
+        for _ in range(96)
+    ]
+    current = MetricPoint(
+        temperature_celsius=45,
+        memory_pressure_avg10=1,
+        io_pressure_avg10=1,
+        filesystem_used_percent=50,
+        ecc_corrected_delta=8,
+        ecc_uncorrected_delta=1,
+    )
+    result = predict_hardware_drift(history, current)
+    assert result["state"] in {"elevated", "high"}
+    assert result["risk_score"] >= 50
+    assert any("ECC" in item for item in result["evidence"])
