@@ -737,6 +737,14 @@ def report_postgres_topology_repair(
 
     if payload.method_used != row.method:
         raise HTTPException(status_code=409, detail="Repair method does not match claimed topology repair job")
+    if (
+        payload.receive_lsn is None
+        or payload.replay_lsn is None
+        or re.fullmatch(r"^[0-9A-F]+/[0-9A-F]+$", payload.receive_lsn) is None
+        or re.fullmatch(r"^[0-9A-F]+/[0-9A-F]+$", payload.replay_lsn) is None
+        or payload.replay_backlog_bytes is None
+    ):
+        raise HTTPException(status_code=409, detail="Successful topology repair requires verified WAL positions")
     group = db.get(HostingPostgresReplicationGroup, row.group_id)
     if group is None or group.primary_node_id != row.source_node_id:
         raise HTTPException(status_code=409, detail="Replication-group primary changed during topology repair")
