@@ -24,6 +24,7 @@ on:
       - "apps/backend/tests/test_audit_integrity.py"
       - "apps/backend/tests/test_infrastructure_monitoring.py"
       - "apps/backend/tests/test_hardware_intelligence.py"
+      - "apps/backend/tests/test_hardware_prediction.py"
       - "apps/backend/tests/test_network_topology.py"
       - "apps/backend/app/services/dmarc_reports.py"
       - "apps/backend/app/services/deliverability.py"
@@ -112,7 +113,7 @@ jobs:
         working-directory: apps/backend
         run: |
           python -m pip install --disable-pip-version-check -r requirements.txt
-          pytest -q tests/test_engine_runtime.py tests/test_engine_router.py tests/test_engine_operations.py tests/test_cluster_engine.py tests/test_webmail_message_resilience.py tests/test_platform_mail_attachments.py tests/test_dmarc_reports.py tests/test_infrastructure_monitoring.py tests/test_hardware_intelligence.py tests/test_network_topology.py
+          pytest -q tests/test_engine_runtime.py tests/test_engine_router.py tests/test_engine_operations.py tests/test_cluster_engine.py tests/test_webmail_message_resilience.py tests/test_platform_mail_attachments.py tests/test_dmarc_reports.py tests/test_infrastructure_monitoring.py tests/test_hardware_intelligence.py tests/test_hardware_prediction.py tests/test_network_topology.py
 
       - name: Build API with native engines
         run: |
