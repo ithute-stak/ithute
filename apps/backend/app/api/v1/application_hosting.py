@@ -86,6 +86,7 @@ class HostingProjectCreate(BaseModel):
     pid_limit: int = Field(default=128, ge=32, le=2048)
     accept_hosting_rules: bool
     node_id: UUID | None = None
+    preferred_region: str | None = Field(default=None, max_length=80)
 
 
 class HostingProjectUpdate(BaseModel):
@@ -335,6 +336,7 @@ def placement_preview(
     memory_mb: int = 512,
     cpu_millicores: int = 500,
     database_engine: str | None = None,
+    preferred_region: str | None = None,
     db: Session = Depends(get_db),
     current: User = Depends(require_platform_owner),
 ):
@@ -347,6 +349,7 @@ def placement_preview(
         memory_mb=max(0, memory_mb),
         cpu_millicores=max(0, cpu_millicores),
         database_engine=database_engine,
+        preferred_region=preferred_region,
     )
     return {
         "items": [
@@ -591,6 +594,7 @@ def create_hosting_project(
         memory_mb=payload.memory_mb,
         cpu_millicores=payload.cpu_millicores,
         preferred_node_id=preferred_node_id,
+        preferred_region=payload.preferred_region,
     )
     now = datetime.now(timezone.utc)
     project = HostingProject(
@@ -638,6 +642,9 @@ def create_hosting_project(
             "placement_mode": "manual_override" if preferred_node_id else "automatic",
             "placement_score": placement["score"],
             "placement_server_id": placement["infrastructure_server_id"],
+            "placement_preferred_region": payload.preferred_region,
+            "placement_region": placement["location"]["server_region"],
+            "placement_region_match": placement["location"]["region_match"],
         },
     )
     db.commit()
