@@ -110,7 +110,19 @@
         "block_requests_issued": {"type": "integer", "minimum": 0},
         "block_requests_completed": {"type": "integer", "minimum": 0},
         "process_exits": {"type": "integer", "minimum": 0},
-        "oom_victims": {"type": "integer", "minimum": 0}
+        "oom_victims": {"type": "integer", "minimum": 0},
+        "block_latency_count": {"type": "integer", "minimum": 0},
+        "block_latency_avg_ms": {"type": ["number", "null"], "minimum": 0},
+        "block_latency_max_ms": {"type": ["number", "null"], "minimum": 0},
+        "block_latency_p50_ms": {"type": ["number", "null"], "minimum": 0},
+        "block_latency_p95_ms": {"type": ["number", "null"], "minimum": 0},
+        "block_latency_p99_ms": {"type": ["number", "null"], "minimum": 0},
+        "block_latency_histogram": {
+          "type": "array",
+          "minItems": 16,
+          "maxItems": 16,
+          "items": {"type": "integer", "minimum": 0}
+        }
       }
     },
     "storage_devices": {
