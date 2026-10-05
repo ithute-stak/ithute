@@ -4,7 +4,8 @@ from pathlib import Path
 from sqlalchemy import delete
 
 from app.models import HostingNode, HostingProject, InfrastructureCommercialProfile, InfrastructureServer, TenantInfrastructureAllocation
-from app.services.hosting_placement import _estimated_incremental_cost, _fresh, sync_tenant_infrastructure_allocation
+from app.services.hosting_placement import _estimated_incremental_cost, _fresh, score_node, sync_tenant_infrastructure_allocation
+from app.services.resource_manager import reserve_capacity
 
 
 def test_placement_heartbeat_freshness():
@@ -190,3 +191,50 @@ def test_placement_contract_includes_security_and_commercial_scoring():
     assert "Project has not been assigned to a hosting node" not in provisioning
     assert "security posture, infrastructure economics" in planner
     assert "Cost est." in planner
+
+
+
+def test_placement_respects_active_resource_reservations(db, platform_owner):
+    node = HostingNode(
+        name=f"reserved-placement-{platform_owner.id}",
+        hostname=f"reserved-placement-{platform_owner.id}.test",
+        allocatable_storage_mb=10_000,
+        allocatable_memory_mb=8_000,
+        allocatable_cpu_millicores=4_000,
+        status="active",
+        accepts_new_projects=True,
+        created_by_user_id=platform_owner.id,
+    )
+    db.add(node)
+    db.flush()
+
+    reserve_capacity(
+        db,
+        node_id=node.id,
+        cpu_millicores=3_500,
+        memory_mb=7_500,
+        storage_mb=9_500,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
+        created_by_user_id=platform_owner.id,
+        purpose="placement-race-test",
+    )
+
+    scored = score_node(
+        db,
+        node,
+        workload="application",
+        storage_mb=600,
+        memory_mb=600,
+        cpu_millicores=600,
+    )
+
+    assert scored["eligible"] is False
+    assert "insufficient storage" in scored["reasons"]
+    assert "insufficient memory" in scored["reasons"]
+    assert "insufficient CPU" in scored["reasons"]
+    assert scored["allocated"]["reserved"] == {
+        "cpu_millicores": 3_500,
+        "memory_mb": 7_500,
+        "storage_mb": 9_500,
+    }
+    db.rollback()
