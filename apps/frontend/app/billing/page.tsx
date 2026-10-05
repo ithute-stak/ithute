@@ -54,8 +54,26 @@ type Limits = {
   hosting_database_storage_bytes: number;
   hosting_source_storage_bytes: number;
 };
-type Summary = { subscription: Subscription | null; usage: Usage; entitlements: Limits | null; within_plan: boolean };
-type Invoice = { id: string; invoice_number: string; currency: string; total_minor: number; status: string; due_at?: string | null };
+type OverageItem = { metric: string; units: number; rate_minor: number; amount_minor: number };
+type Overage = { enabled: boolean; fully_priced: boolean; currency: string; estimated_minor: number; items: OverageItem[]; unpriced_metrics: string[] };
+type Summary = {
+  subscription: Subscription | null;
+  usage: Usage;
+  entitlements: Limits | null;
+  within_plan: boolean;
+  commercial_capacity_status?: "within_plan" | "metered_overage" | "over_limit";
+  overage?: Overage | null;
+};
+type Invoice = {
+  id: string;
+  invoice_number: string;
+  currency: string;
+  base_amount_minor?: number;
+  overage_amount_minor?: number;
+  total_minor: number;
+  status: string;
+  due_at?: string | null;
+};
 type Provider = { provider: string; configured: boolean; hosted_checkout: boolean };
 type Contract = {
   billing_interval: "monthly" | "annual";
@@ -224,6 +242,8 @@ export default function Billing() {
   const overdueInvoice = useMemo(() => invoices.find((item) => item.status !== "paid" && item.status !== "void"), [invoices]);
   const graceDate = summary?.subscription?.grace_ends_at ? new Date(summary.subscription.grace_ends_at) : null;
   const graceExpired = status === "past_due" && (!graceDate || graceDate.getTime() <= Date.now());
+  const capacityStatus = summary?.commercial_capacity_status || (summary?.within_plan ? "within_plan" : "over_limit");
+  const metered = capacityStatus === "metered_overage";
 
   return (
     <ControlShell title="Billing & subscription" subtitle="Package, capacity, invoices and commercial account" userEmail={email}>
@@ -275,8 +295,24 @@ export default function Billing() {
                 {summary.subscription?.current_period_end ? <p className="mt-1 text-[10px] text-[var(--admin-muted)]">Current period ends {new Date(summary.subscription.current_period_end).toLocaleDateString()}</p> : null}
               </article>
               <article className="surface-card p-5"><p className="eyebrow-label">Account credit</p><p className="mt-2 text-2xl font-black">{money(contract?.credit_balance_minor || 0)}</p><p className="mt-2 text-[10px] text-[var(--admin-muted)]">Applied automatically to the next invoice.</p></article>
-              <article className="surface-card p-5"><p className="eyebrow-label">Capacity status</p><p className={`mt-2 flex items-center gap-2 text-lg font-black ${summary.within_plan ? "text-emerald-700" : "text-red-700"}`}>{summary.within_plan ? <CheckCircle2 size={18}/> : <AlertTriangle size={18}/>} {summary.within_plan ? "Within package" : "Over package"}</p><Link href="/addons" className="mt-3 inline-flex items-center gap-1 text-[10px] font-black text-[#285b55]">Add capacity <ArrowRight size={11}/></Link></article>
+              <article className="surface-card p-5"><p className="eyebrow-label">Capacity status</p><p className={`mt-2 flex items-center gap-2 text-lg font-black ${capacityStatus === "within_plan" ? "text-emerald-700" : metered ? "text-amber-700" : "text-red-700"}`}>{capacityStatus === "within_plan" ? <CheckCircle2 size={18}/> : <AlertTriangle size={18}/>} {capacityStatus === "within_plan" ? "Within package" : metered ? "Metered extra usage" : "Over package"}</p><Link href="/addons" className="mt-3 inline-flex items-center gap-1 text-[10px] font-black text-[#285b55]">Add capacity <ArrowRight size={11}/></Link></article>
             </section>
+
+            {summary.overage?.enabled ? (
+              <section className={`rounded-2xl border p-5 ${summary.overage.unpriced_metrics.length ? "border-red-200 bg-red-50" : summary.overage.estimated_minor > 0 ? "border-amber-200 bg-amber-50" : "border-[#dfe7e2] bg-white"}`}>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="eyebrow-label">Metered usage</p>
+                    <h2 className="mt-1 text-xl font-black">Estimated extra usage: {money(summary.overage.estimated_minor, summary.overage.currency)}</h2>
+                    <p className="mt-2 max-w-3xl text-xs leading-5 text-[var(--admin-muted)]">This package permits priced capacity above the included allowance. Extra units are itemized on the invoice; included capacity is still charged at the normal package price.</p>
+                  </div>
+                  <span className={`rounded-full px-3 py-1.5 text-[9px] font-black uppercase ${summary.overage.unpriced_metrics.length ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>
+                    {summary.overage.unpriced_metrics.length ? "Unpriced excess blocked" : "Usage billing enabled"}
+                  </span>
+                </div>
+                {summary.overage.items.length ? <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{summary.overage.items.map((item) => <div key={item.metric} className="rounded-xl border border-black/5 bg-white/70 p-3"><p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">{item.metric.replaceAll("_", " ")}</p><p className="mt-1 text-sm font-black">{item.units} × {money(item.rate_minor, summary.overage?.currency || "LSL")} = {money(item.amount_minor, summary.overage?.currency || "LSL")}</p></div>)}</div> : <p className="mt-4 text-xs font-bold text-emerald-700">No extra usage is currently billable.</p>}
+              </section>
+            ) : null}
 
             <section>
               <div className="mb-3 flex flex-wrap items-end justify-between gap-2"><div><p className="eyebrow-label">Usage & entitlements</p><h2 className="mt-1 text-xl font-black">Your live package capacity</h2></div><Link href="/addons" className="btn-secondary">Add capacity</Link></div>
@@ -322,7 +358,7 @@ export default function Billing() {
 
         <section id="invoices" className="surface-card overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4"><div><h2 className="font-black">Invoices & payments</h2><p className="text-[10px] text-[var(--admin-muted)]">{provider?.configured ? "Secure DPO checkout is available." : "Online payment is not configured; manual/EFT invoicing remains available."}</p></div><button disabled={busy === "invoice"} className="btn-secondary" onClick={() => void invoice()}><CircleDollarSign size={14}/> {busy === "invoice" ? "Generating…" : "Generate current invoice"}</button></div>
-          <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead><tr><th className="p-3">Invoice</th><th className="p-3">Amount</th><th className="p-3">Status</th><th className="p-3">Due</th><th className="p-3"/></tr></thead><tbody>{invoices.length ? invoices.map((item) => <tr key={item.id} className="border-t"><td className="p-3 font-mono font-bold">{item.invoice_number}</td><td className="p-3 font-black">{money(item.total_minor, item.currency)}</td><td className="p-3"><span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${item.status === "paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{item.status}</span></td><td className="p-3">{item.due_at ? new Date(item.due_at).toLocaleDateString() : "—"}</td><td className="p-3">{provider?.configured && item.status !== "paid" && item.status !== "void" ? <button disabled={busy === item.id} className="btn-primary" onClick={() => void pay(item)}>Pay securely</button> : null}</td></tr>) : <tr><td colSpan={5} className="p-6 text-center text-[var(--admin-muted)]">No invoices yet.</td></tr>}</tbody></table></div>
+          <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead><tr><th className="p-3">Invoice</th><th className="p-3">Amount</th><th className="p-3">Status</th><th className="p-3">Due</th><th className="p-3"/></tr></thead><tbody>{invoices.length ? invoices.map((item) => <tr key={item.id} className="border-t"><td className="p-3 font-mono font-bold">{item.invoice_number}</td><td className="p-3"><p className="font-black">{money(item.total_minor, item.currency)}</p>{(item.overage_amount_minor || 0) > 0 ? <p className="mt-1 text-[9px] font-bold text-amber-700">{money(item.overage_amount_minor, item.currency)} usage</p> : null}</td><td className="p-3"><span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${item.status === "paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{item.status}</span></td><td className="p-3">{item.due_at ? new Date(item.due_at).toLocaleDateString() : "—"}</td><td className="p-3">{provider?.configured && item.status !== "paid" && item.status !== "void" ? <button disabled={busy === item.id} className="btn-primary" onClick={() => void pay(item)}>Pay securely</button> : null}</td></tr>) : <tr><td colSpan={5} className="p-6 text-center text-[var(--admin-muted)]">No invoices yet.</td></tr>}</tbody></table></div>
         </section>
       </div>
     </ControlShell>

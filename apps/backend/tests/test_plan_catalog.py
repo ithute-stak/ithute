@@ -77,6 +77,16 @@ def test_platform_owner_can_create_publish_and_update_package(client, db, platfo
             "included_domains": 15,
             "included_storage_mb": 375000,
             "max_api_keys": 12,
+            "allow_metered_overages": True,
+            "overage_mailbox_minor": 500,
+            "overage_domain_minor": 1000,
+            "overage_storage_gb_minor": 250,
+            "overage_api_key_minor": 300,
+            "overage_hosted_project_minor": 2500,
+            "overage_hosting_storage_gb_minor": 400,
+            "overage_database_minor": 1500,
+            "overage_database_storage_gb_minor": 350,
+            "overage_source_storage_gb_minor": 200,
             "product_category": "Branding & Corporate Identity",
             "description": "Custom digital and branding package",
             "website_pages": 6,
@@ -97,6 +107,9 @@ def test_platform_owner_can_create_publish_and_update_package(client, db, platfo
     plan_id = plan["id"]
     assert plan["code"] == code
     assert plan["included_mailboxes"] == 75
+    assert plan["allow_metered_overages"] is True
+    assert plan["overage_mailbox_minor"] == 500
+    assert plan["overage_database_minor"] == 1500
     assert plan["includes_logo_design"] is True
     assert plan["minimum_term_months"] == 12
 
@@ -105,6 +118,8 @@ def test_platform_owner_can_create_publish_and_update_package(client, db, platfo
     published = {item["code"]: item for item in public.json()["items"]}
     assert code in published
     assert published[code]["included_storage_mb"] == 375000
+    assert published[code]["allow_metered_overages"] is True
+    assert published[code]["overage_storage_gb_minor"] == 250
     assert published[code]["product_category"] == "Branding & Corporate Identity"
 
     updated = client.patch(
@@ -113,6 +128,8 @@ def test_platform_owner_can_create_publish_and_update_package(client, db, platfo
             "monthly_price_minor": 239000,
             "included_mailboxes": 80,
             "max_api_keys": 15,
+            "overage_mailbox_minor": 650,
+            "overage_database_minor": 1800,
             "includes_company_profile": True,
             "support_level": "dedicated",
         },
@@ -121,6 +138,8 @@ def test_platform_owner_can_create_publish_and_update_package(client, db, platfo
     assert updated.json()["monthly_price_minor"] == 239000
     assert updated.json()["included_mailboxes"] == 80
     assert updated.json()["max_api_keys"] == 15
+    assert updated.json()["overage_mailbox_minor"] == 650
+    assert updated.json()["overage_database_minor"] == 1800
     assert updated.json()["includes_company_profile"] is True
     assert updated.json()["support_level"] == "dedicated"
 

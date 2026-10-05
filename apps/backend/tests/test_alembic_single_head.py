@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0073_infrastructure_security"
+LATEST_MIGRATION_HEAD = "0074_metered_overages"
 
 
 def test_alembic_has_one_consolidated_head():

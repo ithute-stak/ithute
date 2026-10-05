@@ -234,6 +234,9 @@ def capture_usage(db: Session, tenant_id: UUID, period_start: datetime | None = 
         mailboxes=usage["mailboxes"],
         domains=usage["domains"],
         storage_bytes=usage["allocated_storage_bytes"],
+        api_keys=usage["api_keys"],
+        hosted_projects=usage["hosted_projects"],
+        hosting_storage_bytes=usage["hosting_storage_bytes"],
         hosting_database_count=usage["hosting_database_count"],
         hosting_database_storage_bytes=usage["hosting_database_storage_bytes"],
         hosting_source_storage_bytes=usage["hosting_source_storage_bytes"],
@@ -244,7 +247,6 @@ def capture_usage(db: Session, tenant_id: UUID, period_start: datetime | None = 
     db.commit()
     db.refresh(snapshot)
     return snapshot
-
 
 def get_subscription(db: Session, tenant_id: UUID) -> TenantSubscription | None:
     return db.scalar(select(TenantSubscription).where(TenantSubscription.tenant_id == tenant_id))
@@ -286,6 +288,104 @@ def _limits(plan: BillingPlan) -> dict:
         "hosting_source_storage_bytes": plan.hosting_source_storage_mb * 1024 * 1024,
     }
 
+_GIB = 1024 * 1024 * 1024
+
+
+def _overage_rates(plan: BillingPlan) -> dict[str, int]:
+    return {
+        "mailboxes": int(plan.overage_mailbox_minor or 0),
+        "domains": int(plan.overage_domain_minor or 0),
+        "storage_gb": int(plan.overage_storage_gb_minor or 0),
+        "api_keys": int(plan.overage_api_key_minor or 0),
+        "hosted_projects": int(plan.overage_hosted_project_minor or 0),
+        "hosting_storage_gb": int(plan.overage_hosting_storage_gb_minor or 0),
+        "hosting_database_count": int(plan.overage_database_minor or 0),
+        "hosting_database_storage_gb": int(plan.overage_database_storage_gb_minor or 0),
+        "hosting_source_storage_gb": int(plan.overage_source_storage_gb_minor or 0),
+    }
+
+
+def _billable_units(used: int, included: int, *, bytes_to_gb: bool = False) -> int:
+    extra = max(0, int(used) - int(included))
+    if not bytes_to_gb:
+        return extra
+    return (extra + _GIB - 1) // _GIB if extra else 0
+
+
+def calculate_overage(plan: BillingPlan, usage: dict) -> dict:
+    limits = _limits(plan)
+    rates = _overage_rates(plan)
+    specs = (
+        ("mailboxes", usage["mailboxes"], limits["mailboxes"], rates["mailboxes"], False),
+        ("domains", usage["domains"], limits["domains"], rates["domains"], False),
+        ("storage_gb", usage["allocated_storage_bytes"], limits["storage_bytes"], rates["storage_gb"], True),
+        ("api_keys", usage["api_keys"], limits["api_keys"], rates["api_keys"], False),
+        ("hosted_projects", usage["hosted_projects"], limits["hosted_projects"], rates["hosted_projects"], False),
+        ("hosting_storage_gb", usage["hosting_storage_bytes"], limits["hosting_storage_bytes"], rates["hosting_storage_gb"], True),
+        ("hosting_database_count", usage["hosting_database_count"], limits["hosting_database_count"], rates["hosting_database_count"], False),
+        ("hosting_database_storage_gb", usage["hosting_database_storage_bytes"], limits["hosting_database_storage_bytes"], rates["hosting_database_storage_gb"], True),
+        ("hosting_source_storage_gb", usage["hosting_source_storage_bytes"], limits["hosting_source_storage_bytes"], rates["hosting_source_storage_gb"], True),
+    )
+    items = []
+    unpriced_metrics = []
+    total_minor = 0
+    for metric, used, included, rate_minor, bytes_to_gb in specs:
+        units = _billable_units(used, included, bytes_to_gb=bytes_to_gb)
+        amount_minor = units * rate_minor if plan.allow_metered_overages else 0
+        if units:
+            items.append(
+                {
+                    "metric": metric,
+                    "units": units,
+                    "rate_minor": rate_minor,
+                    "amount_minor": amount_minor,
+                }
+            )
+            if plan.allow_metered_overages and rate_minor <= 0:
+                unpriced_metrics.append(metric)
+            total_minor += amount_minor
+    return {
+        "enabled": bool(plan.allow_metered_overages),
+        "fully_priced": bool(plan.allow_metered_overages) and not unpriced_metrics,
+        "currency": plan.currency,
+        "estimated_minor": total_minor,
+        "items": items,
+        "unpriced_metrics": unpriced_metrics,
+        "rates": rates,
+    }
+
+
+def _can_meter_resource(plan: BillingPlan, resource: str, usage: dict, limits: dict, requested_storage_bytes: int) -> bool:
+    if not plan.allow_metered_overages:
+        return False
+    rates = _overage_rates(plan)
+    if resource == "domain":
+        return rates["domains"] > 0
+    if resource == "api_key":
+        return rates["api_keys"] > 0
+    if resource == "storage":
+        return rates["storage_gb"] > 0
+    if resource == "hosting_storage":
+        return rates["hosting_storage_gb"] > 0
+    if resource == "hosting_database_storage":
+        return rates["hosting_database_storage_gb"] > 0
+    if resource == "hosting_source_storage":
+        return rates["hosting_source_storage_gb"] > 0
+    if resource == "mailbox":
+        count_over = usage["mailboxes"] + 1 > limits["mailboxes"]
+        storage_over = usage["allocated_storage_bytes"] + requested_storage_bytes > limits["storage_bytes"]
+        return (not count_over or rates["mailboxes"] > 0) and (not storage_over or rates["storage_gb"] > 0)
+    if resource == "hosting_project":
+        count_over = usage["hosted_projects"] + 1 > limits["hosted_projects"]
+        storage_over = usage["hosting_storage_bytes"] + requested_storage_bytes > limits["hosting_storage_bytes"]
+        return (not count_over or rates["hosted_projects"] > 0) and (not storage_over or rates["hosting_storage_gb"] > 0)
+    if resource == "hosting_database":
+        count_over = usage["hosting_database_count"] + 1 > limits["hosting_database_count"]
+        storage_over = usage["hosting_database_storage_bytes"] + requested_storage_bytes > limits["hosting_database_storage_bytes"]
+        return (not count_over or rates["hosting_database_count"] > 0) and (not storage_over or rates["hosting_database_storage_gb"] > 0)
+    return False
+
+
 
 def entitlement_decision(db: Session, tenant_id: UUID, resource: str, requested_storage_bytes: int = 0, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
@@ -302,6 +402,7 @@ def entitlement_decision(db: Session, tenant_id: UUID, resource: str, requested_
         return {"allowed": False, "reason": "Payment grace period has expired", "usage": usage, "limits": _limits(plan)}
     if subscription.status not in {SubscriptionStatus.trialing, SubscriptionStatus.active, SubscriptionStatus.past_due}:
         return {"allowed": False, "reason": "Subscription does not allow new resources", "usage": usage, "limits": _limits(plan)}
+
     limits = _limits(plan)
     checks = {
         "domain": usage["domains"] + 1 <= limits["domains"],
@@ -316,8 +417,21 @@ def entitlement_decision(db: Session, tenant_id: UUID, resource: str, requested_
     }
     if resource not in checks:
         raise ValueError(f"Unknown entitlement resource: {resource}")
-    return {"allowed": checks[resource], "reason": "within plan" if checks[resource] else f"{resource} entitlement limit reached", "usage": usage, "limits": limits, "subscription_status": subscription.status.value, "grace_ends_at": subscription.grace_ends_at.isoformat() if subscription.grace_ends_at else None}
 
+    within_plan = checks[resource]
+    metered = False if within_plan else _can_meter_resource(plan, resource, usage, limits, requested_storage_bytes)
+    allowed = within_plan or metered
+    reason = "within plan" if within_plan else ("metered overage" if metered else f"{resource} entitlement limit reached")
+    return {
+        "allowed": allowed,
+        "reason": reason,
+        "usage": usage,
+        "limits": limits,
+        "subscription_status": subscription.status.value,
+        "grace_ends_at": subscription.grace_ends_at.isoformat() if subscription.grace_ends_at else None,
+        "metered_overage": metered,
+        "overage": calculate_overage(plan, usage),
+    }
 
 def require_entitlement(db: Session, tenant_id: UUID, resource: str, requested_storage_bytes: int = 0) -> None:
     if settings.environment.lower() != "production":
@@ -337,14 +451,35 @@ def generate_invoice(db: Session, tenant_id: UUID, due_days: int = 14) -> Billin
     existing = db.scalar(select(BillingInvoice).where(BillingInvoice.tenant_id == tenant_id, BillingInvoice.period_start == subscription.current_period_start, BillingInvoice.period_end == subscription.current_period_end, BillingInvoice.status != InvoiceStatus.void))
     if existing is not None:
         return existing
+
+    usage = tenant_usage(db, tenant_id)
+    overage = calculate_overage(plan, usage)
     snapshot = capture_usage(db, tenant_id, subscription.current_period_start, subscription.current_period_end)
+    base_amount = int(plan.monthly_price_minor)
+    overage_amount = int(overage["estimated_minor"])
+    total = base_amount + overage_amount
     now = datetime.now(timezone.utc)
-    invoice = BillingInvoice(tenant_id=tenant_id, subscription_id=subscription.id, usage_snapshot_id=snapshot.id, invoice_number=f"MDNS-{now:%Y%m%d}-{uuid4().hex[:10].upper()}", currency=plan.currency, subtotal_minor=plan.monthly_price_minor, total_minor=plan.monthly_price_minor, status=InvoiceStatus.open, period_start=subscription.current_period_start, period_end=subscription.current_period_end, due_at=now + timedelta(days=due_days), finalized_at=now)
+    invoice = BillingInvoice(
+        tenant_id=tenant_id,
+        subscription_id=subscription.id,
+        usage_snapshot_id=snapshot.id,
+        invoice_number=f"MDNS-{now:%Y%m%d}-{uuid4().hex[:10].upper()}",
+        currency=plan.currency,
+        base_amount_minor=base_amount,
+        overage_amount_minor=overage_amount,
+        usage_breakdown_json=json.dumps(overage, sort_keys=True),
+        subtotal_minor=total,
+        total_minor=total,
+        status=InvoiceStatus.open,
+        period_start=subscription.current_period_start,
+        period_end=subscription.current_period_end,
+        due_at=now + timedelta(days=due_days),
+        finalized_at=now,
+    )
     db.add(invoice)
     db.commit()
     db.refresh(invoice)
     return invoice
-
 
 def mark_past_due(db: Session, subscription: TenantSubscription, grace_days: int = 7) -> TenantSubscription:
     now = datetime.now(timezone.utc)
@@ -441,17 +576,40 @@ def process_payment_event(db: Session, provider: str, event_id: str, event_type:
 
 
 def invoice_out(invoice: BillingInvoice) -> dict:
-    return {"id": str(invoice.id), "tenant_id": str(invoice.tenant_id), "subscription_id": str(invoice.subscription_id) if invoice.subscription_id else None, "usage_snapshot_id": str(invoice.usage_snapshot_id) if invoice.usage_snapshot_id else None, "invoice_number": invoice.invoice_number, "currency": invoice.currency, "subtotal_minor": invoice.subtotal_minor, "total_minor": invoice.total_minor, "status": invoice.status.value, "period_start": invoice.period_start.isoformat() if invoice.period_start else None, "period_end": invoice.period_end.isoformat() if invoice.period_end else None, "due_at": invoice.due_at.isoformat() if invoice.due_at else None, "paid_at": invoice.paid_at.isoformat() if invoice.paid_at else None, "finalized_at": invoice.finalized_at.isoformat() if invoice.finalized_at else None, "provider_invoice_id": invoice.provider_invoice_id, "created_at": invoice.created_at.isoformat() if invoice.created_at else None}
-
+    try:
+        usage_breakdown = json.loads(invoice.usage_breakdown_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        usage_breakdown = {}
+    return {
+        "id": str(invoice.id),
+        "tenant_id": str(invoice.tenant_id),
+        "subscription_id": str(invoice.subscription_id) if invoice.subscription_id else None,
+        "usage_snapshot_id": str(invoice.usage_snapshot_id) if invoice.usage_snapshot_id else None,
+        "invoice_number": invoice.invoice_number,
+        "currency": invoice.currency,
+        "base_amount_minor": invoice.base_amount_minor,
+        "overage_amount_minor": invoice.overage_amount_minor,
+        "usage_breakdown": usage_breakdown,
+        "subtotal_minor": invoice.subtotal_minor,
+        "total_minor": invoice.total_minor,
+        "status": invoice.status.value,
+        "period_start": invoice.period_start.isoformat() if invoice.period_start else None,
+        "period_end": invoice.period_end.isoformat() if invoice.period_end else None,
+        "due_at": invoice.due_at.isoformat() if invoice.due_at else None,
+        "paid_at": invoice.paid_at.isoformat() if invoice.paid_at else None,
+        "finalized_at": invoice.finalized_at.isoformat() if invoice.finalized_at else None,
+        "provider_invoice_id": invoice.provider_invoice_id,
+        "created_at": invoice.created_at.isoformat() if invoice.created_at else None,
+    }
 
 def billing_summary(db: Session, tenant_id: UUID) -> dict:
     usage = tenant_usage(db, tenant_id)
     subscription = get_subscription(db, tenant_id)
     if subscription is None:
-        return {"subscription": None, "usage": usage, "entitlements": None, "within_plan": False}
+        return {"subscription": None, "usage": usage, "entitlements": None, "within_plan": False, "overage": None}
     entitlement_plan = db.get(BillingPlan, subscription.plan_id)
     if entitlement_plan is None:
-        return {"subscription": {"id": str(subscription.id), "status": subscription.status.value}, "usage": usage, "entitlements": None, "within_plan": False}
+        return {"subscription": {"id": str(subscription.id), "status": subscription.status.value}, "usage": usage, "entitlements": None, "within_plan": False, "overage": None}
     base_plan = db.get(BillingPlan, subscription.base_plan_id or subscription.plan_id) or entitlement_plan
     pending_plan = db.get(BillingPlan, subscription.pending_plan_id) if subscription.pending_plan_id else None
     limits = _limits(entitlement_plan)
@@ -466,6 +624,7 @@ def billing_summary(db: Session, tenant_id: UUID) -> dict:
         and usage["hosting_database_storage_bytes"] <= limits["hosting_database_storage_bytes"]
         and usage["hosting_source_storage_bytes"] <= limits["hosting_source_storage_bytes"]
     )
+    overage = calculate_overage(entitlement_plan, usage)
     return {
         "subscription": {
             "id": str(subscription.id),
@@ -488,4 +647,6 @@ def billing_summary(db: Session, tenant_id: UUID) -> dict:
         "usage": usage,
         "entitlements": limits,
         "within_plan": within,
+        "commercial_capacity_status": "within_plan" if within else ("metered_overage" if overage["fully_priced"] else "over_limit"),
+        "overage": overage,
     }

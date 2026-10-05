@@ -64,7 +64,15 @@ def hosting_resource_meter(db: Session, tenant_id: UUID, *, lock_subscription: b
         "usage": usage,
         "limits": _effective_limits(plan),
         "subscription_status": str(subscription.status.value),
-        "plan": {"id": str(plan.id), "code": plan.code, "name": plan.name},
+        "plan": {
+            "id": str(plan.id),
+            "code": plan.code,
+            "name": plan.name,
+            "allow_metered_overages": bool(plan.allow_metered_overages),
+            "overage_database_minor": int(plan.overage_database_minor or 0),
+            "overage_database_storage_gb_minor": int(plan.overage_database_storage_gb_minor or 0),
+            "overage_source_storage_gb_minor": int(plan.overage_source_storage_gb_minor or 0),
+        },
     }
 
 
@@ -75,11 +83,20 @@ def database_allocation_allowed(db: Session, tenant_id: UUID, requested_storage_
         return False, "Organization has no active hosting package", meter
     usage = meter["usage"]
     requested_bytes = int(requested_storage_mb) * 1024 * 1024
-    if usage["database_count"] + 1 > limits["database_count"]:
+    count_over = usage["database_count"] + 1 > limits["database_count"]
+    storage_over = usage["database_storage_bytes"] + requested_bytes > limits["database_storage_bytes"]
+    if not count_over and not storage_over:
+        return True, "within plan", meter
+
+    plan = meter.get("plan") or {}
+    metered = bool(plan.get("allow_metered_overages"))
+    count_priced = not count_over or int(plan.get("overage_database_minor") or 0) > 0
+    storage_priced = not storage_over or int(plan.get("overage_database_storage_gb_minor") or 0) > 0
+    if metered and count_priced and storage_priced:
+        return True, "metered overage", meter
+    if count_over:
         return False, "Hosted database count limit reached", meter
-    if usage["database_storage_bytes"] + requested_bytes > limits["database_storage_bytes"]:
-        return False, "Hosted database storage limit reached", meter
-    return True, "within plan", meter
+    return False, "Hosted database storage limit reached", meter
 
 
 def source_allocation_allowed(db: Session, tenant_id: UUID, requested_bytes: int) -> tuple[bool, str, dict]:
@@ -88,6 +105,12 @@ def source_allocation_allowed(db: Session, tenant_id: UUID, requested_bytes: int
     if limits is None:
         return False, "Organization has no active hosting package", meter
     usage = meter["usage"]
-    if usage["source_storage_bytes"] + int(requested_bytes) > limits["source_storage_bytes"]:
-        return False, "Hosted source storage limit reached", meter
-    return True, "within plan", meter
+    over = usage["source_storage_bytes"] + int(requested_bytes) > limits["source_storage_bytes"]
+    if not over:
+        return True, "within plan", meter
+
+    plan = meter.get("plan") or {}
+    if bool(plan.get("allow_metered_overages")) and int(plan.get("overage_source_storage_gb_minor") or 0) > 0:
+        return True, "metered overage", meter
+    return False, "Hosted source storage limit reached", meter
+
