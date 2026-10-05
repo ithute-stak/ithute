@@ -62,3 +62,10 @@ The eBPF observer now correlates block request issue and completion events by ke
 Latency is accumulated into 16 bounded histogram buckets from <=100 microseconds through an open-ended >2 second bucket. The privileged exporter calculates approximate p50, p95 and p99 values from those measured request durations and also exports average/max latency.
 
 Because histogram buckets are cumulative from loader start, the backend derives interval percentiles from differences between consecutive signed samples before feeding them into per-server prediction. If a percentile lands in the open-ended final bucket, Ithute marks it as capped/lower-bound rather than pretending the exact latency is known.
+
+
+## ECC and BMC reliability telemetry
+
+Where Linux exposes EDAC memory-controller counters, the Go agent reads corrected and uncorrected ECC totals directly from sysfs. Counter deltas are fed into the per-server predictor so a rising corrected-error rate can be detected before an uncorrected memory failure occurs.
+
+Where a local BMC/IPMI interface and `ipmitool` are available, the agent runs a bounded read-only sensor query and summarizes sensor warnings, critical conditions, highest reported temperature, lowest active fan RPM and a short list of faulty sensor names. Missing EDAC/IPMI support is treated as unavailable telemetry rather than a healthy signal.
