@@ -15,11 +15,15 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_platform_owner, require_tenant_permission
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
-from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingProject, HostingSource, User
+from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingPostgresTopologyRepair, HostingProject, HostingSource, User
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
 from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
 from app.services.database_replication import build_database_failover_plan
 from app.services.postgres_replication_groups import build_postgres_replication_group_plan
+from app.services.postgres_topology_repair import (
+    queue_post_failover_topology_repairs,
+    topology_repair_source,
+)
 from app.services.external_fencing import (
     queue_external_fence_for_database_failover,
     queue_external_fence_for_postgres_group_failover,
@@ -583,6 +587,12 @@ def report_postgres_group_failover(
             row.status = "failed"
             row.healthy = False
             row.telemetry_error = "Standby must be reconfigured to follow the newly promoted primary"
+        repair_jobs = queue_post_failover_topology_repairs(
+            db,
+            group=group,
+            old_primary_node_id=attempt.source_node_id,
+            promoted_standby_id=standby.id,
+        )
         attempt.status = "succeeded"
         attempt.promoted_at = now
         attempt.failure_message = None
@@ -596,6 +606,7 @@ def report_postgres_group_failover(
                 "source_node_id": str(attempt.source_node_id),
                 "target_node_id": str(attempt.target_node_id),
                 "database_ids": [str(row.id) for row in members],
+                "repair_job_ids": [str(row.id) for row in repair_jobs],
             }, sort_keys=True),
         ))
         db.commit()
@@ -605,6 +616,7 @@ def report_postgres_group_failover(
             "group_id": str(group.id),
             "primary_node_id": str(group.primary_node_id),
             "database_ids": [str(row.id) for row in members],
+            "repair_job_ids": [str(row.id) for row in repair_jobs],
         }
 
     raise HTTPException(status_code=409, detail="Group failover action is not claimable by this hosting node")
