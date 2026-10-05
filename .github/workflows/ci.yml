@@ -98,7 +98,7 @@ jobs:
           compose = Path('compose.production.yml').read_text(encoding='utf-8')
           if '\n    build:' in compose or '\n      build:' in compose:
               failures.append('Production compose must not contain application build contexts.')
-          for image in ('ithute-web:', 'ithute-app-api:', 'ithute-java-worker:', 'ithute-auth:', 'ithute-push:', 'ithute-realtime:'):
+          for image in ('ithute-web:', 'ithute-app-api:', 'ithute-go-worker:', 'ithute-java-worker:', 'ithute-auth:', 'ithute-push:', 'ithute-realtime:'):
               if f'image: {image}' not in compose:
                   failures.append(f'Missing immutable runtime image declaration for {image}')
           if 'image: powerdns/pdns-auth-49:4.9.17' not in compose:
