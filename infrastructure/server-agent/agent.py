@@ -383,7 +383,6 @@ def sync_cluster_state() -> None:
             "self_server_id",
             "node_count",
             "reachability_engine",
-            "network_policy_mode",
             "nodes",
         )
         if key in state
