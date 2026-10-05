@@ -19,6 +19,7 @@ from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
 from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
 from app.services.database_replication import build_database_failover_plan
+from app.services.external_fencing import queue_external_fence_for_database_failover
 
 router = APIRouter(tags=["shared-hosting"])
 
@@ -271,10 +272,20 @@ def request_database_failover(
     )
     db.add(attempt)
     db.flush()
+    external_fence = queue_external_fence_for_database_failover(
+        db,
+        failover=attempt,
+        requested_by_user_id=current.id,
+    )
     _audit(
         db, current, tenant_id, "hosting.database.failover.request",
         "hosting_database_failover_attempt", attempt.id,
-        {"database_id": str(database.id), "source_node_id": str(database.node_id), "target_node_id": str(replica.node_id)},
+        {
+            "database_id": str(database.id),
+            "source_node_id": str(database.node_id),
+            "target_node_id": str(replica.node_id),
+            "external_fence_attempt_id": str(external_fence.id) if external_fence else None,
+        },
     )
     db.commit()
     return {

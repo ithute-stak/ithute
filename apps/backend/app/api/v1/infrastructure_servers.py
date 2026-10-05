@@ -22,11 +22,14 @@ from app.services.network_topology import persist_topology_observations
 from app.models import (
     AuditLog,
     HostingDatabase,
+    HostingDatabaseFailoverAttempt,
     HostingNode,
     HostingNodeAgent,
     HostingProject,
     InfrastructureAgentCommand,
     InfrastructureContainerSnapshot,
+    InfrastructureFenceAttempt,
+    InfrastructureFenceController,
     InfrastructureNetworkGrant,
     InfrastructureSecuritySnapshot,
     InfrastructureServer,
@@ -93,6 +96,21 @@ class InfrastructureAgentCommandResult(BaseModel):
     ok: bool
     result: dict = Field(default_factory=dict)
     error: str | None = Field(default=None, max_length=8000)
+
+
+class InfrastructureFenceControllerCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    kind: str = Field(pattern=r"^(provider_api|hypervisor|power_controller)$")
+    provider: str | None = Field(default=None, max_length=80)
+
+
+class InfrastructureFenceResult(BaseModel):
+    claim_token: str = Field(min_length=20, max_length=128)
+    success: bool
+    observed_state: str | None = Field(default=None, pattern=r"^(powered_off|isolated)$")
+    provider_operation_id: str | None = Field(default=None, max_length=255)
+    evidence: dict = Field(default_factory=dict)
+    error: str | None = Field(default=None, max_length=2000)
 
 
 class InfrastructureServerUpdate(BaseModel):
@@ -877,6 +895,25 @@ def update_server(server_id: UUID, payload: InfrastructureServerUpdate, db: Sess
     return _server_out(db, server)
 
 
+def _fence_controller_from_token(
+    db: Session,
+    token: str | None,
+) -> InfrastructureFenceController:
+    raw = (token or "").strip()
+    if not raw or not raw.startswith("ith_fence_"):
+        raise HTTPException(status_code=401, detail="Infrastructure fence controller credential required")
+    controller = db.scalar(
+        select(InfrastructureFenceController).where(
+            InfrastructureFenceController.token_hash == hash_token(raw),
+            InfrastructureFenceController.status == "active",
+        )
+    )
+    if controller is None:
+        raise HTTPException(status_code=401, detail="Invalid infrastructure fence controller credential")
+    controller.last_seen_at = datetime.now(timezone.utc)
+    return controller
+
+
 def _server_agent_from_token(db: Session, token: str | None) -> tuple[InfrastructureServerAgent, InfrastructureServer]:
     raw = (token or "").strip()
     if not raw or not raw.startswith("ith_srv_"):
@@ -1418,6 +1455,167 @@ def queue_server_command(
     db.commit()
     db.refresh(row)
     return _command_out(row)
+
+
+@router.post("/fence-controllers", status_code=201)
+def create_fence_controller(
+    payload: InfrastructureFenceControllerCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    raw = "ith_fence_" + secrets.token_urlsafe(36)
+    row = InfrastructureFenceController(
+        name=payload.name.strip(),
+        kind=payload.kind,
+        provider=payload.provider.strip() if payload.provider else None,
+        token_hash=hash_token(raw),
+        token_hint=raw[-12:],
+        status="active",
+        created_by_user_id=current.id,
+    )
+    db.add(row)
+    db.flush()
+    db.add(AuditLog(
+        actor_user_id=current.id,
+        action="infrastructure.fence_controller.create",
+        resource_type="infrastructure_fence_controller",
+        resource_id=str(row.id),
+        metadata_json=json.dumps({"kind": row.kind, "provider": row.provider}, sort_keys=True),
+    ))
+    db.commit()
+    return {
+        "id": str(row.id),
+        "name": row.name,
+        "kind": row.kind,
+        "provider": row.provider,
+        "status": row.status,
+        "token": raw,
+    }
+
+
+@router.post("/fence-controller/attempts/claim")
+def claim_external_fence_attempt(
+    x_ithute_fence_controller: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    controller = _fence_controller_from_token(db, x_ithute_fence_controller)
+    row = db.scalar(
+        select(InfrastructureFenceAttempt)
+        .where(
+            InfrastructureFenceAttempt.controller_id == controller.id,
+            InfrastructureFenceAttempt.status == "queued",
+        )
+        .order_by(InfrastructureFenceAttempt.created_at.asc(), InfrastructureFenceAttempt.id.asc())
+        .with_for_update(skip_locked=True)
+    )
+    if row is None:
+        db.commit()
+        return {"fence": None}
+
+    server = db.get(InfrastructureServer, row.server_id)
+    if server is None:
+        row.status = "failed"
+        row.error = "Infrastructure server no longer exists"
+        row.completed_at = datetime.now(timezone.utc)
+        db.commit()
+        return {"fence": None}
+
+    raw_claim = secrets.token_urlsafe(32)
+    row.claim_token_hash = hash_token(raw_claim)
+    row.status = "claimed"
+    row.claimed_at = datetime.now(timezone.utc)
+    db.commit()
+    return {
+        "fence": {
+            "id": str(row.id),
+            "claim_token": raw_claim,
+            "server": {
+                "id": str(server.id),
+                "name": server.name,
+                "hostname": server.hostname,
+                "public_ip": server.public_ip,
+                "provider": server.provider,
+            },
+            "required_state": "powered_off_or_isolated",
+            "database_failover_attempt_id": (
+                str(row.database_failover_attempt_id)
+                if row.database_failover_attempt_id else None
+            ),
+        }
+    }
+
+
+@router.post("/fence-controller/attempts/{attempt_id}/result")
+def complete_external_fence_attempt(
+    attempt_id: UUID,
+    payload: InfrastructureFenceResult,
+    x_ithute_fence_controller: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    controller = _fence_controller_from_token(db, x_ithute_fence_controller)
+    row = db.scalar(
+        select(InfrastructureFenceAttempt)
+        .where(
+            InfrastructureFenceAttempt.id == attempt_id,
+            InfrastructureFenceAttempt.controller_id == controller.id,
+        )
+        .with_for_update()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Infrastructure fence attempt not found")
+    if row.status != "claimed" or not row.claim_token_hash:
+        raise HTTPException(status_code=409, detail="Infrastructure fence attempt is not actively claimed")
+    if hash_token(payload.claim_token) != row.claim_token_hash:
+        raise HTTPException(status_code=409, detail="Stale or invalid external fence claim token")
+
+    now = datetime.now(timezone.utc)
+    row.claim_token_hash = None
+    if not payload.success:
+        row.status = "failed"
+        row.error = (payload.error or "External fence controller reported failure").strip()[:2000]
+        row.completed_at = now
+        db.commit()
+        return {"id": str(row.id), "status": row.status}
+
+    if payload.observed_state not in {"powered_off", "isolated"}:
+        raise HTTPException(status_code=409, detail="Successful external fence requires powered_off or isolated observation")
+
+    evidence_json = json.dumps(payload.evidence, sort_keys=True, separators=(",", ":"))
+    if len(evidence_json) > 16000:
+        raise HTTPException(status_code=422, detail="External fence evidence is too large")
+
+    row.status = "succeeded"
+    row.observed_state = payload.observed_state
+    row.provider_operation_id = payload.provider_operation_id
+    row.evidence_json = evidence_json
+    row.error = None
+    row.completed_at = now
+
+    if row.database_failover_attempt_id is not None:
+        failover = db.scalar(
+            select(HostingDatabaseFailoverAttempt)
+            .where(HostingDatabaseFailoverAttempt.id == row.database_failover_attempt_id)
+            .with_for_update()
+        )
+        server = db.get(InfrastructureServer, row.server_id)
+        if (
+            failover is not None
+            and server is not None
+            and server.hosting_node_id == failover.source_node_id
+            and failover.status in {"requested", "fence_claimed"}
+        ):
+            failover.status = "source_fenced"
+            failover.source_fenced_at = now
+            failover.source_fence_token = None
+            failover.failure_message = None
+
+    db.commit()
+    return {
+        "id": str(row.id),
+        "status": row.status,
+        "observed_state": row.observed_state,
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+    }
 
 
 @router.post("/agent/commands/next")

@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0085_database_failover_attempts"
+LATEST_MIGRATION_HEAD = "0086_external_fencing"
 
 
 def test_alembic_has_one_consolidated_head():
