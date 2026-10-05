@@ -453,6 +453,7 @@ def hardware_fleet_health(
             except (TypeError, ValueError, json.JSONDecodeError):
                 payload = {}
             evidence = _health(payload)["evidence"]
+        ebpf = payload.get("ebpf") if isinstance(payload.get("ebpf"), dict) else {}
 
         items.append({
             "server_id": str(server.id),
@@ -470,6 +471,11 @@ def hardware_fleet_health(
             "io_pressure_avg10": latest.io_pressure_avg10 if latest else None,
             "filesystem_used_percent": latest.filesystem_used_percent if latest else None,
             "storage_warning_count": latest.storage_warning_count if latest else 0,
+            "ebpf_block_latency_p50_ms": _number(ebpf, "block_latency_p50_ms"),
+            "ebpf_block_latency_p95_ms": _number(ebpf, "block_latency_p95_ms"),
+            "ebpf_block_latency_p99_ms": _number(ebpf, "block_latency_p99_ms"),
+            "ebpf_block_latency_max_ms": _number(ebpf, "block_latency_max_ms"),
+            "ebpf_latency_percentiles_capped": bool(ebpf.get("block_latency_percentiles_capped")),
             "predictive_risk_score": latest.predictive_risk_score if latest else None,
             "predictive_state": predictive_state,
             "predictive_confidence": latest.predictive_confidence if latest else None,
