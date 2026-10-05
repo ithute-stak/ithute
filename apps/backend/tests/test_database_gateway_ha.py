@@ -262,6 +262,10 @@ def test_managed_gateway_pool_dns_publishes_only_fresh_addresses(monkeypatch):
     pool = SimpleNamespace(
         dns_domain_id=uuid.uuid4(),
         frontend_hostname="db-ha.ithute.internal",
+        published_ipv4_json="[]",
+        published_ipv6_json="[]",
+        dns_last_reconciled_at=None,
+        dns_error=None,
     )
     gateways = [
         SimpleNamespace(advertise_ipv4="10.10.0.11", advertise_ipv6=None),
@@ -272,6 +276,7 @@ def test_managed_gateway_pool_dns_publishes_only_fresh_addresses(monkeypatch):
         FakeDB(),
         pool=pool,
         gateways=gateways,
+        now=datetime.now(timezone.utc),
     )
 
     assert result["error"] is None
@@ -316,10 +321,54 @@ def test_managed_gateway_pool_dns_withdraws_empty_address_family(monkeypatch):
         pool=SimpleNamespace(
             dns_domain_id=uuid.uuid4(),
             frontend_hostname="db-ha.ithute.internal",
+            published_ipv4_json="[]",
+            published_ipv6_json="[]",
+            dns_last_reconciled_at=None,
+            dns_error=None,
         ),
         gateways=[SimpleNamespace(advertise_ipv4="10.10.0.11", advertise_ipv6=None)],
+        now=datetime.now(timezone.utc),
     )
 
     assert result["error"] is None
     assert ("replace", "A", ("10.10.0.11",)) in calls
     assert ("delete", "AAAA") in calls
+
+
+
+def test_managed_gateway_pool_dns_skips_identical_publication(monkeypatch):
+    calls = []
+
+    class FakePowerDNS:
+        def replace_rrset(self, *args, **kwargs):
+            calls.append(("replace", args))
+
+        def delete_rrset(self, *args, **kwargs):
+            calls.append(("delete", args))
+
+    class FakeDB:
+        def get(self, model, key):
+            return SimpleNamespace(ascii_name="ithute.internal")
+
+    monkeypatch.setattr(gateway_ha, "PowerDNSClient", FakePowerDNS)
+    pool = SimpleNamespace(
+        dns_domain_id=uuid.uuid4(),
+        frontend_hostname="db-ha.ithute.internal",
+        published_ipv4_json='["10.10.0.11","10.10.0.12"]',
+        published_ipv6_json="[]",
+        dns_last_reconciled_at=datetime.now(timezone.utc),
+        dns_error=None,
+    )
+    result = gateway_ha._reconcile_pool_dns(
+        FakeDB(),
+        pool=pool,
+        gateways=[
+            SimpleNamespace(advertise_ipv4="10.10.0.12", advertise_ipv6=None),
+            SimpleNamespace(advertise_ipv4="10.10.0.11", advertise_ipv6=None),
+        ],
+        now=datetime.now(timezone.utc),
+    )
+
+    assert result["changed"] is False
+    assert result["error"] is None
+    assert calls == []
