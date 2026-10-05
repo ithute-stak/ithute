@@ -53,3 +53,12 @@ The normal Go hardware agent remains unprivileged. eBPF loading and map reads ar
 The loader never enumerates, detaches or deletes BPF programs outside the Ithute pin tree.
 
 The current eBPF signal set contains cumulative block request issue/complete counts, process exits and OOM victims. These are useful for backlog and fault-growth detection. True request latency percentiles are still a separate roadmap item and must not be inferred from the current counters.
+
+
+## Block request latency
+
+The eBPF observer now correlates block request issue and completion events by kernel request identity and records the measured duration using `bpf_ktime_get_ns()`.
+
+Latency is accumulated into 16 bounded histogram buckets from <=100 microseconds through an open-ended >2 second bucket. The privileged exporter calculates approximate p50, p95 and p99 values from those measured request durations and also exports average/max latency.
+
+Because histogram buckets are cumulative from loader start, the backend derives interval percentiles from differences between consecutive signed samples before feeding them into per-server prediction. If a percentile lands in the open-ended final bucket, Ithute marks it as capped/lower-bound rather than pretending the exact latency is known.
