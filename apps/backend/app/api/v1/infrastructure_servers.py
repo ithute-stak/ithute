@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
-from app.services.engine_router import execute_binary, execute_network, routing_status
+from app.services.engine_router import execute_binary, execute_hmac_sha256, execute_network, routing_status
 from app.services.managed_network import update_peer_telemetry
 from app.models import (
     AuditLog,
@@ -1050,17 +1050,24 @@ def infrastructure_agent_cluster_state(
             "checked": live["checked"],
             "services": live["services"],
         }
-    canonical = json.dumps(nodes, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    digest = execute_binary("crypto.sha256", canonical)
-    return {
+    generated_at = datetime.now(timezone.utc).isoformat()
+    unsigned = {
         "version": 1,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": generated_at,
         "self_server_id": str(current_server.id),
         "node_count": len(nodes),
-        "fingerprint_sha256": str(digest.value),
-        "fingerprint_engine": digest.engine,
         "reachability_engine": reachability_engine,
         "nodes": nodes,
+    }
+    canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = execute_binary("crypto.sha256", canonical)
+    signature = execute_hmac_sha256((x_ithute_server_agent or "").encode("utf-8"), canonical)
+    return {
+        **unsigned,
+        "fingerprint_sha256": str(digest.value),
+        "fingerprint_engine": digest.engine,
+        "signature_hmac_sha256": str(signature.value),
+        "signature_engine": signature.engine,
     }
 
 
