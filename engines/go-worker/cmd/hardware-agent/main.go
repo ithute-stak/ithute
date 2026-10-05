@@ -68,6 +68,7 @@ type Sample struct {
 		Smartctl  bool `json:"smartctl"`
 		NVMeCLI   bool `json:"nvme_cli"`
 	} `json:"capabilities,omitempty"`
+	EBPF EBPFSnapshot `json:"ebpf,omitempty"`
 	StorageDevices []StorageHealth `json:"storage_devices,omitempty"`
 }
 
@@ -98,6 +99,7 @@ func main() {
 	agentID := flag.String("agent-id", "", "stable Ithute infrastructure agent identifier")
 	signingKeyFile := flag.String("signing-key-file", "", "path to the private infrastructure-agent token/HMAC key file")
 	endpoint := flag.String("endpoint", "", "optional Ithute hardware telemetry ingestion URL")
+	ebpfSnapshot := flag.String("ebpf-snapshot", "/run/ithute-hardware/ebpf.json", "path to the root-exported read-only eBPF snapshot")
 	interval := flag.Duration("interval", 15*time.Second, "sampling interval")
 	once := flag.Bool("once", false, "collect one sample and exit")
 	flag.Parse()
@@ -136,6 +138,11 @@ func main() {
 			if path, pathErr := smartctlPath(); pathErr == nil {
 				sample.StorageDevices = collectSmartStorage(ctx, path)
 			}
+		}
+		if snapshot, snapshotErr := readEBPFSnapshot(*ebpfSnapshot, 90*time.Second); snapshotErr == nil {
+			sample.EBPF = snapshot
+		} else if !os.IsNotExist(snapshotErr) {
+			fmt.Fprintln(os.Stderr, "hardware-agent:", snapshotErr)
 		}
 		if err := validateWithRust(ctx, *validator, sample); err != nil {
 			return err
