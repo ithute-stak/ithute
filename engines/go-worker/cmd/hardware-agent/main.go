@@ -89,7 +89,8 @@ func main() {
 	probe := flag.String("probe", "./engines/hardware-intelligence/build/ithute-hw-probe", "path to the read-only C hardware probe")
 	validator := flag.String("validator", "", "optional path to the Rust hardware telemetry validator")
 	agentID := flag.String("agent-id", "", "stable Ithute infrastructure agent identifier")
-	signingKeyFile := flag.String("signing-key-file", "", "path to a private agent HMAC key file")
+	signingKeyFile := flag.String("signing-key-file", "", "path to the private infrastructure-agent token/HMAC key file")
+	endpoint := flag.String("endpoint", "", "optional Ithute hardware telemetry ingestion URL")
 	interval := flag.Duration("interval", 15*time.Second, "sampling interval")
 	once := flag.Bool("once", false, "collect one sample and exit")
 	flag.Parse()
@@ -139,8 +140,16 @@ func main() {
 			if signErr != nil {
 				return signErr
 			}
+			if *endpoint != "" {
+				if postErr := postEnvelope(ctx, *endpoint, signingKey, envelope); postErr != nil {
+					return postErr
+				}
+			}
 			encoded, err = json.Marshal(envelope)
 		} else {
+			if *endpoint != "" {
+				return fmt.Errorf("hardware-agent: endpoint requires --agent-id and --signing-key-file")
+			}
 			encoded, err = json.Marshal(sample)
 		}
 		if err != nil {
