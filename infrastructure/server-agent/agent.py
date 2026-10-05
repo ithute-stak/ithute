@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -17,6 +18,14 @@ API_URL = os.getenv("ITHUTE_API_URL", "https://ithute.co.ls/api/v1").rstrip("/")
 TOKEN = os.getenv("ITHUTE_SERVER_AGENT_TOKEN", "").strip()
 INTERVAL = max(30, int(os.getenv("ITHUTE_SERVER_AGENT_INTERVAL", "60")))
 TIMEOUT = max(3, int(os.getenv("ITHUTE_SERVER_AGENT_TIMEOUT", "10")))
+SERVICE_RE = re.compile(r"^[A-Za-z0-9@_.:-]+(?:\.service)?$")
+CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+BLOCKED_SERVICES = {
+    "ssh", "sshd", "ssh.service", "sshd.service",
+    "networking", "networking.service",
+    "systemd-networkd", "systemd-networkd.service",
+    "ufw", "ufw.service", "firewalld", "firewalld.service",
+}
 
 
 def read_text(path: str) -> str:
@@ -265,10 +274,14 @@ def execute_structured_command(command: dict) -> tuple[bool, dict, str | None]:
         return True, {"pong": True, "hostname": socket.gethostname(), "version": AGENT_VERSION}, None
 
     if kind.startswith("service."):
-        unit = str(payload.get("unit") or "")
+        unit = str(payload.get("unit") or "").strip()
         verb = kind.split(".", 1)[1]
         if verb not in {"start", "stop", "restart"}:
             return False, {}, "unsupported service action"
+        normalized = unit if unit.endswith(".service") else f"{unit}.service"
+        if not SERVICE_RE.fullmatch(unit) or unit in BLOCKED_SERVICES or normalized in BLOCKED_SERVICES:
+            return False, {}, "service action rejected by local agent policy"
+        unit = normalized
         try:
             completed = subprocess.run(
                 ["systemctl", verb, unit],
@@ -284,10 +297,12 @@ def execute_structured_command(command: dict) -> tuple[bool, dict, str | None]:
         return completed.returncode == 0, {"unit": unit, "action": verb, "output": output}, None if completed.returncode == 0 else output
 
     if kind.startswith("container."):
-        container = str(payload.get("container") or "")
+        container = str(payload.get("container") or "").strip()
         verb = kind.split(".", 1)[1]
         if verb not in {"start", "stop", "restart"}:
             return False, {}, "unsupported container action"
+        if not CONTAINER_RE.fullmatch(container):
+            return False, {}, "container action rejected by local agent policy"
         try:
             completed = subprocess.run(
                 ["docker", verb, container],
