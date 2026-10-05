@@ -3,7 +3,10 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 type status struct {
@@ -202,6 +207,171 @@ func endpointFromRequest(r *http.Request) string {
     return strings.TrimSpace(r.URL.Query().Get("endpoint"))
 }
 
+
+type realtimeTicket struct {
+	ApplicationID string `json:"application_id"`
+	Sub           string `json:"sub"`
+	DeviceKey     string `json:"device_key"`
+	ExpiresAt     int64  `json:"exp"`
+}
+
+type realtimePublishRequest struct {
+	ApplicationID      string         `json:"application_id"`
+	Recipients         []string       `json:"recipients"`
+	BroadcastConnected bool           `json:"broadcast_connected"`
+	Event              map[string]any `json:"event"`
+}
+
+type realtimeConnection struct {
+	id        string
+	appID     string
+	sub       string
+	deviceKey string
+	conn      *websocket.Conn
+	writeMu   sync.Mutex
+}
+
+type realtimeBroker struct {
+	mu          sync.RWMutex
+	connections map[string]map[string]*realtimeConnection
+	counter     uint64
+}
+
+func newRealtimeBroker() *realtimeBroker {
+	return &realtimeBroker{connections: make(map[string]map[string]*realtimeConnection)}
+}
+
+func realtimeKey(appID, sub string) string {
+	return appID + "\x00" + sub
+}
+
+func (b *realtimeBroker) nextID() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.counter++
+	return fmt.Sprintf("rt-%d-%d", time.Now().UnixMilli(), b.counter)
+}
+
+func (b *realtimeBroker) register(ticket realtimeTicket, conn *websocket.Conn) *realtimeConnection {
+	record := &realtimeConnection{
+		id: b.nextID(), appID: ticket.ApplicationID, sub: ticket.Sub,
+		deviceKey: ticket.DeviceKey, conn: conn,
+	}
+	key := realtimeKey(ticket.ApplicationID, ticket.Sub)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	bucket := b.connections[key]
+	if bucket == nil {
+		bucket = make(map[string]*realtimeConnection)
+		b.connections[key] = bucket
+	}
+	bucket[record.id] = record
+	return record
+}
+
+func (b *realtimeBroker) unregister(record *realtimeConnection) {
+	key := realtimeKey(record.appID, record.sub)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if bucket := b.connections[key]; bucket != nil {
+		delete(bucket, record.id)
+		if len(bucket) == 0 {
+			delete(b.connections, key)
+		}
+	}
+}
+
+func (b *realtimeBroker) presence(appID, sub string) int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.connections[realtimeKey(appID, sub)])
+}
+
+func (b *realtimeBroker) snapshot(request realtimePublishRequest) []*realtimeConnection {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	result := make([]*realtimeConnection, 0)
+	if request.BroadcastConnected {
+		prefix := request.ApplicationID + "\x00"
+		for key, bucket := range b.connections {
+			if strings.HasPrefix(key, prefix) {
+				for _, record := range bucket {
+					result = append(result, record)
+				}
+			}
+		}
+		return result
+	}
+	seen := make(map[string]struct{})
+	for _, sub := range request.Recipients {
+		if _, ok := seen[sub]; ok {
+			continue
+		}
+		seen[sub] = struct{}{}
+		for _, record := range b.connections[realtimeKey(request.ApplicationID, sub)] {
+			result = append(result, record)
+		}
+	}
+	return result
+}
+
+func (b *realtimeBroker) publish(request realtimePublishRequest) int {
+	payload, err := json.Marshal(request.Event)
+	if err != nil {
+		return 0
+	}
+	delivered := 0
+	for _, record := range b.snapshot(request) {
+		record.writeMu.Lock()
+		err := record.conn.WriteMessage(websocket.TextMessage, payload)
+		record.writeMu.Unlock()
+		if err == nil {
+			delivered++
+		}
+	}
+	return delivered
+}
+
+func verifyRealtimeTicket(raw, secret string) (realtimeTicket, error) {
+	var ticket realtimeTicket
+	parts := strings.Split(raw, ".")
+	if len(parts) != 2 || secret == "" {
+		return ticket, errors.New("invalid ticket")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return ticket, errors.New("invalid ticket")
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ticket, errors.New("invalid ticket")
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(payload)
+	if !hmac.Equal(signature, mac.Sum(nil)) {
+		return ticket, errors.New("invalid ticket")
+	}
+	if err := json.Unmarshal(payload, &ticket); err != nil {
+		return ticket, errors.New("invalid ticket")
+	}
+	if ticket.ExpiresAt < time.Now().Unix() || ticket.ExpiresAt > time.Now().Add(2*time.Minute).Unix() {
+		return ticket, errors.New("expired ticket")
+	}
+	if ticket.ApplicationID == "" || ticket.Sub == "" || len(ticket.DeviceKey) < 8 || len(ticket.DeviceKey) > 200 {
+		return ticket, errors.New("invalid ticket")
+	}
+	return ticket, nil
+}
+
+var websocketUpgrader = websocket.Upgrader{
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
+	CheckOrigin: func(r *http.Request) bool {
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		return origin == "" || strings.HasSuffix(origin, ".ithute.co.ls") || origin == "https://ithute.co.ls"
+	},
+}
+
 type originProbeResponse struct {
 	Engine                   string  `json:"engine"`
 	Healthy                  bool    `json:"healthy"`
@@ -219,8 +389,8 @@ type originProbeResponse struct {
 var engineStatus = status{
 	Service:      "ithute-go-worker",
 	Engine:       "go",
-	Version:      "0.4.0",
-	Capabilities: []string{"health", "network-concurrency", "tcp-reachability", "dns-lookup", "origin-http-tls", "push-delivery", "push-long-poll"},
+	Version:      "0.5.0",
+	Capabilities: []string{"health", "network-concurrency", "tcp-reachability", "dns-lookup", "origin-http-tls", "push-delivery", "push-long-poll", "realtime-websocket", "realtime-fanout", "realtime-presence"},
 }
 
 func writeJSON(w http.ResponseWriter, code int, value any) {
@@ -628,12 +798,89 @@ func runOriginProbe(ctx context.Context, request originProbeRequest) (originProb
 func main() {
 	mux := http.NewServeMux()
 	broker := newPushBroker()
+	realtime := newRealtimeBroker()
 	gatewayToken := strings.TrimSpace(os.Getenv("ITHUTE_PUSH_GATEWAY_TOKEN"))
+	realtimeToken := strings.TrimSpace(os.Getenv("ITHUTE_REALTIME_GATEWAY_TOKEN"))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, engineStatus)
 	})
 	mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, engineStatus)
+	})
+	mux.HandleFunc("GET /v1/realtime/ws", func(w http.ResponseWriter, r *http.Request) {
+		ticket, err := verifyRealtimeTicket(strings.TrimSpace(r.URL.Query().Get("ticket")), realtimeToken)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_ticket"})
+			return
+		}
+		conn, err := websocketUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		record := realtime.register(ticket, conn)
+		defer realtime.unregister(record)
+		_ = conn.SetReadDeadline(time.Now().Add(75 * time.Second))
+		conn.SetPongHandler(func(string) error {
+			return conn.SetReadDeadline(time.Now().Add(75 * time.Second))
+		})
+		record.writeMu.Lock()
+		_ = conn.WriteJSON(map[string]any{
+			"type": "ready", "version": 3, "engine": "go",
+			"application_id": ticket.ApplicationID, "sub": ticket.Sub,
+			"connection_id": record.id, "heartbeat_seconds": 30,
+		})
+		record.writeMu.Unlock()
+		for {
+			messageType, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			if messageType != websocket.TextMessage || len(payload) > 64*1024 {
+				_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(4400, "invalid frame"), time.Now().Add(time.Second))
+				return
+			}
+			var frame map[string]any
+			if json.Unmarshal(payload, &frame) != nil {
+				continue
+			}
+			if frame["type"] == "ping" {
+				_ = conn.SetReadDeadline(time.Now().Add(75 * time.Second))
+				record.writeMu.Lock()
+				_ = conn.WriteJSON(map[string]any{"type": "pong", "connection_id": record.id})
+				record.writeMu.Unlock()
+			}
+		}
+	})
+	mux.HandleFunc("POST /v1/realtime/publish", func(w http.ResponseWriter, r *http.Request) {
+		if !constantTimeTokenMatch(bearerValue(r.Header.Get("Authorization")), realtimeToken) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		defer r.Body.Close()
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128*1024))
+		decoder.DisallowUnknownFields()
+		var request realtimePublishRequest
+		if err := decoder.Decode(&request); err != nil || strings.TrimSpace(request.ApplicationID) == "" || request.Event == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		delivered := realtime.publish(request)
+		writeJSON(w, http.StatusOK, map[string]any{"engine": "go", "delivered": delivered})
+	})
+	mux.HandleFunc("GET /v1/realtime/presence", func(w http.ResponseWriter, r *http.Request) {
+		if !constantTimeTokenMatch(bearerValue(r.Header.Get("Authorization")), realtimeToken) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		appID := strings.TrimSpace(r.URL.Query().Get("application_id"))
+		sub := strings.TrimSpace(r.URL.Query().Get("sub"))
+		if appID == "" || sub == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "application_id and sub are required"})
+			return
+		}
+		count := realtime.presence(appID, sub)
+		writeJSON(w, http.StatusOK, map[string]any{"engine": "go", "online": count > 0, "connection_count": count})
 	})
 	mux.HandleFunc("POST /v1/push/deliver", func(w http.ResponseWriter, r *http.Request) {
 		if !constantTimeTokenMatch(bearerValue(r.Header.Get("Authorization")), gatewayToken) {
