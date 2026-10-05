@@ -16,7 +16,7 @@ from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
 from app.models import HardwareTelemetrySnapshot, InfrastructureServer, InfrastructureServerAgent, User
-from app.services.hardware_prediction import MetricPoint, predict_hardware_drift
+from app.services.hardware_prediction import MetricPoint, derive_rate_features, predict_hardware_drift
 
 router = APIRouter(prefix="/hardware-intelligence", tags=["hardware-intelligence"])
 
@@ -127,32 +127,67 @@ def _validate_payload(payload: dict[str, Any]) -> None:
 
 
 
-def _prediction_point_from_health(health: dict[str, Any]) -> MetricPoint:
+def _safe_payload_json(raw: str | None) -> dict[str, Any]:
+    try:
+        value = json.loads(raw or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _prediction_point_from_health(
+    health: dict[str, Any],
+    previous_payload: dict[str, Any] | None = None,
+    current_payload: dict[str, Any] | None = None,
+) -> MetricPoint:
+    rate = derive_rate_features(previous_payload, current_payload)
     return MetricPoint(
         temperature_celsius=health.get("temperature_celsius"),
         memory_pressure_avg10=health.get("memory_pressure_avg10"),
         io_pressure_avg10=health.get("io_pressure_avg10"),
         filesystem_used_percent=health.get("filesystem_used_percent"),
+        cpu_iowait_percent=rate.get("cpu_iowait_percent"),
+        cpu_steal_percent=rate.get("cpu_steal_percent"),
+        block_io_ms_per_op=rate.get("block_io_ms_per_op"),
+        block_weighted_ms_per_op=rate.get("block_weighted_ms_per_op"),
+        media_error_delta=rate.get("media_error_delta"),
     )
 
 
-def _prediction_for_server(db: Session, server_id, current_health: dict[str, Any]) -> dict[str, Any]:
-    rows = db.scalars(
-        select(HardwareTelemetrySnapshot)
-        .where(HardwareTelemetrySnapshot.server_id == server_id)
-        .order_by(HardwareTelemetrySnapshot.created_at.desc())
-        .limit(96)
-    ).all()
-    history = [
-        MetricPoint(
-            temperature_celsius=row.temperature_celsius,
-            memory_pressure_avg10=row.memory_pressure_avg10,
-            io_pressure_avg10=row.io_pressure_avg10,
-            filesystem_used_percent=row.filesystem_used_percent,
-        )
-        for row in reversed(rows)
-    ]
-    return predict_hardware_drift(history, _prediction_point_from_health(current_health))
+def _prediction_for_server(
+    db: Session,
+    server_id,
+    current_health: dict[str, Any],
+    current_payload: dict[str, Any],
+) -> dict[str, Any]:
+    rows = list(
+        db.scalars(
+            select(HardwareTelemetrySnapshot)
+            .where(HardwareTelemetrySnapshot.server_id == server_id)
+            .order_by(HardwareTelemetrySnapshot.created_at.desc())
+            .limit(97)
+        ).all()
+    )
+    rows.reverse()
+
+    history: list[MetricPoint] = []
+    previous_payload: dict[str, Any] | None = None
+    for row in rows:
+        payload = _safe_payload_json(row.payload_json)
+        row_health = {
+            "temperature_celsius": row.temperature_celsius,
+            "memory_pressure_avg10": row.memory_pressure_avg10,
+            "io_pressure_avg10": row.io_pressure_avg10,
+            "filesystem_used_percent": row.filesystem_used_percent,
+        }
+        history.append(_prediction_point_from_health(row_health, previous_payload, payload))
+        previous_payload = payload
+
+    if len(history) > 96:
+        history = history[-96:]
+
+    current_point = _prediction_point_from_health(current_health, previous_payload, current_payload)
+    return predict_hardware_drift(history, current_point)
 
 
 
@@ -270,7 +305,7 @@ def ingest_hardware_telemetry(
 
     _validate_payload(payload.payload)
     health = _health(payload.payload)
-    prediction = _prediction_for_server(db, server.id, health)
+    prediction = _prediction_for_server(db, server.id, health, payload.payload)
 
     row = HardwareTelemetrySnapshot(
         server_id=server.id,
