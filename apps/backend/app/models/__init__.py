@@ -63,7 +63,7 @@ from app.models.hosting_builds import HostingBuild, HostingBuilderAgent
 from app.models.hosting_build_logs import HostingBuildLog
 from app.models.hosting_backups import HostingDatabaseBackup
 from app.models.hosting_webhooks import HostingSourceWebhook, HostingWebhookDelivery
-from app.models.shared_hosting import HostingDatabase, HostingDatabaseReplica, HostingSource, HostingSourceCredential
+from app.models.shared_hosting import HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingSource, HostingSourceCredential
 from app.models.business import (
     CustomerProfile,
     Notification,
@@ -137,7 +137,7 @@ __all__ = [
     "BillingContract", "UptimeMonitor", "UptimeCheck", "InfrastructureCommercialProfile", "TenantInfrastructureAllocation",
     "FinanceClient", "FinanceInvoice", "FinanceInvoiceItem", "FinanceInvoiceSchedule", "FinancePayment", "FinanceCreditNote", "FinanceDocument", "FinanceDocumentItem", "FinanceSenderConfiguration", "FinanceExpense", "FinanceBankTransaction", "FinanceServiceBillingLink", "FinanceAccountingPeriod", "FinanceRefund", "FinanceTaxRate", "FinanceApprovalRequest", "FinanceGovernanceSetting", "FinanceRoleGrant", "FinancePortalAccess", "FinanceDeliveryEvent", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject", "HostingResourceReservation", "InfrastructureServer", "InfrastructureServerAgent", "InfrastructureTelemetrySnapshot", "InfrastructureWireGuardPeer", "InfrastructureAgentCommand", "InfrastructureContainerSnapshot", "InfrastructureNetworkGrant", "InfrastructureNetworkObservation", "InfrastructureSecuritySnapshot",
     "HOSTING_RUNTIME_MANIFEST_VERSION", "HostingDeployment", "HostingEnvironmentVariable", "HostingNodeAgent", "HostingNodeBootstrap", "HostingNodeHealthState", "HostingFailoverAttempt", "HostingOperationResourceLock", "HostingOperationResourceWait", "HostingProjectOperation", "HostingProvisioningWorkflow",
-    "HostingBuild", "HostingBuilderAgent", "HostingBuildLog", "HostingDatabaseBackup", "HostingSourceWebhook", "HostingWebhookDelivery", "HostingDatabase", "HostingDatabaseReplica", "HostingSource", "HostingSourceCredential",
+    "HostingBuild", "HostingBuilderAgent", "HostingBuildLog", "HostingDatabaseBackup", "HostingSourceWebhook", "HostingWebhookDelivery", "HostingDatabase", "HostingDatabaseFailoverAttempt", "HostingDatabaseReplica", "HostingSource", "HostingSourceCredential",
     "CustomerProfile", "Notification", "ServiceIncident", "ServiceIncidentImpact", "ServiceIncidentStatus",
     "SupportTicket", "SupportTicketMessage", "SupportTicketPriority", "SupportTicketStatus", "DomainOrder",
     "EmailVerificationToken", "GroupwareCredential", "MailMigrationJob", "MailNode", "MailNodeAgent", "MailNodeCommand", "MailNodeOperation", "MailNodeSnapshot", "MailboxDelegate",

@@ -45,6 +45,7 @@ on:
       - "apps/backend/tests/test_operation_resource_locks.py"
       - "apps/backend/tests/test_maintenance_drain_planner.py"
       - "apps/backend/tests/test_database_replication.py"
+      - "apps/backend/tests/test_database_failover_orchestration_contract.py"
       - "apps/backend/tests/test_hosting_builds_contract.py"
       - "apps/backend/tests/test_hosting_build_logs_contract.py"
       - "apps/backend/tests/test_hosting_git_webhooks_contract.py"
@@ -125,6 +126,7 @@ jobs:
           tests/test_operation_resource_locks.py
           tests/test_maintenance_drain_planner.py
           tests/test_database_replication.py
+          tests/test_database_failover_orchestration_contract.py
           tests/test_hosting_builds_contract.py
           tests/test_hosting_build_logs_contract.py
           tests/test_hosting_git_webhooks_contract.py

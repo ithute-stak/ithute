@@ -61,6 +61,26 @@ class HostingDatabaseReplica(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+
+class HostingDatabaseFailoverAttempt(Base):
+    __tablename__ = "hosting_database_failover_attempts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    database_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_databases.id", ondelete="CASCADE"), nullable=False, index=True)
+    replica_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_database_replicas.id", ondelete="RESTRICT"), nullable=False)
+    source_node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_nodes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    target_node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_nodes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="requested", nullable=False, index=True)
+    source_fence_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    target_promote_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_fenced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class HostingSourceCredential(Base):
     __tablename__ = "hosting_source_credentials"
     __table_args__ = (UniqueConstraint("project_id", "name", name="uq_hosting_source_credential_project_name"),)
