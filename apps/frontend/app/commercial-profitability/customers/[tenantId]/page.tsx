@@ -38,7 +38,16 @@ export default function CustomerEnvironmentPage(){
       ].map(([a,b])=><article key={a} className="surface-card p-4"><p className="eyebrow-label">{a}</p><p className="mt-2 text-2xl font-black">{b}</p></article>)}</section>
 
       <section><div className="mb-3"><p className="eyebrow-label">Services</p><h2 className="mt-1 text-xl font-black">Customer resource footprint</h2></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {[[Mail,"Mailboxes",String(data.resources.mailboxes)],[Globe2,"Domains",String(data.resources.domains)],[Server,"Hosted projects",String(data.resources.hosted_projects)],[Database,"Databases",String(data.resources.databases)],[HardDrive,"Mailbox storage",bytes(data.resources.mailbox_storage_bytes)],[HardDrive,"App storage",bytes(data.resources.hosting_storage_bytes)],[Database,"Database storage",bytes(data.resources.database_storage_bytes)],[Boxes,"Source storage",bytes(data.resources.source_storage_bytes)]].map(([Icon,label,value])=><article key={String(label)} className="surface-card p-4"><Icon size={16} className="text-[#285b55]"/><p className="mt-3 text-[9px] font-black uppercase text-[var(--admin-muted)]">{String(label)}</p><p className="mt-1 text-xl font-black">{String(value)}</p></article>)}
+        {[
+          {icon:Mail,label:"Mailboxes",value:String(data.resources.mailboxes)},
+          {icon:Globe2,label:"Domains",value:String(data.resources.domains)},
+          {icon:Server,label:"Hosted projects",value:String(data.resources.hosted_projects)},
+          {icon:Database,label:"Databases",value:String(data.resources.databases)},
+          {icon:HardDrive,label:"Mailbox storage",value:bytes(data.resources.mailbox_storage_bytes)},
+          {icon:HardDrive,label:"App storage",value:bytes(data.resources.hosting_storage_bytes)},
+          {icon:Database,label:"Database storage",value:bytes(data.resources.database_storage_bytes)},
+          {icon:Boxes,label:"Source storage",value:bytes(data.resources.source_storage_bytes)}
+        ].map(item=>{const Icon=item.icon;return <article key={item.label} className="surface-card p-4"><Icon size={16} className="text-[#285b55]"/><p className="mt-3 text-[9px] font-black uppercase text-[var(--admin-muted)]">{item.label}</p><p className="mt-1 text-xl font-black">{item.value}</p></article>})}
       </div></section>
 
       <section className="surface-card overflow-hidden"><div className="border-b p-5"><p className="eyebrow-label">Infrastructure</p><h2 className="mt-1 text-xl font-black">Where this customer runs</h2></div><div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead><tr><th className="p-3">Server</th><th className="p-3">Cost share</th><th className="p-3">Weight</th><th className="p-3">CPU</th><th className="p-3">RAM</th><th className="p-3">Storage</th><th className="p-3">Traffic</th></tr></thead><tbody>{data.servers.length?data.servers.map(row=><tr key={row.server_id} className="border-t"><td className="p-3"><b>{row.server_name}</b><p className="text-[9px] text-[var(--admin-muted)]">{row.hostname}</p></td><td className="p-3 font-black">{money(row.allocated_cost_minor)}</td><td className="p-3">{row.allocation_weight}</td><td className="p-3">{row.cpu_millicores}m</td><td className="p-3">{row.memory_mb} MB</td><td className="p-3">{(row.storage_mb/1024).toFixed(1)} GB</td><td className="p-3">{row.bandwidth_gb} GB</td></tr>):<tr><td colSpan={7} className="p-6 text-center text-[var(--admin-muted)]">No server allocation recorded yet.</td></tr>}</tbody></table></div></section>
