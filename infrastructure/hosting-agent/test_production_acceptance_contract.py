@@ -38,6 +38,18 @@ class ProductionAcceptanceContractTests(unittest.TestCase):
         self.assertIn("systemctl is-active --quiet ithute-hosting-egress.service", text)
         self.assertIn("ITHUTE_HOSTING_REQUIRE_AGENT_ACTIVE", text)
 
+    def test_postgres_replication_is_fail_closed_and_fenced(self) -> None:
+        text = (ROOT / "infrastructure" / "hosting-agent" / "agent_v4.py").read_text()
+        self.assertIn('ITHUTE_HOSTING_POSTGRES_REPLICATION_MODE", "disabled"', text)
+        self.assertIn("POSTGRES_REPLICATION_DEDICATED", text)
+        self.assertIn('"--wal-method=stream"', text)
+        self.assertIn('"--write-recovery-conf"', text)
+        self.assertIn("pg_is_in_recovery()", text)
+        self.assertIn("pg_promote(wait_seconds => 60)", text)
+        self.assertIn("source_fencing_confirmed", text)
+        self.assertIn("Refusing PostgreSQL promotion without confirmed old-primary fencing", text)
+        self.assertNotIn("shell=True", text)
+
     def test_firewall_unit_orders_after_docker_before_agent(self) -> None:
         text = FIREWALL_UNIT.read_text()
         self.assertIn("After=network-online.target docker.service", text)
