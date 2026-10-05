@@ -86,3 +86,21 @@ func TestOriginProbeRejectsPrivateTargetBeforeDial(t *testing.T) {
 		t.Fatal("private target should be rejected")
 	}
 }
+
+
+func FuzzPublicTargetIPNeverPanics(f *testing.F) {
+	for _, seed := range []string{
+		"127.0.0.1",
+		"169.254.169.254",
+		"1.1.1.1",
+		"::1",
+		"2001:4860:4860::8888",
+		"not-an-ip",
+		"",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, value string) {
+		_, _ = publicTargetIP(value)
+	})
+}
