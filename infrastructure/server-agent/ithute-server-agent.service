@@ -16,7 +16,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadOnlyPaths=/
-ReadWritePaths=/var/log/ithute
+ReadWritePaths=/var/log/ithute /var/lib/ithute/server-agent
 RestrictSUIDSGID=true
 LockPersonality=true
 
