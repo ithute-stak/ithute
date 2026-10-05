@@ -18,6 +18,7 @@ API_URL = os.getenv("ITHUTE_API_URL", "https://ithute.co.ls/api/v1").rstrip("/")
 TOKEN = os.getenv("ITHUTE_SERVER_AGENT_TOKEN", "").strip()
 INTERVAL = max(30, int(os.getenv("ITHUTE_SERVER_AGENT_INTERVAL", "60")))
 TIMEOUT = max(3, int(os.getenv("ITHUTE_SERVER_AGENT_TIMEOUT", "10")))
+CLUSTER_STATE_PATH = Path(os.getenv("ITHUTE_CLUSTER_STATE_PATH", "/var/lib/ithute/server-agent/cluster-state.json"))
 SERVICE_RE = re.compile(r"^[A-Za-z0-9@_.:-]+(?:\.service)?$")
 CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 BLOCKED_SERVICES = {
@@ -350,18 +351,34 @@ def payload() -> dict:
 def api_json(path: str, *, method: str = "POST", body: dict | None = None) -> dict:
     if not TOKEN:
         raise RuntimeError("ITHUTE_SERVER_AGENT_TOKEN is required")
-    raw = json.dumps(body or {}).encode("utf-8")
+    normalized_method = method.upper()
+    raw = None if normalized_method in {"GET", "HEAD"} else json.dumps(body or {}).encode("utf-8")
     request = urllib.request.Request(
         f"{API_URL}{path}",
         data=raw,
         headers={"Content-Type": "application/json", "X-Ithute-Server-Agent": TOKEN},
-        method=method,
+        method=normalized_method,
     )
     with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
         if response.status < 200 or response.status >= 300:
             raise RuntimeError(f"agent API failed with HTTP {response.status}")
         payload_raw = response.read()
     return json.loads(payload_raw.decode("utf-8")) if payload_raw else {}
+
+
+def sync_cluster_state() -> None:
+    """Cache Ithute's sanitized cluster directory for local node awareness."""
+    state = api_json("/platform/infrastructure/agent/cluster-state", method="GET")
+    if not isinstance(state, dict) or state.get("version") != 1 or not isinstance(state.get("nodes"), list):
+        raise RuntimeError("cluster-state response is invalid")
+    CLUSTER_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary = CLUSTER_STATE_PATH.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(state, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, CLUSTER_STATE_PATH)
 
 
 def execute_structured_command(command: dict) -> tuple[bool, dict, str | None]:
@@ -451,6 +468,7 @@ def main() -> int:
     while True:
         try:
             heartbeat()
+            sync_cluster_state()
             poll_command()
         except Exception as exc:
             print(f"agent cycle failed: {exc}", flush=True)
