@@ -164,7 +164,6 @@ def restart_project(
     if _active(db, project.id) is not None:
         raise HTTPException(status_code=409, detail="Wait for the current project operation to finish before restarting")
     row = _queue(db, project=project, current=current, operation="restart")
-    release_operation_resources(db, row.id)
     db.commit()
     db.refresh(row)
     return _operation_out(row)
@@ -320,6 +319,7 @@ def report_project_operation(
         row.fencing_token = None
         row.failure_message = (payload.message or "Hosting node reported project operation failure").strip()[:2000]
         _audit(db, None, row, f"hosting.project.{row.operation}.failed", {"message": row.failure_message})
+    release_operation_resources(db, row.id)
     db.commit()
     db.refresh(row)
     return _operation_out(row)
