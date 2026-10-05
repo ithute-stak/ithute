@@ -65,7 +65,15 @@ matching = [run for run in runs if run.get("head_sha") == sha and run.get("head_
 matching.sort(key=lambda run: run.get("created_at") or "", reverse=True)
 if not matching:
     raise SystemExit(f"[Ithute] {label} has no run for current main {sha}")
-run = matching[0]
+
+# workflow_run based workflows can legitimately emit a newer skipped run for the
+# same SHA after an earlier successful publication. A skipped duplicate must not
+# mask the last real gate result, but a newer failure/cancellation still blocks
+# deployment.
+actionable = [run for run in matching if run.get("conclusion") != "skipped"]
+if not actionable:
+    raise SystemExit(f"[Ithute] {label} has no actionable run for current main {sha}")
+run = actionable[0]
 status = run.get("status")
 conclusion = run.get("conclusion")
 url = run.get("html_url") or ""
