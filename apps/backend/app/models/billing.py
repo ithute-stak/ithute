@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,6 +38,18 @@ class BillingPlan(Base):
     included_domains: Mapped[int] = mapped_column(Integer, nullable=False)
     included_storage_mb: Mapped[int] = mapped_column(Integer, nullable=False)
     max_api_keys: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Optional usage-based commercial model. Hard caps remain the default.
+    allow_metered_overages: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    overage_mailbox_minor: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    overage_domain_minor: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    overage_storage_gb_minor: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    overage_api_key_minor: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    overage_hosted_project_minor: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    overage_hosting_storage_gb_minor: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    overage_database_minor: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    overage_database_storage_gb_minor: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    overage_source_storage_gb_minor: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
     included_hosted_projects: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     hosting_storage_mb: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
@@ -105,6 +117,9 @@ class UsageSnapshot(Base):
     mailboxes: Mapped[int] = mapped_column(Integer, nullable=False)
     domains: Mapped[int] = mapped_column(Integer, nullable=False)
     storage_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    api_keys: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    hosted_projects: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    hosting_storage_bytes: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", nullable=False)
     hosting_database_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     hosting_database_storage_bytes: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", nullable=False)
     hosting_source_storage_bytes: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0", nullable=False)
@@ -122,6 +137,9 @@ class BillingInvoice(Base):
     usage_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("usage_snapshots.id", ondelete="SET NULL"), index=True, nullable=True)
     invoice_number: Mapped[str] = mapped_column(String(80), unique=True, index=True, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    base_amount_minor: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    overage_amount_minor: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    usage_breakdown_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}", nullable=False)
     subtotal_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     total_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[InvoiceStatus] = mapped_column(Enum(InvoiceStatus), default=InvoiceStatus.draft, nullable=False)
