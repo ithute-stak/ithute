@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0089_pg_group_failover"
+LATEST_MIGRATION_HEAD = "0090_pg_topology_repair"
 
 
 def test_alembic_has_one_consolidated_head():
