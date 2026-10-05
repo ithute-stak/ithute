@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 API = ROOT / "apps/backend/app/api/v1/shared_hosting.py"
 AGENT = ROOT / "infrastructure/hosting-agent/agent_v4.py"
 
