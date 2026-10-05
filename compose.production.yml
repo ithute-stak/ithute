@@ -40,6 +40,8 @@ x-push-environment: &push_environment
   PUSH_REQUIRED_PROVIDERS: ${ITHUTE_PUSH_REQUIRED_PROVIDERS:-}
   PUSH_ITHUTE_GATEWAY_URL: ${ITHUTE_PUSH_ITHUTE_GATEWAY_URL:-http://ithute-go-worker:8080}
   PUSH_ITHUTE_GATEWAY_TOKEN: ${ITHUTE_PUSH_ITHUTE_GATEWAY_TOKEN:-}
+  PUSH_JAVA_WORKER_URL: http://ithute-java-worker:8080
+  PUSH_ENGINE_HTTP_TIMEOUT_SECONDS: ${ITHUTE_ENGINE_HTTP_TIMEOUT_SECONDS:-1.5}
   PUSH_FCM_PROJECT_ID: ${ITHUTE_PUSH_FCM_PROJECT_ID:-}
   PUSH_FCM_CREDENTIALS_FILE: /run/secrets/fcm-service-account.json
   PUSH_FCM_ANDROID_CHANNEL_ID: ${ITHUTE_PUSH_FCM_ANDROID_CHANNEL_ID:-ithute_default}
@@ -354,6 +356,10 @@ services:
       ithute-auth:
         condition: service_healthy
       ithute-push-db:
+        condition: service_healthy
+      ithute-go-worker:
+        condition: service_healthy
+      ithute-java-worker:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
