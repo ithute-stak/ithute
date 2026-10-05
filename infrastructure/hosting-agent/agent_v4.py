@@ -153,6 +153,18 @@ def postgres_physical_replication_capabilities() -> dict[str, Any]:
             result["replay_age_seconds"] = float(replay_age) if replay_age else None
             result["wal_receiver_status"] = receiver_status or None
             result["wal_receiver_streaming"] = receiver_status == "streaming"
+            if result["in_recovery"] is False:
+                sync_commit = base.psql("SHOW synchronous_commit").strip().lower()
+                sync_names = base.psql("SHOW synchronous_standby_names").strip()
+                streaming, synchronous = base.psql(
+                    "SELECT count(*) FILTER (WHERE state='streaming')::text || '|' || "
+                    "count(*) FILTER (WHERE state='streaming' AND sync_state IN ('sync','quorum'))::text "
+                    "FROM pg_stat_replication"
+                ).split("|", 1)
+                result["primary_synchronous_commit"] = sync_commit
+                result["primary_synchronous_standby_names"] = sync_names
+                result["primary_streaming_standbys"] = int(streaming)
+                result["primary_sync_standbys"] = int(synchronous)
             try:
                 wal_log_hints = base.psql("SHOW wal_log_hints").strip().lower() == "on"
                 data_checksums = base.psql("SHOW data_checksums").strip().lower() == "on"
