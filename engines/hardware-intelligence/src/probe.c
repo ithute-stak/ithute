@@ -22,6 +22,14 @@ typedef struct {
     unsigned long long weighted_io_ms;
 } block_summary_t;
 
+typedef struct {
+    unsigned long long rx_errors;
+    unsigned long long tx_errors;
+    unsigned long long rx_dropped;
+    unsigned long long tx_dropped;
+    unsigned long long tcp_retrans_segs;
+} network_summary_t;
+
 static int read_cpu(cpu_sample_t *out) {
     FILE *f = fopen("/proc/stat", "r");
     if (!f) return -1;
@@ -150,6 +158,77 @@ static void block_summary(block_summary_t *out) {
     closedir(dir);
 }
 
+static void network_device_summary(network_summary_t *out) {
+    FILE *f = fopen("/proc/net/dev", "r");
+    if (!f) return;
+
+    char line[1024];
+    while (fgets(line, sizeof(line), f) != NULL) {
+        char *colon = strchr(line, ':');
+        if (!colon) continue;
+        *colon = '\0';
+
+        char *iface = line;
+        while (*iface == ' ' || *iface == '\t') iface++;
+        char *end = iface + strlen(iface);
+        while (end > iface && (end[-1] == ' ' || end[-1] == '\t')) *--end = '\0';
+        if (strcmp(iface, "lo") == 0 || *iface == '\0') continue;
+
+        unsigned long long rx_bytes = 0, rx_packets = 0, rx_errs = 0, rx_drop = 0;
+        unsigned long long rx_fifo = 0, rx_frame = 0, rx_compressed = 0, rx_multicast = 0;
+        unsigned long long tx_bytes = 0, tx_packets = 0, tx_errs = 0, tx_drop = 0;
+        unsigned long long tx_fifo = 0, tx_colls = 0, tx_carrier = 0, tx_compressed = 0;
+        int n = sscanf(
+            colon + 1,
+            "%llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
+            &rx_bytes, &rx_packets, &rx_errs, &rx_drop,
+            &rx_fifo, &rx_frame, &rx_compressed, &rx_multicast,
+            &tx_bytes, &tx_packets, &tx_errs, &tx_drop,
+            &tx_fifo, &tx_colls, &tx_carrier, &tx_compressed
+        );
+        if (n != 16) continue;
+
+        out->rx_errors += rx_errs;
+        out->tx_errors += tx_errs;
+        out->rx_dropped += rx_drop;
+        out->tx_dropped += tx_drop;
+    }
+    fclose(f);
+}
+
+static void tcp_retrans_summary(network_summary_t *out) {
+    FILE *f = fopen("/proc/net/snmp", "r");
+    if (!f) return;
+
+    char header[4096];
+    char values[4096];
+    while (fgets(header, sizeof(header), f) != NULL) {
+        if (strncmp(header, "Tcp:", 4) != 0) continue;
+        if (fgets(values, sizeof(values), f) == NULL || strncmp(values, "Tcp:", 4) != 0) break;
+
+        char *header_save = NULL;
+        char *value_save = NULL;
+        char *header_token = strtok_r(header, " \t\r\n", &header_save);
+        char *value_token = strtok_r(values, " \t\r\n", &value_save);
+        while (header_token && value_token) {
+            if (strcmp(header_token, "RetransSegs") == 0) {
+                out->tcp_retrans_segs = strtoull(value_token, NULL, 10);
+                fclose(f);
+                return;
+            }
+            header_token = strtok_r(NULL, " \t\r\n", &header_save);
+            value_token = strtok_r(NULL, " \t\r\n", &value_save);
+        }
+    }
+    fclose(f);
+}
+
+static void network_summary(network_summary_t *out) {
+    memset(out, 0, sizeof(*out));
+    network_device_summary(out);
+    tcp_retrans_summary(out);
+}
+
 static int command_available(const char *a, const char *b) {
     return (a && access(a, X_OK) == 0) || (b && access(b, X_OK) == 0);
 }
@@ -178,6 +257,9 @@ int main(void) {
 
     block_summary_t block = {0};
     block_summary(&block);
+
+    network_summary_t network = {0};
+    network_summary(&network);
 
     double cpu_pressure = read_pressure_avg10("cpu");
     double memory_pressure = read_pressure_avg10("memory");
@@ -208,6 +290,8 @@ int main(void) {
     printf("\"filesystem\":{\"root_total_bytes\":%llu,\"root_available_bytes\":%llu},", fs_total, fs_free);
     printf("\"block\":{\"devices\":%d,\"reads_completed\":%llu,\"sectors_read\":%llu,\"writes_completed\":%llu,\"sectors_written\":%llu,\"io_ms\":%llu,\"weighted_io_ms\":%llu},",
         block.devices, block.reads_completed, block.sectors_read, block.writes_completed, block.sectors_written, block.io_ms, block.weighted_io_ms);
+    printf("\"network\":{\"rx_errors\":%llu,\"tx_errors\":%llu,\"rx_dropped\":%llu,\"tx_dropped\":%llu,\"tcp_retrans_segs\":%llu},",
+        network.rx_errors, network.tx_errors, network.rx_dropped, network.tx_dropped, network.tcp_retrans_segs);
     printf("\"capabilities\":{");
     printf("\"hwmon\":%s,\"thermal\":%s,\"edac\":%s,\"ipmi\":%s,",
         has_hwmon ? "true" : "false", has_thermal ? "true" : "false", has_edac ? "true" : "false", has_ipmi ? "true" : "false");
