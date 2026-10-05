@@ -557,14 +557,38 @@ def database_gateway_route_ack(
         .order_by(HostingPostgresGroupFailoverAttempt.promoted_at.desc())
         .with_for_update()
     )
+    group = db.get(HostingPostgresReplicationGroup, endpoint.group_id)
+    member_ids = db.scalars(
+        select(HostingPostgresReplicationMember.database_id).where(
+            HostingPostgresReplicationMember.group_id == endpoint.group_id
+        )
+    ).all()
+    members = (
+        db.scalars(select(HostingDatabase).where(HostingDatabase.id.in_(member_ids))).all()
+        if member_ids
+        else []
+    )
+    for database in members:
+        _sync_database_connection_env(
+            db,
+            database,
+            host=endpoint.hostname,
+            port=endpoint.listen_port,
+        )
+
     if attempt is not None:
-        group = db.get(HostingPostgresReplicationGroup, endpoint.group_id)
         restored_at = _now()
         attempt.service_restored_at = restored_at
         detected = attempt.failure_detected_at or attempt.created_at
         detected = detected if detected.tzinfo else detected.replace(tzinfo=timezone.utc)
         attempt.rto_seconds = max(0, int((restored_at - detected).total_seconds()))
         attempt.rto_met = bool(group and attempt.rto_seconds <= int(group.rto_target_seconds))
+        if group is not None:
+            mark_redundancy_restored_if_ready(
+                db,
+                group_id=group.id,
+                now=restored_at,
+            )
     db.commit()
     return {
         "endpoint_id": str(endpoint.id),
