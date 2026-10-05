@@ -581,6 +581,76 @@ def _ensure_verified_backup_local(storage_key: str, path: pathlib.Path, expected
         raise RuntimeError("Rehydrated database backup failed control-plane size/SHA-256 verification")
 
 
+def claim_postgres_rpo_policy() -> dict[str, Any] | None:
+    result = base.api("/hosting/agent/postgres-rpo-policy/claim")
+    work = result.get("policy")
+    return work if isinstance(work, dict) else None
+
+
+def report_postgres_rpo_policy(
+    operation_id: str,
+    token: str,
+    success: bool,
+    *,
+    rpo_class: str | None = None,
+    required_sync_standbys: int | None = None,
+    synchronous_commit: str | None = None,
+    synchronous_standby_names: str | None = None,
+    message: str | None = None,
+) -> dict[str, Any]:
+    return base.api(
+        f"/hosting/agent/postgres-rpo-policy/{operation_id}/status",
+        {
+            "token": token,
+            "success": success,
+            "rpo_class": rpo_class,
+            "required_sync_standbys": required_sync_standbys,
+            "synchronous_commit": synchronous_commit,
+            "synchronous_standby_names": synchronous_standby_names,
+            "message": message,
+        },
+    )
+
+
+def process_postgres_rpo_policy(work: dict[str, Any]) -> None:
+    operation_id = str(work.get("id") or "")
+    token = str(work.get("token") or "")
+    rpo_class = str(work.get("rpo_class") or "")
+    required = int(work.get("required_sync_standbys") or 0)
+    if not operation_id or len(token) < 20:
+        raise RuntimeError("PostgreSQL RPO policy job is incomplete")
+
+    try:
+        applied = postgres_apply_rpo_policy(
+            rpo_class=rpo_class,
+            required_sync_standbys=required,
+        )
+        report_postgres_rpo_policy(
+            operation_id,
+            token,
+            True,
+            rpo_class=rpo_class,
+            required_sync_standbys=required,
+            synchronous_commit=str(applied["synchronous_commit"]),
+            synchronous_standby_names=str(applied["synchronous_standby_names"]),
+            message="PostgreSQL RPO policy applied; awaiting heartbeat verification",
+        )
+    except Exception as exc:
+        error = str(exc)[:1900]
+        base.log(f"postgres rpo policy {operation_id} failed: {error}")
+        try:
+            report_postgres_rpo_policy(
+                operation_id,
+                token,
+                False,
+                rpo_class=rpo_class if rpo_class in {"async", "sync_flush", "sync_apply"} else None,
+                required_sync_standbys=required,
+                message=error,
+            )
+        except Exception as report_exc:
+            base.log(f"could not report postgres rpo policy failure: {report_exc}")
+
+
 def claim_postgres_topology_repair() -> dict[str, Any] | None:
     result = base.api("/hosting/agent/postgres-topology-repairs/claim")
     work = result.get("repair")
@@ -1001,6 +1071,11 @@ def main() -> int:
             topology_repair = claim_postgres_topology_repair()
             if topology_repair:
                 process_postgres_topology_repair(topology_repair)
+                continue
+
+            rpo_policy = claim_postgres_rpo_policy()
+            if rpo_policy:
+                process_postgres_rpo_policy(rpo_policy)
                 continue
 
             database_failover = claim_database_failover()
