@@ -259,6 +259,24 @@ def create_postgres_replication_group(
     if existing is not None:
         raise HTTPException(status_code=409, detail="A selected database already belongs to a PostgreSQL replication group")
 
+    primary_agent = db.get(HostingNodeAgent, primary.id)
+    primary_capabilities = {}
+    if primary_agent is not None:
+        try:
+            primary_capabilities = json.loads(primary_agent.capabilities_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            primary_capabilities = {}
+    primary_postgres = (
+        primary_capabilities.get("postgres_physical_replication")
+        if isinstance(primary_capabilities, dict) else None
+    )
+    if (
+        not isinstance(primary_postgres, dict)
+        or primary_postgres.get("supported") is not True
+        or primary_postgres.get("dedicated_cluster") is not True
+    ):
+        raise HTTPException(status_code=409, detail="Primary node is not a dedicated PostgreSQL physical-replication cluster")
+
     standby_nodes = []
     for node_id in standby_node_ids:
         node = db.get(HostingNode, node_id)
@@ -266,6 +284,36 @@ def create_postgres_replication_group(
             raise HTTPException(status_code=404, detail=f"Standby hosting node {node_id} not found")
         if node.status != "active":
             raise HTTPException(status_code=409, detail=f"Standby hosting node {node.name} is not active")
+        already_used = db.scalar(
+            select(HostingPostgresReplicationStandby.id).where(
+                HostingPostgresReplicationStandby.node_id == node.id
+            )
+        )
+        if already_used is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Standby hosting node {node.name} already belongs to a PostgreSQL physical replication group",
+            )
+        standby_agent = db.get(HostingNodeAgent, node.id)
+        standby_capabilities = {}
+        if standby_agent is not None:
+            try:
+                standby_capabilities = json.loads(standby_agent.capabilities_json or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                standby_capabilities = {}
+        standby_postgres = (
+            standby_capabilities.get("postgres_physical_replication")
+            if isinstance(standby_capabilities, dict) else None
+        )
+        if (
+            not isinstance(standby_postgres, dict)
+            or standby_postgres.get("supported") is not True
+            or standby_postgres.get("dedicated_cluster") is not True
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Standby hosting node {node.name} is not a dedicated PostgreSQL physical-replication cluster",
+            )
         standby_nodes.append(node)
 
     group = HostingPostgresReplicationGroup(
