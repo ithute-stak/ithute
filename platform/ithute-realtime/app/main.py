@@ -402,6 +402,7 @@ def native_websocket_ticket(
     return {
         "engine": "go",
         "ticket": ticket,
+        "websocket_protocol": "ithute-ticket." + ticket,
         "expires_in_seconds": 60,
         "websocket_url": settings.public_url.rstrip("/") + settings.go_websocket_public_path,
     }
