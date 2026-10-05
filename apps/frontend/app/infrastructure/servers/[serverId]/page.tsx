@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, ArrowLeft, Box, Cpu, Database, HardDrive, MemoryStick, RefreshCw, Send, Server, ShieldCheck } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, Box, Cpu, Database, HardDrive, MemoryStick, RefreshCw, Send, Server, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
 import { ControlShell } from "@/components/control-shell";
@@ -22,6 +22,8 @@ type ContainerInventory = {
   containers: Array<{ name?: string; image?: string; state?: string; project_id?: string | null }>;
 };
 type AgentCommand = { id: string; kind: string; status: string; error?: string | null; created_at?: string | null };
+type SecuritySnapshot = { score: number; posture: string; fingerprint_sha256: string; created_at?: string | null; findings: Array<{ key: string; severity: string; title: string; evidence: string; recommendation: string }> };
+type Readiness = { score: number; status: string; checks: Array<{ key: string; weight: number; passed: boolean; detail: string }>; network: { engine: string; checked: number; reachable: boolean }; security: { score?: number | null; posture: string; fingerprint_sha256?: string | null }; engine_contributions: Record<string, { preferred_engine: string }> };
 type ServerData = {
   id: string; name: string; hostname: string; public_ip?: string | null; region: string; provider?: string | null; roles: string[]; health: string;
   thresholds: { cpu_percent: number; memory_percent: number; disk_percent: number; offline_minutes: number };
@@ -89,6 +91,8 @@ export default function InfrastructureServerDetailPage() {
   const [history, setHistory] = useState<Point[]>([]);
   const [inventory, setInventory] = useState<ContainerInventory | null>(null);
   const [commands, setCommands] = useState<AgentCommand[]>([]);
+  const [security, setSecurity] = useState<SecuritySnapshot | null>(null);
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [hours, setHours] = useState(24);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -96,17 +100,26 @@ export default function InfrastructureServerDetailPage() {
 
   async function load() {
     setLoading(true); setError("");
-    const [serverResponse, historyResponse, inventoryResponse, commandsResponse] = await Promise.all([
+    const [serverResponse, historyResponse, inventoryResponse, commandsResponse, securityResponse, readinessResponse] = await Promise.all([
       api(`/platform/infrastructure/servers/${serverId}`),
       api(`/platform/infrastructure/servers/${serverId}/history?hours=${hours}&limit=1000`),
       api(`/platform/infrastructure/servers/${serverId}/container-inventory`),
       api(`/platform/infrastructure/servers/${serverId}/commands?limit=10`),
+      api(`/platform/infrastructure/servers/${serverId}/security?limit=1`),
+      api(`/platform/infrastructure/servers/${serverId}/readiness`),
     ]);
     if (!serverResponse.ok) { setError("Unable to load server monitoring."); setLoading(false); return; }
     setServer(await serverResponse.json());
     setHistory(historyResponse.ok ? ((await historyResponse.json()).items || []) : []);
     setInventory(inventoryResponse.ok ? await inventoryResponse.json() : null);
     setCommands(commandsResponse.ok ? ((await commandsResponse.json()).items || []) : []);
+    if (securityResponse.ok) {
+      const body = await securityResponse.json();
+      setSecurity((body.items || [])[0] || null);
+    } else {
+      setSecurity(null);
+    }
+    setReadiness(readinessResponse.ok ? await readinessResponse.json() : null);
     setLoading(false);
   }
 
