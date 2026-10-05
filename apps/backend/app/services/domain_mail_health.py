@@ -3,8 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-import dns.exception
-import dns.resolver
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,22 +11,22 @@ from app.models.deliverability import DkimKey
 from app.models.domains import Domain, DomainDnsMode, DomainStatus
 from app.services.deliverability import dns_readiness, infrastructure_readiness, recommended_records
 from app.services.dns_phase5 import delegation_diagnostics
+from app.services.engine_router import execute_dns
 
 
 def _resolve(name: str, rtype: str) -> list[str]:
-    resolver = dns.resolver.Resolver(configure=True)
-    resolver.lifetime = 5
-    try:
-        answers = resolver.resolve(name, rtype)
-    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers, dns.exception.Timeout, OSError):
+    execution = execute_dns(
+        [{"id": "health", "name": name, "type": rtype, "timeout_ms": 5000}],
+        concurrency=1,
+    )
+    results = execution.value.get("results", []) if isinstance(execution.value, dict) else []
+    if not results or not isinstance(results[0], dict):
         return []
-    values: list[str] = []
-    for answer in answers:
-        if rtype == "CNAME":
-            values.append(str(answer.target).rstrip(".").lower())
-        else:
-            values.append(str(answer).strip().rstrip(".").lower())
-    return values
+    return [
+        str(value).strip().rstrip(".").lower()
+        for value in (results[0].get("values") or [])
+        if str(value).strip()
+    ]
 
 
 def _host_addresses(hostname: str) -> set[str]:
