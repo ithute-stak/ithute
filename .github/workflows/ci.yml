@@ -59,6 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           make -C engines/hardware-intelligence
+          bash -n engines/hardware-intelligence/bin/ithute-ebpf-loader
           engines/hardware-intelligence/build/ithute-hw-probe | python3 -m json.tool >/dev/null
           cargo build --release --locked --manifest-path engines/rust-core/Cargo.toml --bin hardware-validator
           cd engines/go-worker
