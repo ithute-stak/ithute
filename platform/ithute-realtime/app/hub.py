@@ -116,6 +116,28 @@ class RealtimeHub:
         except (httpx.HTTPError, ValueError, TypeError):
             return 0
 
+    async def engine_health(self) -> dict[str, bool]:
+        go_ready = False
+        native_ready = False
+        timeout = max(self.settings.engine_http_timeout_seconds, 2.0)
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            try:
+                response = await client.get(self.settings.go_worker_url.rstrip("/") + "/v1/capabilities")
+                response.raise_for_status()
+                body = response.json()
+                go_ready = isinstance(body, dict) and body.get("engine") == "go" and "realtime-websocket" in body.get("capabilities", [])
+            except (httpx.HTTPError, ValueError, TypeError):
+                go_ready = False
+            try:
+                response = await client.get(self.settings.native_engine_url.rstrip("/") + "/healthz")
+                response.raise_for_status()
+                body = response.json()
+                native_ready = isinstance(body, dict) and body.get("service") == "ithute-native-engine"
+            except (httpx.HTTPError, ValueError, TypeError):
+                native_ready = False
+        return {"go": go_ready, "native": native_ready}
+
+
     async def _remote_presence(self, application_id: str, sub: str) -> list[dict]:
         rows: list[dict] = []
         pattern = f"ithute:realtime:presence:{application_id}:{sub}:*"
