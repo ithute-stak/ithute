@@ -114,13 +114,13 @@ export default function ProfitabilityCentre(){
 
       {portfolio?<><section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
         {[
-          ["Estimated MRR",money(portfolio.summary.estimated_mrr_minor),CircleDollarSign],
-          ["Server cost",money(portfolio.summary.total_server_cost_minor),Server],
-          ["Allocated cost",money(portfolio.summary.allocated_infrastructure_cost_minor),HardDrive],
-          ["Gross profit",money(portfolio.summary.gross_profit_minor),TrendingUp],
-          ["Gross margin",margin(portfolio.summary.gross_margin_bps),TrendingUp],
-          ["Alerts",String(portfolio.summary.alerts),AlertTriangle],
-        ].map(([label,value,Icon])=><article key={String(label)} className="surface-card p-4"><Icon size={17} className="text-[#285b55]"/><p className="mt-3 text-[9px] font-black uppercase text-[var(--admin-muted)]">{String(label)}</p><p className="mt-1 text-xl font-black">{String(value)}</p></article>)}
+          {label:"Estimated MRR",value:money(portfolio.summary.estimated_mrr_minor),icon:CircleDollarSign},
+          {label:"Server cost",value:money(portfolio.summary.total_server_cost_minor),icon:Server},
+          {label:"Allocated cost",value:money(portfolio.summary.allocated_infrastructure_cost_minor),icon:HardDrive},
+          {label:"Gross profit",value:money(portfolio.summary.gross_profit_minor),icon:TrendingUp},
+          {label:"Gross margin",value:margin(portfolio.summary.gross_margin_bps),icon:TrendingUp},
+          {label:"Alerts",value:String(portfolio.summary.alerts),icon:AlertTriangle},
+        ].map(item=>{const Icon=item.icon;return <article key={item.label} className="surface-card p-4"><Icon size={17} className="text-[#285b55]"/><p className="mt-3 text-[9px] font-black uppercase text-[var(--admin-muted)]">{item.label}</p><p className="mt-1 text-xl font-black">{item.value}</p></article>})}
       </section>
 
       {portfolio.summary.unallocated_server_cost_minor>0?<div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900"><b>Unallocated server cost: {money(portfolio.summary.unallocated_server_cost_minor)}.</b> Assign customer shares so gross margins include the complete infrastructure cost.</div>:null}
