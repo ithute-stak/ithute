@@ -138,6 +138,9 @@ def test_cluster_awareness_contract_exists_and_remains_read_only():
     assert '"workloads"' in api
     assert '"resource_usage"' in api
     assert '"docker"' in api
+    assert "_cluster_reachability" in api
+    assert "execute_network(targets" in api
+    assert '"reachability_engine"' in api
     assert "token_hint" not in api[api.index("def _cluster_node_out"):api.index('@router.post("/servers/{server_id}/agent-token")')]
 
     assert "sync_cluster_state" in agent
@@ -147,3 +150,19 @@ def test_cluster_awareness_contract_exists_and_remains_read_only():
     assert "shell.exec" not in agent
     assert "ReadWritePaths=/var/log/ithute /var/lib/ithute/server-agent" in service
     assert "read-only discovery" in readme
+
+
+def test_cluster_awareness_production_go_worker_contract():
+    root = Path(__file__).parents[2]
+    repo = root.parents[1]
+    compose = (repo / "compose.production.yml").read_text(encoding="utf-8")
+    manual = (repo / "scripts" / "deploy-production-manual.sh").read_text(encoding="utf-8")
+    deploy = (repo / "scripts" / "deploy-production.sh").read_text(encoding="utf-8")
+    readiness = (repo / "scripts" / "verify-production-readiness.sh").read_text(encoding="utf-8")
+
+    assert "ithute-go-worker:" in compose
+    assert "ITHUTE_GO_WORKER_URL: http://ithute-go-worker:8080" in compose
+    assert "CANDIDATE_ONLY_IMAGES=(ithute-go-worker ithute-java-worker)" in manual
+    assert 'docker image inspect "ithute-go-worker:$tag"' in deploy
+    assert 'wait_service ithute-go-worker' in deploy
+    assert "Go network engine is running" in readiness
