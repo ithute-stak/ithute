@@ -80,3 +80,36 @@ def test_placement_ranking_fallback_matches_scheduler_contract(monkeypatch):
     ranked = cluster_engine.rank_placement_candidates(rows)
 
     assert [row["node_id"] for row in ranked] == ["a", "b", "c", "z"]
+
+
+
+def test_dependency_order_fallback_is_dependency_first(monkeypatch):
+    monkeypatch.setattr(cluster_engine, "_load_cluster", lambda: None)
+    nodes = [{"id": "frontend"}, {"id": "backend"}, {"id": "postgres"}]
+    edges = [
+        {"source": "frontend", "target": "backend", "relation": "depends_on"},
+        {"source": "backend", "target": "postgres", "relation": "depends_on"},
+    ]
+
+    result = cluster_engine.dependency_order(nodes, edges)
+
+    assert result == {
+        "engine": "python-fallback",
+        "acyclic": True,
+        "order": ["postgres", "backend", "frontend"],
+    }
+
+
+def test_dependency_order_fallback_rejects_cycle(monkeypatch):
+    monkeypatch.setattr(cluster_engine, "_load_cluster", lambda: None)
+    nodes = [{"id": "frontend"}, {"id": "backend"}, {"id": "postgres"}]
+    edges = [
+        {"source": "frontend", "target": "backend", "relation": "depends_on"},
+        {"source": "backend", "target": "postgres", "relation": "depends_on"},
+        {"source": "postgres", "target": "frontend", "relation": "depends_on"},
+    ]
+
+    result = cluster_engine.dependency_order(nodes, edges)
+
+    assert result["acyclic"] is False
+    assert result["order"] == []
