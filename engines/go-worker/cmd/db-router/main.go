@@ -245,6 +245,15 @@ func (m *routeManager) proxyConnection(ctx context.Context, client net.Conn, tar
 	}
 }
 
+func (m *routeManager) probe(r route) error {
+	address := net.JoinHostPort(r.TargetHost, strconv.Itoa(r.TargetPort))
+	conn, err := net.DialTimeout("tcp", address, m.dialTimeout)
+	if err != nil {
+		return fmt.Errorf("probe endpoint=%s target=%s: %w", r.EndpointID, address, err)
+	}
+	return conn.Close()
+}
+
 func (m *routeManager) close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -271,6 +280,10 @@ func run(ctx context.Context, cfg config) error {
 		applied, err := manager.apply(ctx, snap)
 		if err != nil { log.Printf("route apply failed: %v", err); return }
 		for _, r := range applied {
+			if err := manager.probe(r); err != nil {
+				log.Printf("route probe endpoint=%s generation=%d failed: %v", r.EndpointID, r.Generation, err)
+				continue
+			}
 			if err := api.ack(callCtx, r.EndpointID, r.Generation); err != nil {
 				log.Printf("route ack endpoint=%s generation=%d failed: %v", r.EndpointID, r.Generation, err)
 			}
