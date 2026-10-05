@@ -866,13 +866,19 @@ def report_postgres_group_failover(
             old_primary_node_id=attempt.source_node_id,
             promoted_standby_id=standby.id,
         )
+        endpoint = switch_postgres_endpoint_to_primary(db, group=group, now=now)
         attempt.status = "succeeded"
         attempt.promoted_at = now
-        attempt.service_restored_at = now
-        detected = attempt.failure_detected_at or attempt.created_at
-        detected = detected if detected.tzinfo else detected.replace(tzinfo=timezone.utc)
-        attempt.rto_seconds = max(0, int((now - detected).total_seconds()))
-        attempt.rto_met = attempt.rto_seconds <= int(group.rto_target_seconds)
+        if endpoint is None:
+            attempt.service_restored_at = now
+            detected = attempt.failure_detected_at or attempt.created_at
+            detected = detected if detected.tzinfo else detected.replace(tzinfo=timezone.utc)
+            attempt.rto_seconds = max(0, int((now - detected).total_seconds()))
+            attempt.rto_met = attempt.rto_seconds <= int(group.rto_target_seconds)
+        else:
+            attempt.service_restored_at = None
+            attempt.rto_seconds = None
+            attempt.rto_met = None
         attempt.failure_message = None
         db.add(AuditLog(
             actor_user_id=None,
@@ -885,6 +891,9 @@ def report_postgres_group_failover(
                 "target_node_id": str(attempt.target_node_id),
                 "database_ids": [str(row.id) for row in members],
                 "repair_job_ids": [str(row.id) for row in repair_jobs],
+                "endpoint_id": str(endpoint.id) if endpoint else None,
+                "endpoint_generation": endpoint.generation if endpoint else None,
+                "awaiting_gateway_route": endpoint is not None,
                 "rto_seconds": attempt.rto_seconds,
                 "rto_target_seconds": group.rto_target_seconds,
                 "rto_met": attempt.rto_met,
@@ -898,6 +907,9 @@ def report_postgres_group_failover(
             "primary_node_id": str(group.primary_node_id),
             "database_ids": [str(row.id) for row in members],
             "repair_job_ids": [str(row.id) for row in repair_jobs],
+            "endpoint_id": str(endpoint.id) if endpoint else None,
+            "endpoint_generation": endpoint.generation if endpoint else None,
+            "awaiting_gateway_route": endpoint is not None,
             "rto_seconds": attempt.rto_seconds,
             "rto_met": attempt.rto_met,
         }
