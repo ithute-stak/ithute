@@ -51,8 +51,8 @@ sudo ITHUTE_APP_DIR=/home/administrator/ithute-platform \
 public key, listen port, firewall service, reconciler timer and advertised
 endpoint whenever the managed-network settings exist in production.
 
-## Policy-controlled peer communication
+## Default full-mesh peer communication
 
-Ithute does not enable an unrestricted WireGuard full mesh. The edge enables IPv4 forwarding but routes peer-to-peer traffic through the dedicated `ITHUTE_WG_MESH` iptables chain. The chain allows established replies plus only explicit service grants created in the control plane (source server, target server, protocol and port); all other `ithute0 -> ithute0` forwarding is dropped.
+Every enrolled Ithute node can communicate with every other enrolled node by default across the private WireGuard network. The edge enables IPv4 forwarding and routes `ithute0 -> ithute0` traffic through the dedicated `ITHUTE_WG_MESH` chain, which accepts peer traffic while keeping the mesh separate from public interfaces.
 
-This lets one VPS use a service on another VPS—for example PostgreSQL on TCP/5432—without giving every node arbitrary access to every private port. The reconciler rebuilds the allowlist from the authenticated control-plane policy on every run.
+The existing service-grant records remain available as topology metadata and for a future optional restricted/segmented mode, but they are not required for normal node-to-node communication in the default full-mesh mode.
