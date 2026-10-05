@@ -60,8 +60,28 @@ jobs:
           set -euo pipefail
           make -C engines/hardware-intelligence
           engines/hardware-intelligence/build/ithute-hw-probe | python3 -m json.tool >/dev/null
+          cargo build --release --locked --manifest-path engines/rust-core/Cargo.toml --bin hardware-validator
           cd engines/go-worker
           go test ./cmd/hardware-agent
+          printf '%s' '0123456789abcdef0123456789abcdef' > /tmp/ithute-hardware-agent.key
+          chmod 600 /tmp/ithute-hardware-agent.key
+          go run ./cmd/hardware-agent \
+            --once \
+            --probe ../hardware-intelligence/build/ithute-hw-probe \
+            --validator ../rust-core/target/release/hardware-validator \
+            --agent-id ci-server-01 \
+            --signing-key-file /tmp/ithute-hardware-agent.key \
+            > /tmp/ithute-hardware-envelope.json
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/ithute-hardware-envelope.json'))
+          assert body['envelope_version']==1
+          assert body['algorithm']=='HMAC-SHA256'
+          assert body['agent_id']=='ci-server-01'
+          assert len(body['nonce'])==32
+          assert len(body['signature'])==64
+          assert body['payload']['schema_version']==1
+          PY
 
       - name: Validate deployment scripts
         run: |
