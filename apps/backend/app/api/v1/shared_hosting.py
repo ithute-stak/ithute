@@ -198,7 +198,35 @@ def _audit(db: Session, current: User | None, tenant_id: UUID, action: str, reso
     )
 
 
-def _db_out(row: HostingDatabase) -> dict:
+def _db_out(row: HostingDatabase, db: Session | None = None) -> dict:
+    host = row.internal_host
+    port = row.internal_port
+    endpoint_payload = None
+    if db is not None and row.engine == "postgresql":
+        group_id = db.scalar(
+            select(HostingPostgresReplicationMember.group_id).where(
+                HostingPostgresReplicationMember.database_id == row.id
+            )
+        )
+        endpoint = (
+            db.scalar(
+                select(HostingPostgresEndpoint).where(
+                    HostingPostgresEndpoint.group_id == group_id
+                )
+            )
+            if group_id is not None
+            else None
+        )
+        if endpoint is not None:
+            host = endpoint.hostname
+            port = endpoint.listen_port
+            endpoint_payload = {
+                "id": str(endpoint.id),
+                "group_id": str(endpoint.group_id),
+                "generation": endpoint.generation,
+                "applied_generation": endpoint.applied_generation,
+                "status": endpoint.status,
+            }
     return {
         "id": str(row.id),
         "tenant_id": str(row.tenant_id),
@@ -208,8 +236,9 @@ def _db_out(row: HostingDatabase) -> dict:
         "engine_version": row.engine_version,
         "database_name": row.database_name,
         "username": row.username,
-        "host": row.internal_host,
-        "port": row.internal_port,
+        "host": host,
+        "port": port,
+        "stable_endpoint": endpoint_payload,
         "storage_mb": row.storage_mb,
         "status": row.status,
         "operation": row.operation,
@@ -218,6 +247,56 @@ def _db_out(row: HostingDatabase) -> dict:
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
+
+
+def _sync_database_connection_env(
+    db: Session,
+    row: HostingDatabase,
+    *,
+    host: str,
+    port: int,
+) -> None:
+    if row.project_id is None or row.status != "ready":
+        return
+    try:
+        password = decrypt_secret(row.encrypted_password)
+    except ValueError:
+        password = None
+    values = {
+        "DATABASE_HOST": (host, False),
+        "DATABASE_PORT": (str(port), False),
+        "DATABASE_NAME": (row.database_name, False),
+        "DATABASE_USER": (row.username, True),
+    }
+    if password is not None:
+        scheme = "postgresql" if row.engine == "postgresql" else "mysql"
+        values["DATABASE_PASSWORD"] = (password, True)
+        values["DATABASE_URL"] = (
+            f"{scheme}://{row.username}:{password}@{host}:{port}/{row.database_name}",
+            True,
+        )
+    for key, (value, secret) in values.items():
+        env = db.scalar(
+            select(HostingEnvironmentVariable).where(
+                HostingEnvironmentVariable.project_id == row.project_id,
+                HostingEnvironmentVariable.key == key,
+            )
+        )
+        encrypted = encrypt_secret(value)
+        if env is None:
+            env = HostingEnvironmentVariable(
+                project_id=row.project_id,
+                key=key,
+                encrypted_value=encrypted,
+                is_secret=secret,
+                created_by_user_id=row.created_by_user_id,
+                updated_by_user_id=row.created_by_user_id,
+            )
+            db.add(env)
+        else:
+            env.encrypted_value = encrypted
+            env.is_secret = secret
+            env.updated_by_user_id = row.created_by_user_id
 
 
 def _source_out(row: HostingSource) -> dict:
@@ -1587,7 +1666,7 @@ def report_database_failover(
 def list_hosting_databases(tenant_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "hosting.read", db, current)
     rows = db.scalars(select(HostingDatabase).where(HostingDatabase.tenant_id == tenant_id).order_by(HostingDatabase.created_at.desc())).all()
-    return {"items": [_db_out(row) for row in rows]}
+    return {"items": [_db_out(row, db) for row in rows]}
 
 
 @router.post("/tenants/{tenant_id}/hosting/databases", status_code=201)
@@ -1658,7 +1737,7 @@ def create_hosting_database(tenant_id: UUID, payload: HostingDatabaseCreate, db:
     _audit(db, current, tenant_id, "hosting.database.create", "hosting_database", row.id, {"engine": row.engine, "database_name": row.database_name, "project_id": str(row.project_id) if row.project_id else None, "node_id": str(node.id), "storage_mb": row.storage_mb, "placement_mode": placement_mode, "placement_score": placement["score"], "placement_server_id": placement["infrastructure_server_id"]})
     db.commit()
     db.refresh(row)
-    result = _db_out(row)
+    result = _db_out(row, db)
     result["password"] = raw_password
     result["credential_warning"] = "The generated password is returned only on creation. Store it securely; Ithute keeps only an encrypted copy."
     return result
@@ -1675,7 +1754,7 @@ def rotate_database_password(tenant_id: UUID, database_id: UUID, db: Session = D
     _queue_database_operation(row, "rotate")
     _audit(db, current, tenant_id, "hosting.database.rotate.queue", "hosting_database", row.id)
     db.commit()
-    result = _db_out(row)
+    result = _db_out(row, db)
     result["password"] = raw_password
     result["credential_warning"] = "This replacement password is shown once. It becomes the active stored credential only after the hosting node confirms the rotation."
     return result
@@ -1690,7 +1769,7 @@ def suspend_database(tenant_id: UUID, database_id: UUID, db: Session = Depends(g
     _queue_database_operation(row, "suspend")
     _audit(db, current, tenant_id, "hosting.database.suspend.queue", "hosting_database", row.id)
     db.commit()
-    return _db_out(row)
+    return _db_out(row, db)
 
 
 @router.post("/tenants/{tenant_id}/hosting/databases/{database_id}/resume")
@@ -1702,7 +1781,7 @@ def resume_database(tenant_id: UUID, database_id: UUID, db: Session = Depends(ge
     _queue_database_operation(row, "resume")
     _audit(db, current, tenant_id, "hosting.database.resume.queue", "hosting_database", row.id)
     db.commit()
-    return _db_out(row)
+    return _db_out(row, db)
 
 
 @router.delete("/tenants/{tenant_id}/hosting/databases/{database_id}", status_code=202)
@@ -1714,7 +1793,7 @@ def delete_hosting_database(tenant_id: UUID, database_id: UUID, db: Session = De
     _queue_database_operation(row, "delete")
     _audit(db, current, tenant_id, "hosting.database.delete.queue", "hosting_database", row.id)
     db.commit()
-    return {"accepted": True, "database": _db_out(row)}
+    return {"accepted": True, "database": _db_out(row, db)}
 
 
 @router.post("/hosting/agent/databases/claim")
@@ -1791,7 +1870,7 @@ def report_database_operation(database_id: UUID, payload: DatabaseAgentStatus, x
         _audit(db, None, row.tenant_id, f"hosting.database.{operation}.failed", "hosting_database", row.id, {"node_id": str(node.id), "message": row.failure_message})
         db.commit()
         db.refresh(row)
-        return _db_out(row)
+        return _db_out(row, db)
 
     if operation == "delete":
         tenant_id = row.tenant_id
@@ -1810,7 +1889,7 @@ def report_database_operation(database_id: UUID, payload: DatabaseAgentStatus, x
             _audit(db, None, row.tenant_id, "hosting.database.rotate.failed", "hosting_database", row.id, {"node_id": str(node.id), "message": row.failure_message})
             db.commit()
             db.refresh(row)
-            return _db_out(row)
+            return _db_out(row, db)
         row.encrypted_password = row.pending_encrypted_password
         row.pending_encrypted_password = None
 
@@ -1868,7 +1947,7 @@ def report_database_operation(database_id: UUID, payload: DatabaseAgentStatus, x
     _audit(db, None, row.tenant_id, f"hosting.database.{operation}.complete", "hosting_database", row.id, {"node_id": str(node.id), "host": row.internal_host, "port": row.internal_port})
     db.commit()
     db.refresh(row)
-    return _db_out(row)
+    return _db_out(row, db)
 
 
 @router.get("/tenants/{tenant_id}/hosting/projects/{project_id}/sources")
