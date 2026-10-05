@@ -192,12 +192,29 @@ def build_postgres_replication_group_plan(
         blockers.append("no standby currently meets safe promotion criteria")
 
     recommended = eligible[0] if eligible else None
+    rpo_checked = _utc(group.rpo_last_checked_at)
+    rpo_fresh = (
+        rpo_checked is not None
+        and rpo_checked >= now - GROUP_HEALTH_GRACE
+    )
+    rpo_verified = bool(group.rpo_healthy and rpo_fresh)
     return {
         "group": {
             "id": str(group.id),
             "name": group.name,
             "status": group.status,
             "primary_node_id": str(group.primary_node_id),
+            "rpo_class": group.rpo_class,
+            "required_sync_standbys": group.required_sync_standbys,
+        },
+        "rpo_policy": {
+            "class": group.rpo_class,
+            "required_sync_standbys": group.required_sync_standbys,
+            "healthy": rpo_verified,
+            "observed_synchronous_commit": group.observed_synchronous_commit,
+            "observed_sync_standbys": group.observed_sync_standbys,
+            "last_checked_at": rpo_checked.isoformat() if rpo_checked else None,
+            "fresh": rpo_fresh,
         },
         "databases": [
             {

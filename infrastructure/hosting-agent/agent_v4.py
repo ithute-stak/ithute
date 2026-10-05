@@ -42,6 +42,8 @@ PG_REWIND = os.getenv("ITHUTE_HOSTING_PG_REWIND", "pg_rewind").strip()
 PG_CONTROLDATA = os.getenv("ITHUTE_HOSTING_PG_CONTROLDATA", "pg_controldata").strip()
 POSTGRES_REPLICATION_USER = os.getenv("ITHUTE_HOSTING_POSTGRES_REPLICATION_USER", "").strip()
 POSTGRES_REPLICATION_PASSWORD = os.getenv("ITHUTE_HOSTING_POSTGRES_REPLICATION_PASSWORD", "")
+POSTGRES_OS_USER = os.getenv("ITHUTE_HOSTING_POSTGRES_OS_USER", "postgres").strip()
+RUNUSER = os.getenv("ITHUTE_HOSTING_RUNUSER", "runuser").strip()
 _SERVICE_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,128}$")
 if POSTGRES_REPLICATION_MODE not in {"disabled", "physical_cluster"}:
     raise RuntimeError("ITHUTE_HOSTING_POSTGRES_REPLICATION_MODE must be disabled or physical_cluster")
@@ -110,6 +112,10 @@ def postgres_physical_replication_capabilities() -> dict[str, Any]:
     pg_ctl_available = shutil.which(PG_CTL) is not None
     pg_rewind_available = shutil.which(PG_REWIND) is not None
     pg_controldata_available = shutil.which(PG_CONTROLDATA) is not None
+    cluster_admin_available = (
+        bool(base.DB_USER_RE.fullmatch(POSTGRES_OS_USER))
+        and shutil.which(RUNUSER) is not None
+    )
     replication_credentials_configured = (
         bool(base.DB_USER_RE.fullmatch(POSTGRES_REPLICATION_USER))
         and 20 <= len(POSTGRES_REPLICATION_PASSWORD) <= 256
@@ -135,6 +141,7 @@ def postgres_physical_replication_capabilities() -> dict[str, Any]:
         "pg_rewind_available": pg_rewind_available,
         "pg_controldata_available": pg_controldata_available,
         "replication_credentials_configured": replication_credentials_configured,
+        "rpo_policy_apply_available": cluster_admin_available,
     }
     if configured:
         try:
@@ -153,6 +160,18 @@ def postgres_physical_replication_capabilities() -> dict[str, Any]:
             result["replay_age_seconds"] = float(replay_age) if replay_age else None
             result["wal_receiver_status"] = receiver_status or None
             result["wal_receiver_streaming"] = receiver_status == "streaming"
+            if result["in_recovery"] is False:
+                sync_commit = base.psql("SHOW synchronous_commit").strip().lower()
+                sync_names = base.psql("SHOW synchronous_standby_names").strip()
+                streaming, synchronous = base.psql(
+                    "SELECT count(*) FILTER (WHERE state='streaming')::text || '|' || "
+                    "count(*) FILTER (WHERE state='streaming' AND sync_state IN ('sync','quorum'))::text "
+                    "FROM pg_stat_replication"
+                ).split("|", 1)
+                result["primary_synchronous_commit"] = sync_commit
+                result["primary_synchronous_standby_names"] = sync_names
+                result["primary_streaming_standbys"] = int(streaming)
+                result["primary_sync_standbys"] = int(synchronous)
             try:
                 wal_log_hints = base.psql("SHOW wal_log_hints").strip().lower() == "on"
                 data_checksums = base.psql("SHOW data_checksums").strip().lower() == "on"
@@ -167,6 +186,64 @@ def postgres_physical_replication_capabilities() -> dict[str, Any]:
         except Exception as exc:
             result["status_error"] = str(exc)[:300]
     return result
+
+
+def _postgres_cluster_admin_sql(sql: str) -> str:
+    if not base.DB_USER_RE.fullmatch(POSTGRES_OS_USER):
+        raise RuntimeError("PostgreSQL OS account is invalid")
+    if shutil.which(RUNUSER) is None:
+        raise RuntimeError("runuser is unavailable for PostgreSQL cluster administration")
+    return base.command(
+        [
+            RUNUSER,
+            "-u", POSTGRES_OS_USER,
+            "--",
+            base.PSQL,
+            "--dbname", base.POSTGRES_ADMIN_DATABASE,
+            "-v", "ON_ERROR_STOP=1",
+            "-Atqc", sql,
+        ],
+        timeout=60,
+    ).stdout.strip()
+
+
+def postgres_apply_rpo_policy(*, rpo_class: str, required_sync_standbys: int) -> dict[str, Any]:
+    if rpo_class not in {"async", "sync_flush", "sync_apply"}:
+        raise RuntimeError("Unsupported PostgreSQL RPO class")
+    required = int(required_sync_standbys)
+    if rpo_class == "async":
+        if required != 0:
+            raise RuntimeError("async RPO class requires zero synchronous standbys")
+        _postgres_cluster_admin_sql("ALTER SYSTEM SET synchronous_standby_names = ''")
+        _postgres_cluster_admin_sql("ALTER SYSTEM SET synchronous_commit = 'on'")
+    else:
+        if required < 1 or required > 8:
+            raise RuntimeError("synchronous RPO class requires between 1 and 8 standbys")
+        commit_mode = "on" if rpo_class == "sync_flush" else "remote_apply"
+        _postgres_cluster_admin_sql(
+            f"ALTER SYSTEM SET synchronous_commit = {base.sql_literal(commit_mode)}"
+        )
+        sync_names = f"ANY {required} (*)"
+        _postgres_cluster_admin_sql(
+            f"ALTER SYSTEM SET synchronous_standby_names = {base.sql_literal(sync_names)}"
+        )
+    _postgres_cluster_admin_sql("SELECT pg_reload_conf()")
+
+    observed_commit = _postgres_cluster_admin_sql("SHOW synchronous_commit").strip().lower()
+    observed_names = _postgres_cluster_admin_sql("SHOW synchronous_standby_names").strip()
+    expected_commit = "on" if rpo_class in {"async", "sync_flush"} else "remote_apply"
+    if observed_commit != expected_commit:
+        raise RuntimeError("PostgreSQL synchronous_commit did not match the requested RPO policy")
+    if rpo_class == "async" and observed_names:
+        raise RuntimeError("PostgreSQL synchronous standby configuration remained enabled for async policy")
+    if rpo_class != "async" and not observed_names:
+        raise RuntimeError("PostgreSQL synchronous standby configuration was not applied")
+    return {
+        "rpo_class": rpo_class,
+        "required_sync_standbys": required,
+        "synchronous_commit": observed_commit,
+        "synchronous_standby_names": observed_names,
+    }
 
 
 def postgres_bootstrap_physical_replica(
@@ -502,6 +579,76 @@ def _ensure_verified_backup_local(storage_key: str, path: pathlib.Path, expected
     if not _backup_matches(path, expected_sha, expected_size):
         path.unlink(missing_ok=True)
         raise RuntimeError("Rehydrated database backup failed control-plane size/SHA-256 verification")
+
+
+def claim_postgres_rpo_policy() -> dict[str, Any] | None:
+    result = base.api("/hosting/agent/postgres-rpo-policy/claim")
+    work = result.get("policy")
+    return work if isinstance(work, dict) else None
+
+
+def report_postgres_rpo_policy(
+    operation_id: str,
+    token: str,
+    success: bool,
+    *,
+    rpo_class: str | None = None,
+    required_sync_standbys: int | None = None,
+    synchronous_commit: str | None = None,
+    synchronous_standby_names: str | None = None,
+    message: str | None = None,
+) -> dict[str, Any]:
+    return base.api(
+        f"/hosting/agent/postgres-rpo-policy/{operation_id}/status",
+        {
+            "token": token,
+            "success": success,
+            "rpo_class": rpo_class,
+            "required_sync_standbys": required_sync_standbys,
+            "synchronous_commit": synchronous_commit,
+            "synchronous_standby_names": synchronous_standby_names,
+            "message": message,
+        },
+    )
+
+
+def process_postgres_rpo_policy(work: dict[str, Any]) -> None:
+    operation_id = str(work.get("id") or "")
+    token = str(work.get("token") or "")
+    rpo_class = str(work.get("rpo_class") or "")
+    required = int(work.get("required_sync_standbys") or 0)
+    if not operation_id or len(token) < 20:
+        raise RuntimeError("PostgreSQL RPO policy job is incomplete")
+
+    try:
+        applied = postgres_apply_rpo_policy(
+            rpo_class=rpo_class,
+            required_sync_standbys=required,
+        )
+        report_postgres_rpo_policy(
+            operation_id,
+            token,
+            True,
+            rpo_class=rpo_class,
+            required_sync_standbys=required,
+            synchronous_commit=str(applied["synchronous_commit"]),
+            synchronous_standby_names=str(applied["synchronous_standby_names"]),
+            message="PostgreSQL RPO policy applied; awaiting heartbeat verification",
+        )
+    except Exception as exc:
+        error = str(exc)[:1900]
+        base.log(f"postgres rpo policy {operation_id} failed: {error}")
+        try:
+            report_postgres_rpo_policy(
+                operation_id,
+                token,
+                False,
+                rpo_class=rpo_class if rpo_class in {"async", "sync_flush", "sync_apply"} else None,
+                required_sync_standbys=required,
+                message=error,
+            )
+        except Exception as report_exc:
+            base.log(f"could not report postgres rpo policy failure: {report_exc}")
 
 
 def claim_postgres_topology_repair() -> dict[str, Any] | None:
@@ -924,6 +1071,11 @@ def main() -> int:
             topology_repair = claim_postgres_topology_repair()
             if topology_repair:
                 process_postgres_topology_repair(topology_repair)
+                continue
+
+            rpo_policy = claim_postgres_rpo_policy()
+            if rpo_policy:
+                process_postgres_rpo_policy(rpo_policy)
                 continue
 
             database_failover = claim_database_failover()

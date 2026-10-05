@@ -15,11 +15,15 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_platform_owner, require_tenant_permission
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
-from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingPostgresTopologyRepair, HostingProject, HostingSource, User
+from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingPostgresRpoPolicyOperation, HostingPostgresTopologyRepair, HostingProject, HostingSource, User
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
 from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
 from app.services.database_replication import build_database_failover_plan
 from app.services.postgres_replication_groups import build_postgres_replication_group_plan
+from app.services.postgres_rpo_policy import (
+    queue_rpo_policy_operation,
+    validate_rpo_request,
+)
 from app.services.postgres_topology_repair import (
     queue_post_failover_topology_repairs,
     topology_repair_source,
@@ -59,6 +63,21 @@ class PostgresReplicationGroupCreate(BaseModel):
 
 class PostgresReplicationGroupFailoverRequest(BaseModel):
     standby_id: UUID
+
+
+class PostgresRpoPolicyUpdate(BaseModel):
+    rpo_class: str = Field(pattern=r"^(async|sync_flush|sync_apply)$")
+    required_sync_standbys: int = Field(default=0, ge=0, le=8)
+
+
+class PostgresRpoPolicyAgentStatus(BaseModel):
+    token: str = Field(min_length=20, max_length=64)
+    success: bool
+    rpo_class: str | None = Field(default=None, pattern=r"^(async|sync_flush|sync_apply)$")
+    required_sync_standbys: int | None = Field(default=None, ge=0, le=8)
+    synchronous_commit: str | None = Field(default=None, max_length=32)
+    synchronous_standby_names: str | None = Field(default=None, max_length=1000)
+    message: str | None = Field(default=None, max_length=2000)
 
 
 class HostingDatabaseCreate(BaseModel):
@@ -796,6 +815,180 @@ def report_postgres_topology_repair(
         "id": str(row.id),
         "status": row.status,
         "standby_id": str(standby.id),
+    }
+
+
+@router.put("/platform/hosting/postgres-replication-groups/{group_id}/rpo-policy", status_code=202)
+def update_postgres_group_rpo_policy(
+    group_id: UUID,
+    payload: PostgresRpoPolicyUpdate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    group = db.scalar(
+        select(HostingPostgresReplicationGroup)
+        .where(HostingPostgresReplicationGroup.id == group_id)
+        .with_for_update()
+    )
+    if group is None:
+        raise HTTPException(status_code=404, detail="PostgreSQL replication group not found")
+
+    errors = validate_rpo_request(
+        db,
+        group=group,
+        rpo_class=payload.rpo_class,
+        required_sync_standbys=payload.required_sync_standbys,
+    )
+    if errors:
+        raise HTTPException(status_code=409, detail={"message": "Requested RPO policy is not currently safe", "reasons": errors})
+
+    try:
+        operation = queue_rpo_policy_operation(
+            db,
+            group=group,
+            rpo_class=payload.rpo_class,
+            required_sync_standbys=payload.required_sync_standbys,
+            created_by_user_id=current.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    db.add(AuditLog(
+        actor_user_id=current.id,
+        action="hosting.postgres_replication_group.rpo_policy.request",
+        resource_type="hosting_postgres_replication_group",
+        resource_id=str(group.id),
+        metadata_json=json.dumps({
+            "rpo_class": payload.rpo_class,
+            "required_sync_standbys": payload.required_sync_standbys,
+            "operation_id": str(operation.id),
+        }, sort_keys=True),
+    ))
+    db.commit()
+    return {
+        "group_id": str(group.id),
+        "operation_id": str(operation.id),
+        "rpo_class": group.rpo_class,
+        "required_sync_standbys": group.required_sync_standbys,
+        "rpo_healthy": group.rpo_healthy,
+        "status": operation.status,
+    }
+
+
+@router.post("/hosting/agent/postgres-rpo-policy/claim")
+def claim_postgres_rpo_policy(
+    x_ithute_hosting_agent: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    agent, node = _agent_from_token(db, x_ithute_hosting_agent)
+    agent.last_seen_at = _now()
+    row = db.scalar(
+        select(HostingPostgresRpoPolicyOperation)
+        .where(
+            HostingPostgresRpoPolicyOperation.node_id == node.id,
+            HostingPostgresRpoPolicyOperation.status == "queued",
+        )
+        .order_by(HostingPostgresRpoPolicyOperation.created_at.asc(), HostingPostgresRpoPolicyOperation.id.asc())
+        .with_for_update(skip_locked=True)
+    )
+    if row is None:
+        db.commit()
+        return {"policy": None}
+
+    group = db.get(HostingPostgresReplicationGroup, row.group_id)
+    if (
+        group is None
+        or group.primary_node_id != node.id
+        or group.rpo_class != row.rpo_class
+        or int(group.required_sync_standbys) != int(row.required_sync_standbys)
+    ):
+        row.status = "failed"
+        row.failure_message = "Replication-group RPO policy changed before operation claim"
+        row.completed_at = _now()
+        db.commit()
+        return {"policy": None}
+
+    row.status = "claimed"
+    row.claim_token = secrets.token_urlsafe(32)
+    row.claimed_at = _now()
+    db.commit()
+    return {
+        "policy": {
+            "id": str(row.id),
+            "group_id": str(row.group_id),
+            "token": row.claim_token,
+            "rpo_class": row.rpo_class,
+            "required_sync_standbys": row.required_sync_standbys,
+        }
+    }
+
+
+@router.post("/hosting/agent/postgres-rpo-policy/{operation_id}/status")
+def report_postgres_rpo_policy(
+    operation_id: UUID,
+    payload: PostgresRpoPolicyAgentStatus,
+    x_ithute_hosting_agent: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    agent, node = _agent_from_token(db, x_ithute_hosting_agent)
+    agent.last_seen_at = _now()
+    row = db.scalar(
+        select(HostingPostgresRpoPolicyOperation)
+        .where(
+            HostingPostgresRpoPolicyOperation.id == operation_id,
+            HostingPostgresRpoPolicyOperation.node_id == node.id,
+        )
+        .with_for_update()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="PostgreSQL RPO policy operation not found")
+    if row.status != "claimed" or not row.claim_token:
+        raise HTTPException(status_code=409, detail="PostgreSQL RPO policy operation is not actively claimed")
+    if not secrets.compare_digest(row.claim_token, payload.token):
+        raise HTTPException(status_code=409, detail="Stale PostgreSQL RPO policy token")
+
+    row.claim_token = None
+    row.completed_at = _now()
+    group = db.get(HostingPostgresReplicationGroup, row.group_id)
+    if not payload.success:
+        row.status = "failed"
+        row.failure_message = (payload.message or "PostgreSQL RPO policy application failed").strip()[:2000]
+        if group is not None:
+            group.rpo_healthy = False
+        db.commit()
+        return {"id": str(row.id), "status": row.status}
+
+    if (
+        payload.rpo_class != row.rpo_class
+        or payload.required_sync_standbys != row.required_sync_standbys
+    ):
+        raise HTTPException(status_code=409, detail="Applied PostgreSQL RPO policy does not match the claimed operation")
+
+    row.status = "succeeded"
+    row.failure_message = None
+    if group is not None:
+        group.rpo_healthy = False
+        group.observed_synchronous_commit = payload.synchronous_commit
+        group.rpo_last_checked_at = None
+    db.add(AuditLog(
+        actor_user_id=None,
+        action="hosting.postgres_replication_group.rpo_policy.applied",
+        resource_type="hosting_postgres_rpo_policy_operation",
+        resource_id=str(row.id),
+        metadata_json=json.dumps({
+            "group_id": str(row.group_id),
+            "rpo_class": row.rpo_class,
+            "required_sync_standbys": row.required_sync_standbys,
+            "synchronous_commit": payload.synchronous_commit,
+            "synchronous_standby_names": payload.synchronous_standby_names,
+        }, sort_keys=True),
+    ))
+    db.commit()
+    return {
+        "id": str(row.id),
+        "status": row.status,
+        "rpo_healthy": group.rpo_healthy if group is not None else False,
+        "awaiting_heartbeat_verification": True,
     }
 
 
