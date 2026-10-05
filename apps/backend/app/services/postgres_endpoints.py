@@ -17,7 +17,6 @@ from app.models import (
 )
 
 
-_ENDPOINT_SUFFIX = os.getenv("ITHUTE_POSTGRES_ENDPOINT_SUFFIX", "db.ithute.internal").strip().lower()
 _DNS_RE = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$")
 _ENDPOINT_PORT_START = int(os.getenv("ITHUTE_POSTGRES_ENDPOINT_PORT_START", "20000"))
 _ENDPOINT_PORT_END = int(os.getenv("ITHUTE_POSTGRES_ENDPOINT_PORT_END", "39999"))
@@ -41,12 +40,6 @@ def _allocate_listen_port(db: Session, gateway_id) -> int:
             return port
     raise RuntimeError("PostgreSQL endpoint gateway port range is exhausted")
 
-
-def endpoint_hostname(group: HostingPostgresReplicationGroup) -> str:
-    suffix = _ENDPOINT_SUFFIX
-    if not _DNS_RE.fullmatch(suffix):
-        raise RuntimeError("ITHUTE_POSTGRES_ENDPOINT_SUFFIX is not a valid DNS suffix")
-    return f"pg-{str(group.id).replace('-', '')[:20]}.{suffix}"
 
 
 def _target_for_group(db: Session, group: HostingPostgresReplicationGroup) -> tuple[HostingNode, int]:
@@ -81,7 +74,7 @@ def ensure_postgres_endpoint(
         row = HostingPostgresEndpoint(
             group_id=group.id,
             gateway_id=gateway.id,
-            hostname=endpoint_hostname(group),
+            hostname=gateway.hostname,
             listen_port=_allocate_listen_port(db, gateway.id),
             current_node_id=node.id,
             target_host=node.hostname,
@@ -96,11 +89,13 @@ def ensure_postgres_endpoint(
 
     changed = (
         row.gateway_id != gateway.id
+        or row.hostname != gateway.hostname
         or row.current_node_id != node.id
         or row.target_host != node.hostname
         or int(row.target_port) != port
     )
     row.gateway_id = gateway.id
+    row.hostname = gateway.hostname
     row.current_node_id = node.id
     row.target_host = node.hostname
     row.target_port = port
