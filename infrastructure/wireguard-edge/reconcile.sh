@@ -20,7 +20,12 @@ tmp_json="$(mktemp)"
 tmp_conf="$(mktemp)"
 trap 'rm -f "$tmp_json" "$tmp_conf"' EXIT
 
-curl -fsS \
+curl --connect-timeout 5 \
+  --max-time 15 \
+  --retry 1 \
+  --retry-delay 2 \
+  --retry-all-errors \
+  -fsS \
   -H "X-Ithute-WireGuard-Reconciler: $ITHUTE_WIREGUARD_RECONCILER_TOKEN" \
   "${ITHUTE_API_URL%/}/api/v1/infrastructure/private-network/edge-peers" > "$tmp_json"
 

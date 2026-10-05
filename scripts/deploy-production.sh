@@ -227,13 +227,19 @@ wait_service() {
   local name="$1"
   local command="$2"
   local attempt
-  for attempt in $(seq 1 60); do
+  local attempts="${ITHUTE_DEPLOY_HEALTH_ATTEMPTS:-30}"
+  echo "[Ithute] Verifying service: $name"
+  for attempt in $(seq 1 "$attempts"); do
     if compose exec -T "$name" sh -c "$command" >/dev/null 2>&1; then
+      echo "[Ithute] Service healthy: $name"
       return 0
+    fi
+    if [ $((attempt % 10)) -eq 0 ]; then
+      echo "[Ithute] Still waiting for $name ($attempt/$attempts)"
     fi
     sleep 2
   done
-  echo "Health verification failed for $name" >&2
+  echo "Health verification failed for $name after $((attempts * 2)) seconds" >&2
   compose ps >&2 || true
   compose logs --tail=160 "$name" >&2 || true
   return 1
@@ -273,7 +279,8 @@ require_public_marker() {
   local url="$2"
   local expected="$3"
   local body
-  body="$(curl --retry 10 --retry-delay 2 --retry-all-errors --connect-timeout 10 -fsS "$url")" || {
+  echo "[Ithute] Verifying public endpoint: $label"
+  body="$(curl --retry 2 --retry-delay 2 --retry-all-errors --connect-timeout 5 --max-time 15 -fsS "$url")" || {
     echo "Public health failed: $label could not be fetched at $url" >&2
     return 1
   }
@@ -281,6 +288,7 @@ require_public_marker() {
     echo "Public health failed: $label did not contain expected marker: $expected" >&2
     return 1
   fi
+  echo "[Ithute] Public endpoint healthy: $label"
 }
 
 verify_public_health() {
@@ -387,30 +395,45 @@ compose pull \
 if ! compose up -d --no-build; then
   fail_release
 fi
+echo "[Ithute] Validating and reloading Caddy edge"
 if ! ensure_edge_and_reload; then
   fail_release
 fi
+echo "[Ithute] Caddy edge ready"
+
+echo "[Ithute] Running core service health gates"
 if ! verify_core_health; then
   fail_release
 fi
+echo "[Ithute] Core service health gates passed"
+
+echo "[Ithute] Verifying managed private network"
 if ! verify_edge_private_network; then
   echo "Managed private-network edge readiness failed after deployment." >&2
   fail_release
 fi
 
+echo "[Ithute] Managed private network ready"
+
 # Peer reconciliation can only succeed after the public API name is reachable.
 # The timer remains active either way and will retry automatically.
 if getent ahostsv4 ithute.co.ls 2>/dev/null | awk '{print $1}' | grep -Fxq "$(sed -n 's/^ITHUTE_PUBLIC_IPV4=//p' "$ENV_FILE" | tail -n1)"; then
+  echo "[Ithute] Reconciling WireGuard edge peers"
   systemctl start ithute-wireguard-edge-reconciler.service || {
     systemctl status --no-pager ithute-wireguard-edge-reconciler.service >&2 || true
     fail_release
   }
+  echo "[Ithute] WireGuard edge peer reconciliation complete"
 fi
 
+echo "[Ithute] Running public health gates"
 if ! verify_public_health; then
   echo "Candidate failed public health verification." >&2
   fail_release
 fi
+
+echo "[Ithute] Public health gates passed"
+echo "[Ithute] Committing candidate as active and last-known-good release"
 
 # Commit the release marker only after the complete candidate is healthy. Until
 # this point the previous .image.env and last-known-good marker remain intact.
