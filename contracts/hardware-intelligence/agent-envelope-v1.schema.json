@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ithute.co.ls/contracts/hardware-intelligence/agent-envelope-v1.schema.json",
+  "title": "Ithute Hardware Intelligence Signed Agent Envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "envelope_version",
+    "algorithm",
+    "agent_id",
+    "issued_at_unix",
+    "nonce",
+    "payload",
+    "signature"
+  ],
+  "properties": {
+    "envelope_version": {"const": 1},
+    "algorithm": {"const": "HMAC-SHA256"},
+    "agent_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "issued_at_unix": {"type": "integer", "minimum": 0},
+    "nonce": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "payload": {
+      "$ref": "./telemetry-v1.schema.json"
+    },
+    "signature": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
