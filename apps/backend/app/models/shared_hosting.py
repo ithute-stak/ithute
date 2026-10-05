@@ -208,6 +208,44 @@ class HostingPostgresRpoPolicyOperation(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+
+class HostingDatabaseGateway(Base):
+    __tablename__ = "hosting_database_gateways"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    hostname: Mapped[str] = mapped_column(String(253), nullable=False, unique=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    token_hint: Mapped[str] = mapped_column(String(24), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="active", nullable=False)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    agent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class HostingPostgresEndpoint(Base):
+    __tablename__ = "hosting_postgres_endpoints"
+    __table_args__ = (
+        UniqueConstraint("gateway_id", "listen_port", name="uq_pg_endpoint_gateway_port"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    group_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_postgres_replication_groups.id", ondelete="CASCADE"), nullable=False, unique=True)
+    gateway_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_database_gateways.id", ondelete="RESTRICT"), nullable=False, index=True)
+    hostname: Mapped[str] = mapped_column(String(253), nullable=False)
+    listen_port: Mapped[int] = mapped_column(Integer, default=5432, nullable=False)
+    current_node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_nodes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    target_host: Mapped[str] = mapped_column(String(253), nullable=False)
+    target_port: Mapped[int] = mapped_column(Integer, default=5432, nullable=False)
+    generation: Mapped[int] = mapped_column(BigInteger, default=1, nullable=False)
+    applied_generation: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="pending", nullable=False)
+    last_routed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class HostingSourceCredential(Base):
     __tablename__ = "hosting_source_credentials"
     __table_args__ = (UniqueConstraint("project_id", "name", name="uq_hosting_source_credential_project_name"),)

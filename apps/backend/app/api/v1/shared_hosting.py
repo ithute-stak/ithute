@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_platform_owner, require_tenant_permission
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
-from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingNodeHealthState, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingPostgresRpoPolicyOperation, HostingPostgresTopologyRepair, HostingProject, HostingSource, User
+from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingDatabaseGateway, HostingNode, HostingNodeAgent, HostingNodeHealthState, HostingPostgresEndpoint, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingPostgresRpoPolicyOperation, HostingPostgresTopologyRepair, HostingProject, HostingSource, User
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
 from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
 from app.services.database_replication import build_database_failover_plan
@@ -31,6 +31,12 @@ from app.services.postgres_topology_repair import (
 from app.services.postgres_rto_slo import (
     failover_slo_snapshot,
     mark_redundancy_restored_if_ready,
+)
+from app.services.postgres_endpoints import (
+    acknowledge_route_generation,
+    ensure_postgres_endpoint,
+    gateway_route_snapshot,
+    switch_postgres_endpoint_to_primary,
 )
 from app.services.external_fencing import (
     queue_external_fence_for_database_failover,
@@ -63,6 +69,23 @@ class PostgresReplicationGroupCreate(BaseModel):
     primary_node_id: UUID
     database_ids: list[UUID] = Field(min_length=1, max_length=500)
     standby_node_ids: list[UUID] = Field(default_factory=list, max_length=16)
+
+
+class DatabaseGatewayCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    hostname: str = Field(min_length=1, max_length=253)
+
+
+class DatabaseGatewayHeartbeat(BaseModel):
+    version: str = Field(min_length=1, max_length=64)
+
+
+class DatabaseGatewayRouteAck(BaseModel):
+    generation: int = Field(ge=1)
+
+
+class PostgresEndpointCreate(BaseModel):
+    gateway_id: UUID
 
 
 class PostgresReplicationGroupFailoverRequest(BaseModel):
@@ -175,7 +198,35 @@ def _audit(db: Session, current: User | None, tenant_id: UUID, action: str, reso
     )
 
 
-def _db_out(row: HostingDatabase) -> dict:
+def _db_out(row: HostingDatabase, db: Session | None = None) -> dict:
+    host = row.internal_host
+    port = row.internal_port
+    endpoint_payload = None
+    if db is not None and row.engine == "postgresql":
+        group_id = db.scalar(
+            select(HostingPostgresReplicationMember.group_id).where(
+                HostingPostgresReplicationMember.database_id == row.id
+            )
+        )
+        endpoint = (
+            db.scalar(
+                select(HostingPostgresEndpoint).where(
+                    HostingPostgresEndpoint.group_id == group_id
+                )
+            )
+            if group_id is not None
+            else None
+        )
+        if endpoint is not None:
+            host = endpoint.hostname
+            port = endpoint.listen_port
+            endpoint_payload = {
+                "id": str(endpoint.id),
+                "group_id": str(endpoint.group_id),
+                "generation": endpoint.generation,
+                "applied_generation": endpoint.applied_generation,
+                "status": endpoint.status,
+            }
     return {
         "id": str(row.id),
         "tenant_id": str(row.tenant_id),
@@ -185,8 +236,9 @@ def _db_out(row: HostingDatabase) -> dict:
         "engine_version": row.engine_version,
         "database_name": row.database_name,
         "username": row.username,
-        "host": row.internal_host,
-        "port": row.internal_port,
+        "host": host,
+        "port": port,
+        "stable_endpoint": endpoint_payload,
         "storage_mb": row.storage_mb,
         "status": row.status,
         "operation": row.operation,
@@ -195,6 +247,56 @@ def _db_out(row: HostingDatabase) -> dict:
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
+
+
+def _sync_database_connection_env(
+    db: Session,
+    row: HostingDatabase,
+    *,
+    host: str,
+    port: int,
+) -> None:
+    if row.project_id is None or row.status != "ready":
+        return
+    try:
+        password = decrypt_secret(row.encrypted_password)
+    except ValueError:
+        password = None
+    values = {
+        "DATABASE_HOST": (host, False),
+        "DATABASE_PORT": (str(port), False),
+        "DATABASE_NAME": (row.database_name, False),
+        "DATABASE_USER": (row.username, True),
+    }
+    if password is not None:
+        scheme = "postgresql" if row.engine == "postgresql" else "mysql"
+        values["DATABASE_PASSWORD"] = (password, True)
+        values["DATABASE_URL"] = (
+            f"{scheme}://{row.username}:{password}@{host}:{port}/{row.database_name}",
+            True,
+        )
+    for key, (value, secret) in values.items():
+        env = db.scalar(
+            select(HostingEnvironmentVariable).where(
+                HostingEnvironmentVariable.project_id == row.project_id,
+                HostingEnvironmentVariable.key == key,
+            )
+        )
+        encrypted = encrypt_secret(value)
+        if env is None:
+            env = HostingEnvironmentVariable(
+                project_id=row.project_id,
+                key=key,
+                encrypted_value=encrypted,
+                is_secret=secret,
+                created_by_user_id=row.created_by_user_id,
+                updated_by_user_id=row.created_by_user_id,
+            )
+            db.add(env)
+        else:
+            env.encrypted_value = encrypted
+            env.is_secret = secret
+            env.updated_by_user_id = row.created_by_user_id
 
 
 def _source_out(row: HostingSource) -> dict:
@@ -250,6 +352,25 @@ def _queue_database_operation(row: HostingDatabase, operation: str) -> None:
     row.status = "deleting" if operation == "delete" else "queued"
 
 
+def _database_gateway_from_token(
+    db: Session,
+    token: str | None,
+) -> HostingDatabaseGateway:
+    raw = (token or "").strip()
+    if not raw or not raw.startswith("ith_dbgw_"):
+        raise HTTPException(status_code=401, detail="Database gateway credential required")
+    gateway = db.scalar(
+        select(HostingDatabaseGateway).where(
+            HostingDatabaseGateway.token_hash == hash_token(raw),
+            HostingDatabaseGateway.status == "active",
+        )
+    )
+    if gateway is None:
+        raise HTTPException(status_code=401, detail="Invalid database gateway credential")
+    gateway.last_seen_at = _now()
+    return gateway
+
+
 def _agent_from_token(db: Session, token: str | None) -> tuple[HostingNodeAgent, HostingNode]:
     raw = (token or "").strip()
     if not raw or not raw.startswith("ith_host_"):
@@ -270,6 +391,212 @@ def runtime_catalog():
         "source_types": ["git", "zip"],
         "database_engines": ["postgresql", "mysql"],
         "custom_runtime_policy": "Applications outside managed runtimes can use a reviewed Dockerfile build path.",
+    }
+
+
+@router.post("/platform/hosting/database-gateways", status_code=201)
+def create_database_gateway(
+    payload: DatabaseGatewayCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    hostname = payload.hostname.strip().lower()
+    if re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*", hostname) is None:
+        raise HTTPException(status_code=422, detail="Database gateway hostname is invalid")
+    raw = "ith_dbgw_" + secrets.token_urlsafe(36)
+    row = HostingDatabaseGateway(
+        name=payload.name.strip(),
+        hostname=hostname,
+        token_hash=hash_token(raw),
+        token_hint=raw[-12:],
+        status="active",
+        created_by_user_id=current.id,
+    )
+    db.add(row)
+    db.flush()
+    db.add(AuditLog(
+        actor_user_id=current.id,
+        action="hosting.database_gateway.create",
+        resource_type="hosting_database_gateway",
+        resource_id=str(row.id),
+        metadata_json=json.dumps({"name": row.name, "hostname": row.hostname}, sort_keys=True),
+    ))
+    db.commit()
+    return {
+        "id": str(row.id),
+        "name": row.name,
+        "hostname": row.hostname,
+        "status": row.status,
+        "token": raw,
+    }
+
+
+@router.post("/platform/hosting/postgres-replication-groups/{group_id}/endpoint", status_code=201)
+def create_postgres_group_endpoint(
+    group_id: UUID,
+    payload: PostgresEndpointCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    group = db.get(HostingPostgresReplicationGroup, group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="PostgreSQL replication group not found")
+    gateway = db.get(HostingDatabaseGateway, payload.gateway_id)
+    if gateway is None or gateway.status != "active":
+        raise HTTPException(status_code=409, detail="Database gateway is unavailable")
+
+    try:
+        endpoint = ensure_postgres_endpoint(db, group=group, gateway=gateway)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    db.add(AuditLog(
+        actor_user_id=current.id,
+        action="hosting.postgres_replication_group.endpoint.ensure",
+        resource_type="hosting_postgres_endpoint",
+        resource_id=str(endpoint.id),
+        metadata_json=json.dumps({
+            "group_id": str(group.id),
+            "gateway_id": str(gateway.id),
+            "hostname": endpoint.hostname,
+            "listen_port": endpoint.listen_port,
+            "generation": endpoint.generation,
+        }, sort_keys=True),
+    ))
+    db.commit()
+    return {
+        "id": str(endpoint.id),
+        "group_id": str(group.id),
+        "hostname": endpoint.hostname,
+        "port": endpoint.listen_port,
+        "gateway_hostname": gateway.hostname,
+        "generation": endpoint.generation,
+        "applied_generation": endpoint.applied_generation,
+        "status": endpoint.status,
+    }
+
+
+@router.get("/platform/hosting/postgres-replication-groups/{group_id}/endpoint")
+def get_postgres_group_endpoint(
+    group_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    endpoint = db.scalar(
+        select(HostingPostgresEndpoint).where(HostingPostgresEndpoint.group_id == group_id)
+    )
+    if endpoint is None:
+        raise HTTPException(status_code=404, detail="PostgreSQL stable endpoint not configured")
+    gateway = db.get(HostingDatabaseGateway, endpoint.gateway_id)
+    return {
+        "id": str(endpoint.id),
+        "group_id": str(endpoint.group_id),
+        "hostname": endpoint.hostname,
+        "port": endpoint.listen_port,
+        "gateway_hostname": gateway.hostname if gateway else None,
+        "generation": endpoint.generation,
+        "applied_generation": endpoint.applied_generation,
+        "status": endpoint.status,
+        "current_node_id": str(endpoint.current_node_id),
+        "target_host": endpoint.target_host,
+        "target_port": endpoint.target_port,
+        "last_routed_at": endpoint.last_routed_at.isoformat() if endpoint.last_routed_at else None,
+    }
+
+
+@router.post("/hosting/database-gateway/heartbeat")
+def database_gateway_heartbeat(
+    payload: DatabaseGatewayHeartbeat,
+    x_ithute_database_gateway: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    gateway = _database_gateway_from_token(db, x_ithute_database_gateway)
+    gateway.agent_version = payload.version.strip()
+    gateway.last_seen_at = _now()
+    db.commit()
+    return {"ok": True, "gateway_id": str(gateway.id), "status": gateway.status}
+
+
+@router.get("/hosting/database-gateway/routes")
+def database_gateway_routes(
+    x_ithute_database_gateway: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    gateway = _database_gateway_from_token(db, x_ithute_database_gateway)
+    snapshot = gateway_route_snapshot(db, gateway=gateway)
+    db.commit()
+    return snapshot
+
+
+@router.post("/hosting/database-gateway/routes/{endpoint_id}/ack")
+def database_gateway_route_ack(
+    endpoint_id: UUID,
+    payload: DatabaseGatewayRouteAck,
+    x_ithute_database_gateway: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    gateway = _database_gateway_from_token(db, x_ithute_database_gateway)
+    try:
+        endpoint = acknowledge_route_generation(
+            db,
+            endpoint_id=endpoint_id,
+            gateway_id=gateway.id,
+            generation=payload.generation,
+            now=_now(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    attempt = db.scalar(
+        select(HostingPostgresGroupFailoverAttempt)
+        .where(
+            HostingPostgresGroupFailoverAttempt.group_id == endpoint.group_id,
+            HostingPostgresGroupFailoverAttempt.status == "succeeded",
+            HostingPostgresGroupFailoverAttempt.target_node_id == endpoint.current_node_id,
+            HostingPostgresGroupFailoverAttempt.service_restored_at.is_(None),
+        )
+        .order_by(HostingPostgresGroupFailoverAttempt.promoted_at.desc())
+        .with_for_update()
+    )
+    group = db.get(HostingPostgresReplicationGroup, endpoint.group_id)
+    member_ids = db.scalars(
+        select(HostingPostgresReplicationMember.database_id).where(
+            HostingPostgresReplicationMember.group_id == endpoint.group_id
+        )
+    ).all()
+    members = (
+        db.scalars(select(HostingDatabase).where(HostingDatabase.id.in_(member_ids))).all()
+        if member_ids
+        else []
+    )
+    for database in members:
+        _sync_database_connection_env(
+            db,
+            database,
+            host=endpoint.hostname,
+            port=endpoint.listen_port,
+        )
+
+    if attempt is not None:
+        restored_at = _now()
+        attempt.service_restored_at = restored_at
+        detected = attempt.failure_detected_at or attempt.created_at
+        detected = detected if detected.tzinfo else detected.replace(tzinfo=timezone.utc)
+        attempt.rto_seconds = max(0, int((restored_at - detected).total_seconds()))
+        attempt.rto_met = bool(group and attempt.rto_seconds <= int(group.rto_target_seconds))
+        if group is not None:
+            mark_redundancy_restored_if_ready(
+                db,
+                group_id=group.id,
+                now=restored_at,
+            )
+    db.commit()
+    return {
+        "endpoint_id": str(endpoint.id),
+        "generation": endpoint.generation,
+        "status": endpoint.status,
+        "service_restored": attempt is not None,
+        "rto_seconds": attempt.rto_seconds if attempt else None,
+        "rto_met": attempt.rto_met if attempt else None,
     }
 
 
@@ -642,13 +969,19 @@ def report_postgres_group_failover(
             old_primary_node_id=attempt.source_node_id,
             promoted_standby_id=standby.id,
         )
+        endpoint = switch_postgres_endpoint_to_primary(db, group=group, now=now)
         attempt.status = "succeeded"
         attempt.promoted_at = now
-        attempt.service_restored_at = now
-        detected = attempt.failure_detected_at or attempt.created_at
-        detected = detected if detected.tzinfo else detected.replace(tzinfo=timezone.utc)
-        attempt.rto_seconds = max(0, int((now - detected).total_seconds()))
-        attempt.rto_met = attempt.rto_seconds <= int(group.rto_target_seconds)
+        if endpoint is None:
+            attempt.service_restored_at = now
+            detected = attempt.failure_detected_at or attempt.created_at
+            detected = detected if detected.tzinfo else detected.replace(tzinfo=timezone.utc)
+            attempt.rto_seconds = max(0, int((now - detected).total_seconds()))
+            attempt.rto_met = attempt.rto_seconds <= int(group.rto_target_seconds)
+        else:
+            attempt.service_restored_at = None
+            attempt.rto_seconds = None
+            attempt.rto_met = None
         attempt.failure_message = None
         db.add(AuditLog(
             actor_user_id=None,
@@ -661,6 +994,9 @@ def report_postgres_group_failover(
                 "target_node_id": str(attempt.target_node_id),
                 "database_ids": [str(row.id) for row in members],
                 "repair_job_ids": [str(row.id) for row in repair_jobs],
+                "endpoint_id": str(endpoint.id) if endpoint else None,
+                "endpoint_generation": endpoint.generation if endpoint else None,
+                "awaiting_gateway_route": endpoint is not None,
                 "rto_seconds": attempt.rto_seconds,
                 "rto_target_seconds": group.rto_target_seconds,
                 "rto_met": attempt.rto_met,
@@ -674,6 +1010,9 @@ def report_postgres_group_failover(
             "primary_node_id": str(group.primary_node_id),
             "database_ids": [str(row.id) for row in members],
             "repair_job_ids": [str(row.id) for row in repair_jobs],
+            "endpoint_id": str(endpoint.id) if endpoint else None,
+            "endpoint_generation": endpoint.generation if endpoint else None,
+            "awaiting_gateway_route": endpoint is not None,
             "rto_seconds": attempt.rto_seconds,
             "rto_met": attempt.rto_met,
         }
@@ -1351,7 +1690,7 @@ def report_database_failover(
 def list_hosting_databases(tenant_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     require_tenant_permission(tenant_id, "hosting.read", db, current)
     rows = db.scalars(select(HostingDatabase).where(HostingDatabase.tenant_id == tenant_id).order_by(HostingDatabase.created_at.desc())).all()
-    return {"items": [_db_out(row) for row in rows]}
+    return {"items": [_db_out(row, db) for row in rows]}
 
 
 @router.post("/tenants/{tenant_id}/hosting/databases", status_code=201)
@@ -1422,7 +1761,7 @@ def create_hosting_database(tenant_id: UUID, payload: HostingDatabaseCreate, db:
     _audit(db, current, tenant_id, "hosting.database.create", "hosting_database", row.id, {"engine": row.engine, "database_name": row.database_name, "project_id": str(row.project_id) if row.project_id else None, "node_id": str(node.id), "storage_mb": row.storage_mb, "placement_mode": placement_mode, "placement_score": placement["score"], "placement_server_id": placement["infrastructure_server_id"]})
     db.commit()
     db.refresh(row)
-    result = _db_out(row)
+    result = _db_out(row, db)
     result["password"] = raw_password
     result["credential_warning"] = "The generated password is returned only on creation. Store it securely; Ithute keeps only an encrypted copy."
     return result
@@ -1439,7 +1778,7 @@ def rotate_database_password(tenant_id: UUID, database_id: UUID, db: Session = D
     _queue_database_operation(row, "rotate")
     _audit(db, current, tenant_id, "hosting.database.rotate.queue", "hosting_database", row.id)
     db.commit()
-    result = _db_out(row)
+    result = _db_out(row, db)
     result["password"] = raw_password
     result["credential_warning"] = "This replacement password is shown once. It becomes the active stored credential only after the hosting node confirms the rotation."
     return result
@@ -1454,7 +1793,7 @@ def suspend_database(tenant_id: UUID, database_id: UUID, db: Session = Depends(g
     _queue_database_operation(row, "suspend")
     _audit(db, current, tenant_id, "hosting.database.suspend.queue", "hosting_database", row.id)
     db.commit()
-    return _db_out(row)
+    return _db_out(row, db)
 
 
 @router.post("/tenants/{tenant_id}/hosting/databases/{database_id}/resume")
@@ -1466,7 +1805,7 @@ def resume_database(tenant_id: UUID, database_id: UUID, db: Session = Depends(ge
     _queue_database_operation(row, "resume")
     _audit(db, current, tenant_id, "hosting.database.resume.queue", "hosting_database", row.id)
     db.commit()
-    return _db_out(row)
+    return _db_out(row, db)
 
 
 @router.delete("/tenants/{tenant_id}/hosting/databases/{database_id}", status_code=202)
@@ -1478,7 +1817,7 @@ def delete_hosting_database(tenant_id: UUID, database_id: UUID, db: Session = De
     _queue_database_operation(row, "delete")
     _audit(db, current, tenant_id, "hosting.database.delete.queue", "hosting_database", row.id)
     db.commit()
-    return {"accepted": True, "database": _db_out(row)}
+    return {"accepted": True, "database": _db_out(row, db)}
 
 
 @router.post("/hosting/agent/databases/claim")
@@ -1555,7 +1894,7 @@ def report_database_operation(database_id: UUID, payload: DatabaseAgentStatus, x
         _audit(db, None, row.tenant_id, f"hosting.database.{operation}.failed", "hosting_database", row.id, {"node_id": str(node.id), "message": row.failure_message})
         db.commit()
         db.refresh(row)
-        return _db_out(row)
+        return _db_out(row, db)
 
     if operation == "delete":
         tenant_id = row.tenant_id
@@ -1574,7 +1913,7 @@ def report_database_operation(database_id: UUID, payload: DatabaseAgentStatus, x
             _audit(db, None, row.tenant_id, "hosting.database.rotate.failed", "hosting_database", row.id, {"node_id": str(node.id), "message": row.failure_message})
             db.commit()
             db.refresh(row)
-            return _db_out(row)
+            return _db_out(row, db)
         row.encrypted_password = row.pending_encrypted_password
         row.pending_encrypted_password = None
 
@@ -1586,53 +1925,41 @@ def report_database_operation(database_id: UUID, payload: DatabaseAgentStatus, x
     row.failure_message = None
     row.completed_at = now
 
-    # Automatic provisioning can create a project-scoped database before the
-    # hosting agent knows its final internal host. Once provisioning completes,
-    # reconcile connection metadata into the existing encrypted environment
-    # store so the next application deployment receives usable credentials.
-    if row.project_id and row.status == "ready" and row.internal_host:
-        try:
-            password = decrypt_secret(row.encrypted_password)
-        except ValueError:
-            password = None
-        values = {
-            "DATABASE_HOST": (row.internal_host, False),
-            "DATABASE_PORT": (str(row.internal_port), False),
-            "DATABASE_NAME": (row.database_name, False),
-            "DATABASE_USER": (row.username, True),
-        }
-        if password is not None:
-            scheme = "postgresql" if row.engine == "postgresql" else "mysql"
-            values["DATABASE_PASSWORD"] = (password, True)
-            values["DATABASE_URL"] = (
-                f"{scheme}://{row.username}:{password}@{row.internal_host}:{row.internal_port}/{row.database_name}",
-                True,
+    # Keep application connection metadata on the stable gateway endpoint when
+    # this PostgreSQL database belongs to a routed replication group.
+    connection_host = row.internal_host
+    connection_port = row.internal_port
+    if row.engine == "postgresql":
+        group_id = db.scalar(
+            select(HostingPostgresReplicationMember.group_id).where(
+                HostingPostgresReplicationMember.database_id == row.id
             )
-        for key, (value, secret) in values.items():
-            env = db.scalar(select(HostingEnvironmentVariable).where(
-                HostingEnvironmentVariable.project_id == row.project_id,
-                HostingEnvironmentVariable.key == key,
-            ))
-            encrypted = encrypt_secret(value)
-            if env is None:
-                env = HostingEnvironmentVariable(
-                    project_id=row.project_id,
-                    key=key,
-                    encrypted_value=encrypted,
-                    is_secret=secret,
-                    created_by_user_id=row.created_by_user_id,
-                    updated_by_user_id=row.created_by_user_id,
+        )
+        endpoint = (
+            db.scalar(
+                select(HostingPostgresEndpoint).where(
+                    HostingPostgresEndpoint.group_id == group_id,
+                    HostingPostgresEndpoint.status == "ready",
                 )
-                db.add(env)
-            else:
-                env.encrypted_value = encrypted
-                env.is_secret = secret
-                env.updated_by_user_id = row.created_by_user_id
+            )
+            if group_id is not None
+            else None
+        )
+        if endpoint is not None:
+            connection_host = endpoint.hostname
+            connection_port = endpoint.listen_port
+    if connection_host:
+        _sync_database_connection_env(
+            db,
+            row,
+            host=connection_host,
+            port=connection_port,
+        )
 
     _audit(db, None, row.tenant_id, f"hosting.database.{operation}.complete", "hosting_database", row.id, {"node_id": str(node.id), "host": row.internal_host, "port": row.internal_port})
     db.commit()
     db.refresh(row)
-    return _db_out(row)
+    return _db_out(row, db)
 
 
 @router.get("/tenants/{tenant_id}/hosting/projects/{project_id}/sources")
