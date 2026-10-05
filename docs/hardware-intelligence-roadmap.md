@@ -37,8 +37,8 @@ C hardware probe + eBPF kernel signals -> Rust validation/hardening -> Go long-r
 - [x] Add System Owner fleet/history hardware-health APIs and responsive Hardware Intelligence dashboard.
 
 ### Phase 4 - Predictive analytics
-- [ ] Baseline each server instead of using one global normal range.
-- [ ] Add trend/anomaly features for temperature, memory pressure, disk latency/errors, CPU steal/iowait and network errors.
+- [x] Baseline each server independently using robust median/MAD statistics and recent trend slope.
+- [x] Add first trend/anomaly features for temperature, memory pressure, I/O pressure and filesystem growth.\n- [ ] Extend predictive features to disk latency/error deltas, CPU steal/iowait and network error rates.
 - [ ] Train and validate failure-risk scoring against historical incidents.
 - [ ] Require confidence plus evidence before presenting a predictive warning.
 - [ ] Track model version, false positives and operator acknowledgement.
