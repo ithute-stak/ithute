@@ -126,6 +126,7 @@ jobs:
           assert "placement-priority-queue" in status["engines"]["cpp"]["capabilities"]
           assert "dependency-dag" in status["engines"]["cpp"]["capabilities"]
           assert "topological-order" in status["engines"]["cpp"]["capabilities"]
+          assert "weighted-shortest-path" in status["engines"]["cpp"]["capabilities"]
           from app.services.cluster_engine import cluster_graph_analysis, rank_placement_candidates
           cluster = cluster_graph_analysis(
               [
@@ -158,6 +159,22 @@ jobs:
           assert dag["engine"] == "cpp"
           assert dag["acyclic"] is True
           assert dag["order"] == ["postgres", "backend", "frontend"]
+          from app.services.cluster_engine import shortest_weighted_path
+          route = shortest_weighted_path(
+              ["a", "b", "c", "d"],
+              [
+                  {"source": "a", "target": "b", "weight": 2.0},
+                  {"source": "a", "target": "c", "weight": 10.0},
+                  {"source": "b", "target": "d", "weight": 2.0},
+                  {"source": "c", "target": "d", "weight": 1.0},
+              ],
+              source="a",
+              target="d",
+          )
+          assert route["engine"] == "cpp"
+          assert route["reachable"] is True
+          assert route["path"] == ["a", "b", "d"]
+          assert route["total_weight"] == 4.0
           from app.services.engine_runtime import hmac_sha256
           result = sample_native_result(b"Subject: engine\\n\\nbody")
           hmac_value, hmac_engine = hmac_sha256(b"key", b"audit")
