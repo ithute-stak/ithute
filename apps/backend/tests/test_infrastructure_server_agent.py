@@ -122,3 +122,28 @@ def test_security_readiness_donor_contract_exists():
     assert "Production readiness & host security" in frontend
     assert "Java remains the enterprise/XML engine" in frontend
     assert "C++ remains the native blob/fingerprint accelerator" in frontend
+
+
+def test_cluster_awareness_contract_exists_and_remains_read_only():
+    root = Path(__file__).parents[2]
+    api = (root / "app" / "api" / "v1" / "infrastructure_servers.py").read_text(encoding="utf-8")
+    repo = root.parents[1]
+    agent = (repo / "infrastructure" / "server-agent" / "agent.py").read_text(encoding="utf-8")
+    service = (repo / "infrastructure" / "server-agent" / "ithute-server-agent.service").read_text(encoding="utf-8")
+    readme = (repo / "infrastructure" / "server-agent" / "README.md").read_text(encoding="utf-8")
+
+    assert '@router.get("/agent/cluster-state")' in api
+    assert '"fingerprint_sha256"' in api
+    assert '"private_network"' in api
+    assert '"workloads"' in api
+    assert '"resource_usage"' in api
+    assert '"docker"' in api
+    assert "token_hint" not in api[api.index("def _cluster_node_out"):api.index('@router.post("/servers/{server_id}/agent-token")')]
+
+    assert "sync_cluster_state" in agent
+    assert "/platform/infrastructure/agent/cluster-state" in agent
+    assert "/var/lib/ithute/server-agent/cluster-state.json" in agent
+    assert "os.replace(temporary, CLUSTER_STATE_PATH)" in agent
+    assert "shell.exec" not in agent
+    assert "ReadWritePaths=/var/log/ithute /var/lib/ithute/server-agent" in service
+    assert "read-only discovery" in readme
