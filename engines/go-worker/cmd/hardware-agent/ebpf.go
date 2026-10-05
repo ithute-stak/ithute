@@ -15,6 +15,13 @@ type EBPFSnapshot struct {
 	BlockRequestsCompleted uint64 `json:"block_requests_completed,omitempty"`
 	ProcessExits           uint64 `json:"process_exits,omitempty"`
 	OOMVictims             uint64 `json:"oom_victims,omitempty"`
+	BlockLatencyCount      uint64 `json:"block_latency_count,omitempty"`
+	BlockLatencyAvgMS      *float64 `json:"block_latency_avg_ms,omitempty"`
+	BlockLatencyMaxMS      *float64 `json:"block_latency_max_ms,omitempty"`
+	BlockLatencyP50MS      *float64 `json:"block_latency_p50_ms,omitempty"`
+	BlockLatencyP95MS      *float64 `json:"block_latency_p95_ms,omitempty"`
+	BlockLatencyP99MS      *float64 `json:"block_latency_p99_ms,omitempty"`
+	BlockLatencyHistogram  []uint64 `json:"block_latency_histogram,omitempty"`
 }
 
 func readEBPFSnapshot(path string, maxAge time.Duration) (EBPFSnapshot, error) {
