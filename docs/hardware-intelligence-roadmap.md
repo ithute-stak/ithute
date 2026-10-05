@@ -34,7 +34,7 @@ C hardware probe + eBPF kernel signals -> Rust validation/hardening -> Go long-r
 - [x] Add signed agent-ingest endpoint with infrastructure-agent authentication, HMAC verification, clock-skew checks and replay protection.
 - [ ] Publish current health through Ithute Realtime.
 - [x] Add deterministic hardware health scoring and warning/critical evidence.
-- [ ] Add System Owner hardware-health API and dashboard.
+- [x] Add System Owner fleet/history hardware-health APIs and responsive Hardware Intelligence dashboard.
 
 ### Phase 4 - Predictive analytics
 - [ ] Baseline each server instead of using one global normal range.
