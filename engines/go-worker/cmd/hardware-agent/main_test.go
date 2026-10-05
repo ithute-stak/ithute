@@ -258,3 +258,22 @@ func TestReadEBPFSnapshotRejectsWritableOrStaleFiles(t *testing.T) {
 		t.Fatal("expected stale snapshot to be rejected")
 	}
 }
+
+
+func TestReadEBPFSnapshotCarriesLatencyPercentiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ebpf-latency.json")
+	body := fmt.Sprintf(`{"available":true,"sampled_at_unix":%d,"block_latency_count":100,"block_latency_avg_ms":1.25,"block_latency_max_ms":42.0,"block_latency_p50_ms":0.5,"block_latency_p95_ms":4.0,"block_latency_p99_ms":16.0,"block_latency_percentiles_capped":false,"block_latency_histogram":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]}`, time.Now().Unix())
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := readEBPFSnapshot(path, 90*time.Second)
+	if err != nil {
+		t.Fatalf("readEBPFSnapshot returned error: %v", err)
+	}
+	if snapshot.BlockLatencyCount != 100 || snapshot.BlockLatencyP95MS == nil || *snapshot.BlockLatencyP95MS != 4.0 {
+		t.Fatalf("unexpected latency snapshot: %#v", snapshot)
+	}
+	if len(snapshot.BlockLatencyHistogram) != 16 {
+		t.Fatalf("histogram buckets = %d, want 16", len(snapshot.BlockLatencyHistogram))
+	}
+}
