@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 const links = [
   ["Command Centre", "/system-owner"],
   ["Operations", "/system-owner/operations"],
+  ["Hardware Intelligence", "/system-owner/hardware-intelligence"],
   ["Security", "/system-owner/security"],
   ["Backup & Recovery", "/system-owner/recovery"],
 ] as const;
