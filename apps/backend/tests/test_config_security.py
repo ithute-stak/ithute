@@ -214,3 +214,4 @@ def test_platform_signup_mode_defaults_fail_closed_during_bootstrap():
     settings = make_settings(cookie_secure=False)
     assert settings.platform_bootstrap_signup_enabled is False
     assert settings.platform_domain_signup_enabled is True
+    assert settings.legacy_local_auth_production_enabled is False
