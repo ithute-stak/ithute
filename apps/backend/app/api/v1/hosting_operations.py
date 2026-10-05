@@ -300,8 +300,8 @@ def create_resource_reservation(
         project = db.get(HostingProject, payload.project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Hosted project not found")
-        if project.node_id not in {None, node_id}:
-            raise HTTPException(status_code=409, detail="Project is assigned to a different hosting node")
+        if project.node_id is not None:
+            raise HTTPException(status_code=409, detail="Project is already assigned and its resources are counted as allocated")
 
     try:
         reservation = reserve_capacity(
