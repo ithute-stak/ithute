@@ -1,6 +1,6 @@
 """add policy-controlled private network grants
 
-Revision ID: 0076_infrastructure_network_grants
+Revision ID: 0076_network_grants
 Revises: 0075_customer_profitability
 """
 
@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "0076_infrastructure_network_grants"
+revision = "0076_network_grants"
 down_revision = "0075_customer_profitability"
 branch_labels = None
 depends_on = None
