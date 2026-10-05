@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0091_pg_rpo_policy"
+LATEST_MIGRATION_HEAD = "0092_pg_rto_slo"
 
 
 def test_alembic_has_one_consolidated_head():

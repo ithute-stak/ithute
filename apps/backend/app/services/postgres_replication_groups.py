@@ -207,6 +207,14 @@ def build_postgres_replication_group_plan(
             "rpo_class": group.rpo_class,
             "required_sync_standbys": group.required_sync_standbys,
         },
+        "rto_policy": {
+            "auto_failover_enabled": group.auto_failover_enabled,
+            "rto_target_seconds": group.rto_target_seconds,
+            "detection_budget_seconds": group.detection_budget_seconds,
+            "fencing_budget_seconds": group.fencing_budget_seconds,
+            "promotion_budget_seconds": group.promotion_budget_seconds,
+            "repair_budget_seconds": group.repair_budget_seconds,
+        },
         "rpo_policy": {
             "class": group.rpo_class,
             "required_sync_standbys": group.required_sync_standbys,

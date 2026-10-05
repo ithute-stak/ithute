@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_platform_owner, require_tenant_permission
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
-from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingPostgresRpoPolicyOperation, HostingPostgresTopologyRepair, HostingProject, HostingSource, User
+from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingNodeHealthState, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingPostgresRpoPolicyOperation, HostingPostgresTopologyRepair, HostingProject, HostingSource, User
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
 from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
 from app.services.database_replication import build_database_failover_plan
@@ -27,6 +27,10 @@ from app.services.postgres_rpo_policy import (
 from app.services.postgres_topology_repair import (
     queue_post_failover_topology_repairs,
     topology_repair_source,
+)
+from app.services.postgres_rto_slo import (
+    failover_slo_snapshot,
+    mark_redundancy_restored_if_ready,
 )
 from app.services.external_fencing import (
     queue_external_fence_for_database_failover,
@@ -63,6 +67,15 @@ class PostgresReplicationGroupCreate(BaseModel):
 
 class PostgresReplicationGroupFailoverRequest(BaseModel):
     standby_id: UUID
+
+
+class PostgresRtoPolicyUpdate(BaseModel):
+    auto_failover_enabled: bool
+    rto_target_seconds: int = Field(ge=30, le=86400)
+    detection_budget_seconds: int = Field(ge=15, le=3600)
+    fencing_budget_seconds: int = Field(ge=15, le=3600)
+    promotion_budget_seconds: int = Field(ge=15, le=3600)
+    repair_budget_seconds: int = Field(ge=60, le=86400)
 
 
 class PostgresRpoPolicyUpdate(BaseModel):
@@ -434,6 +447,8 @@ def request_postgres_replication_group_failover(
         source_node_id=group.primary_node_id,
         target_node_id=standby.node_id,
         status="requested",
+        trigger="manual",
+        failure_detected_at=_now(),
         created_by_user_id=current.id,
     )
     db.add(attempt)
@@ -443,6 +458,8 @@ def request_postgres_replication_group_failover(
         failover=attempt,
         requested_by_user_id=current.id,
     )
+    if external_fence is not None:
+        attempt.fence_started_at = _now()
     db.add(AuditLog(
         actor_user_id=current.id,
         action="hosting.postgres_replication_group.failover.request",
@@ -486,6 +503,8 @@ def claim_postgres_group_failover(
     if source is not None:
         source.status = "fence_claimed"
         source.source_fence_token = secrets.token_urlsafe(32)
+        if source.fence_started_at is None:
+            source.fence_started_at = _now()
         db.commit()
         return {
             "failover": {
@@ -509,6 +528,7 @@ def claim_postgres_group_failover(
     if target is not None:
         target.status = "promote_claimed"
         target.target_promote_token = secrets.token_urlsafe(32)
+        target.promotion_started_at = _now()
         db.commit()
         return {
             "failover": {
@@ -624,6 +644,11 @@ def report_postgres_group_failover(
         )
         attempt.status = "succeeded"
         attempt.promoted_at = now
+        attempt.service_restored_at = now
+        detected = attempt.failure_detected_at or attempt.created_at
+        detected = detected if detected.tzinfo else detected.replace(tzinfo=timezone.utc)
+        attempt.rto_seconds = max(0, int((now - detected).total_seconds()))
+        attempt.rto_met = attempt.rto_seconds <= int(group.rto_target_seconds)
         attempt.failure_message = None
         db.add(AuditLog(
             actor_user_id=None,
@@ -636,6 +661,9 @@ def report_postgres_group_failover(
                 "target_node_id": str(attempt.target_node_id),
                 "database_ids": [str(row.id) for row in members],
                 "repair_job_ids": [str(row.id) for row in repair_jobs],
+                "rto_seconds": attempt.rto_seconds,
+                "rto_target_seconds": group.rto_target_seconds,
+                "rto_met": attempt.rto_met,
             }, sort_keys=True),
         ))
         db.commit()
@@ -646,6 +674,8 @@ def report_postgres_group_failover(
             "primary_node_id": str(group.primary_node_id),
             "database_ids": [str(row.id) for row in members],
             "repair_job_ids": [str(row.id) for row in repair_jobs],
+            "rto_seconds": attempt.rto_seconds,
+            "rto_met": attempt.rto_met,
         }
 
     raise HTTPException(status_code=409, detail="Group failover action is not claimable by this hosting node")
@@ -795,6 +825,11 @@ def report_postgres_topology_repair(
 
     row.status = "succeeded"
     row.failure_message = None
+    restored_attempt = mark_redundancy_restored_if_ready(
+        db,
+        group_id=row.group_id,
+        now=now,
+    )
     db.add(AuditLog(
         actor_user_id=None,
         action="hosting.postgres_replication_group.topology_repair.complete",
@@ -815,7 +850,97 @@ def report_postgres_topology_repair(
         "id": str(row.id),
         "status": row.status,
         "standby_id": str(standby.id),
+        "redundancy_restored": restored_attempt is not None,
     }
+
+
+@router.put("/platform/hosting/postgres-replication-groups/{group_id}/rto-policy")
+def update_postgres_group_rto_policy(
+    group_id: UUID,
+    payload: PostgresRtoPolicyUpdate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    group = db.scalar(
+        select(HostingPostgresReplicationGroup)
+        .where(HostingPostgresReplicationGroup.id == group_id)
+        .with_for_update()
+    )
+    if group is None:
+        raise HTTPException(status_code=404, detail="PostgreSQL replication group not found")
+
+    if (
+        payload.detection_budget_seconds
+        + payload.fencing_budget_seconds
+        + payload.promotion_budget_seconds
+        > payload.rto_target_seconds
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Detection + fencing + promotion budgets cannot exceed the RTO target",
+        )
+
+    if payload.auto_failover_enabled:
+        health_state = db.get(HostingNodeHealthState, group.primary_node_id)
+        if health_state is None or not health_state.automation_enabled:
+            raise HTTPException(
+                status_code=409,
+                detail="Primary node health automation must be enabled before PostgreSQL auto-failover",
+            )
+        plan = build_postgres_replication_group_plan(db, group=group)
+        if not plan.get("promotion_ready"):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "PostgreSQL auto-failover requires a currently safe standby",
+                    "reasons": plan.get("blockers", []),
+                },
+            )
+
+    group.auto_failover_enabled = payload.auto_failover_enabled
+    group.rto_target_seconds = payload.rto_target_seconds
+    group.detection_budget_seconds = payload.detection_budget_seconds
+    group.fencing_budget_seconds = payload.fencing_budget_seconds
+    group.promotion_budget_seconds = payload.promotion_budget_seconds
+    group.repair_budget_seconds = payload.repair_budget_seconds
+    db.add(AuditLog(
+        actor_user_id=current.id,
+        action="hosting.postgres_replication_group.rto_policy.update",
+        resource_type="hosting_postgres_replication_group",
+        resource_id=str(group.id),
+        metadata_json=json.dumps(payload.model_dump(), sort_keys=True),
+    ))
+    db.commit()
+    return {
+        "group_id": str(group.id),
+        "auto_failover_enabled": group.auto_failover_enabled,
+        "rto_target_seconds": group.rto_target_seconds,
+        "detection_budget_seconds": group.detection_budget_seconds,
+        "fencing_budget_seconds": group.fencing_budget_seconds,
+        "promotion_budget_seconds": group.promotion_budget_seconds,
+        "repair_budget_seconds": group.repair_budget_seconds,
+    }
+
+
+@router.get("/platform/hosting/postgres-replication-groups/{group_id}/failovers/{attempt_id}/slo")
+def postgres_group_failover_slo(
+    group_id: UUID,
+    attempt_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    group = db.get(HostingPostgresReplicationGroup, group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="PostgreSQL replication group not found")
+    attempt = db.scalar(
+        select(HostingPostgresGroupFailoverAttempt).where(
+            HostingPostgresGroupFailoverAttempt.id == attempt_id,
+            HostingPostgresGroupFailoverAttempt.group_id == group.id,
+        )
+    )
+    if attempt is None:
+        raise HTTPException(status_code=404, detail="PostgreSQL group failover attempt not found")
+    return failover_slo_snapshot(group=group, attempt=attempt)
 
 
 @router.put("/platform/hosting/postgres-replication-groups/{group_id}/rpo-policy", status_code=202)
