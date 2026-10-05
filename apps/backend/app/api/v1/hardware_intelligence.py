@@ -12,9 +12,10 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
-from app.models import HardwareTelemetrySnapshot, InfrastructureServer, InfrastructureServerAgent
+from app.models import HardwareTelemetrySnapshot, InfrastructureServer, InfrastructureServerAgent, User
 
 router = APIRouter(prefix="/hardware-intelligence", tags=["hardware-intelligence"])
 
@@ -284,7 +285,9 @@ def ingest_hardware_telemetry(
 def latest_hardware_health(
     server_id: str,
     db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
 ):
+    _ = current
     try:
         from uuid import UUID
         parsed = UUID(server_id)
