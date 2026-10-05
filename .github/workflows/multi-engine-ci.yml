@@ -23,6 +23,7 @@ on:
       - "apps/backend/tests/test_security_hardening.py"
       - "apps/backend/tests/test_audit_integrity.py"
       - "apps/backend/tests/test_infrastructure_monitoring.py"
+      - "apps/backend/tests/test_network_topology.py"
       - "apps/backend/app/services/dmarc_reports.py"
       - "apps/backend/app/services/deliverability.py"
       - "apps/backend/app/services/domain_mail_health.py"
@@ -34,6 +35,7 @@ on:
       - "apps/backend/app/services/webmail.py"
       - "apps/backend/app/services/platform_mail_attachments.py"
       - "apps/backend/app/services/metrics.py"
+      - "apps/backend/app/services/network_topology.py"
       - "apps/backend/benchmarks/**"
       - ".github/workflows/multi-engine-ci.yml"
       - ".github/workflows/release-images.yml"
@@ -109,7 +111,7 @@ jobs:
         working-directory: apps/backend
         run: |
           python -m pip install --disable-pip-version-check -r requirements.txt
-          pytest -q tests/test_engine_runtime.py tests/test_engine_router.py tests/test_engine_operations.py tests/test_cluster_engine.py tests/test_webmail_message_resilience.py tests/test_platform_mail_attachments.py tests/test_dmarc_reports.py tests/test_infrastructure_monitoring.py
+          pytest -q tests/test_engine_runtime.py tests/test_engine_router.py tests/test_engine_operations.py tests/test_cluster_engine.py tests/test_webmail_message_resilience.py tests/test_platform_mail_attachments.py tests/test_dmarc_reports.py tests/test_infrastructure_monitoring.py tests/test_network_topology.py
 
       - name: Build API with native engines
         run: |
