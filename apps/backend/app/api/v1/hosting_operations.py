@@ -17,6 +17,7 @@ from app.api.deps import get_current_user, require_platform_owner, require_tenan
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
 from app.services.resource_manager import node_resource_snapshot, release_reservation, reserve_capacity
+from app.services.postgres_replica_telemetry import persist_postgres_replica_telemetry
 from app.models import (
     AuditLog,
     HostingDeployment,
@@ -894,8 +895,20 @@ def agent_heartbeat(
     if len(encoded_capabilities) > 8000:
         raise HTTPException(status_code=422, detail="Hosting agent capability payload is too large")
     agent.capabilities_json = encoded_capabilities
+    replication = persist_postgres_replica_telemetry(
+        db,
+        node=node,
+        capabilities=payload.capabilities,
+        now=agent.last_seen_at,
+    )
     db.commit()
-    return {"ok": True, "node_id": str(node.id), "node": node.name, "status": node.status}
+    return {
+        "ok": True,
+        "node_id": str(node.id),
+        "node": node.name,
+        "status": node.status,
+        "postgres_replica_telemetry": replication,
+    }
 
 
 @router.post("/hosting/agent/deployments/claim")

@@ -17,7 +17,6 @@ from app.services.replica_anti_affinity import anti_affinity_evaluation, anti_af
 
 
 REPLICA_HEALTH_GRACE = timedelta(minutes=2)
-MAX_PROMOTION_LAG_SECONDS = 30.0
 MAX_PROMOTION_LAG_BYTES = 64 * 1024 * 1024
 
 
@@ -59,17 +58,18 @@ def replica_promotion_evaluation(
     if checked is None or checked < now - REPLICA_HEALTH_GRACE:
         reasons.append("replica health observation is stale")
 
-    if replica.lag_seconds is None:
-        reasons.append("replication lag seconds is unknown")
-    elif float(replica.lag_seconds) > MAX_PROMOTION_LAG_SECONDS:
-        reasons.append(
-            f"replication lag {float(replica.lag_seconds):.1f}s exceeds {MAX_PROMOTION_LAG_SECONDS:.0f}s promotion threshold"
-        )
-
     if replica.lag_bytes is None:
         reasons.append("replication lag bytes is unknown")
     elif int(replica.lag_bytes) > MAX_PROMOTION_LAG_BYTES:
         reasons.append("replication byte lag exceeds promotion threshold")
+
+    if database.engine == "postgresql":
+        if replica.in_recovery is not True:
+            reasons.append("replica is not confirmed to be in PostgreSQL recovery")
+        if not replica.receive_lsn or not replica.replay_lsn:
+            reasons.append("fresh PostgreSQL WAL receive/replay positions are unavailable")
+        if replica.telemetry_error:
+            reasons.append(f"replica telemetry error: {replica.telemetry_error}")
 
     source_server = _server_for_node(db, database.node_id)
     target_server = _server_for_node(db, replica.node_id)
@@ -112,8 +112,12 @@ def replica_promotion_evaluation(
         "reasons": reasons,
         "healthy": bool(replica.healthy),
         "status": replica.status,
-        "lag_seconds": replica.lag_seconds,
+        "replay_age_seconds": replica.lag_seconds,
         "lag_bytes": replica.lag_bytes,
+        "receive_lsn": replica.receive_lsn,
+        "replay_lsn": replica.replay_lsn,
+        "in_recovery": replica.in_recovery,
+        "telemetry_error": replica.telemetry_error,
         "last_checked_at": checked.isoformat() if checked else None,
         "anti_affinity": anti_affinity,
     }
@@ -139,7 +143,7 @@ def build_database_failover_plan(
     evaluations.sort(
         key=lambda item: anti_affinity_sort_key(
             item["anti_affinity"],
-            score=float(item["lag_seconds"] or 0.0),
+            score=float(item["lag_bytes"] or 0.0),
             name=item["node_name"] or "",
             server_id=item["node_id"] or "",
         )
@@ -148,6 +152,17 @@ def build_database_failover_plan(
     recommended = eligible[0] if eligible else None
 
     blockers: list[str] = []
+    if database.engine == "postgresql" and database.node_id is not None:
+        active_databases = db.scalars(
+            select(HostingDatabase.id).where(
+                HostingDatabase.node_id == database.node_id,
+                HostingDatabase.status.notin_(["deleting", "failed"]),
+            )
+        ).all()
+        if len(active_databases) != 1:
+            blockers.append(
+                "physical PostgreSQL failover requires a dedicated source cluster with exactly one active Ithute-managed database"
+            )
     if database.status not in {"ready", "suspended"}:
         blockers.append(f"database status is {database.status}")
     if database.node_id is None:
@@ -171,8 +186,8 @@ def build_database_failover_plan(
         "blockers": blockers,
         "thresholds": {
             "health_grace_seconds": int(REPLICA_HEALTH_GRACE.total_seconds()),
-            "max_lag_seconds": MAX_PROMOTION_LAG_SECONDS,
             "max_lag_bytes": MAX_PROMOTION_LAG_BYTES,
+            "replay_age_seconds_is_diagnostic_only": True,
         },
         "execution_mode": "plan_only",
     }
