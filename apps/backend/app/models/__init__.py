@@ -47,7 +47,7 @@ from app.models.finance_governance import FinanceApprovalRequest, FinanceGoverna
 from app.models.finance_completion import FinanceDeliveryEvent, FinancePortalAccess, FinanceRoleGrant
 from app.models.hosting import HOSTING_RULES_VERSION, HostingNode, HostingProject, HostingResourceReservation
 from app.models.infrastructure import InfrastructureAgentCommand, InfrastructureContainerSnapshot, InfrastructureNetworkGrant, InfrastructureNetworkObservation, InfrastructureSecuritySnapshot, InfrastructureServer, InfrastructureServerAgent, InfrastructureTelemetrySnapshot, InfrastructureWireGuardPeer
-from app.models.hardware_intelligence import HardwareTelemetrySnapshot
+from app.models.hardware_intelligence import HardwareAlertAcknowledgement, HardwareMaintenanceWindow, HardwareTelemetrySnapshot
 from app.models.hosting_operations import (
     HOSTING_RUNTIME_MANIFEST_VERSION,
     HostingDeployment,
