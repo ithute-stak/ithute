@@ -79,6 +79,8 @@ for grant in data.get("grants", []):
 pathlib.Path(sys.argv[2]).write_text("\n".join(rows) + ("\n" if rows else ""), encoding="utf-8")
 PY
 
+install -d -m 0700 "$(dirname "$CONFIG_FILE")"
+install -m 0600 "$tmp_conf" "$CONFIG_FILE"
 
 if ! ip link show ithute0 >/dev/null 2>&1; then
   wg-quick up ithute0
@@ -95,9 +97,18 @@ iptables -C FORWARD -i ithute0 -o ithute0 -j "$MESH_CHAIN" >/dev/null 2>&1 ||
 iptables -F "$MESH_CHAIN"
 iptables -A "$MESH_CHAIN" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
-while IFS=\t' read -r source target protocol port; do
+while IFS=
+
+iptables -A "$MESH_CHAIN" -j DROP
+\t' read -r source target protocol port; do
   [ -n "$source" ] || continue
-  iptables -A "$MESH_CHAIN"     -s "$source/32"     -d "$target/32"     -p "$protocol"     --dport "$port"     -m conntrack --ctstate NEW,ESTABLISHED     -j ACCEPT
+  iptables -A "$MESH_CHAIN" \
+    -s "$source/32" \
+    -d "$target/32" \
+    -p "$protocol" \
+    --dport "$port" \
+    -m conntrack --ctstate NEW,ESTABLISHED \
+    -j ACCEPT
 done < "$tmp_grants"
 
 iptables -A "$MESH_CHAIN" -j DROP
