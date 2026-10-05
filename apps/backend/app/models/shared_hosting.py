@@ -226,6 +226,9 @@ class HostingDatabaseGateway(Base):
 
 class HostingPostgresEndpoint(Base):
     __tablename__ = "hosting_postgres_endpoints"
+    __table_args__ = (
+        UniqueConstraint("gateway_id", "listen_port", name="uq_pg_endpoint_gateway_port"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     group_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_postgres_replication_groups.id", ondelete="CASCADE"), nullable=False, unique=True)
