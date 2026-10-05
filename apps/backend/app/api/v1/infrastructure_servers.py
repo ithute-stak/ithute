@@ -215,7 +215,25 @@ def _container_drift(db: Session, server: InfrastructureServer, telemetry: dict)
 
 
 def _security_findings(telemetry: dict) -> dict:
-    security = telemetry.get("security") if isinstance(telemetry.get("security"), dict) else {}
+    raw_security = telemetry.get("security")
+    security = raw_security if isinstance(raw_security, dict) else {}
+    if not security:
+        canonical = b'[{"key":"agent.security_unavailable","severity":"high"}]'
+        digest = execute_binary("crypto.sha256", canonical)
+        return {
+            "score": 50,
+            "posture": "critical",
+            "findings": [{
+                "key": "agent.security_unavailable",
+                "severity": "high",
+                "title": "Host security scan is unavailable",
+                "evidence": "The connected server agent has not reported v3 host-security telemetry.",
+                "recommendation": "Upgrade/restart the Ithute Server Agent so SSH, firewall, update and Docker security signals are reported.",
+            }],
+            "fingerprint_sha256": str(digest.value),
+            "fingerprint_engine": digest.engine,
+        }
+
     sshd = security.get("sshd") if isinstance(security.get("sshd"), dict) else {}
     firewall = security.get("firewall") if isinstance(security.get("firewall"), dict) else {}
     docker = security.get("docker") if isinstance(security.get("docker"), dict) else {}
@@ -403,15 +421,11 @@ def _readiness_for_server(db: Session, server: InfrastructureServer) -> dict:
         {
             "key": "backup_recovery",
             "weight": 10,
-            "passed": bool(
-                server_view["mail"]["backup_ready"]
-                or capabilities.get("backup_tools")
-                or "backup" not in _json_roles(server.roles_json)
-            ),
+            "passed": bool(server_view["mail"]["backup_ready"] or capabilities.get("backup_tools")),
             "detail": (
                 "Backup tooling/readiness detected."
                 if server_view["mail"]["backup_ready"] or capabilities.get("backup_tools")
-                else "Backup role requires restic/rclone or workload backup readiness."
+                else "No host backup tooling or workload backup readiness has been reported."
             ),
         },
     ]
