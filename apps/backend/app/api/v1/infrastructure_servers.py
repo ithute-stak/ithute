@@ -23,6 +23,7 @@ from app.models import (
     AuditLog,
     HostingDatabase,
     HostingDatabaseFailoverAttempt,
+    HostingPostgresGroupFailoverAttempt,
     HostingNode,
     HostingNodeAgent,
     HostingProject,
@@ -1541,6 +1542,10 @@ def claim_external_fence_attempt(
                 str(row.database_failover_attempt_id)
                 if row.database_failover_attempt_id else None
             ),
+            "postgres_group_failover_attempt_id": (
+                str(row.postgres_group_failover_attempt_id)
+                if row.postgres_group_failover_attempt_id else None
+            ),
         }
     }
 
@@ -1608,6 +1613,27 @@ def complete_external_fence_attempt(
             failover.source_fenced_at = now
             failover.source_fence_token = None
             failover.failure_message = None
+
+    if row.postgres_group_failover_attempt_id is not None:
+        group_failover = db.scalar(
+            select(HostingPostgresGroupFailoverAttempt)
+            .where(
+                HostingPostgresGroupFailoverAttempt.id
+                == row.postgres_group_failover_attempt_id
+            )
+            .with_for_update()
+        )
+        server = db.get(InfrastructureServer, row.server_id)
+        if (
+            group_failover is not None
+            and server is not None
+            and server.hosting_node_id == group_failover.source_node_id
+            and group_failover.status in {"requested", "fence_claimed"}
+        ):
+            group_failover.status = "source_fenced"
+            group_failover.source_fenced_at = now
+            group_failover.source_fence_token = None
+            group_failover.failure_message = None
 
     db.commit()
     return {
