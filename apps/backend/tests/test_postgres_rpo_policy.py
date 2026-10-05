@@ -71,6 +71,7 @@ def _group(db, owner, primary, *, rpo_class="async", required=0):
 
 def test_async_policy_rejects_nonzero_sync_requirement(db, platform_owner):
     primary = _node(db, platform_owner, "async")
+    _agent(db, platform_owner, primary, recovery=False)
     group = _group(db, platform_owner, primary)
 
     errors = validate_rpo_request(
@@ -201,3 +202,16 @@ def test_policy_queue_marks_group_unverified_until_heartbeat(db, platform_owner)
     assert group.rpo_healthy is False
     assert group.rpo_last_checked_at is None
     db.rollback()
+
+
+
+def test_agent_rpo_executor_uses_fixed_cluster_settings():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    text = (root / "infrastructure/hosting-agent/agent_v4.py").read_text()
+    assert "ALTER SYSTEM SET synchronous_commit" in text
+    assert "ALTER SYSTEM SET synchronous_standby_names" in text
+    assert 'sync_names = f"ANY {required} (*)"' in text
+    assert 'commit_mode = "on" if rpo_class == "sync_flush" else "remote_apply"' in text
+    assert "Unsupported PostgreSQL RPO class" in text
