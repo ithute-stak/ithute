@@ -25,6 +25,7 @@ on:
       - "apps/backend/app/models/billing.py"
       - "apps/backend/app/models/__init__.py"
       - "apps/backend/app/services/hosting_metering.py"
+      - "apps/backend/app/services/hosting_operation_scheduler.py"
       - "apps/backend/app/services/hosting_webhooks.py"
       - "apps/backend/app/services/billing.py"
       - "apps/backend/alembic/versions/*hosting*.py"
@@ -105,6 +106,7 @@ jobs:
           tests/test_application_hosting.py
           tests/test_hosting_operations_unit.py
           tests/test_hosting_operations_integration.py
+          tests/test_hosting_operation_scheduler.py
           tests/test_hosting_database_backup_contract.py
           tests/test_hosting_project_operations_contract.py
           tests/test_hosting_builds_contract.py
