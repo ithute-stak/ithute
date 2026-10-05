@@ -99,6 +99,20 @@
         "tcp_retrans_segs": {"type": "integer", "minimum": 0}
       }
     },
+    "ebpf": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available"],
+      "properties": {
+        "available": {"type": "boolean"},
+        "reason": {"type": "string", "maxLength": 256},
+        "sampled_at_unix": {"type": "integer", "minimum": 0},
+        "block_requests_issued": {"type": "integer", "minimum": 0},
+        "block_requests_completed": {"type": "integer", "minimum": 0},
+        "process_exits": {"type": "integer", "minimum": 0},
+        "oom_victims": {"type": "integer", "minimum": 0}
+      }
+    },
     "storage_devices": {
       "type": "array",
       "maxItems": 64,
