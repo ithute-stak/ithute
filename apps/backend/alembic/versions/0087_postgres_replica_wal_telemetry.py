@@ -1,13 +1,13 @@
 """add PostgreSQL replica WAL telemetry
 
-Revision ID: 0087_postgres_replica_wal_telemetry
+Revision ID: 0087_pg_wal_telemetry
 Revises: 0086_external_fencing
 """
 
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0087_postgres_replica_wal_telemetry"
+revision = "0087_pg_wal_telemetry"
 down_revision = "0086_external_fencing"
 branch_labels = None
 depends_on = None
