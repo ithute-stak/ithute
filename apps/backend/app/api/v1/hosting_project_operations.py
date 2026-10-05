@@ -13,6 +13,7 @@ from app.api.deps import get_current_user, require_tenant_permission
 from app.api.v1.hosting_operations import _agent_from_token, _project
 from app.db.session import get_db
 from app.models import AuditLog, HostingProject, HostingProjectOperation, User
+from app.services.hosting_operation_scheduler import claim_next_project_operation
 
 router = APIRouter(tags=["hosting-project-operations"])
 ACTIVE_STATUSES = {"queued", "claimed"}
@@ -180,12 +181,7 @@ def claim_project_operation(
 ):
     agent, node = _agent_from_token(db, x_ithute_hosting_agent)
     agent.last_seen_at = _now()
-    row = db.scalar(
-        select(HostingProjectOperation)
-        .where(HostingProjectOperation.node_id == node.id, HostingProjectOperation.status == "queued")
-        .order_by(HostingProjectOperation.created_at.asc())
-        .with_for_update(skip_locked=True)
-    )
+    row = claim_next_project_operation(db, node_id=node.id, now=_now())
     if row is None:
         db.commit()
         return {"operation": None}
@@ -209,8 +205,6 @@ def claim_project_operation(
         row.completed_at = _now()
         db.commit()
         return {"operation": None}
-    row.status = "claimed"
-    row.claimed_at = _now()
     db.commit()
     return {
         "operation": {
