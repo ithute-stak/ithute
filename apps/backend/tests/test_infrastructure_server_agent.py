@@ -141,11 +141,14 @@ def test_cluster_awareness_contract_exists_and_remains_read_only():
     assert "_cluster_reachability" in api
     assert "execute_network(targets" in api
     assert '"reachability_engine"' in api
+    assert "execute_hmac_sha256" in api
+    assert '"signature_hmac_sha256"' in api
     assert "token_hint" not in api[api.index("def _cluster_node_out"):api.index('@router.post("/servers/{server_id}/agent-token")')]
 
     assert "sync_cluster_state" in agent
     assert "/platform/infrastructure/agent/cluster-state" in agent
     assert "/var/lib/ithute/server-agent/cluster-state.json" in agent
+    assert "hmac.compare_digest(signature, expected)" in agent
     assert "os.replace(temporary, CLUSTER_STATE_PATH)" in agent
     assert "shell.exec" not in agent
     assert "ReadWritePaths=/var/log/ithute /var/lib/ithute/server-agent" in service
