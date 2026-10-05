@@ -56,6 +56,15 @@ int ithute_cluster_summary_read(
     struct ithute_cluster_summary* out
 );
 
+int ithute_cluster_rank_candidates(
+    const char* const* keys,
+    const double* scores,
+    const int* eligible,
+    std::size_t count,
+    std::size_t* out_indices,
+    std::size_t out_capacity
+);
+
 #ifdef __cplusplus
 }
 #endif
