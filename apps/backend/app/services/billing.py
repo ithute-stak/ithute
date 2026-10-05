@@ -327,6 +327,7 @@ def calculate_overage(plan: BillingPlan, usage: dict) -> dict:
         ("hosting_source_storage_gb", usage["hosting_source_storage_bytes"], limits["hosting_source_storage_bytes"], rates["hosting_source_storage_gb"], True),
     )
     items = []
+    unpriced_metrics = []
     total_minor = 0
     for metric, used, included, rate_minor, bytes_to_gb in specs:
         units = _billable_units(used, included, bytes_to_gb=bytes_to_gb)
@@ -340,12 +341,16 @@ def calculate_overage(plan: BillingPlan, usage: dict) -> dict:
                     "amount_minor": amount_minor,
                 }
             )
+            if plan.allow_metered_overages and rate_minor <= 0:
+                unpriced_metrics.append(metric)
             total_minor += amount_minor
     return {
         "enabled": bool(plan.allow_metered_overages),
+        "fully_priced": bool(plan.allow_metered_overages) and not unpriced_metrics,
         "currency": plan.currency,
         "estimated_minor": total_minor,
         "items": items,
+        "unpriced_metrics": unpriced_metrics,
         "rates": rates,
     }
 
@@ -642,6 +647,6 @@ def billing_summary(db: Session, tenant_id: UUID) -> dict:
         "usage": usage,
         "entitlements": limits,
         "within_plan": within,
-        "commercial_capacity_status": "within_plan" if within else ("metered_overage" if overage["enabled"] else "over_limit"),
+        "commercial_capacity_status": "within_plan" if within else ("metered_overage" if overage["fully_priced"] else "over_limit"),
         "overage": overage,
     }
