@@ -49,34 +49,32 @@ def validate_rpo_request(
     if rpo_class == "async":
         if required != 0:
             errors.append("async RPO class requires zero synchronous standbys")
-        return errors
-
-    if required < 1 or required > 8:
-        errors.append("synchronous RPO classes require between 1 and 8 synchronous standbys")
-        return errors
-
-    standbys = db.scalars(
-        select(HostingPostgresReplicationStandby).where(
-            HostingPostgresReplicationStandby.group_id == group.id
-        )
-    ).all()
-    healthy = 0
-    for standby in standbys:
-        checked = standby.last_checked_at
-        if checked is not None and checked.tzinfo is None:
-            checked = checked.replace(tzinfo=timezone.utc)
-        if (
-            standby.status in {"streaming", "ready"}
-            and standby.healthy
-            and standby.in_recovery is True
-            and checked is not None
-            and checked >= now - RPO_HEALTH_GRACE
-        ):
-            healthy += 1
-    if healthy < required:
-        errors.append(
-            f"requested policy requires {required} healthy synchronous standby(s), but only {healthy} are currently healthy"
-        )
+    else:
+        if required < 1 or required > 8:
+            errors.append("synchronous RPO classes require between 1 and 8 synchronous standbys")
+        else:
+            standbys = db.scalars(
+                select(HostingPostgresReplicationStandby).where(
+                    HostingPostgresReplicationStandby.group_id == group.id
+                )
+            ).all()
+            healthy = 0
+            for standby in standbys:
+                checked = standby.last_checked_at
+                if checked is not None and checked.tzinfo is None:
+                    checked = checked.replace(tzinfo=timezone.utc)
+                if (
+                    standby.status in {"streaming", "ready"}
+                    and standby.healthy
+                    and standby.in_recovery is True
+                    and checked is not None
+                    and checked >= now - RPO_HEALTH_GRACE
+                ):
+                    healthy += 1
+            if healthy < required:
+                errors.append(
+                    f"requested policy requires {required} healthy synchronous standby(s), but only {healthy} are currently healthy"
+                )
 
     primary_agent = db.get(HostingNodeAgent, group.primary_node_id)
     postgres = _agent_postgres_capabilities(primary_agent)
