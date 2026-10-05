@@ -169,6 +169,15 @@ def build_postgres_replication_group_plan(
     )
     eligible = [item for item in evaluations if item["eligible"]]
     blockers: list[str] = []
+    primary_capabilities = _agent_capabilities(db, group.primary_node_id)
+    primary_postgres = primary_capabilities.get("postgres_physical_replication")
+    if not isinstance(primary_postgres, dict) or primary_postgres.get("supported") is not True:
+        blockers.append("primary agent does not advertise safe PostgreSQL physical replication")
+    elif primary_postgres.get("dedicated_cluster") is not True:
+        blockers.append("primary node is not configured as a dedicated PostgreSQL cluster")
+    elif primary_postgres.get("promotion_requires_source_fencing") is not True:
+        blockers.append("primary agent does not require source fencing")
+
     if group.status != "active":
         blockers.append(f"replication group status is {group.status}")
     if not databases:
