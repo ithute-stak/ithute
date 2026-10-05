@@ -82,7 +82,7 @@ def _database(db, tenant, owner, node):
         internal_port=5432,
         storage_mb=1024,
         status="ready",
-        operation="idle",
+        operation="provision",
         created_by_user_id=owner.id,
     )
     db.add(row)
