@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -218,5 +219,42 @@ func TestPostEnvelopeRequiresHTTPSAwayFromLocalhost(t *testing.T) {
 	err := postEnvelope(context.Background(), "http://example.com/telemetry", []byte("key"), envelope)
 	if err == nil {
 		t.Fatal("expected insecure remote endpoint rejection")
+	}
+}
+
+
+func TestReadEBPFSnapshotAcceptsFreshRootExport(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ebpf.json")
+	body := fmt.Sprintf(`{"available":true,"sampled_at_unix":%d,"block_requests_issued":10,"block_requests_completed":9,"process_exits":2,"oom_victims":1}`, time.Now().Unix())
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := readEBPFSnapshot(path, 90*time.Second)
+	if err != nil {
+		t.Fatalf("readEBPFSnapshot returned error: %v", err)
+	}
+	if !snapshot.Available || snapshot.BlockRequestsIssued != 10 || snapshot.OOMVictims != 1 {
+		t.Fatalf("unexpected snapshot: %#v", snapshot)
+	}
+}
+
+func TestReadEBPFSnapshotRejectsWritableOrStaleFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ebpf.json")
+	fresh := fmt.Sprintf(`{"available":true,"sampled_at_unix":%d}`, time.Now().Unix())
+	if err := os.WriteFile(path, []byte(fresh), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readEBPFSnapshot(path, 90*time.Second); err == nil {
+		t.Fatal("expected writable snapshot to be rejected")
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stale := fmt.Sprintf(`{"available":true,"sampled_at_unix":%d}`, time.Now().Add(-10*time.Minute).Unix())
+	if err := os.WriteFile(path, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readEBPFSnapshot(path, 90*time.Second); err == nil {
+		t.Fatal("expected stale snapshot to be rejected")
 	}
 }
