@@ -220,6 +220,7 @@ type realtimePublishRequest struct {
 	ApplicationID      string         `json:"application_id"`
 	Recipients         []string       `json:"recipients"`
 	BroadcastConnected bool           `json:"broadcast_connected"`
+	RoutingShard       int            `json:"routing_shard"`
 	Event              map[string]any `json:"event"`
 }
 
@@ -236,6 +237,7 @@ type realtimeBroker struct {
 	mu          sync.RWMutex
 	connections map[string]map[string]*realtimeConnection
 	counter     uint64
+	routeLocks  [256]sync.Mutex
 }
 
 func newRealtimeBroker() *realtimeBroker {
@@ -317,6 +319,14 @@ func (b *realtimeBroker) snapshot(request realtimePublishRequest) []*realtimeCon
 }
 
 func (b *realtimeBroker) publish(request realtimePublishRequest) int {
+	shard := request.RoutingShard
+	if shard < 0 {
+		shard = 0
+	}
+	lock := &b.routeLocks[shard%len(b.routeLocks)]
+	lock.Lock()
+	defer lock.Unlock()
+
 	payload, err := json.Marshal(request.Event)
 	if err != nil {
 		return 0
@@ -881,7 +891,7 @@ func main() {
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128*1024))
 		decoder.DisallowUnknownFields()
 		var request realtimePublishRequest
-		if err := decoder.Decode(&request); err != nil || strings.TrimSpace(request.ApplicationID) == "" || request.Event == nil {
+		if err := decoder.Decode(&request); err != nil || strings.TrimSpace(request.ApplicationID) == "" || request.Event == nil || request.RoutingShard < 0 || request.RoutingShard > 65535 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 			return
 		}
