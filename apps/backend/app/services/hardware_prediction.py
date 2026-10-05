@@ -24,6 +24,8 @@ class MetricPoint:
     media_error_delta: float | None = None
     network_error_delta: float | None = None
     tcp_retrans_delta: float | None = None
+    ebpf_inflight_delta: float | None = None
+    ebpf_oom_delta: float | None = None
 
 
 @dataclass(frozen=True)
@@ -152,6 +154,8 @@ def derive_rate_features(previous_payload: dict | None, current_payload: dict | 
             "media_error_delta": None,
             "network_error_delta": None,
             "tcp_retrans_delta": None,
+            "ebpf_inflight_delta": None,
+            "ebpf_oom_delta": None,
         }
 
     cpu_keys = ("user", "nice", "system", "idle", "iowait", "irq", "softirq", "steal")
@@ -221,6 +225,21 @@ def derive_rate_features(previous_payload: dict | None, current_payload: dict | 
         _mapping_number(current_payload, "network", "tcp_retrans_segs"),
     )
 
+    previous_issued = _mapping_number(previous_payload, "ebpf", "block_requests_issued")
+    current_issued = _mapping_number(current_payload, "ebpf", "block_requests_issued")
+    previous_completed = _mapping_number(previous_payload, "ebpf", "block_requests_completed")
+    current_completed = _mapping_number(current_payload, "ebpf", "block_requests_completed")
+    issued_delta = _counter_delta(previous_issued, current_issued)
+    completed_delta = _counter_delta(previous_completed, current_completed)
+    ebpf_inflight_delta = None
+    if issued_delta is not None and completed_delta is not None:
+        ebpf_inflight_delta = max(0.0, issued_delta - completed_delta)
+
+    ebpf_oom_delta = _counter_delta(
+        _mapping_number(previous_payload, "ebpf", "oom_victims"),
+        _mapping_number(current_payload, "ebpf", "oom_victims"),
+    )
+
     return {
         "cpu_iowait_percent": cpu_iowait_percent,
         "cpu_steal_percent": cpu_steal_percent,
@@ -229,6 +248,8 @@ def derive_rate_features(previous_payload: dict | None, current_payload: dict | 
         "media_error_delta": media_error_delta if comparable else None,
         "network_error_delta": network_error_delta if network_comparable else None,
         "tcp_retrans_delta": tcp_retrans_delta,
+        "ebpf_inflight_delta": ebpf_inflight_delta,
+        "ebpf_oom_delta": ebpf_oom_delta,
     }
 
 
@@ -337,6 +358,22 @@ def predict_hardware_drift(
             current.tcp_retrans_delta,
             minimum_scale=2.0,
             slope_scale=0.50,
+        ),
+        _metric(
+            "ebpf_inflight_delta",
+            "eBPF block request backlog growth",
+            [point.ebpf_inflight_delta for point in history],
+            current.ebpf_inflight_delta,
+            minimum_scale=2.0,
+            slope_scale=0.50,
+        ),
+        _metric(
+            "ebpf_oom_delta",
+            "eBPF OOM victim growth",
+            [point.ebpf_oom_delta for point in history],
+            current.ebpf_oom_delta,
+            minimum_scale=0.25,
+            slope_scale=0.05,
         ),
     ]
     available = [metric for metric in metrics if metric is not None]
