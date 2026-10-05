@@ -122,6 +122,8 @@ jobs:
           assert status["engines"]["cpp"]["available"] is True
           assert "cluster-graph" in status["engines"]["cpp"]["capabilities"]
           assert "placement-priority-queue" in status["engines"]["cpp"]["capabilities"]
+          assert "dependency-dag" in status["engines"]["cpp"]["capabilities"]
+          assert "topological-order" in status["engines"]["cpp"]["capabilities"]
           from app.services.cluster_engine import cluster_graph_analysis, rank_placement_candidates
           cluster = cluster_graph_analysis(
               [
@@ -143,6 +145,17 @@ jobs:
               {"node_id": "z", "name": "Zulu", "eligible": False, "score": 1.0},
           ])
           assert [row["node_id"] for row in ranked] == ["a", "b", "c", "z"]
+          from app.services.cluster_engine import dependency_order
+          dag = dependency_order(
+              [{"id": "frontend"}, {"id": "backend"}, {"id": "postgres"}],
+              [
+                  {"source": "frontend", "target": "backend", "relation": "depends_on"},
+                  {"source": "backend", "target": "postgres", "relation": "depends_on"},
+              ],
+          )
+          assert dag["engine"] == "cpp"
+          assert dag["acyclic"] is True
+          assert dag["order"] == ["postgres", "backend", "frontend"]
           from app.services.engine_runtime import hmac_sha256
           result = sample_native_result(b"Subject: engine\\n\\nbody")
           hmac_value, hmac_engine = hmac_sha256(b"key", b"audit")
