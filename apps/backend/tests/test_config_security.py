@@ -208,3 +208,9 @@ def test_production_accepts_hardened_domain_configuration():
     assert settings.cookie_secure is True
     assert settings.mail_tls_mode == "acme"
     assert settings.groupware_public_url.startswith("https://")
+
+
+def test_platform_signup_mode_defaults_fail_closed_during_bootstrap():
+    settings = make_settings(cookie_secure=False)
+    assert settings.platform_bootstrap_signup_enabled is False
+    assert settings.platform_domain_signup_enabled is True
