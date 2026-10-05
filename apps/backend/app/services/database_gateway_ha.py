@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import (
+    Domain,
     HostingDatabaseGateway,
     HostingDatabaseGatewayPool,
     HostingDatabaseGatewayPoolMember,
@@ -57,6 +58,37 @@ def _endpoint_ready_count(
     return ready
 
 
+
+
+def _reconcile_pool_dns(
+    db: Session,
+    *,
+    pool: HostingDatabaseGatewayPool,
+    gateways: list[HostingDatabaseGateway],
+) -> dict:
+    if pool.dns_domain_id is None:
+        return {"managed": False, "a": [], "aaaa": [], "error": None}
+    domain = db.get(Domain, pool.dns_domain_id)
+    if domain is None:
+        return {"managed": True, "a": [], "aaaa": [], "error": "Managed DNS domain is unavailable"}
+
+    ipv4 = sorted({gateway.advertise_ipv4 for gateway in gateways if gateway and gateway.advertise_ipv4})
+    ipv6 = sorted({gateway.advertise_ipv6 for gateway in gateways if gateway and gateway.advertise_ipv6})
+    client = PowerDNSClient()
+    try:
+        if ipv4:
+            client.replace_rrset(domain.ascii_name, pool.frontend_hostname, "A", 60, ipv4)
+        else:
+            client.delete_rrset(domain.ascii_name, pool.frontend_hostname, "A")
+        if ipv6:
+            client.replace_rrset(domain.ascii_name, pool.frontend_hostname, "AAAA", 60, ipv6)
+        else:
+            client.delete_rrset(domain.ascii_name, pool.frontend_hostname, "AAAA")
+    except PowerDNSError as exc:
+        return {"managed": True, "a": ipv4, "aaaa": ipv6, "error": str(exc)[:500]}
+    return {"managed": True, "a": ipv4, "aaaa": ipv6, "error": None}
+
+
 def reconcile_database_gateway_health(
     db: Session,
     *,
@@ -77,13 +109,16 @@ def reconcile_database_gateway_health(
                 HostingDatabaseGatewayPoolMember.pool_id == pool.id
             )
         ).all()
-        fresh_gateways = sum(
-            1 for gateway_id in gateway_ids
+        fresh_members = [
+            db.get(HostingDatabaseGateway, gateway_id)
+            for gateway_id in gateway_ids
             if _fresh(now, db.get(HostingDatabaseGateway, gateway_id))
-        )
+        ]
+        fresh_gateways = len(fresh_members)
+        dns = _reconcile_pool_dns(db, pool=pool, gateways=fresh_members)
         desired_pool_status = (
             "active"
-            if fresh_gateways >= int(pool.required_ready_gateways)
+            if fresh_gateways >= int(pool.required_ready_gateways) and not dns["error"]
             else "degraded"
         )
         if pool.status != desired_pool_status:
@@ -124,6 +159,7 @@ def reconcile_database_gateway_health(
             "fresh_gateways": fresh_gateways,
             "required_ready_gateways": pool.required_ready_gateways,
             "status": pool.status,
+            "dns": dns,
             "endpoints": endpoint_states,
         })
 
