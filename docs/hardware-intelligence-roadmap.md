@@ -24,9 +24,10 @@ C hardware probe + eBPF kernel signals -> Rust validation/hardening -> Go long-r
 - [x] Add filesystem, block-I/O and Linux PSI pressure telemetry for predictive baselining.
 - [x] Add SMART/NVMe collection through bounded helpers.
 - [ ] Add hwmon/IPMI/EDAC/ECC adapters where the host exposes them.
-- [ ] Add eBPF loader with least-privilege capability checks.
+- [x] Add privilege-separated eBPF loader/exporter with bounded Linux capabilities and read-only snapshot handoff.
 - [ ] Add local buffering, jitter, backoff and batch compression.
-- [x] Sign agent identity with per-agent HMAC envelopes.\n- [ ] Bind signed agent identities to Ithute infrastructure-server records during backend ingestion.
+- [x] Sign agent identity with per-agent HMAC envelopes.
+- [x] Bind signed agent identities to Ithute infrastructure-server records during backend ingestion.
 - [x] Add Rust telemetry safety validation boundary for core host signals.
 
 ### Phase 3 - Backend integration
@@ -38,7 +39,10 @@ C hardware probe + eBPF kernel signals -> Rust validation/hardening -> Go long-r
 
 ### Phase 4 - Predictive analytics
 - [x] Baseline each server independently using robust median/MAD statistics and recent trend slope.
-- [x] Add first trend/anomaly features for temperature, memory pressure, I/O pressure and filesystem growth.\n- [x] Add block-I/O busy/queue-time proxies, SMART/NVMe media-error growth, CPU steal/iowait and network error/TCP retransmission deltas.\n- [ ] Replace block timing proxies with eBPF request-latency histograms when the privileged loader is complete.
+- [x] Add first trend/anomaly features for temperature, memory pressure, I/O pressure and filesystem growth.
+- [x] Add block-I/O busy/queue-time proxies, SMART/NVMe media-error growth, CPU steal/iowait and network error/TCP retransmission deltas.
+- [x] Feed privilege-separated eBPF block request, process-exit and OOM counters into prediction.
+- [ ] Replace block timing proxies with eBPF request-latency histograms.
 - [ ] Train and validate failure-risk scoring against historical incidents.
 - [ ] Require confidence plus evidence before presenting a predictive warning.
 - [ ] Track model version, false positives and operator acknowledgement.
