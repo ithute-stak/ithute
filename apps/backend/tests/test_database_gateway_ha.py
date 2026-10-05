@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 import uuid
 
 from app.core.security import hash_token
@@ -11,6 +12,7 @@ from app.models import (
     HostingPostgresReplicationGroup,
     HostingPostgresReplicationMember,
 )
+import app.services.database_gateway_ha as gateway_ha
 from app.services.database_gateway_ha import reconcile_database_gateway_health
 from app.services.postgres_endpoints import (
     acknowledge_route_generation,
@@ -238,3 +240,86 @@ def test_gateway_quorum_recovers_after_failed_member_returns(db, tenant_admin, p
     assert endpoint.status == "ready"
     assert pool.status == "active"
     db.rollback()
+
+
+
+def test_managed_gateway_pool_dns_publishes_only_fresh_addresses(monkeypatch):
+    calls = []
+
+    class FakePowerDNS:
+        def replace_rrset(self, zone, name, rtype, ttl, contents):
+            calls.append(("replace", zone, name, rtype, ttl, tuple(contents)))
+
+        def delete_rrset(self, zone, name, rtype):
+            calls.append(("delete", zone, name, rtype))
+
+    class FakeDB:
+        def get(self, model, key):
+            return SimpleNamespace(ascii_name="ithute.internal")
+
+    monkeypatch.setattr(gateway_ha, "PowerDNSClient", FakePowerDNS)
+
+    pool = SimpleNamespace(
+        dns_domain_id=uuid.uuid4(),
+        frontend_hostname="db-ha.ithute.internal",
+    )
+    gateways = [
+        SimpleNamespace(advertise_ipv4="10.10.0.11", advertise_ipv6=None),
+        SimpleNamespace(advertise_ipv4="10.10.0.12", advertise_ipv6="2001:db8::12"),
+    ]
+
+    result = gateway_ha._reconcile_pool_dns(
+        FakeDB(),
+        pool=pool,
+        gateways=gateways,
+    )
+
+    assert result["error"] is None
+    assert result["a"] == ["10.10.0.11", "10.10.0.12"]
+    assert result["aaaa"] == ["2001:db8::12"]
+    assert (
+        "replace",
+        "ithute.internal",
+        "db-ha.ithute.internal",
+        "A",
+        60,
+        ("10.10.0.11", "10.10.0.12"),
+    ) in calls
+    assert (
+        "replace",
+        "ithute.internal",
+        "db-ha.ithute.internal",
+        "AAAA",
+        60,
+        ("2001:db8::12",),
+    ) in calls
+
+
+def test_managed_gateway_pool_dns_withdraws_empty_address_family(monkeypatch):
+    calls = []
+
+    class FakePowerDNS:
+        def replace_rrset(self, zone, name, rtype, ttl, contents):
+            calls.append(("replace", rtype, tuple(contents)))
+
+        def delete_rrset(self, zone, name, rtype):
+            calls.append(("delete", rtype))
+
+    class FakeDB:
+        def get(self, model, key):
+            return SimpleNamespace(ascii_name="ithute.internal")
+
+    monkeypatch.setattr(gateway_ha, "PowerDNSClient", FakePowerDNS)
+
+    result = gateway_ha._reconcile_pool_dns(
+        FakeDB(),
+        pool=SimpleNamespace(
+            dns_domain_id=uuid.uuid4(),
+            frontend_hostname="db-ha.ithute.internal",
+        ),
+        gateways=[SimpleNamespace(advertise_ipv4="10.10.0.11", advertise_ipv6=None)],
+    )
+
+    assert result["error"] is None
+    assert ("replace", "A", ("10.10.0.11",)) in calls
+    assert ("delete", "AAAA") in calls
