@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     go_worker_url: str = "http://ithute-go-worker:8080"
     go_gateway_token: str = ""
     go_websocket_public_path: str = "/v1/native-ws"
+    native_engine_url: str = "http://ithute-native-engine:8080"
+    native_engine_token: str = ""
+    route_shard_count: int = 64
     engine_http_timeout_seconds: float = 1.5
 
     websocket_auth_timeout_seconds: int = 10
