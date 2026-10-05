@@ -14,6 +14,7 @@ from app.models import (
     HostingPostgresEndpoint,
     HostingPostgresEndpointGatewayAck,
 )
+from app.services.powerdns import PowerDNSClient, PowerDNSError
 
 _GATEWAY_FRESHNESS_SECONDS = int(os.getenv("ITHUTE_DB_GATEWAY_FRESHNESS_SECONDS", "30"))
 
