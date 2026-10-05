@@ -13,7 +13,10 @@ from app.api.deps import get_current_user, require_tenant_permission
 from app.api.v1.hosting_operations import _agent_from_token, _project
 from app.db.session import get_db
 from app.models import AuditLog, HostingProject, HostingProjectOperation, User
-from app.services.hosting_operation_scheduler import claim_next_project_operation
+from app.services.hosting_operation_scheduler import (
+    claim_next_project_operation,
+    renew_project_operation_lease,
+)
 
 router = APIRouter(tags=["hosting-project-operations"])
 ACTIVE_STATUSES = {"queued", "claimed"}
@@ -25,9 +28,14 @@ class LogRequest(BaseModel):
 
 
 class AgentProjectOperationStatus(BaseModel):
+    fencing_token: str = Field(min_length=20, max_length=64)
     success: bool
     output: str | None = Field(default=None, max_length=MAX_LOG_OUTPUT)
     message: str | None = Field(default=None, max_length=2000)
+
+
+class AgentProjectOperationLease(BaseModel):
+    fencing_token: str = Field(min_length=20, max_length=64)
 
 
 def _now() -> datetime:
@@ -47,6 +55,9 @@ def _operation_out(row: HostingProjectOperation) -> dict:
         "failure_message": row.failure_message,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "claimed_at": row.claimed_at.isoformat() if row.claimed_at else None,
+        "attempt_count": row.attempt_count,
+        "lease_expires_at": row.lease_expires_at.isoformat() if row.lease_expires_at else None,
+        "lease_heartbeat_at": row.lease_heartbeat_at.isoformat() if row.lease_heartbeat_at else None,
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
     }
 
@@ -211,6 +222,9 @@ def claim_project_operation(
             "id": str(row.id),
             "operation": row.operation,
             "requested_lines": row.requested_lines,
+            "attempt": row.attempt_count,
+            "fencing_token": row.fencing_token,
+            "lease_expires_at": row.lease_expires_at.isoformat() if row.lease_expires_at else None,
             "project": {
                 "id": str(project.id),
                 "container_port": project.container_port,
@@ -219,6 +233,42 @@ def claim_project_operation(
                 "discard_local_data": row.operation == "retire",
             },
         }
+    }
+
+
+@router.post("/hosting/agent/project-operations/{operation_id}/heartbeat")
+def heartbeat_project_operation(
+    operation_id: UUID,
+    payload: AgentProjectOperationLease,
+    x_ithute_hosting_agent: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    agent, node = _agent_from_token(db, x_ithute_hosting_agent)
+    agent.last_seen_at = _now()
+    row = db.scalar(
+        select(HostingProjectOperation)
+        .where(
+            HostingProjectOperation.id == operation_id,
+            HostingProjectOperation.node_id == node.id,
+            HostingProjectOperation.status == "claimed",
+        )
+        .with_for_update()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Claimed project operation not found for this hosting node")
+    if not renew_project_operation_lease(
+        db,
+        row=row,
+        fencing_token=payload.fencing_token,
+        now=_now(),
+    ):
+        raise HTTPException(status_code=409, detail="Operation lease is stale or fencing token is no longer valid")
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": str(row.id),
+        "attempt": row.attempt_count,
+        "lease_expires_at": row.lease_expires_at.isoformat() if row.lease_expires_at else None,
     }
 
 
@@ -242,15 +292,27 @@ def report_project_operation(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Claimed project operation not found for this hosting node")
-    row.completed_at = _now()
+    now = _now()
+    if (
+        not row.fencing_token
+        or row.fencing_token != payload.fencing_token
+        or row.lease_expires_at is None
+        or row.lease_expires_at <= now
+    ):
+        raise HTTPException(status_code=409, detail="Operation lease is stale or fencing token is no longer valid")
+    row.completed_at = now
     if payload.success:
         row.status = "succeeded"
         row.failure_message = None
+        row.lease_expires_at = None
+        row.lease_heartbeat_at = None
         row.output_text = (payload.output or "")[-MAX_LOG_OUTPUT:] if row.operation == "logs" else None
         _audit(db, None, row, f"hosting.project.{row.operation}.complete", {"output_chars": len(row.output_text or "")})
     else:
         row.status = "failed"
         row.output_text = None
+        row.lease_expires_at = None
+        row.lease_heartbeat_at = None
         row.failure_message = (payload.message or "Hosting node reported project operation failure").strip()[:2000]
         _audit(db, None, row, f"hosting.project.{row.operation}.failed", {"message": row.failure_message})
     db.commit()
