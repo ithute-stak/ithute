@@ -61,17 +61,21 @@ def route_edge_weight(observation: dict, *, now: datetime | None = None) -> dict
         MAX_STALE_PENALTY,
         (age_seconds / 60.0) * STALE_PENALTY_PER_MINUTE,
     )
-    reliability_component = (1.0 - reliability) * RELIABILITY_PENALTY_MAX
-    congestion_component = (congestion_percent / 100.0) * CONGESTION_PENALTY_MAX
+    reliability_component = round((1.0 - reliability) * RELIABILITY_PENALTY_MAX, 6)
+    congestion_component = round((congestion_percent / 100.0) * CONGESTION_PENALTY_MAX, 6)
+    latency_component = round(latency_component, 6)
+    loss_component = round(loss_component, 6)
+    jitter_component = round(jitter_component, 6)
+    stale_component = round(stale_component, 6)
 
-    total = (
+    total = round((
         latency_component
         + loss_component
         + jitter_component
         + stale_component
         + reliability_component
         + congestion_component
-    )
+    ), 6)
     return {
         "weight": total,
         "components": {
