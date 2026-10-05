@@ -35,7 +35,7 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
         sa.Column("group_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("hosting_postgres_replication_groups.id", ondelete="CASCADE"), nullable=False, unique=True),
         sa.Column("gateway_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("hosting_database_gateways.id", ondelete="RESTRICT"), nullable=False),
-        sa.Column("hostname", sa.String(length=253), nullable=False, unique=True),
+        sa.Column("hostname", sa.String(length=253), nullable=False),
         sa.Column("listen_port", sa.Integer(), nullable=False, server_default="5432"),
         sa.Column("current_node_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("hosting_nodes.id", ondelete="RESTRICT"), nullable=False),
         sa.Column("target_host", sa.String(length=253), nullable=False),
