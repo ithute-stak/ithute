@@ -176,6 +176,7 @@ services:
       ITHUTE_AUTH_AUDIENCE: mailbox-dns
       ITHUTE_AUTH_JWKS_URL: http://ithute-auth:8080/.well-known/jwks.json
       ITHUTE_AUTH_INTERNAL_URL: http://ithute-auth:8080
+      ITHUTE_GO_WORKER_URL: http://ithute-go-worker:8080
       ITHUTE_JAVA_WORKER_URL: http://ithute-java-worker:8080
       ITHUTE_ENGINE_HTTP_TIMEOUT_SECONDS: ${ITHUTE_ENGINE_HTTP_TIMEOUT_SECONDS:-1.5}
     volumes:
@@ -200,6 +201,25 @@ services:
       timeout: 5s
       retries: 18
       start_period: 45s
+    networks: [ithute]
+
+  ithute-go-worker:
+    image: ithute-go-worker:${ITHUTE_IMAGE_TAG:?ITHUTE_IMAGE_TAG is required}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     networks: [ithute]
 
   ithute-java-worker:
