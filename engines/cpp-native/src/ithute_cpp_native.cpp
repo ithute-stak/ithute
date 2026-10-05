@@ -48,3 +48,15 @@ extern "C" int ithute_cpp_blob_profile_scan(
     *out = result;
     return 0;
 }
+
+extern "C" std::uint32_t ithute_cpp_route_shard(
+    const std::uint8_t* key,
+    std::size_t len,
+    std::uint32_t shard_count
+) {
+    if (shard_count == 0 || (key == nullptr && len != 0)) {
+        return 0;
+    }
+    const auto hash = ithute_cpp_fnv1a64(key, len);
+    return static_cast<std::uint32_t>(hash % shard_count);
+}
