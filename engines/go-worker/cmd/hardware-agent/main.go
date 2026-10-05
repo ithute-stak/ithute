@@ -87,6 +87,9 @@ func runProbe(ctx context.Context, path string) (Sample, error) {
 
 func main() {
 	probe := flag.String("probe", "./engines/hardware-intelligence/build/ithute-hw-probe", "path to the read-only C hardware probe")
+	validator := flag.String("validator", "", "optional path to the Rust hardware telemetry validator")
+	agentID := flag.String("agent-id", "", "stable Ithute infrastructure agent identifier")
+	signingKeyFile := flag.String("signing-key-file", "", "path to a private agent HMAC key file")
 	interval := flag.Duration("interval", 15*time.Second, "sampling interval")
 	once := flag.Bool("once", false, "collect one sample and exit")
 	flag.Parse()
@@ -98,6 +101,20 @@ func main() {
 
 	writer := bufio.NewWriter(os.Stdout)
 	defer writer.Flush()
+
+	var signingKey []byte
+	if *agentID != "" || *signingKeyFile != "" {
+		if *agentID == "" || *signingKeyFile == "" {
+			fmt.Fprintln(os.Stderr, "hardware-agent: --agent-id and --signing-key-file must be supplied together")
+			os.Exit(2)
+		}
+		var keyErr error
+		signingKey, keyErr = readSigningKey(*signingKeyFile)
+		if keyErr != nil {
+			fmt.Fprintln(os.Stderr, "hardware-agent:", keyErr)
+			os.Exit(2)
+		}
+	}
 
 	collect := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -112,7 +129,20 @@ func main() {
 				sample.StorageDevices = collectSmartStorage(ctx, path)
 			}
 		}
-		encoded, err := json.Marshal(sample)
+		if err := validateWithRust(ctx, *validator, sample); err != nil {
+			return err
+		}
+
+		var encoded []byte
+		if len(signingKey) > 0 {
+			envelope, signErr := signSample(*agentID, signingKey, sample)
+			if signErr != nil {
+				return signErr
+			}
+			encoded, err = json.Marshal(envelope)
+		} else {
+			encoded, err = json.Marshal(sample)
+		}
 		if err != nil {
 			return err
 		}
