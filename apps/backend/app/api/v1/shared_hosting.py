@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_platform_owner, require_tenant_permission
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
-from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingNodeHealthState, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingPostgresRpoPolicyOperation, HostingPostgresTopologyRepair, HostingProject, HostingSource, User
+from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingDatabaseGateway, HostingNode, HostingNodeAgent, HostingNodeHealthState, HostingPostgresEndpoint, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingPostgresRpoPolicyOperation, HostingPostgresTopologyRepair, HostingProject, HostingSource, User
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
 from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
 from app.services.database_replication import build_database_failover_plan
@@ -31,6 +31,12 @@ from app.services.postgres_topology_repair import (
 from app.services.postgres_rto_slo import (
     failover_slo_snapshot,
     mark_redundancy_restored_if_ready,
+)
+from app.services.postgres_endpoints import (
+    acknowledge_route_generation,
+    ensure_postgres_endpoint,
+    gateway_route_snapshot,
+    switch_postgres_endpoint_to_primary,
 )
 from app.services.external_fencing import (
     queue_external_fence_for_database_failover,
@@ -63,6 +69,23 @@ class PostgresReplicationGroupCreate(BaseModel):
     primary_node_id: UUID
     database_ids: list[UUID] = Field(min_length=1, max_length=500)
     standby_node_ids: list[UUID] = Field(default_factory=list, max_length=16)
+
+
+class DatabaseGatewayCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    hostname: str = Field(min_length=1, max_length=253)
+
+
+class DatabaseGatewayHeartbeat(BaseModel):
+    version: str = Field(min_length=1, max_length=64)
+
+
+class DatabaseGatewayRouteAck(BaseModel):
+    generation: int = Field(ge=1)
+
+
+class PostgresEndpointCreate(BaseModel):
+    gateway_id: UUID
 
 
 class PostgresReplicationGroupFailoverRequest(BaseModel):
