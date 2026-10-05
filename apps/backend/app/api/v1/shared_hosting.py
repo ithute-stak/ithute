@@ -596,6 +596,16 @@ def request_database_failover(
 ):
     require_tenant_permission(tenant_id, "hosting.manage", db, current)
     database = _database(db, tenant_id, database_id, lock=True)
+    grouped = db.scalar(
+        select(HostingPostgresReplicationMember.group_id).where(
+            HostingPostgresReplicationMember.database_id == database.id
+        )
+    )
+    if grouped is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Database belongs to a physical PostgreSQL replication group; use group failover",
+        )
     if database.engine != "postgresql":
         raise HTTPException(status_code=409, detail="Controlled failover execution currently supports PostgreSQL only")
     if database.node_id is None:
