@@ -20,6 +20,7 @@ _BINARY_OPERATIONS: dict[str, BinaryHandler] = {
     "mail.byte_stats": engine_runtime.byte_stats,
     "mail.mime_scan": engine_runtime.mime_scan,
     "mail.sha256": engine_runtime.sha256_digest,
+    "crypto.sha256": engine_runtime.sha256_digest,
     "native.fingerprint": engine_runtime.fast_fingerprint,
     "native.blob_profile": engine_runtime.blob_profile,
 }
@@ -29,6 +30,8 @@ PREFERRED_ENGINES: dict[str, str] = {
     "mail.byte_stats": "rust",
     "mail.mime_scan": "rust",
     "mail.sha256": "rust",
+    "crypto.sha256": "rust",
+    "crypto.hmac_sha256": "rust",
     "native.fingerprint": "cpp",
     "native.blob_profile": "cpp",
     "network.concurrent": "go",
@@ -51,6 +54,12 @@ def execute_binary(operation: str, data: bytes) -> EngineExecution:
         raise ValueError(f"Unsupported binary engine operation: {operation}")
     value, engine = handler(data)
     return EngineExecution(operation=operation, engine=engine, value=value)
+
+
+def execute_hmac_sha256(key: bytes, data: bytes) -> EngineExecution:
+    """Route integrity/signature HMAC work to Rust with Python fallback."""
+    value, engine = engine_runtime.hmac_sha256(key, data)
+    return EngineExecution(operation="crypto.hmac_sha256", engine=engine, value=value)
 
 
 def routing_status() -> dict[str, dict[str, str]]:
