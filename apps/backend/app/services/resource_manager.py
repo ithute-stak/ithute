@@ -8,6 +8,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
+    HostingDatabase,
+    HostingFailoverAttempt,
     HostingNode,
     HostingProject,
     HostingResourceReservation,
@@ -39,26 +41,32 @@ def expire_reservations(db: Session, *, now: datetime | None = None, node_id: UU
     return len(rows)
 
 
-def _project_allocations(db: Session, node_id: UUID) -> dict:
-    row = db.execute(
+def node_commitments(db: Session, node_id: UUID, *, now: datetime | None = None) -> dict:
+    now = now or _utcnow()
+    expire_reservations(db, now=now, node_id=node_id)
+
+    project_row = db.execute(
         select(
             func.coalesce(func.sum(HostingProject.cpu_millicores), 0),
             func.coalesce(func.sum(HostingProject.memory_mb), 0),
             func.coalesce(func.sum(HostingProject.storage_mb), 0),
+            func.count(HostingProject.id),
         ).where(
             HostingProject.node_id == node_id,
             HostingProject.status.not_in(ACTIVE_PROJECT_EXCLUSIONS),
         )
     ).one()
-    return {
-        "cpu_millicores": int(row[0] or 0),
-        "memory_mb": int(row[1] or 0),
-        "storage_mb": int(row[2] or 0),
-    }
+    database_storage = int(
+        db.scalar(
+            select(func.coalesce(func.sum(HostingDatabase.storage_mb), 0)).where(
+                HostingDatabase.node_id == node_id,
+                HostingDatabase.status != "deleting",
+            )
+        )
+        or 0
+    )
 
-
-def _reservation_totals(db: Session, node_id: UUID, *, now: datetime) -> dict:
-    row = db.execute(
+    reservation_row = db.execute(
         select(
             func.coalesce(func.sum(HostingResourceReservation.cpu_millicores), 0),
             func.coalesce(func.sum(HostingResourceReservation.memory_mb), 0),
@@ -69,10 +77,47 @@ def _reservation_totals(db: Session, node_id: UUID, *, now: datetime) -> dict:
             HostingResourceReservation.expires_at > now,
         )
     ).one()
+
+    legacy_failover = db.execute(
+        select(
+            func.coalesce(func.sum(HostingProject.cpu_millicores), 0),
+            func.coalesce(func.sum(HostingProject.memory_mb), 0),
+            func.coalesce(func.sum(HostingProject.storage_mb), 0),
+            func.count(HostingProject.id),
+        )
+        .join(HostingFailoverAttempt, HostingFailoverAttempt.project_id == HostingProject.id)
+        .where(
+            HostingFailoverAttempt.target_node_id == node_id,
+            HostingFailoverAttempt.status.in_(["pending", "deploying", "edge_pending"]),
+            HostingProject.node_id != node_id,
+        )
+    ).one()
+
+    allocated = {
+        "cpu_millicores": int(project_row[0] or 0),
+        "memory_mb": int(project_row[1] or 0),
+        "storage_mb": int(project_row[2] or 0) + database_storage,
+    }
+    reserved = {
+        "cpu_millicores": int(reservation_row[0] or 0) + int(legacy_failover[0] or 0),
+        "memory_mb": int(reservation_row[1] or 0) + int(legacy_failover[1] or 0),
+        "storage_mb": int(reservation_row[2] or 0) + int(legacy_failover[2] or 0),
+    }
     return {
-        "cpu_millicores": int(row[0] or 0),
-        "memory_mb": int(row[1] or 0),
-        "storage_mb": int(row[2] or 0),
+        "allocated": allocated,
+        "reserved": reserved,
+        "details": {
+            "app_storage_mb": int(project_row[2] or 0),
+            "database_storage_mb": database_storage,
+            "project_count": int(project_row[3] or 0),
+            "explicit_reserved_cpu_millicores": int(reservation_row[0] or 0),
+            "explicit_reserved_memory_mb": int(reservation_row[1] or 0),
+            "explicit_reserved_storage_mb": int(reservation_row[2] or 0),
+            "failover_reserved_cpu_millicores": int(legacy_failover[0] or 0),
+            "failover_reserved_memory_mb": int(legacy_failover[1] or 0),
+            "failover_reserved_storage_mb": int(legacy_failover[2] or 0),
+            "failover_reserved_projects": int(legacy_failover[3] or 0),
+        },
     }
 
 
@@ -123,15 +168,14 @@ def _live_usage(db: Session, node_id: UUID) -> dict:
 
 def node_resource_snapshot(db: Session, node: HostingNode, *, now: datetime | None = None) -> dict:
     now = now or _utcnow()
-    expire_reservations(db, now=now, node_id=node.id)
-
     capacity = {
         "cpu_millicores": int(node.allocatable_cpu_millicores),
         "memory_mb": int(node.allocatable_memory_mb),
         "storage_mb": int(node.allocatable_storage_mb),
     }
-    allocated = _project_allocations(db, node.id)
-    reserved = _reservation_totals(db, node.id, now=now)
+    commitments = node_commitments(db, node.id, now=now)
+    allocated = commitments["allocated"]
+    reserved = commitments["reserved"]
     available = {
         key: max(0, capacity[key] - allocated[key] - reserved[key])
         for key in capacity
@@ -154,6 +198,7 @@ def node_resource_snapshot(db: Session, node: HostingNode, *, now: datetime | No
         "available": available,
         "overcommitted": overcommitted,
         "used": _live_usage(db, node.id),
+        "details": commitments["details"],
         "as_of": now.isoformat(),
     }
 
