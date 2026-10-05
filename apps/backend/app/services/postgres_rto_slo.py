@@ -212,6 +212,17 @@ def failover_slo_snapshot(
             return None
         return max(0, int((end - start).total_seconds()))
 
+    phase_seconds = {
+        "detection_to_fence_start": elapsed(detected, fence_started),
+        "fencing": elapsed(fence_started, fenced),
+        "promotion_and_control_plane_cutover": elapsed(promotion_started, restored),
+        "service_restoration": elapsed(detected, restored),
+        "redundancy_repair": elapsed(restored, redundancy),
+    }
+
+    def within(value, budget):
+        return None if value is None else value <= int(budget)
+
     return {
         "trigger": attempt.trigger,
         "status": attempt.status,
@@ -220,12 +231,18 @@ def failover_slo_snapshot(
         "rto_met": attempt.rto_met,
         "repair_budget_seconds": group.repair_budget_seconds,
         "repair_slo_met": attempt.repair_slo_met,
-        "phase_seconds": {
-            "detection_to_fence_start": elapsed(detected, fence_started),
-            "fencing": elapsed(fence_started, fenced),
-            "promotion_and_control_plane_cutover": elapsed(promotion_started, restored),
-            "service_restoration": elapsed(detected, restored),
-            "redundancy_repair": elapsed(restored, redundancy),
+        "phase_seconds": phase_seconds,
+        "phase_budget_met": {
+            "detection": within(phase_seconds["detection_to_fence_start"], group.detection_budget_seconds),
+            "fencing": within(phase_seconds["fencing"], group.fencing_budget_seconds),
+            "promotion_and_control_plane_cutover": within(
+                phase_seconds["promotion_and_control_plane_cutover"],
+                group.promotion_budget_seconds,
+            ),
+            "redundancy_repair": within(
+                phase_seconds["redundancy_repair"],
+                group.repair_budget_seconds,
+            ),
         },
         "timestamps": {
             "failure_detected_at": detected.isoformat() if detected else None,
