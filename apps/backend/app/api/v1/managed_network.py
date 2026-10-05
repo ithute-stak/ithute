@@ -208,15 +208,24 @@ def edge_peer_configuration(
         .where(InfrastructureNetworkGrant.enabled.is_(True))
         .order_by(InfrastructureNetworkGrant.created_at.asc())
     ).all()
+    peer_by_server = {
+        row.server_id: row
+        for row in db.scalars(
+            select(InfrastructureWireGuardPeer).where(InfrastructureWireGuardPeer.status == "active")
+        ).all()
+    }
     config["grants"] = [
         {
             "id": str(row.id),
             "source_server_id": str(row.source_server_id),
+            "source_ip": peer_by_server[row.source_server_id].assigned_ipv4,
             "target_server_id": str(row.target_server_id),
+            "target_ip": peer_by_server[row.target_server_id].assigned_ipv4,
             "protocol": row.protocol,
             "port": row.port,
             "service": row.service,
         }
         for row in grants
+        if row.source_server_id in peer_by_server and row.target_server_id in peer_by_server
     ]
     return config
