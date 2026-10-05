@@ -1106,7 +1106,6 @@ def infrastructure_agent_cluster_state(
         "self_server_id": str(current_server.id),
         "node_count": len(nodes),
         "reachability_engine": reachability_engine,
-        "network_policy_mode": "full_mesh",
         "nodes": nodes,
     }
     canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
