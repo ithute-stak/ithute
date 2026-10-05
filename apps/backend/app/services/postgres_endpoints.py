@@ -19,6 +19,27 @@ from app.models import (
 
 _ENDPOINT_SUFFIX = os.getenv("ITHUTE_POSTGRES_ENDPOINT_SUFFIX", "db.ithute.internal").strip().lower()
 _DNS_RE = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$")
+_ENDPOINT_PORT_START = int(os.getenv("ITHUTE_POSTGRES_ENDPOINT_PORT_START", "20000"))
+_ENDPOINT_PORT_END = int(os.getenv("ITHUTE_POSTGRES_ENDPOINT_PORT_END", "39999"))
+
+
+
+
+def _allocate_listen_port(db: Session, gateway_id) -> int:
+    if not (1024 <= _ENDPOINT_PORT_START <= _ENDPOINT_PORT_END <= 65535):
+        raise RuntimeError("PostgreSQL endpoint port range is invalid")
+    used = set(
+        int(value)
+        for value in db.scalars(
+            select(HostingPostgresEndpoint.listen_port).where(
+                HostingPostgresEndpoint.gateway_id == gateway_id
+            )
+        ).all()
+    )
+    for port in range(_ENDPOINT_PORT_START, _ENDPOINT_PORT_END + 1):
+        if port not in used:
+            return port
+    raise RuntimeError("PostgreSQL endpoint gateway port range is exhausted")
 
 
 def endpoint_hostname(group: HostingPostgresReplicationGroup) -> str:
@@ -61,7 +82,7 @@ def ensure_postgres_endpoint(
             group_id=group.id,
             gateway_id=gateway.id,
             hostname=endpoint_hostname(group),
-            listen_port=5432,
+            listen_port=_allocate_listen_port(db, gateway.id),
             current_node_id=node.id,
             target_host=node.hostname,
             target_port=port,
