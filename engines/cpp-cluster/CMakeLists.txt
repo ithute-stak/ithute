@@ -5,6 +5,7 @@ add_library(ithute_cpp_cluster SHARED
   src/cluster_graph.cpp
   src/placement_scheduler.cpp
   src/weighted_network.cpp
+  src/network_partitions.cpp
   src/c_api.cpp
 )
 

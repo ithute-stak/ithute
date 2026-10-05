@@ -214,3 +214,30 @@ def test_smart_failover_uses_network_path_when_domain_risk_matches(db, platform_
     assert ranked[0]["target_server"].id == fast.id
     assert ranked[0]["route"]["reachable"] is True
     db.rollback()
+
+
+
+def test_replica_anti_affinity_rejects_same_network_segment():
+    from app.services.replica_anti_affinity import anti_affinity_evaluation
+
+    source = _server(provider="p1", region="r1", datacenter="dc1", physical_host="h1", network_segment="seg-x")
+    target = _server(provider="p2", region="r2", datacenter="dc2", physical_host="h2", network_segment="seg-x")
+
+    result = anti_affinity_evaluation(source, target)
+
+    assert result["eligible"] is False
+    assert "network_segment" in result["violations"]
+
+
+def test_replica_anti_affinity_can_require_provider_diversity():
+    from app.services.replica_anti_affinity import anti_affinity_evaluation
+
+    source = _server(provider="p1", region="r1", datacenter="dc1", physical_host="h1", network_segment="s1")
+    target = _server(provider="p1", region="r2", datacenter="dc2", physical_host="h2", network_segment="s2")
+
+    relaxed = anti_affinity_evaluation(source, target)
+    strict = anti_affinity_evaluation(source, target, require_provider_diversity=True)
+
+    assert relaxed["eligible"] is True
+    assert strict["eligible"] is False
+    assert "provider" in strict["violations"]

@@ -135,3 +135,15 @@ def test_weighted_shortest_path_fallback(monkeypatch):
         "path": ["a", "b", "d"],
         "total_weight": 4.0,
     }
+
+
+
+def test_network_partitions_fallback(monkeypatch):
+    monkeypatch.setattr(cluster_engine, "_load_cluster", lambda: None)
+    result = cluster_engine.network_partitions(
+        ["a", "b", "c", "d", "e"],
+        [("a", "b"), ("b", "c"), ("d", "e")],
+    )
+    assert result["engine"] == "python-fallback"
+    assert result["component_count"] == 2
+    assert result["components"] == [["a", "b", "c"], ["d", "e"]]

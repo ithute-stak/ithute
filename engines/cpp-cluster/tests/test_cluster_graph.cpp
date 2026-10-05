@@ -2,6 +2,7 @@
 #include "ithute_cluster_c.h"
 #include "placement_scheduler.hpp"
 #include "weighted_network.hpp"
+#include "network_partitions.hpp"
 
 #include <cassert>
 #include <cstdint>
@@ -207,6 +208,20 @@ int main() {
     assert(shortest_order[1] == 1);
     assert(shortest_order[2] == 3);
     assert(shortest_weight == 4.0);
+
+    const std::size_t partition_sources[] = {0, 1, 3};
+    const std::size_t partition_targets[] = {1, 2, 4};
+    std::size_t component_ids[5] = {};
+    std::size_t component_count = 0;
+    assert(ithute_cluster_network_partitions(
+        5, partition_sources, partition_targets, 3,
+        component_ids, 5, &component_count
+    ) == 0);
+    assert(component_count == 2);
+    assert(component_ids[0] == component_ids[1]);
+    assert(component_ids[1] == component_ids[2]);
+    assert(component_ids[3] == component_ids[4]);
+    assert(component_ids[0] != component_ids[3]);
 
     return 0;
 }

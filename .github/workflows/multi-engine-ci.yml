@@ -129,6 +129,7 @@ jobs:
           assert "dependency-dag" in status["engines"]["cpp"]["capabilities"]
           assert "topological-order" in status["engines"]["cpp"]["capabilities"]
           assert "weighted-shortest-path" in status["engines"]["cpp"]["capabilities"]
+          assert "network-partitions" in status["engines"]["cpp"]["capabilities"]
           from app.services.cluster_engine import cluster_graph_analysis, rank_placement_candidates
           cluster = cluster_graph_analysis(
               [
@@ -177,6 +178,14 @@ jobs:
           assert route["reachable"] is True
           assert route["path"] == ["a", "b", "d"]
           assert route["total_weight"] == 4.0
+          from app.services.cluster_engine import network_partitions
+          partitions = network_partitions(
+              ["a", "b", "c", "d", "e"],
+              [("a", "b"), ("b", "c"), ("d", "e")],
+          )
+          assert partitions["engine"] == "cpp"
+          assert partitions["component_count"] == 2
+          assert sorted(partitions["components"]) == [["a", "b", "c"], ["d", "e"]]
           from app.services.engine_runtime import hmac_sha256
           result = sample_native_result(b"Subject: engine\\n\\nbody")
           hmac_value, hmac_engine = hmac_sha256(b"key", b"audit")
