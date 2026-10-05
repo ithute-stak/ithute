@@ -8,7 +8,11 @@ from app.services import engine_router
 def test_router_prefers_specialist_engines_by_workload():
     assert engine_router.preferred_engine("mail.mime_scan") == "rust"
     assert engine_router.preferred_engine("mail.sha256") == "rust"
+    assert engine_router.preferred_engine("crypto.sha256") == "rust"
+    assert engine_router.preferred_engine("crypto.hmac_sha256") == "rust"
     assert engine_router.preferred_engine("network.concurrent") == "go"
+    assert engine_router.preferred_engine("network.dns") == "go"
+    assert engine_router.preferred_engine("network.origin") == "go"
     assert engine_router.preferred_engine("enterprise.xml") == "java"
     assert engine_router.preferred_engine("native.fingerprint") == "cpp"
     assert engine_router.preferred_engine("native.blob_profile") == "cpp"
@@ -83,3 +87,31 @@ def test_enterprise_xml_router_uses_java_runtime(monkeypatch):
     assert result.operation == "enterprise.xml"
     assert result.engine == "java"
     assert result.value["root"] == "report"
+
+
+def test_hmac_router_uses_rust_runtime_result(monkeypatch):
+    monkeypatch.setattr(
+        engine_router.engine_runtime,
+        "hmac_sha256",
+        lambda key, data: ("deadbeef", "rust"),
+    )
+    result = engine_router.execute_hmac_sha256(b"key", b"data")
+    assert result.engine == "rust"
+    assert result.value == "deadbeef"
+
+
+def test_dns_router_uses_go_runtime_result(monkeypatch):
+    monkeypatch.setattr(
+        engine_router.engine_runtime,
+        "dns_lookup",
+        lambda queries, concurrency: (
+            {"engine": "go", "checked": len(queries), "results": []},
+            "go",
+        ),
+    )
+    result = engine_router.execute_dns(
+        [{"id": "a", "name": "example.test", "type": "A"}],
+        concurrency=4,
+    )
+    assert result.operation == "network.dns"
+    assert result.engine == "go"
