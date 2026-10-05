@@ -18,6 +18,7 @@ from app.services.hosting_operation_scheduler import (
     claim_next_project_operation,
     renew_project_operation_lease,
 )
+from app.services.operation_resource_locks import release_operation_resources
 
 router = APIRouter(tags=["hosting-project-operations"])
 ACTIVE_STATUSES = {"queued", "claimed"}
@@ -163,6 +164,7 @@ def restart_project(
     if _active(db, project.id) is not None:
         raise HTTPException(status_code=409, detail="Wait for the current project operation to finish before restarting")
     row = _queue(db, project=project, current=current, operation="restart")
+    release_operation_resources(db, row.id)
     db.commit()
     db.refresh(row)
     return _operation_out(row)
