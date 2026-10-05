@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models import HostingDatabase, HostingNode, HostingProject, InfrastructureServer
 from app.services.hosting_placement import rank_nodes
+from app.services.database_replication import build_database_failover_plan
 from app.services.smart_failover_ranking import rank_failover_candidates
 
 
@@ -25,8 +26,16 @@ def _project_plan(db: Session, project: HostingProject, source_node_id) -> dict:
     blockers: list[str] = []
     if project.failover_policy != "stateless_auto":
         blockers.append("project is not opted into stateless_auto relocation")
-    if attached_databases:
-        blockers.append("managed database dependency requires database failover support before application relocation")
+    database_failover_plans = [
+        build_database_failover_plan(db, database=row)
+        for row in attached_databases
+    ]
+    unsafe_databases = [
+        plan for plan in database_failover_plans
+        if not plan["promotion_ready"]
+    ]
+    if unsafe_databases:
+        blockers.append("one or more managed database dependencies have no safe replica promotion target")
 
     ranked = rank_nodes(
         db,
@@ -72,8 +81,15 @@ def _project_plan(db: Session, project: HostingProject, source_node_id) -> dict:
             "storage_mb": project.storage_mb,
         },
         "dependencies": [
-            {"kind": "database", "id": str(row.id), "engine": row.engine, "status": row.status}
-            for row in attached_databases
+            {
+                "kind": "database",
+                "id": str(row.id),
+                "engine": row.engine,
+                "status": row.status,
+                "promotion_ready": plan["promotion_ready"],
+                "recommended_replica": plan["recommended_replica"],
+            }
+            for row, plan in zip(attached_databases, database_failover_plans)
         ],
         "movable": not blockers,
         "blockers": blockers,
@@ -83,7 +99,9 @@ def _project_plan(db: Session, project: HostingProject, source_node_id) -> dict:
     }
 
 
-def _database_plan(database: HostingDatabase) -> dict:
+def _database_plan(db: Session, database: HostingDatabase) -> dict:
+    failover = build_database_failover_plan(db, database=database)
+    recommended = failover["recommended_replica"]
     return {
         "kind": "database",
         "id": str(database.id),
@@ -96,13 +114,12 @@ def _database_plan(database: HostingDatabase) -> dict:
             "storage_mb": database.storage_mb,
         },
         "dependencies": [],
-        "movable": False,
-        "blockers": [
-            "managed database drain requires database replication/failover before automated relocation"
-        ],
-        "recommended_target_node_id": None,
-        "recommended_target_name": None,
-        "candidate_count": 0,
+        "movable": bool(failover["promotion_ready"]),
+        "blockers": list(failover["blockers"]),
+        "recommended_target_node_id": recommended["node_id"] if recommended else None,
+        "recommended_target_name": recommended["node_name"] if recommended else None,
+        "candidate_count": len(failover["replicas"]),
+        "failover_plan": failover,
     }
 
 
@@ -129,18 +146,10 @@ def build_maintenance_drain_plan(db: Session, *, node_id) -> dict:
     ).all()
 
     project_rows = [_project_plan(db, project, node.id) for project in projects]
-    database_rows = [_database_plan(database) for database in databases]
+    database_rows = [_database_plan(db, database) for database in databases]
 
-    attached_database_ids = {
-        item["id"]
-        for project in project_rows
-        for item in project["dependencies"]
-    }
-    independent_database_rows = [
-        row for row in database_rows if row["id"] not in attached_database_ids
-    ]
-
-    migration_order = independent_database_rows + project_rows
+    # Databases are promoted/relocated before applications that depend on them.
+    migration_order = database_rows + project_rows
     blockers = [
         {
             "kind": item["kind"],
