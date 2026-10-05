@@ -40,3 +40,6 @@ def test_infrastructure_server_contract_and_navigation_exist():
     assert 'Synchronize existing nodes' in page_source
     assert 'Mail role' in page_source
     assert 'Hosting & databases' in page_source
+    detail_source = (ui_root / "app" / "infrastructure" / "servers" / "[serverId]" / "page.tsx").read_text(encoding="utf-8")
+    assert "Agent operations & container drift" in detail_source
+    assert "Ping agent" in detail_source

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -12,11 +13,19 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-AGENT_VERSION = "ithute-server-agent/1"
+AGENT_VERSION = "ithute-server-agent/2"
 API_URL = os.getenv("ITHUTE_API_URL", "https://ithute.co.ls/api/v1").rstrip("/")
 TOKEN = os.getenv("ITHUTE_SERVER_AGENT_TOKEN", "").strip()
 INTERVAL = max(30, int(os.getenv("ITHUTE_SERVER_AGENT_INTERVAL", "60")))
 TIMEOUT = max(3, int(os.getenv("ITHUTE_SERVER_AGENT_TIMEOUT", "10")))
+SERVICE_RE = re.compile(r"^[A-Za-z0-9@_.:-]+(?:\.service)?$")
+CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+BLOCKED_SERVICES = {
+    "ssh", "sshd", "ssh.service", "sshd.service",
+    "networking", "networking.service",
+    "systemd-networkd", "systemd-networkd.service",
+    "ufw", "ufw.service", "firewalld", "firewalld.service",
+}
 
 
 def read_text(path: str) -> str:
@@ -120,16 +129,33 @@ def service_active(name: str) -> bool:
 
 def docker_info() -> dict:
     if not command_exists("docker"):
-        return {"installed": False, "reachable": False, "version": None, "containers_running": 0, "containers_total": 0}
+        return {"installed": False, "reachable": False, "version": None, "containers_running": 0, "containers_total": 0, "containers": []}
     version = command_output(["docker", "version", "--format", "{{.Server.Version}}"])
-    total_raw = command_output(["docker", "ps", "-aq"])
-    running_raw = command_output(["docker", "ps", "-q"])
+    inventory = command_output([
+        "docker", "ps", "-a",
+        "--format", '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}\t{{.Label "ithute.project_id"}}',
+    ], timeout=8)
+    containers: list[dict] = []
+    if inventory:
+        for line in inventory.splitlines()[:1000]:
+            parts = line.split("\t", 4)
+            if len(parts) < 4:
+                continue
+            project_id = parts[4].strip() if len(parts) > 4 else ""
+            containers.append({
+                "id": parts[0].strip(),
+                "name": parts[1].strip(),
+                "image": parts[2].strip(),
+                "state": parts[3].strip().lower(),
+                "labels": {"ithute.project_id": project_id} if project_id else {},
+            })
     return {
         "installed": True,
         "reachable": version is not None,
         "version": version,
-        "containers_total": len(total_raw.splitlines()) if total_raw else 0,
-        "containers_running": len(running_raw.splitlines()) if running_raw else 0,
+        "containers_total": len(containers),
+        "containers_running": sum(1 for item in containers if item.get("state") == "running"),
+        "containers": containers,
     }
 
 
@@ -194,6 +220,8 @@ def capabilities() -> dict:
         "imap": service_active("dovecot") or command_exists("dovecot"),
         "systemd": command_exists("systemctl"),
         "wireguard": command_exists("wg"),
+        "structured_commands": command_exists("systemctl") or command_exists("docker"),
+        "container_inventory": command_exists("docker"),
     }
 
 
@@ -222,6 +250,90 @@ def payload() -> dict:
     }
 
 
+def api_json(path: str, *, method: str = "POST", body: dict | None = None) -> dict:
+    if not TOKEN:
+        raise RuntimeError("ITHUTE_SERVER_AGENT_TOKEN is required")
+    raw = json.dumps(body or {}).encode("utf-8")
+    request = urllib.request.Request(
+        f"{API_URL}{path}",
+        data=raw,
+        headers={"Content-Type": "application/json", "X-Ithute-Server-Agent": TOKEN},
+        method=method,
+    )
+    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        if response.status < 200 or response.status >= 300:
+            raise RuntimeError(f"agent API failed with HTTP {response.status}")
+        payload_raw = response.read()
+    return json.loads(payload_raw.decode("utf-8")) if payload_raw else {}
+
+
+def execute_structured_command(command: dict) -> tuple[bool, dict, str | None]:
+    kind = str(command.get("kind") or "")
+    payload = command.get("payload") if isinstance(command.get("payload"), dict) else {}
+    if kind == "agent.ping":
+        return True, {"pong": True, "hostname": socket.gethostname(), "version": AGENT_VERSION}, None
+
+    if kind.startswith("service."):
+        unit = str(payload.get("unit") or "").strip()
+        verb = kind.split(".", 1)[1]
+        if verb not in {"start", "stop", "restart"}:
+            return False, {}, "unsupported service action"
+        normalized = unit if unit.endswith(".service") else f"{unit}.service"
+        if not SERVICE_RE.fullmatch(unit) or unit in BLOCKED_SERVICES or normalized in BLOCKED_SERVICES:
+            return False, {}, "service action rejected by local agent policy"
+        unit = normalized
+        try:
+            completed = subprocess.run(
+                ["systemctl", verb, unit],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, {}, str(exc)[:8000]
+        output = (completed.stdout or "")[-4000:]
+        return completed.returncode == 0, {"unit": unit, "action": verb, "output": output}, None if completed.returncode == 0 else output
+
+    if kind.startswith("container."):
+        container = str(payload.get("container") or "").strip()
+        verb = kind.split(".", 1)[1]
+        if verb not in {"start", "stop", "restart"}:
+            return False, {}, "unsupported container action"
+        if not CONTAINER_RE.fullmatch(container):
+            return False, {}, "container action rejected by local agent policy"
+        try:
+            completed = subprocess.run(
+                ["docker", verb, container],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, {}, str(exc)[:8000]
+        output = (completed.stdout or "")[-4000:]
+        return completed.returncode == 0, {"container": container, "action": verb, "output": output}, None if completed.returncode == 0 else output
+    return False, {}, "unsupported structured command"
+
+
+def poll_command() -> None:
+    body = api_json("/platform/infrastructure/agent/commands/next")
+    command = body.get("command") if isinstance(body, dict) else None
+    if not isinstance(command, dict):
+        return
+    command_id = str(command.get("id") or "")
+    if not command_id:
+        return
+    ok, result, error = execute_structured_command(command)
+    api_json(
+        f"/platform/infrastructure/agent/commands/{command_id}/result",
+        body={"ok": ok, "result": result, "error": error},
+    )
+
+
 def heartbeat() -> None:
     if not TOKEN:
         raise RuntimeError("ITHUTE_SERVER_AGENT_TOKEN is required")
@@ -242,8 +354,9 @@ def main() -> int:
     while True:
         try:
             heartbeat()
+            poll_command()
         except Exception as exc:
-            print(f"heartbeat failed: {exc}", flush=True)
+            print(f"agent cycle failed: {exc}", flush=True)
         time.sleep(INTERVAL)
 
 

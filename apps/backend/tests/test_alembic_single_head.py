@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0071_application_failover"
+LATEST_MIGRATION_HEAD = "0072_infrastructure_agent_ops"
 
 
 def test_alembic_has_one_consolidated_head():

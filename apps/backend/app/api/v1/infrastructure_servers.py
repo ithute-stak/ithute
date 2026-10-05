@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
@@ -22,6 +23,8 @@ from app.models import (
     HostingNode,
     HostingNodeAgent,
     HostingProject,
+    InfrastructureAgentCommand,
+    InfrastructureContainerSnapshot,
     InfrastructureServer,
     InfrastructureServerAgent,
     InfrastructureTelemetrySnapshot,
@@ -35,6 +38,23 @@ router = APIRouter(prefix="/platform/infrastructure", tags=["infrastructure"])
 ALLOWED_ROLES = {"mail", "application", "database", "storage", "build", "backup"}
 ALLOWED_STATUSES = {"active", "maintenance", "disabled"}
 HEARTBEAT_GRACE_SECONDS = 180
+AGENT_COMMAND_KINDS = {
+    "agent.ping",
+    "service.restart",
+    "service.start",
+    "service.stop",
+    "container.restart",
+    "container.start",
+    "container.stop",
+}
+AGENT_SERVICE_RE = re.compile(r"^[A-Za-z0-9@_.:-]+(?:\.service)?$")
+AGENT_CONTAINER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+AGENT_BLOCKED_SERVICES = {
+    "ssh", "sshd", "ssh.service", "sshd.service",
+    "networking", "networking.service",
+    "systemd-networkd", "systemd-networkd.service",
+    "ufw", "ufw.service", "firewalld", "firewalld.service",
+}
 
 
 class InfrastructureServerCreate(BaseModel):
@@ -54,6 +74,17 @@ class InfrastructureAgentHeartbeat(BaseModel):
     uptime_seconds: int | None = Field(default=None, ge=0)
     telemetry: dict = Field(default_factory=dict)
     capabilities: dict = Field(default_factory=dict)
+
+
+class InfrastructureAgentCommandCreate(BaseModel):
+    kind: str = Field(min_length=1, max_length=64)
+    payload: dict = Field(default_factory=dict)
+
+
+class InfrastructureAgentCommandResult(BaseModel):
+    ok: bool
+    result: dict = Field(default_factory=dict)
+    error: str | None = Field(default=None, max_length=8000)
 
 
 class InfrastructureServerUpdate(BaseModel):
@@ -97,6 +128,89 @@ def _json_roles(raw: str) -> list[str]:
     except (TypeError, ValueError, json.JSONDecodeError):
         value = []
     return sorted({str(item) for item in value if str(item) in ALLOWED_ROLES})
+
+
+def _validated_agent_command(kind: str, payload: dict) -> tuple[str, dict]:
+    normalized_kind = kind.strip().lower()
+    if normalized_kind not in AGENT_COMMAND_KINDS:
+        raise HTTPException(status_code=422, detail="Unsupported structured infrastructure-agent command")
+    if normalized_kind == "agent.ping":
+        return normalized_kind, {}
+    if normalized_kind.startswith("service."):
+        unit = str(payload.get("unit") or "").strip()
+        if not AGENT_SERVICE_RE.fullmatch(unit):
+            raise HTTPException(status_code=422, detail="Invalid systemd service")
+        normalized_unit = unit if unit.endswith(".service") else f"{unit}.service"
+        if unit in AGENT_BLOCKED_SERVICES or normalized_unit in AGENT_BLOCKED_SERVICES:
+            raise HTTPException(status_code=409, detail="Connectivity-critical services are blocked from agent actions")
+        return normalized_kind, {"unit": normalized_unit}
+    container = str(payload.get("container") or "").strip()
+    if not AGENT_CONTAINER_RE.fullmatch(container):
+        raise HTTPException(status_code=422, detail="Invalid Docker container name or id")
+    return normalized_kind, {"container": container}
+
+
+def _command_out(row: InfrastructureAgentCommand) -> dict:
+    return {
+        "id": str(row.id),
+        "server_id": str(row.server_id),
+        "kind": row.kind,
+        "payload": json.loads(row.payload_json or "{}"),
+        "status": row.status,
+        "result": json.loads(row.result_json or "{}"),
+        "error": row.error,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "claimed_at": row.claimed_at.isoformat() if row.claimed_at else None,
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+    }
+
+
+def _container_drift(db: Session, server: InfrastructureServer, telemetry: dict) -> dict:
+    docker = telemetry.get("docker") if isinstance(telemetry.get("docker"), dict) else {}
+    containers = docker.get("containers") if isinstance(docker.get("containers"), list) else []
+    expected_ids: set[str] = set()
+    if server.hosting_node_id:
+        project_ids = db.scalars(
+            select(HostingProject.id).where(
+                HostingProject.node_id == server.hosting_node_id,
+                HostingProject.status != "suspended",
+            )
+        ).all()
+        expected_ids = {str(value) for value in project_ids}
+
+    reported_ids: set[str] = set()
+    running = 0
+    clean: list[dict] = []
+    for item in containers[:1000]:
+        if not isinstance(item, dict):
+            continue
+        labels = item.get("labels") if isinstance(item.get("labels"), dict) else {}
+        project_id = str(labels.get("ithute.project_id") or item.get("project_id") or "").strip()
+        if project_id:
+            reported_ids.add(project_id)
+        state = str(item.get("state") or item.get("status") or "").strip().lower()
+        if state in {"running", "up", "healthy"}:
+            running += 1
+        clean.append({
+            "name": str(item.get("name") or "")[:160],
+            "image": str(item.get("image") or "")[:500],
+            "state": state[:32],
+            "project_id": project_id or None,
+        })
+
+    missing = sorted(expected_ids - reported_ids)
+    unexpected = sorted(reported_ids - expected_ids)
+    drift_status = "healthy" if not missing and not unexpected else "attention"
+    return {
+        "containers": clean,
+        "expected_count": len(expected_ids),
+        "running_count": running,
+        "missing_project_ids": missing,
+        "unexpected_project_ids": unexpected,
+        "missing_count": len(missing),
+        "unexpected_count": len(unexpected),
+        "drift_status": drift_status,
+    }
 
 
 def _fresh(value: datetime | None) -> bool:
@@ -594,17 +708,169 @@ def infrastructure_agent_heartbeat(
         .where(InfrastructureTelemetrySnapshot.server_id == server.id)
         .order_by(InfrastructureTelemetrySnapshot.created_at.desc())
     )
+    container_drift = _container_drift(db, server, payload.telemetry)
     if latest is None or not latest.created_at or now - (latest.created_at if latest.created_at.tzinfo else latest.created_at.replace(tzinfo=timezone.utc)) >= timedelta(minutes=5):
         values = _telemetry_values(payload.telemetry)
         db.add(InfrastructureTelemetrySnapshot(server_id=server.id, **values))
+        db.add(
+            InfrastructureContainerSnapshot(
+                server_id=server.id,
+                containers_json=json.dumps(container_drift["containers"], sort_keys=True, separators=(",", ":")),
+                expected_count=container_drift["expected_count"],
+                running_count=container_drift["running_count"],
+                missing_count=container_drift["missing_count"],
+                unexpected_count=container_drift["unexpected_count"],
+                drift_status=container_drift["drift_status"],
+            )
+        )
         db.execute(
             delete(InfrastructureTelemetrySnapshot).where(
                 InfrastructureTelemetrySnapshot.server_id == server.id,
                 InfrastructureTelemetrySnapshot.created_at < now - timedelta(days=7),
             )
         )
+        db.execute(
+            delete(InfrastructureContainerSnapshot).where(
+                InfrastructureContainerSnapshot.server_id == server.id,
+                InfrastructureContainerSnapshot.created_at < now - timedelta(days=7),
+            )
+        )
     db.commit()
-    return {"ok": True, "server_id": str(server.id), "status": server.status}
+    return {
+        "ok": True,
+        "server_id": str(server.id),
+        "status": server.status,
+        "container_drift": {
+            key: value for key, value in container_drift.items() if key != "containers"
+        },
+    }
+
+
+@router.get("/servers/{server_id}/commands")
+def list_server_commands(
+    server_id: UUID,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    server = db.get(InfrastructureServer, server_id)
+    if server is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+    rows = db.scalars(
+        select(InfrastructureAgentCommand)
+        .where(InfrastructureAgentCommand.server_id == server.id)
+        .order_by(InfrastructureAgentCommand.created_at.desc())
+        .limit(max(1, min(limit, 200)))
+    ).all()
+    return {"items": [_command_out(row) for row in rows], "allowed_kinds": sorted(AGENT_COMMAND_KINDS)}
+
+
+@router.post("/servers/{server_id}/commands", status_code=201)
+def queue_server_command(
+    server_id: UUID,
+    payload: InfrastructureAgentCommandCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    server = db.get(InfrastructureServer, server_id)
+    if server is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+    agent = db.get(InfrastructureServerAgent, server.id)
+    if agent is None:
+        raise HTTPException(status_code=409, detail="Infrastructure server agent is not configured")
+    kind, clean_payload = _validated_agent_command(payload.kind, payload.payload)
+    row = InfrastructureAgentCommand(
+        server_id=server.id,
+        kind=kind,
+        payload_json=json.dumps(clean_payload, sort_keys=True, separators=(",", ":")),
+        requested_by_user_id=current.id,
+    )
+    db.add(row)
+    db.flush()
+    _audit(db, current, "infrastructure.server_agent.command.queue", server, {"command_id": str(row.id), "kind": kind})
+    db.commit()
+    db.refresh(row)
+    return _command_out(row)
+
+
+@router.post("/agent/commands/next")
+def claim_infrastructure_agent_command(
+    x_ithute_server_agent: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    agent, server = _server_agent_from_token(db, x_ithute_server_agent)
+    row = db.scalar(
+        select(InfrastructureAgentCommand)
+        .where(
+            InfrastructureAgentCommand.server_id == server.id,
+            InfrastructureAgentCommand.status == "queued",
+        )
+        .order_by(InfrastructureAgentCommand.created_at.asc())
+        .with_for_update(skip_locked=True)
+    )
+    if row is None:
+        return {"command": None}
+    row.status = "claimed"
+    row.claimed_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    return {"command": _command_out(row)}
+
+
+@router.post("/agent/commands/{command_id}/result")
+def complete_infrastructure_agent_command(
+    command_id: UUID,
+    payload: InfrastructureAgentCommandResult,
+    x_ithute_server_agent: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    agent, server = _server_agent_from_token(db, x_ithute_server_agent)
+    row = db.scalar(
+        select(InfrastructureAgentCommand)
+        .where(
+            InfrastructureAgentCommand.id == command_id,
+            InfrastructureAgentCommand.server_id == server.id,
+        )
+        .with_for_update()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Infrastructure agent command not found")
+    if row.status not in {"claimed", "queued"}:
+        raise HTTPException(status_code=409, detail="Infrastructure agent command is already complete")
+    row.status = "succeeded" if payload.ok else "failed"
+    row.result_json = json.dumps(payload.result, sort_keys=True, separators=(",", ":"))
+    row.error = payload.error.strip()[:8000] if payload.error else None
+    row.completed_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"ok": True, "command": _command_out(row)}
+
+
+@router.get("/servers/{server_id}/container-inventory")
+def server_container_inventory(
+    server_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    server = db.get(InfrastructureServer, server_id)
+    if server is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+    latest = db.scalar(
+        select(InfrastructureContainerSnapshot)
+        .where(InfrastructureContainerSnapshot.server_id == server.id)
+        .order_by(InfrastructureContainerSnapshot.created_at.desc())
+    )
+    if latest is None:
+        return {"server_id": str(server.id), "status": "awaiting_agent", "containers": []}
+    return {
+        "server_id": str(server.id),
+        "status": latest.drift_status,
+        "expected_count": latest.expected_count,
+        "running_count": latest.running_count,
+        "missing_count": latest.missing_count,
+        "unexpected_count": latest.unexpected_count,
+        "containers": json.loads(latest.containers_json or "[]"),
+        "checked_at": latest.created_at.isoformat() if latest.created_at else None,
+    }
 
 
 @router.post("/servers/import-existing")
