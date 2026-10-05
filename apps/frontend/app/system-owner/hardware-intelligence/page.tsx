@@ -32,6 +32,11 @@ type FleetItem = {
   io_pressure_avg10?: number | null;
   filesystem_used_percent?: number | null;
   storage_warning_count: number;
+  ebpf_block_latency_p50_ms?: number | null;
+  ebpf_block_latency_p95_ms?: number | null;
+  ebpf_block_latency_p99_ms?: number | null;
+  ebpf_block_latency_max_ms?: number | null;
+  ebpf_latency_percentiles_capped?: boolean;
   predictive_risk_score?: number | null;
   predictive_state: "learning" | "stable" | "watch" | "elevated" | "high";
   predictive_confidence?: number | null;
@@ -270,6 +275,16 @@ export default function HardwareIntelligencePage() {
                   <div className="rounded-xl border border-[var(--admin-line)] p-3"><Activity size={14}/><p className="mt-2 text-[8px] font-black uppercase text-[var(--admin-muted)]">Memory PSI</p><p className="mt-1 text-sm font-black">{metric(selectedServer.memory_pressure_avg10, "%")}</p></div>
                   <div className="rounded-xl border border-[var(--admin-line)] p-3"><Cpu size={14}/><p className="mt-2 text-[8px] font-black uppercase text-[var(--admin-muted)]">I/O PSI</p><p className="mt-1 text-sm font-black">{metric(selectedServer.io_pressure_avg10, "%")}</p></div>
                   <div className="rounded-xl border border-[var(--admin-line)] p-3"><HardDrive size={14}/><p className="mt-2 text-[8px] font-black uppercase text-[var(--admin-muted)]">Root used</p><p className="mt-1 text-sm font-black">{metric(selectedServer.filesystem_used_percent, "%")}</p></div>
+                </div>
+                <div className="rounded-xl border border-[var(--admin-line)] p-3">
+                  <div className="flex items-center justify-between"><p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Kernel block latency</p><HardDrive size={12}/></div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4">
+                    <div><p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">p50</p><p className="mt-1 font-black">{metric(selectedServer.ebpf_block_latency_p50_ms, " ms")}</p></div>
+                    <div><p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">p95</p><p className="mt-1 font-black">{metric(selectedServer.ebpf_block_latency_p95_ms, " ms")}</p></div>
+                    <div><p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">p99</p><p className="mt-1 font-black">{metric(selectedServer.ebpf_block_latency_p99_ms, " ms")}</p></div>
+                    <div><p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Max</p><p className="mt-1 font-black">{metric(selectedServer.ebpf_block_latency_max_ms, " ms")}</p></div>
+                  </div>
+                  {selectedServer.ebpf_latency_percentiles_capped ? <p className="mt-2 text-[8px] font-bold text-amber-700">A percentile entered the open-ended &gt;2s bucket, so the displayed percentile is a lower bound.</p> : null}
                 </div>
                 <div className="rounded-xl border border-[var(--admin-line)] p-3">
                   <div className="flex items-center justify-between"><p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">24-hour health trend</p>{historyLoading ? <RefreshCw size={12} className="animate-spin"/> : <Gauge size={12}/>}</div>
