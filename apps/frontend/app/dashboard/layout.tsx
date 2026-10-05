@@ -4,8 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ControlShell } from "../../components/control-shell";
-
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
+import { apiFetch } from "../../lib/platform-api";
 
 type ApplicationState = {
   application?: {
@@ -20,8 +19,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
-    void fetch(`${API}/me/customer-application`, {
-      credentials: "include",
+    void apiFetch("/me/customer-application", {
       cache: "no-store",
     })
       .then(async (response) => {

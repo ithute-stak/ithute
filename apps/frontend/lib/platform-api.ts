@@ -5,6 +5,36 @@ type JsonOptions = { ttlMs?: number; signal?: AbortSignal; force?: boolean };
 
 const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<unknown>>();
+let sessionRefresh: Promise<boolean> | null = null;
+
+async function refreshSession(): Promise<boolean> {
+  if (sessionRefresh) return sessionRefresh;
+
+  sessionRefresh = (async () => {
+    // Central Ithute Auth is the production identity path. Try it first so a
+    // rotating central refresh token is consumed exactly once. Development and
+    // explicitly enabled legacy installations may fall back to local auth.
+    let response = await fetch(`${API}/auth/ithute/refresh`, {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      response = await fetch(`${API}/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+      });
+    }
+    return response.ok;
+  })();
+
+  try {
+    return await sessionRefresh;
+  } finally {
+    sessionRefresh = null;
+  }
+}
 
 export class PlatformApiError extends Error {
   status: number;
@@ -22,12 +52,14 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
   const request = () => fetch(`${API}${path}`, { credentials: "include", ...init });
   let response = await request();
 
-  if (response.status === 401 && path !== "/auth/refresh" && path !== "/auth/ithute/refresh" && path !== "/auth/login") {
-    let refresh = await fetch(`${API}/auth/refresh`, { method: "POST", credentials: "include" });
-    if (!refresh.ok) {
-      refresh = await fetch(`${API}/auth/ithute/refresh`, { method: "POST", credentials: "include" });
-    }
-    if (refresh.ok) response = await request();
+  const refreshPath =
+    path === "/auth/refresh" ||
+    path === "/auth/ithute/refresh" ||
+    path === "/auth/login" ||
+    path === "/auth/ithute/login";
+
+  if (response.status === 401 && !refreshPath && (await refreshSession())) {
+    response = await request();
   }
 
   return response;
