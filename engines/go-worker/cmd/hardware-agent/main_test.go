@@ -97,3 +97,84 @@ func TestParseSmartHealthATA(t *testing.T) {
 		t.Fatalf("temperature not parsed")
 	}
 }
+
+
+func TestSignedEnvelopeVerifiesAndDetectsTamper(t *testing.T) {
+	var sample Sample
+	sample.SchemaVersion = 1
+	sample.SampledAtUnix = 123
+	sample.UptimeSeconds = 456
+	sample.Memory.TotalKB = 1024
+	sample.Memory.AvailableKB = 512
+
+	key := []byte("0123456789abcdef0123456789abcdef")
+	envelope, err := signSample("server-01", key, sample)
+	if err != nil {
+		t.Fatalf("signSample returned error: %v", err)
+	}
+	if envelope.Algorithm != "HMAC-SHA256" || envelope.Signature == "" || envelope.Nonce == "" {
+		t.Fatalf("incomplete envelope: %#v", envelope)
+	}
+	if !verifyEnvelope(envelope, key) {
+		t.Fatal("signed envelope did not verify")
+	}
+	envelope.Payload.Memory.AvailableKB++
+	if verifyEnvelope(envelope, key) {
+		t.Fatal("tampered envelope unexpectedly verified")
+	}
+}
+
+func TestAgentIDValidation(t *testing.T) {
+	for _, value := range []string{"server-01", "vps.prod_1", "tenant:host"} {
+		if !validAgentID(value) {
+			t.Fatalf("expected valid agent id %q", value)
+		}
+	}
+	for _, value := range []string{"", "a", "bad id", "../escape", "x/y"} {
+		if validAgentID(value) {
+			t.Fatalf("expected invalid agent id %q", value)
+		}
+	}
+}
+
+func TestReadSigningKeyRejectsLoosePermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.key")
+	if err := os.WriteFile(path, []byte("0123456789abcdef0123456789abcdef"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSigningKey(path); err == nil {
+		t.Fatal("expected loose key permissions to be rejected")
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	key, err := readSigningKey(path)
+	if err != nil {
+		t.Fatalf("expected private key file to load: %v", err)
+	}
+	if len(key) != 32 {
+		t.Fatalf("key length = %d, want 32", len(key))
+	}
+}
+
+func TestRustValidatorBridge(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "validator")
+	script := "#!/bin/sh\n[ \"$3\" = \"100\" ] || exit 2\nprintf 'ok\\n'\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var sample Sample
+	sample.UptimeSeconds = 10
+	sample.Load.One = 0.5
+	sample.Memory.TotalKB = 100
+	sample.Memory.AvailableKB = 50
+	sample.Pressure.CPUAvg10 = -1
+	sample.Pressure.MemoryAvg10 = -1
+	sample.Pressure.IOAvg10 = -1
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := validateWithRust(ctx, path, sample); err != nil {
+		t.Fatalf("validator bridge returned error: %v", err)
+	}
+}
