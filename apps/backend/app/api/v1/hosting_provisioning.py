@@ -33,7 +33,7 @@ from app.models import (
     User,
 )
 from app.services.hosting_metering import database_allocation_allowed
-from app.services.hosting_placement import select_node
+from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
 from app.services.hosting_edge_handoff import HostingOriginError, reconcile_project_edge
 
 router = APIRouter(tags=["hosting-provisioning"])
@@ -282,6 +282,7 @@ def provision_project(
             storage_mb=payload.database_storage_mb,
             database_engine=payload.database_engine,
             preferred_node_id=project.node_id,
+        tenant_id=tenant_id,
         )
         suffix = secrets.token_hex(4)
         username = f"ith_{db_name[:32]}_{suffix}"[:63]
