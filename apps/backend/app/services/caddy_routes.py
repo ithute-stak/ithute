@@ -10,7 +10,6 @@ from urllib.parse import urlsplit
 import dns.resolver
 import httpx
 
-from app.core.config import settings
 
 _HOST_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9]?))*$")
 
@@ -53,15 +52,16 @@ def _origin(value: str) -> str:
 def expected_edge_ips() -> set[str]:
     configured = os.getenv("ITHUTE_EDGE_PUBLIC_IPS", "").strip()
     values = [item.strip() for item in configured.split(",") if item.strip()]
-    if not values and settings.bootstrap_public_ip:
-        values = [settings.bootstrap_public_ip]
+    bootstrap_public_ip = os.getenv("BOOTSTRAP_PUBLIC_IP", "").strip()
+    if not values and bootstrap_public_ip:
+        values = [bootstrap_public_ip]
     result: set[str] = set()
     for value in values:
         try:
             address = ipaddress.ip_address(value)
         except ValueError as exc:
             raise CaddyRouteError("ITHUTE_EDGE_PUBLIC_IPS contains an invalid address") from exc
-        if settings.environment.lower() == "production" and not address.is_global:
+        if os.getenv("ENVIRONMENT", "development").lower() == "production" and not address.is_global:
             raise CaddyRouteError("Production edge IPs must be globally routable")
         result.add(str(address))
     if not result:
@@ -122,7 +122,7 @@ def _base_caddyfile() -> str:
 
 
 def reload_caddy() -> None:
-    base = settings.caddy_admin_url.rstrip("/")
+    base = os.getenv("CADDY_ADMIN_URL", "http://caddy:2019").rstrip("/")
     content = _base_caddyfile()
     try:
         adapted = httpx.post(
