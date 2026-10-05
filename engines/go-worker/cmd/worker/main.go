@@ -88,6 +88,105 @@ type originProbeRequest struct {
 	TimeoutMS      int    `json:"timeout_ms"`
 }
 
+type pushDeliveryRequest struct {
+    Endpoint     string         `json:"endpoint"`
+    DeliveryID   string         `json:"delivery_id,omitempty"`
+    TTLSeconds   int            `json:"ttl_seconds"`
+    Notification map[string]any `json:"notification"`
+}
+
+type pushEnvelope struct {
+    MessageID    string         `json:"message_id"`
+    DeliveryID   string         `json:"delivery_id,omitempty"`
+    ExpiresAt    int64          `json:"expires_at"`
+    Notification map[string]any `json:"notification"`
+}
+
+type pushDeliveryResponse struct {
+    Engine    string `json:"engine"`
+    MessageID string `json:"message_id"`
+    Queued    bool   `json:"queued"`
+}
+
+type pushBroker struct {
+    mu      sync.Mutex
+    queues  map[string]chan pushEnvelope
+    counter uint64
+}
+
+func newPushBroker() *pushBroker {
+    return &pushBroker{queues: make(map[string]chan pushEnvelope)}
+}
+
+func (b *pushBroker) queue(endpoint string) chan pushEnvelope {
+    b.mu.Lock()
+    defer b.mu.Unlock()
+    queue, ok := b.queues[endpoint]
+    if !ok {
+        queue = make(chan pushEnvelope, 64)
+        b.queues[endpoint] = queue
+    }
+    return queue
+}
+
+func (b *pushBroker) nextID() string {
+    b.mu.Lock()
+    defer b.mu.Unlock()
+    b.counter++
+    return fmt.Sprintf("ithute-%d-%d", time.Now().UnixMilli(), b.counter)
+}
+
+func (b *pushBroker) deliver(request pushDeliveryRequest) (pushDeliveryResponse, error) {
+    endpoint := strings.TrimSpace(request.Endpoint)
+    if len(endpoint) < 16 || len(endpoint) > 8192 {
+        return pushDeliveryResponse{}, errors.New("endpoint must contain 16 to 8192 characters")
+    }
+    if request.TTLSeconds < 1 || request.TTLSeconds > 604800 {
+        return pushDeliveryResponse{}, errors.New("ttl_seconds must be between 1 and 604800")
+    }
+    if request.Notification == nil {
+        return pushDeliveryResponse{}, errors.New("notification is required")
+    }
+    envelope := pushEnvelope{
+        MessageID: b.nextID(),
+        DeliveryID: strings.TrimSpace(request.DeliveryID),
+        ExpiresAt: time.Now().Add(time.Duration(request.TTLSeconds) * time.Second).Unix(),
+        Notification: request.Notification,
+    }
+    select {
+    case b.queue(endpoint) <- envelope:
+        return pushDeliveryResponse{Engine: "go", MessageID: envelope.MessageID, Queued: true}, nil
+    default:
+        return pushDeliveryResponse{}, errors.New("endpoint queue is full")
+    }
+}
+
+func constantTimeTokenMatch(got, expected string) bool {
+    if expected == "" || len(got) != len(expected) {
+        return false
+    }
+    var diff byte
+    for i := 0; i < len(got); i++ {
+        diff |= got[i] ^ expected[i]
+    }
+    return diff == 0
+}
+
+func bearerValue(header string) string {
+    const prefix = "Bearer "
+    if !strings.HasPrefix(header, prefix) {
+        return ""
+    }
+    return strings.TrimSpace(strings.TrimPrefix(header, prefix))
+}
+
+func endpointFromRequest(r *http.Request) string {
+    if value := strings.TrimSpace(r.Header.Get("X-Ithute-Push-Endpoint")); value != "" {
+        return value
+    }
+    return strings.TrimSpace(r.URL.Query().Get("endpoint"))
+}
+
 type originProbeResponse struct {
 	Engine                   string  `json:"engine"`
 	Healthy                  bool    `json:"healthy"`
@@ -105,8 +204,8 @@ type originProbeResponse struct {
 var engineStatus = status{
 	Service:      "ithute-go-worker",
 	Engine:       "go",
-	Version:      "0.3.0",
-	Capabilities: []string{"health", "network-concurrency", "tcp-reachability", "dns-lookup", "origin-http-tls"},
+	Version:      "0.4.0",
+	Capabilities: []string{"health", "network-concurrency", "tcp-reachability", "dns-lookup", "origin-http-tls", "push-delivery", "push-long-poll"},
 }
 
 func writeJSON(w http.ResponseWriter, code int, value any) {
@@ -513,11 +612,71 @@ func runOriginProbe(ctx context.Context, request originProbeRequest) (originProb
 
 func main() {
 	mux := http.NewServeMux()
+	broker := newPushBroker()
+	gatewayToken := strings.TrimSpace(os.Getenv("ITHUTE_PUSH_GATEWAY_TOKEN"))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, engineStatus)
 	})
 	mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, engineStatus)
+	})
+	mux.HandleFunc("POST /v1/push/deliver", func(w http.ResponseWriter, r *http.Request) {
+		if !constantTimeTokenMatch(bearerValue(r.Header.Get("Authorization")), gatewayToken) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		defer r.Body.Close()
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024))
+		decoder.DisallowUnknownFields()
+		var request pushDeliveryRequest
+		if err := decoder.Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		response, err := broker.deliver(request)
+		if err != nil {
+			status := http.StatusUnprocessableEntity
+			if err.Error() == "endpoint queue is full" {
+				status = http.StatusTooManyRequests
+			}
+			writeJSON(w, status, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusAccepted, response)
+	})
+	mux.HandleFunc("GET /v1/push/poll", func(w http.ResponseWriter, r *http.Request) {
+		endpoint := endpointFromRequest(r)
+		if len(endpoint) < 16 || len(endpoint) > 8192 {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid endpoint"})
+			return
+		}
+		timeout := 25 * time.Second
+		if value := strings.TrimSpace(r.URL.Query().Get("timeout_seconds")); value != "" {
+			seconds, err := strconv.Atoi(value)
+			if err != nil || seconds < 1 || seconds > 30 {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "timeout_seconds must be between 1 and 30"})
+				return
+			}
+			timeout = time.Duration(seconds) * time.Second
+		}
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		queue := broker.queue(endpoint)
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-timer.C:
+				w.WriteHeader(http.StatusNoContent)
+				return
+			case message := <-queue:
+				if message.ExpiresAt <= time.Now().Unix() {
+					continue
+				}
+				writeJSON(w, http.StatusOK, message)
+				return
+			}
+		}
 	})
 	mux.HandleFunc("POST /v1/network/probe", func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
