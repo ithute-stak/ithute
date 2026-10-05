@@ -1,4 +1,4 @@
-FROM rust:1.83-slim-bookworm AS rust-engine-build
+FROM rust:1.99-slim-bookworm AS rust-engine-build
 WORKDIR /src
 COPY engines/rust-core/Cargo.toml ./
 COPY engines/rust-core/src ./src
