@@ -2,7 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from app.core.security import hash_token
+from app.core.config import settings
+from app.core.security import create_access_token, hash_token
 from app.models import PasswordResetToken, User, UserSession
 
 PASSWORD = "Phase1-Test-Password!"
@@ -136,3 +137,19 @@ def test_protected_endpoint_rejects_missing_token(client):
     fresh = type(client)(client.app)
     response = fresh.get("/api/v1/tenants")
     assert response.status_code == 401
+
+
+def test_production_disables_legacy_local_auth_surface_by_default(client, platform_owner, monkeypatch):
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "legacy_local_auth_production_enabled", False)
+
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": platform_owner.email, "password": PASSWORD},
+    )
+    assert login.status_code == 404
+
+    legacy_token = create_access_token(str(platform_owner.id), {"sv": platform_owner.session_version})
+    protected = client.get("/api/v1/tenants", headers={"Authorization": f"Bearer {legacy_token}"})
+    assert protected.status_code == 401
+    assert protected.json()["detail"] == "Legacy local authentication is disabled"

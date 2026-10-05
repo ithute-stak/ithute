@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     app_name: str = "Mailbox DNS"
     environment: str = "development"
     platform_mode: str = "bootstrap"
+    platform_bootstrap_signup_enabled: bool = False
+    platform_domain_signup_enabled: bool = True
+    legacy_local_auth_production_enabled: bool = False
     bootstrap_public_ip: str | None = None
     caddy_admin_url: str = "http://caddy:2019"
     caddy_runtime_file: str = "/platform-runtime/Caddyfile"

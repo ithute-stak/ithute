@@ -170,6 +170,7 @@ services:
       POWERDNS_API_URL: http://ithute-dns:8081/api/v1
       POWERDNS_API_KEY: ${ITHUTE_APP_POWERDNS_API_KEY}
       POWERDNS_SERVER_ID: localhost
+      LEGACY_LOCAL_AUTH_PRODUCTION_ENABLED: "false"
       ITHUTE_AUTH_ENABLED: "true"
       ITHUTE_AUTH_ISSUER: ${ITHUTE_AUTH_ISSUER:-https://auth.ithute.co.ls}
       ITHUTE_AUTH_AUDIENCE: mailbox-dns

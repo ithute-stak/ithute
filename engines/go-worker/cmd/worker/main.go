@@ -379,10 +379,6 @@ func tlsVersionName(version uint16) string {
 	}
 }
 
-func stringPtr(value string) *string {
-	return &value
-}
-
 func intPtr(value int) *int {
 	return &value
 }

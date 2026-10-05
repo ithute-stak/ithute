@@ -12,6 +12,13 @@ pub struct ByteStats {
     pub non_ascii: usize,
 }
 
+/// Compute simple byte statistics for a caller-owned buffer.
+///
+/// # Safety
+///
+/// When `len > 0`, `data` must point to at least `len` readable bytes.
+/// `out` must be non-null, properly aligned, and writable for one
+/// `ByteStats` value for the duration of this call.
 #[no_mangle]
 pub unsafe extern "C" fn ithute_rust_byte_stats(
     data: *const u8,
@@ -124,6 +131,13 @@ fn mime_scan(bytes: &[u8]) -> MimeScan {
     }
 }
 
+/// Pre-scan a bounded MIME message into structural counters.
+///
+/// # Safety
+///
+/// When `len > 0`, `data` must point to at least `len` readable bytes.
+/// `out` must be non-null, properly aligned, and writable for one
+/// `MimeScan` value for the duration of this call.
 #[no_mangle]
 pub unsafe extern "C" fn ithute_rust_mime_scan(
     data: *const u8,
@@ -161,8 +175,14 @@ const SHA256_K: [u32; 64] = [
 
 fn sha256_compress(state: &mut [u32; 8], block: &[u8]) {
     let mut w = [0u32; 64];
-    for (index, chunk) in block.chunks_exact(4).take(16).enumerate() {
-        w[index] = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    for (index, word) in w.iter_mut().take(16).enumerate() {
+        let offset = index * 4;
+        *word = u32::from_be_bytes([
+            block[offset],
+            block[offset + 1],
+            block[offset + 2],
+            block[offset + 3],
+        ]);
     }
     for index in 16..64 {
         let s0 = w[index - 15].rotate_right(7) ^ w[index - 15].rotate_right(18) ^ (w[index - 15] >> 3);
@@ -216,8 +236,10 @@ fn sha256_compress(state: &mut [u32; 8], block: &[u8]) {
 
 fn sha256_digest(bytes: &[u8]) -> [u8; 32] {
     let mut state = SHA256_INITIAL;
-    for block in bytes.chunks_exact(64) {
-        sha256_compress(&mut state, block);
+    let full_blocks = bytes.len() / 64;
+    for index in 0..full_blocks {
+        let offset = index * 64;
+        sha256_compress(&mut state, &bytes[offset..offset + 64]);
     }
 
     let remainder = bytes.len() % 64;
@@ -227,8 +249,8 @@ fn sha256_digest(bytes: &[u8]) -> [u8; 32] {
     let bit_len = (bytes.len() as u64).wrapping_mul(8);
     let padded_len = if remainder < 56 { 64 } else { 128 };
     tail[padded_len - 8..padded_len].copy_from_slice(&bit_len.to_be_bytes());
-    for block in tail[..padded_len].chunks_exact(64) {
-        sha256_compress(&mut state, block);
+    for offset in (0..padded_len).step_by(64) {
+        sha256_compress(&mut state, &tail[offset..offset + 64]);
     }
 
     let mut digest = [0u8; 32];
@@ -265,6 +287,13 @@ fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     sha256_digest(&outer)
 }
 
+/// Compute HMAC-SHA256 and write the 32-byte digest to caller memory.
+///
+/// # Safety
+///
+/// When `key_len > 0`, `key` must point to at least `key_len` readable
+/// bytes. When `data_len > 0`, `data` must point to at least `data_len`
+/// readable bytes. `out` must be non-null and writable for at least 32 bytes.
 #[no_mangle]
 pub unsafe extern "C" fn ithute_rust_hmac_sha256(
     key: *const u8,
@@ -291,6 +320,12 @@ pub unsafe extern "C" fn ithute_rust_hmac_sha256(
     0
 }
 
+/// Compute SHA-256 and write the 32-byte digest to caller memory.
+///
+/// # Safety
+///
+/// When `len > 0`, `data` must point to at least `len` readable bytes.
+/// `out` must be non-null and writable for at least 32 bytes.
 #[no_mangle]
 pub unsafe extern "C" fn ithute_rust_sha256(
     data: *const u8,

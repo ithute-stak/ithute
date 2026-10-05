@@ -102,6 +102,7 @@ def _secure_headers(response: Response, request_id: str) -> None:
     response.headers["Referrer-Policy"] = "same-origin"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-site"
 
 
 def _should_publish_webmail_event(request: Request, response: Response) -> bool:
