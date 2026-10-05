@@ -237,6 +237,23 @@ jobs:
           assert body['results'][0]['reachable'] is True
           PY
           curl -fsS -X POST -H 'Content-Type: application/json' \
+            --data '{"source_id":"node-a","targets":[{"id":"node-b","host":"127.0.0.1","port":8080,"timeout_ms":500}],"samples":3,"concurrency":1}' \
+            http://127.0.0.1:18080/v1/network/topology > /tmp/go-network-topology.json
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/go-network-topology.json'))
+          assert body['engine']=='go'
+          assert body['source_id']=='node-a'
+          assert body['samples']==3
+          result=body['results'][0]
+          assert result['id']=='node-b'
+          assert result['attempts']==3
+          assert result['successes']==3
+          assert result['reachable'] is True
+          assert result['connect_loss_percent']==0
+          assert result['latency_min_ms'] <= result['latency_average_ms'] <= result['latency_max_ms']
+          PY
+          curl -fsS -X POST -H 'Content-Type: application/json' \
             --data '{"queries":[{"id":"localhost","name":"localhost","type":"A","timeout_ms":1000}],"concurrency":2}' \
             http://127.0.0.1:18080/v1/dns/lookup > /tmp/go-dns.json
           python3 - <<'PY'
