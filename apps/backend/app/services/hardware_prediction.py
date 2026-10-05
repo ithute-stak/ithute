@@ -29,6 +29,8 @@ class MetricPoint:
     ebpf_block_p50_ms: float | None = None
     ebpf_block_p95_ms: float | None = None
     ebpf_block_p99_ms: float | None = None
+    ecc_corrected_delta: float | None = None
+    ecc_uncorrected_delta: float | None = None
 
 
 @dataclass(frozen=True)
@@ -208,6 +210,8 @@ def derive_rate_features(previous_payload: dict | None, current_payload: dict | 
             "ebpf_block_p50_ms": None,
             "ebpf_block_p95_ms": None,
             "ebpf_block_p99_ms": None,
+            "ecc_corrected_delta": None,
+            "ecc_uncorrected_delta": None,
         }
 
     cpu_keys = ("user", "nice", "system", "idle", "iowait", "irq", "softirq", "steal")
@@ -296,6 +300,15 @@ def derive_rate_features(previous_payload: dict | None, current_payload: dict | 
     ebpf_block_p95_ms = _histogram_percentile(previous_payload, current_payload, 0.95)
     ebpf_block_p99_ms = _histogram_percentile(previous_payload, current_payload, 0.99)
 
+    ecc_corrected_delta = _counter_delta(
+        _mapping_number(previous_payload, "memory_reliability", "corrected_errors"),
+        _mapping_number(current_payload, "memory_reliability", "corrected_errors"),
+    )
+    ecc_uncorrected_delta = _counter_delta(
+        _mapping_number(previous_payload, "memory_reliability", "uncorrected_errors"),
+        _mapping_number(current_payload, "memory_reliability", "uncorrected_errors"),
+    )
+
     return {
         "cpu_iowait_percent": cpu_iowait_percent,
         "cpu_steal_percent": cpu_steal_percent,
@@ -309,6 +322,8 @@ def derive_rate_features(previous_payload: dict | None, current_payload: dict | 
         "ebpf_block_p50_ms": ebpf_block_p50_ms,
         "ebpf_block_p95_ms": ebpf_block_p95_ms,
         "ebpf_block_p99_ms": ebpf_block_p99_ms,
+        "ecc_corrected_delta": ecc_corrected_delta,
+        "ecc_uncorrected_delta": ecc_uncorrected_delta,
     }
 
 
@@ -457,6 +472,22 @@ def predict_hardware_drift(
             current.ebpf_block_p99_ms,
             minimum_scale=1.0,
             slope_scale=0.20,
+        ),
+        _metric(
+            "ecc_corrected_delta",
+            "ECC corrected-error growth",
+            [point.ecc_corrected_delta for point in history],
+            current.ecc_corrected_delta,
+            minimum_scale=0.25,
+            slope_scale=0.05,
+        ),
+        _metric(
+            "ecc_uncorrected_delta",
+            "ECC uncorrected-error growth",
+            [point.ecc_uncorrected_delta for point in history],
+            current.ecc_uncorrected_delta,
+            minimum_scale=0.10,
+            slope_scale=0.02,
         ),
     ]
     available = [metric for metric in metrics if metric is not None]
