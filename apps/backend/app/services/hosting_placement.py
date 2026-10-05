@@ -23,6 +23,8 @@ from app.models import (
     TenantSubscription,
 )
 
+from app.services.resource_manager import node_commitments
+
 HEARTBEAT_GRACE = timedelta(minutes=3)
 
 
@@ -46,48 +48,21 @@ def _json(raw: str | None) -> dict:
 
 
 def _allocated(db: Session, node_id: UUID) -> dict:
-    app_row = db.execute(
-        select(
-            func.coalesce(func.sum(HostingProject.storage_mb), 0),
-            func.coalesce(func.sum(HostingProject.memory_mb), 0),
-            func.coalesce(func.sum(HostingProject.cpu_millicores), 0),
-            func.count(HostingProject.id),
-        ).where(HostingProject.node_id == node_id)
-    ).one()
-    database_storage = int(
-        db.scalar(
-            select(func.coalesce(func.sum(HostingDatabase.storage_mb), 0)).where(
-                HostingDatabase.node_id == node_id,
-                HostingDatabase.status != "deleting",
-            )
-        )
-        or 0
-    )
-    reserved = db.execute(
-        select(
-            func.coalesce(func.sum(HostingProject.storage_mb), 0),
-            func.coalesce(func.sum(HostingProject.memory_mb), 0),
-            func.coalesce(func.sum(HostingProject.cpu_millicores), 0),
-            func.count(HostingProject.id),
-        )
-        .join(HostingFailoverAttempt, HostingFailoverAttempt.project_id == HostingProject.id)
-        .where(
-            HostingFailoverAttempt.target_node_id == node_id,
-            HostingFailoverAttempt.status.in_(["pending", "deploying", "edge_pending"]),
-            HostingProject.node_id != node_id,
-        )
-    ).one()
-    reserved_storage = int(reserved[0])
-    reserved_memory = int(reserved[1])
-    reserved_cpu = int(reserved[2])
+    commitments = node_commitments(db, node_id)
+    allocated = commitments["allocated"]
+    reserved = commitments["reserved"]
+    details = commitments["details"]
     return {
-        "app_storage_mb": int(app_row[0]),
-        "database_storage_mb": database_storage,
-        "failover_reserved_storage_mb": reserved_storage,
-        "storage_mb": int(app_row[0]) + database_storage + reserved_storage,
-        "memory_mb": int(app_row[1]) + reserved_memory,
-        "cpu_millicores": int(app_row[2]) + reserved_cpu,
-        "projects": int(app_row[3]) + int(reserved[3]),
+        "app_storage_mb": details["app_storage_mb"],
+        "database_storage_mb": details["database_storage_mb"],
+        "failover_reserved_storage_mb": details["failover_reserved_storage_mb"],
+        "explicit_reserved_storage_mb": details["explicit_reserved_storage_mb"],
+        "storage_mb": allocated["storage_mb"] + reserved["storage_mb"],
+        "memory_mb": allocated["memory_mb"] + reserved["memory_mb"],
+        "cpu_millicores": allocated["cpu_millicores"] + reserved["cpu_millicores"],
+        "projects": details["project_count"] + details["failover_reserved_projects"],
+        "allocated": allocated,
+        "reserved": reserved,
     }
 
 
