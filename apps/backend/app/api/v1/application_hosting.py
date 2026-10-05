@@ -337,6 +337,7 @@ def placement_preview(
     cpu_millicores: int = 500,
     database_engine: str | None = None,
     preferred_region: str | None = None,
+    tenant_id: UUID | None = None,
     db: Session = Depends(get_db),
     current: User = Depends(require_platform_owner),
 ):
@@ -350,6 +351,7 @@ def placement_preview(
         cpu_millicores=max(0, cpu_millicores),
         database_engine=database_engine,
         preferred_region=preferred_region,
+        tenant_id=tenant_id,
     )
     return {
         "items": [
@@ -595,6 +597,7 @@ def create_hosting_project(
         cpu_millicores=payload.cpu_millicores,
         preferred_node_id=preferred_node_id,
         preferred_region=payload.preferred_region,
+    tenant_id=tenant_id,
     )
     now = datetime.now(timezone.utc)
     project = HostingProject(
@@ -625,6 +628,13 @@ def create_hosting_project(
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Project slug or hostname is already in use") from exc
+    if placement["infrastructure_server_id"]:
+        sync_tenant_infrastructure_allocation(
+            db,
+            tenant_id=tenant_id,
+            server_id=UUID(placement["infrastructure_server_id"]),
+            actor_user_id=current.id,
+        )
     _audit(
         db,
         current,

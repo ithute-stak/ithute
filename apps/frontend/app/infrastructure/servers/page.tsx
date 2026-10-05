@@ -33,6 +33,8 @@ type PlacementCandidate = {
   telemetry: { cpu_percent?: number | null; memory_percent?: number | null; disk_percent?: number | null };
   location: { requested_region?: string | null; server_region?: string | null; region_match: boolean; region_penalty: number };
   infrastructure: { server_id?: string | null; server_name?: string | null; hostname?: string | null; provider?: string | null; region?: string | null };
+  security: { score?: number | null; posture: string };
+  commercial: { profile_configured: boolean; estimated_incremental_cost_minor: number; estimated_margin_bps?: number | null; target_margin_bps: number; penalty: number };
 };
 
 type InfrastructureServer = {
@@ -292,7 +294,7 @@ export default function InfrastructureServersPage() {
 
       <section className="surface-card p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div><div className="flex items-center gap-2"><Sparkles size={16} className="text-[#285b55]"/><h2 className="text-sm font-black">Smart workload placement</h2></div><p className="mt-1 max-w-3xl text-[10px] leading-5 text-[var(--admin-muted)]">Preview the exact scheduler ranking before allocating a workload. Lower scores are better; Ithute weighs live CPU/RAM/disk pressure, sellable capacity, workload capability, server health and preferred region.</p></div>
+          <div><div className="flex items-center gap-2"><Sparkles size={16} className="text-[#285b55]"/><h2 className="text-sm font-black">Smart workload placement</h2></div><p className="mt-1 max-w-3xl text-[10px] leading-5 text-[var(--admin-muted)]">Preview the exact scheduler ranking before allocating a workload. Lower scores are better; Ithute weighs live CPU/RAM/disk pressure, sellable capacity, workload capability, server health, security posture, infrastructure economics and preferred region.</p></div>
           <button className="btn-secondary" disabled={placementLoading} onClick={() => void loadPlacement()}><RefreshCw size={13}/>{placementLoading ? "Scoring…" : "Recalculate"}</button>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
@@ -309,6 +311,7 @@ export default function InfrastructureServersPage() {
             <div className="mt-3 flex items-center justify-between gap-2"><span className="text-[9px] font-black">Placement score {candidate.score.toFixed(1)}</span><span className="flex items-center gap-1 text-[9px] text-[var(--admin-muted)]"><MapPin size={11}/>{candidate.location.server_region || "region unknown"}{candidate.location.region_match ? " · preferred" : ""}</span></div>
             <div className="mt-3 grid grid-cols-3 gap-2 text-[8px]"><div className="rounded-lg bg-[#f5f8f6] p-2"><b>{gb(candidate.available.storage_mb)}</b><br/>disk free</div><div className="rounded-lg bg-[#f5f8f6] p-2"><b>{candidate.available.memory_mb} MB</b><br/>RAM free</div><div className="rounded-lg bg-[#f5f8f6] p-2"><b>{(candidate.available.cpu_millicores / 1000).toFixed(1)}</b><br/>CPU free</div></div>
             <div className="mt-3 grid grid-cols-3 gap-2 text-[8px]"><span>CPU <b>{candidate.telemetry.cpu_percent ?? "—"}%</b></span><span>RAM <b>{candidate.telemetry.memory_percent ?? "—"}%</b></span><span>Disk <b>{candidate.telemetry.disk_percent ?? "—"}%</b></span></div>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-[8px]"><span>Security <b>{candidate.security.score ?? "—"}/100</b></span><span>Cost est. <b>{"M " + (candidate.commercial.estimated_incremental_cost_minor / 100).toFixed(2)}</b></span><span>Commercial <b>{candidate.commercial.profile_configured ? "priced" : "unpriced"}</b></span></div>
             {candidate.reasons.length ? <p className="mt-3 text-[9px] leading-4 text-red-700">{candidate.reasons.join(" · ")}</p> : <p className="mt-3 text-[9px] leading-4 text-emerald-700">Healthy and capable of accepting this workload.</p>}
           </article>)}
           {!placementLoading && !placement.length ? <div className="rounded-2xl border border-dashed border-[#d6dfda] p-5 text-xs text-[var(--admin-muted)]">No hosting-node placement candidates are registered yet.</div> : null}

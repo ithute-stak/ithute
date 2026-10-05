@@ -17,7 +17,7 @@ from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
 from app.models import AuditLog, HostingDatabase, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingProject, HostingSource, User
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
-from app.services.hosting_placement import select_node
+from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
 
 router = APIRouter(tags=["shared-hosting"])
 
@@ -225,6 +225,7 @@ def create_hosting_database(tenant_id: UUID, payload: HostingDatabaseCreate, db:
             storage_mb=payload.storage_mb,
             database_engine=payload.engine,
             preferred_node_id=project.node_id,
+        tenant_id=tenant_id,
         )
         placement_mode = "project_colocation"
     else:
@@ -234,6 +235,7 @@ def create_hosting_database(tenant_id: UUID, payload: HostingDatabaseCreate, db:
             storage_mb=payload.storage_mb,
             database_engine=payload.engine,
             preferred_node_id=payload.node_id if current.is_platform_owner else None,
+        tenant_id=tenant_id,
         )
         placement_mode = "manual_override" if payload.node_id else "automatic"
     database_name = _safe_db_name(payload.name)
@@ -263,6 +265,13 @@ def create_hosting_database(tenant_id: UUID, payload: HostingDatabaseCreate, db:
     )
     db.add(row)
     db.flush()
+    if placement["infrastructure_server_id"]:
+        sync_tenant_infrastructure_allocation(
+            db,
+            tenant_id=tenant_id,
+            server_id=UUID(placement["infrastructure_server_id"]),
+            actor_user_id=current.id,
+        )
     _audit(db, current, tenant_id, "hosting.database.create", "hosting_database", row.id, {"engine": row.engine, "database_name": row.database_name, "project_id": str(row.project_id) if row.project_id else None, "node_id": str(node.id), "storage_mb": row.storage_mb, "placement_mode": placement_mode, "placement_score": placement["score"], "placement_server_id": placement["infrastructure_server_id"]})
     db.commit()
     db.refresh(row)
