@@ -170,7 +170,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: "1.23"
-          cache-dependency-path: engines/go-worker/go.sum
+          cache-dependency-path: engines/go-worker/go.mod
 
       - name: Run database router race and chaos tests
         working-directory: engines/go-worker
