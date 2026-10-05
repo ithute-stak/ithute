@@ -10,6 +10,7 @@ import redis.asyncio as redis
 from fastapi import WebSocket
 
 from .config import get_settings
+from .native_engine import analyze_realtime
 
 
 class ConnectionLimitError(RuntimeError):
@@ -81,10 +82,20 @@ class RealtimeHub:
     async def _publish_go(self, application_id: str, event: dict) -> int:
         if not self.settings.go_gateway_token:
             return 0
+        recipients = [str(value) for value in event.get("recipients", [])]
+        route_key = application_id + ":" + (
+            "broadcast" if event.get("broadcast_connected") else ",".join(sorted(recipients))
+        )
+        analysis = await analyze_realtime(
+            self.settings,
+            route_key=route_key,
+            frame=event,
+        )
         payload = {
             "application_id": application_id,
-            "recipients": [str(value) for value in event.get("recipients", [])],
+            "recipients": recipients,
             "broadcast_connected": bool(event.get("broadcast_connected")),
+            "routing_shard": int(analysis["shard"]),
             "event": event,
         }
         try:
