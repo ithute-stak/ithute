@@ -164,6 +164,7 @@ images_present() {
 candidate_images_present() {
   local tag="$1"
   images_present "$tag" || return 1
+  docker image inspect "ithute-go-worker:$tag" >/dev/null 2>&1 || return 1
   docker image inspect "ithute-java-worker:$tag" >/dev/null 2>&1 || return 1
 }
 
@@ -249,6 +250,9 @@ verify_core_health() {
   wait_service ithute-dns "python3 -c 'import os,urllib.request; request=urllib.request.Request(\"http://127.0.0.1:8081/api/v1/servers/localhost\", headers={\"X-API-Key\": os.environ[\"PDNS_AUTH_API_KEY\"]}); urllib.request.urlopen(request, timeout=3).read()'" || return 1
   wait_service ithute-auth "curl -fsS http://127.0.0.1:8080/healthz | grep -q ithute-auth" || return 1
   wait_service ithute-app-api "curl -fsS http://127.0.0.1:8000/health/ready | grep -q '\"status\":\"ready\"'" || return 1
+  if compose config --services | grep -Fxq ithute-go-worker; then
+    wait_service ithute-go-worker "wget -qO- http://127.0.0.1:8080/healthz | grep -q ithute-go-worker" || return 1
+  fi
   if compose config --services | grep -Fxq ithute-java-worker; then
     wait_service ithute-java-worker "wget -qO- http://127.0.0.1:8080/healthz | grep -q ithute-java-worker" || return 1
   fi

@@ -18,7 +18,8 @@ set +a
 umask 077
 tmp_json="$(mktemp)"
 tmp_conf="$(mktemp)"
-trap 'rm -f "$tmp_json" "$tmp_conf"' EXIT
+tmp_grants="$(mktemp)"
+trap 'rm -f "$tmp_json" "$tmp_conf" "$tmp_grants"' EXIT
 
 curl --connect-timeout 5 \
   --max-time 15 \
@@ -54,6 +55,30 @@ for peer in data.get("peers", []):
 pathlib.Path(sys.argv[1]).write_text("\n".join(lines), encoding="utf-8")
 PY
 
+python3 - "$tmp_json" "$tmp_grants" <<'PY'
+import ipaddress
+import json
+import pathlib
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+network = ipaddress.ip_network(str(data["subnet"]), strict=False)
+rows = []
+for grant in data.get("grants", []):
+    if not isinstance(grant, dict):
+        continue
+    source = ipaddress.ip_address(str(grant.get("source_ip") or ""))
+    target = ipaddress.ip_address(str(grant.get("target_ip") or ""))
+    protocol = str(grant.get("protocol") or "").lower()
+    port = int(grant.get("port") or 0)
+    if source not in network or target not in network or source == target:
+        raise SystemExit("edge policy contains an invalid peer address")
+    if protocol not in {"tcp", "udp"} or not 1 <= port <= 65535:
+        raise SystemExit("edge policy contains an invalid protocol or port")
+    rows.append(f"{source}\t{target}\t{protocol}\t{port}")
+pathlib.Path(sys.argv[2]).write_text("\n".join(rows) + ("\n" if rows else ""), encoding="utf-8")
+PY
+
 install -d -m 0700 "$(dirname "$CONFIG_FILE")"
 install -m 0600 "$tmp_conf" "$CONFIG_FILE"
 
@@ -64,3 +89,24 @@ else
   ip address replace "$edge_cidr" dev ithute0
   wg syncconf ithute0 <(wg-quick strip "$CONFIG_FILE")
 fi
+
+MESH_CHAIN="ITHUTE_WG_MESH"
+iptables -N "$MESH_CHAIN" >/dev/null 2>&1 || true
+iptables -C FORWARD -i ithute0 -o ithute0 -j "$MESH_CHAIN" >/dev/null 2>&1 ||
+  iptables -I FORWARD 1 -i ithute0 -o ithute0 -j "$MESH_CHAIN"
+iptables -F "$MESH_CHAIN"
+iptables -A "$MESH_CHAIN" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+TAB="$(printf '\\t')"
+while IFS="$TAB" read -r source target protocol port; do
+  [ -n "$source" ] || continue
+  iptables -A "$MESH_CHAIN" \
+    -s "$source/32" \
+    -d "$target/32" \
+    -p "$protocol" \
+    --dport "$port" \
+    -m conntrack --ctstate NEW,ESTABLISHED \
+    -j ACCEPT
+done < "$tmp_grants"
+
+iptables -A "$MESH_CHAIN" -j DROP

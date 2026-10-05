@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
-from app.services.engine_router import execute_binary, execute_network, routing_status
+from app.services.engine_router import execute_binary, execute_hmac_sha256, execute_network, routing_status
 from app.services.managed_network import update_peer_telemetry
 from app.models import (
     AuditLog,
@@ -25,10 +25,12 @@ from app.models import (
     HostingProject,
     InfrastructureAgentCommand,
     InfrastructureContainerSnapshot,
+    InfrastructureNetworkGrant,
     InfrastructureSecuritySnapshot,
     InfrastructureServer,
     InfrastructureServerAgent,
     InfrastructureTelemetrySnapshot,
+    InfrastructureWireGuardPeer,
     MailNode,
     Mailbox,
     User,
@@ -870,6 +872,92 @@ def _server_agent_from_token(db: Session, token: str | None) -> tuple[Infrastruc
     return agent, server
 
 
+def _cluster_node_out(db: Session, server: InfrastructureServer, *, self_server_id: UUID) -> dict:
+    """Return the sanitized node view shared with trusted Ithute server agents.
+
+    Cluster awareness deliberately contains operational discovery data only.
+    It never exposes agent credentials, environment variables, private keys,
+    command queues, audit history, or customer secrets.
+    """
+    view = _server_out(db, server)
+    peer = db.scalar(
+        select(InfrastructureWireGuardPeer).where(
+            InfrastructureWireGuardPeer.server_id == server.id,
+            InfrastructureWireGuardPeer.status == "active",
+        )
+    )
+    telemetry = view["agent"]["telemetry"] if isinstance(view["agent"].get("telemetry"), dict) else {}
+    docker = telemetry.get("docker") if isinstance(telemetry.get("docker"), dict) else {}
+    raw_containers = docker.get("containers") if isinstance(docker.get("containers"), list) else []
+    containers: list[dict] = []
+    for item in raw_containers[:250]:
+        if not isinstance(item, dict):
+            continue
+        labels = item.get("labels") if isinstance(item.get("labels"), dict) else {}
+        containers.append({
+            "name": str(item.get("name") or "")[:160],
+            "image": str(item.get("image") or "")[:500],
+            "state": str(item.get("state") or "")[:32],
+            "project_id": str(labels.get("ithute.project_id") or "")[:80] or None,
+        })
+
+    resource_usage = _telemetry_values(telemetry)
+    capabilities = view["agent"]["capabilities"] if isinstance(view["agent"].get("capabilities"), dict) else {}
+    safe_capabilities = {
+        str(key)[:80]: value
+        for key, value in capabilities.items()
+        if isinstance(value, (bool, int, float, str)) and len(str(key)) <= 80
+    }
+
+    return {
+        "server_id": view["id"],
+        "self": server.id == self_server_id,
+        "name": view["name"],
+        "hostname": view["hostname"],
+        "region": view["region"],
+        "provider": view["provider"],
+        "roles": view["roles"],
+        "status": view["status"],
+        "health": view["health"],
+        "online": bool(view["agent"]["online"]),
+        "last_seen_at": view["agent"]["last_seen_at"],
+        "private_network": {
+            "interface": "ithute0",
+            "ipv4": peer.assigned_ipv4 if peer else None,
+            "connected": bool(
+                peer
+                and peer.last_handshake_at
+                and _fresh(peer.last_handshake_at)
+            ),
+            "last_handshake_at": peer.last_handshake_at.isoformat() if peer and peer.last_handshake_at else None,
+        },
+        "workloads": view["workloads"],
+        "hosting": {
+            "linked": view["hosting"]["linked"],
+            "status": view["hosting"]["status"],
+            "online": view["hosting"]["online"],
+            "accepts_new_projects": view["hosting"]["accepts_new_projects"],
+            "capacity": view["hosting"]["capacity"],
+        },
+        "mail": {
+            "linked": view["mail"]["linked"],
+            "status": view["mail"]["status"],
+            "online": view["mail"]["online"],
+            "ready": view["mail"]["ready"],
+        },
+        "resource_usage": resource_usage,
+        "capabilities": safe_capabilities,
+        "docker": {
+            "installed": bool(docker.get("installed")),
+            "reachable": bool(docker.get("reachable")),
+            "version": str(docker.get("version") or "")[:80] or None,
+            "containers_running": int(docker.get("containers_running") or 0),
+            "containers_total": int(docker.get("containers_total") or 0),
+            "containers": containers,
+        },
+    }
+
+
 @router.post("/servers/{server_id}/agent-token")
 def rotate_server_agent_token(server_id: UUID, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     server = db.get(InfrastructureServer, server_id)
@@ -903,6 +991,112 @@ def rotate_server_agent_token(server_id: UUID, db: Session = Depends(get_db), cu
         "token": raw,
         "token_hint": raw[:18],
         "warning": "This credential is shown once. Store it only on the Ithute Server Agent host.",
+    }
+
+
+def _cluster_reachability(servers: list[InfrastructureServer]) -> tuple[str, dict[str, dict]]:
+    targets: list[dict] = []
+    labels: dict[str, tuple[str, str]] = {}
+    for server in servers:
+        for target in _network_probe_targets(server):
+            if len(targets) >= 64:
+                break
+            targets.append(target)
+            labels[str(target["id"])] = (str(server.id), str(target["id"]).rsplit(":", 1)[-1])
+        if len(targets) >= 64:
+            break
+
+    if not targets:
+        return "python", {}
+
+    execution = execute_network(targets, concurrency=min(24, len(targets)))
+    grouped: dict[str, dict] = {}
+    results = execution.value.get("results", []) if isinstance(execution.value, dict) else []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        mapping = labels.get(str(item.get("id") or ""))
+        if mapping is None:
+            continue
+        server_id, service = mapping
+        node = grouped.setdefault(server_id, {"services": {}, "reachable": True, "checked": 0})
+        reachable = bool(item.get("reachable"))
+        node["services"][service] = {
+            "reachable": reachable,
+            "latency_ms": item.get("latency_ms"),
+        }
+        node["reachable"] = bool(node["reachable"] and reachable)
+        node["checked"] += 1
+    return execution.engine, grouped
+
+
+@router.get("/agent/cluster-state")
+def infrastructure_agent_cluster_state(
+    x_ithute_server_agent: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    _agent, current_server = _server_agent_from_token(db, x_ithute_server_agent)
+    rows = db.scalars(
+        select(InfrastructureServer)
+        .where(InfrastructureServer.status != "disabled")
+        .order_by(InfrastructureServer.name.asc())
+    ).all()
+    reachability_engine, reachability = _cluster_reachability(list(rows))
+    nodes = [_cluster_node_out(db, row, self_server_id=current_server.id) for row in rows]
+    node_by_id = {str(node["server_id"]): node for node in nodes}
+    for node in nodes:
+        live = reachability.get(str(node["server_id"]), {"services": {}, "reachable": None, "checked": 0})
+        node["reachability"] = {
+            "engine": reachability_engine,
+            "reachable": live["reachable"],
+            "checked": live["checked"],
+            "services": live["services"],
+        }
+        node["communication"] = {"outbound": [], "inbound": []}
+
+    grants = db.scalars(
+        select(InfrastructureNetworkGrant)
+        .where(InfrastructureNetworkGrant.enabled.is_(True))
+        .order_by(InfrastructureNetworkGrant.created_at.asc())
+    ).all()
+    for grant in grants:
+        source_id = str(grant.source_server_id)
+        target_id = str(grant.target_server_id)
+        source_node = node_by_id.get(source_id)
+        target_node = node_by_id.get(target_id)
+        if source_node is None or target_node is None:
+            continue
+        flow = {
+            "peer_server_id": target_id,
+            "peer_name": target_node["name"],
+            "protocol": grant.protocol,
+            "port": grant.port,
+            "service": grant.service,
+        }
+        source_node["communication"]["outbound"].append(flow)
+        target_node["communication"]["inbound"].append({
+            **flow,
+            "peer_server_id": source_id,
+            "peer_name": source_node["name"],
+        })
+    generated_at = datetime.now(timezone.utc).isoformat()
+    unsigned = {
+        "version": 1,
+        "generated_at": generated_at,
+        "self_server_id": str(current_server.id),
+        "node_count": len(nodes),
+        "reachability_engine": reachability_engine,
+        "nodes": nodes,
+    }
+    canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = execute_binary("crypto.sha256", canonical)
+    signature = execute_hmac_sha256((x_ithute_server_agent or "").encode("utf-8"), canonical)
+    return {
+        **unsigned,
+        "fingerprint_sha256": str(digest.value),
+        "fingerprint_engine": digest.engine,
+        "signature_hmac_sha256": str(signature.value),
+        "signature_engine": signature.engine,
     }
 
 

@@ -8,7 +8,7 @@ MIN_FREE_KB="${ITHUTE_MIN_FREE_KB:-15728640}"
 REPO_RAW="https://raw.githubusercontent.com/ithute-stak/ithute"
 REPO_GIT="https://github.com/ithute-stak/ithute.git"
 IMAGES=(ithute-web ithute-app-api ithute-auth ithute-push ithute-realtime)
-CANDIDATE_ONLY_IMAGES=(ithute-java-worker)
+CANDIDATE_ONLY_IMAGES=(ithute-go-worker ithute-java-worker)
 
 if [ "$RELEASE_SELECTOR" = "latest" ]; then
   echo "[Ithute] Resolving latest main release"

@@ -138,6 +138,14 @@ if command -v docker >/dev/null 2>&1 && [[ -f "$COMPOSE_FILE" ]]; then
     pass "Caddy admin port 2019 is not host-published"
   fi
 
+  if docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -Fxq ithute-go-worker; then
+    if docker compose -f "$COMPOSE_FILE" ps --status running ithute-go-worker 2>/dev/null | grep -q ithute-go-worker; then
+      pass "Go network engine is running"
+    else
+      fail "Go network engine is not running"
+    fi
+  fi
+
   if docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -Fxq ithute-java-worker; then
     if docker compose -f "$COMPOSE_FILE" ps --status running ithute-java-worker 2>/dev/null | grep -q ithute-java-worker; then
       pass "Java enterprise engine is running"

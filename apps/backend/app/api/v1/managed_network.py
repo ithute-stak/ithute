@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
-from app.models import HostingNode, HostingNodeAgent, InfrastructureServer, InfrastructureWireGuardPeer, User
+from app.models import HostingNode, HostingNodeAgent, InfrastructureNetworkGrant, InfrastructureServer, InfrastructureWireGuardPeer, User
 from app.services.managed_network import allocate_peer, enrollment_response, peer_list
 
 router = APIRouter(tags=["managed-private-network"])
@@ -21,6 +21,14 @@ router = APIRouter(tags=["managed-private-network"])
 
 class NetworkEnroll(BaseModel):
     public_key: str = Field(min_length=40, max_length=128)
+
+
+class NetworkGrantCreate(BaseModel):
+    source_server_id: UUID
+    target_server_id: UUID
+    protocol: str = Field(pattern=r"^(tcp|udp)$")
+    port: int = Field(ge=1, le=65535)
+    service: str = Field(min_length=1, max_length=80)
 
 
 def _hosting_agent(db: Session, token: str | None) -> tuple[HostingNodeAgent, HostingNode]:
@@ -50,6 +58,107 @@ def enroll_managed_network(
     agent.origin_bind_ip = peer.assigned_ipv4
     db.commit()
     return enrollment_response(peer)
+
+
+def _grant_out(db: Session, row: InfrastructureNetworkGrant) -> dict:
+    source = db.get(InfrastructureServer, row.source_server_id)
+    target = db.get(InfrastructureServer, row.target_server_id)
+    source_peer = db.scalar(select(InfrastructureWireGuardPeer).where(InfrastructureWireGuardPeer.server_id == row.source_server_id))
+    target_peer = db.scalar(select(InfrastructureWireGuardPeer).where(InfrastructureWireGuardPeer.server_id == row.target_server_id))
+    return {
+        "id": str(row.id),
+        "source_server_id": str(row.source_server_id),
+        "source_name": source.name if source else None,
+        "source_ipv4": source_peer.assigned_ipv4 if source_peer and source_peer.status == "active" else None,
+        "target_server_id": str(row.target_server_id),
+        "target_name": target.name if target else None,
+        "target_ipv4": target_peer.assigned_ipv4 if target_peer and target_peer.status == "active" else None,
+        "protocol": row.protocol,
+        "port": row.port,
+        "service": row.service,
+        "enabled": row.enabled,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.get("/platform/infrastructure/private-network/grants")
+def list_private_network_grants(
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    rows = db.scalars(
+        select(InfrastructureNetworkGrant)
+        .order_by(InfrastructureNetworkGrant.created_at.asc())
+    ).all()
+    return {"items": [_grant_out(db, row) for row in rows]}
+
+
+@router.post("/platform/infrastructure/private-network/grants", status_code=201)
+def create_private_network_grant(
+    payload: NetworkGrantCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    if payload.source_server_id == payload.target_server_id:
+        raise HTTPException(status_code=422, detail="Source and target servers must be different")
+    source = db.get(InfrastructureServer, payload.source_server_id)
+    target = db.get(InfrastructureServer, payload.target_server_id)
+    if source is None or target is None:
+        raise HTTPException(status_code=404, detail="Source or target infrastructure server not found")
+    if source.status != "active" or target.status != "active":
+        raise HTTPException(status_code=409, detail="Both servers must be active")
+    for server_id, label in ((source.id, "source"), (target.id, "target")):
+        peer = db.scalar(
+            select(InfrastructureWireGuardPeer).where(
+                InfrastructureWireGuardPeer.server_id == server_id,
+                InfrastructureWireGuardPeer.status == "active",
+            )
+        )
+        if peer is None:
+            raise HTTPException(status_code=409, detail=f"The {label} server is not enrolled in the managed private network")
+
+    existing = db.scalar(
+        select(InfrastructureNetworkGrant).where(
+            InfrastructureNetworkGrant.source_server_id == source.id,
+            InfrastructureNetworkGrant.target_server_id == target.id,
+            InfrastructureNetworkGrant.protocol == payload.protocol,
+            InfrastructureNetworkGrant.port == payload.port,
+        )
+    )
+    if existing is not None:
+        existing.service = payload.service.strip()
+        existing.enabled = True
+        db.commit()
+        db.refresh(existing)
+        return _grant_out(db, existing)
+
+    row = InfrastructureNetworkGrant(
+        source_server_id=source.id,
+        target_server_id=target.id,
+        protocol=payload.protocol,
+        port=payload.port,
+        service=payload.service.strip(),
+        enabled=True,
+        created_by_user_id=current.id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _grant_out(db, row)
+
+
+@router.delete("/platform/infrastructure/private-network/grants/{grant_id}", status_code=204)
+def delete_private_network_grant(
+    grant_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    row = db.get(InfrastructureNetworkGrant, grant_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Private network grant not found")
+    db.delete(row)
+    db.commit()
 
 
 @router.get("/platform/infrastructure/private-network")
@@ -93,4 +202,30 @@ def edge_peer_configuration(
     supplied = (x_ithute_wireguard_reconciler or "").strip()
     if not expected or not supplied or not hmac.compare_digest(expected, supplied):
         raise HTTPException(status_code=401, detail="Private-network reconciler credential required")
-    return peer_list(db)
+    config = peer_list(db)
+    grants = db.scalars(
+        select(InfrastructureNetworkGrant)
+        .where(InfrastructureNetworkGrant.enabled.is_(True))
+        .order_by(InfrastructureNetworkGrant.created_at.asc())
+    ).all()
+    peer_by_server = {
+        row.server_id: row
+        for row in db.scalars(
+            select(InfrastructureWireGuardPeer).where(InfrastructureWireGuardPeer.status == "active")
+        ).all()
+    }
+    config["grants"] = [
+        {
+            "id": str(row.id),
+            "source_server_id": str(row.source_server_id),
+            "source_ip": peer_by_server[row.source_server_id].assigned_ipv4,
+            "target_server_id": str(row.target_server_id),
+            "target_ip": peer_by_server[row.target_server_id].assigned_ipv4,
+            "protocol": row.protocol,
+            "port": row.port,
+            "service": row.service,
+        }
+        for row in grants
+        if row.source_server_id in peer_by_server and row.target_server_id in peer_by_server
+    ]
+    return config

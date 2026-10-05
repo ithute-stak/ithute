@@ -50,3 +50,9 @@ sudo ITHUTE_APP_DIR=/home/administrator/ithute-platform \
 `scripts/verify-production-readiness.sh` validates the edge interface, address,
 public key, listen port, firewall service, reconciler timer and advertised
 endpoint whenever the managed-network settings exist in production.
+
+## Policy-controlled peer communication
+
+Ithute does not enable an unrestricted WireGuard full mesh. The edge enables IPv4 forwarding but routes peer-to-peer traffic through the dedicated `ITHUTE_WG_MESH` iptables chain. The chain allows established replies plus only explicit service grants created in the control plane (source server, target server, protocol and port); all other `ithute0 -> ithute0` forwarding is dropped.
+
+This lets one VPS use a service on another VPS—for example PostgreSQL on TCP/5432—without giving every node arbitrary access to every private port. The reconciler rebuilds the allowlist from the authenticated control-plane policy on every run.

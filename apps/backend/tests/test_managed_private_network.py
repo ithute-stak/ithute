@@ -46,3 +46,27 @@ def test_managed_network_contract_exists():
     assert "PrivateKey" in edge_reconcile
     assert "Managed private network" in frontend
     assert "last handshake" in frontend.lower()
+
+
+def test_private_network_service_grants_are_default_deny_and_edge_enforced():
+    root = Path(__file__).parents[2]
+    repo = root.parents[1]
+    api = (root / "app" / "api" / "v1" / "managed_network.py").read_text(encoding="utf-8")
+    model = (root / "app" / "models" / "infrastructure.py").read_text(encoding="utf-8")
+    migration = (root / "alembic" / "versions" / "0076_infrastructure_network_grants.py").read_text(encoding="utf-8")
+    reconcile = (repo / "infrastructure" / "wireguard-edge" / "reconcile.sh").read_text(encoding="utf-8")
+    firewall = (repo / "infrastructure" / "wireguard-edge" / "firewall.sh").read_text(encoding="utf-8")
+    bootstrap = (repo / "infrastructure" / "wireguard-edge" / "bootstrap.sh").read_text(encoding="utf-8")
+
+    assert "class InfrastructureNetworkGrant" in model
+    assert "infrastructure_network_grants" in migration
+    assert '@router.post("/platform/infrastructure/private-network/grants"' in api
+    assert '@router.delete("/platform/infrastructure/private-network/grants/{grant_id}"' in api
+    assert '"source_ip"' in api and '"target_ip"' in api
+    assert 'MESH_CHAIN="ITHUTE_WG_MESH"' in firewall
+    assert 'iptables -A "$MESH_CHAIN" -j DROP' in firewall
+    assert '--ctstate ESTABLISHED,RELATED -j ACCEPT' in firewall
+    assert '--ctstate NEW,ESTABLISHED' in reconcile
+    assert '-s "$source/32"' in reconcile
+    assert '-d "$target/32"' in reconcile
+    assert 'net.ipv4.ip_forward=1' in bootstrap

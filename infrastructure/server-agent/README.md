@@ -39,3 +39,11 @@ Version 3 adds read-only security evidence inspired by the consumed VPS control-
 - availability of restic/rclone backup tooling.
 
 The agent reports evidence only. The Ithute control plane performs the authoritative scoring and recommendations. Security findings are canonicalized and fingerprinted through Ithute's Rust SHA-256 engine, while role-aware network readiness probes use the Go worker. Java and C++ continue to serve their specialist enterprise/XML and benchmarked native workloads through the common engine router.
+
+## Cluster awareness
+
+Every trusted server agent now downloads a sanitized cluster directory from the Ithute control plane and stores it at `/var/lib/ithute/server-agent/cluster-state.json` by default. This lets each VPS know which other Ithute nodes exist, their roles, online/health state, WireGuard private address, workload counts, resource pressure, capabilities, and container/service inventory.
+
+Cluster awareness is intentionally **read-only discovery**, not peer shell access. The directory never contains agent tokens, passwords, environment variables, private keys, customer secrets, or arbitrary command capability. Node-to-node application traffic should continue to use the managed WireGuard network and explicit service authorization.
+
+The cache is replaced atomically on each agent cycle, so local automation can read a consistent snapshot even if the control plane is temporarily unreachable.

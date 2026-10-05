@@ -122,3 +122,54 @@ def test_security_readiness_donor_contract_exists():
     assert "Production readiness & host security" in frontend
     assert "Java remains the enterprise/XML engine" in frontend
     assert "C++ remains the native blob/fingerprint accelerator" in frontend
+
+
+def test_cluster_awareness_contract_exists_and_remains_read_only():
+    root = Path(__file__).parents[2]
+    api = (root / "app" / "api" / "v1" / "infrastructure_servers.py").read_text(encoding="utf-8")
+    repo = root.parents[1]
+    agent = (repo / "infrastructure" / "server-agent" / "agent.py").read_text(encoding="utf-8")
+    service = (repo / "infrastructure" / "server-agent" / "ithute-server-agent.service").read_text(encoding="utf-8")
+    readme = (repo / "infrastructure" / "server-agent" / "README.md").read_text(encoding="utf-8")
+
+    assert '@router.get("/agent/cluster-state")' in api
+    assert '"fingerprint_sha256"' in api
+    assert '"private_network"' in api
+    assert '"workloads"' in api
+    assert '"resource_usage"' in api
+    assert '"docker"' in api
+    assert "_cluster_reachability" in api
+    assert "execute_network(targets" in api
+    assert '"reachability_engine"' in api
+    assert '"communication"' in api
+    assert '"outbound"' in api
+    assert '"inbound"' in api
+    assert "InfrastructureNetworkGrant" in api
+    assert "execute_hmac_sha256" in api
+    assert '"signature_hmac_sha256"' in api
+    assert "token_hint" not in api[api.index("def _cluster_node_out"):api.index('@router.post("/servers/{server_id}/agent-token")')]
+
+    assert "sync_cluster_state" in agent
+    assert "/platform/infrastructure/agent/cluster-state" in agent
+    assert "/var/lib/ithute/server-agent/cluster-state.json" in agent
+    assert "hmac.compare_digest(signature, expected)" in agent
+    assert "os.replace(temporary, CLUSTER_STATE_PATH)" in agent
+    assert "shell.exec" not in agent
+    assert "ReadWritePaths=/var/log/ithute /var/lib/ithute/server-agent" in service
+    assert "read-only discovery" in readme
+
+
+def test_cluster_awareness_production_go_worker_contract():
+    root = Path(__file__).parents[2]
+    repo = root.parents[1]
+    compose = (repo / "compose.production.yml").read_text(encoding="utf-8")
+    manual = (repo / "scripts" / "deploy-production-manual.sh").read_text(encoding="utf-8")
+    deploy = (repo / "scripts" / "deploy-production.sh").read_text(encoding="utf-8")
+    readiness = (repo / "scripts" / "verify-production-readiness.sh").read_text(encoding="utf-8")
+
+    assert "ithute-go-worker:" in compose
+    assert "ITHUTE_GO_WORKER_URL: http://ithute-go-worker:8080" in compose
+    assert "CANDIDATE_ONLY_IMAGES=(ithute-go-worker ithute-java-worker)" in manual
+    assert 'docker image inspect "ithute-go-worker:$tag"' in deploy
+    assert 'wait_service ithute-go-worker' in deploy
+    assert "Go network engine is running" in readiness
