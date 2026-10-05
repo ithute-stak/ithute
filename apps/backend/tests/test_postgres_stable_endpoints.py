@@ -172,20 +172,6 @@ def test_gateway_snapshot_contains_only_gateway_routes(db, tenant_admin, platfor
     other_gateway = _gateway(db, platform_owner, "other")
     endpoint = ensure_postgres_endpoint(db, group=group, gateway=expected_gateway)
 
-    rogue = HostingPostgresEndpoint(
-        group_id=uuid.uuid4(),
-        gateway_id=other_gateway.id,
-        hostname=other_gateway.hostname,
-        listen_port=25001,
-        current_node_id=primary.id,
-        target_host=primary.hostname,
-        target_port=5432,
-        generation=1,
-        applied_generation=0,
-        status="pending",
-    )
-    # Avoid flushing the intentionally orphaned group id. It only verifies the
-    # service query does not rely on an in-memory list.
     snapshot = gateway_route_snapshot(db, gateway=expected_gateway)
 
     assert snapshot["gateway_id"] == str(expected_gateway.id)
