@@ -89,6 +89,16 @@ int ithute_cluster_shortest_path(
     double* out_total_weight
 );
 
+int ithute_cluster_network_partitions(
+    std::size_t node_count,
+    const std::size_t* edge_sources,
+    const std::size_t* edge_targets,
+    std::size_t edge_count,
+    std::size_t* out_component_ids,
+    std::size_t out_capacity,
+    std::size_t* out_component_count
+);
+
 #ifdef __cplusplus
 }
 #endif
