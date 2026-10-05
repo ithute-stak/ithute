@@ -12,7 +12,9 @@ import hashlib
 import ipaddress
 import os
 import pathlib
+import re
 import signal
+import shutil
 import subprocess
 import tempfile
 import time
@@ -30,6 +32,15 @@ PG_DUMP = os.getenv("ITHUTE_HOSTING_PG_DUMP", "pg_dump")
 PG_RESTORE = os.getenv("ITHUTE_HOSTING_PG_RESTORE", "pg_restore")
 MYSQLDUMP = os.getenv("ITHUTE_HOSTING_MYSQLDUMP", "mysqldump")
 MAX_BACKUP_BYTES = int(os.getenv("ITHUTE_HOSTING_DATABASE_BACKUP_MAX_BYTES", str(20 * 1024 * 1024 * 1024)))
+POSTGRES_REPLICATION_MODE = os.getenv("ITHUTE_HOSTING_POSTGRES_REPLICATION_MODE", "disabled").strip().lower()
+POSTGRES_DATA_DIR = os.getenv("ITHUTE_HOSTING_POSTGRES_DATA_DIR", "").strip()
+POSTGRES_SERVICE = os.getenv("ITHUTE_HOSTING_POSTGRES_SERVICE", "").strip()
+POSTGRES_REPLICATION_DEDICATED = os.getenv("ITHUTE_HOSTING_POSTGRES_REPLICATION_DEDICATED", "false").lower() == "true"
+PG_BASEBACKUP = os.getenv("ITHUTE_HOSTING_PG_BASEBACKUP", "pg_basebackup").strip()
+PG_CTL = os.getenv("ITHUTE_HOSTING_PG_CTL", "pg_ctl").strip()
+_SERVICE_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,128}$")
+if POSTGRES_REPLICATION_MODE not in {"disabled", "physical_cluster"}:
+    raise RuntimeError("ITHUTE_HOSTING_POSTGRES_REPLICATION_MODE must be disabled or physical_cluster")
 HOSTED_NETWORK_PREFIX = int(os.getenv("ITHUTE_HOSTING_NETWORK_PREFIX", "28"))
 HOSTED_NETWORK_POOL = parse_pool(os.getenv("ITHUTE_HOSTING_NETWORK_POOL", "10.240.0.0/12"), HOSTED_NETWORK_PREFIX)
 
@@ -85,6 +96,109 @@ def ensure_hosted_network(name: str, project_id: str) -> None:
 # Replacing the module attribute here upgrades every deployment handled by v4
 # without duplicating the mature activation/rollback implementation.
 base.ensure_network = ensure_hosted_network
+
+
+def postgres_physical_replication_capabilities() -> dict[str, Any]:
+    configured = POSTGRES_REPLICATION_MODE == "physical_cluster"
+    data_dir_ok = bool(POSTGRES_DATA_DIR) and pathlib.Path(POSTGRES_DATA_DIR).is_absolute()
+    service_ok = bool(POSTGRES_SERVICE) and bool(_SERVICE_RE.fullmatch(POSTGRES_SERVICE))
+    basebackup_available = shutil.which(PG_BASEBACKUP) is not None
+    pg_ctl_available = shutil.which(PG_CTL) is not None
+    supported = configured and POSTGRES_REPLICATION_DEDICATED and data_dir_ok and service_ok and basebackup_available and pg_ctl_available
+    result: dict[str, Any] = {
+        "mode": POSTGRES_REPLICATION_MODE,
+        "supported": supported,
+        "promotion_requires_source_fencing": True,
+        "dedicated_cluster": POSTGRES_REPLICATION_DEDICATED,
+        "data_dir_configured": data_dir_ok,
+        "service_configured": service_ok,
+        "pg_basebackup_available": basebackup_available,
+        "pg_ctl_available": pg_ctl_available,
+    }
+    if configured:
+        try:
+            recovery, replay_lsn, lag_seconds = base.psql(
+                "SELECT pg_is_in_recovery()::text || '|' || "
+                "COALESCE(pg_last_wal_replay_lsn()::text,'') || '|' || "
+                "COALESCE(EXTRACT(EPOCH FROM (clock_timestamp()-pg_last_xact_replay_timestamp()))::text,'')"
+            ).split("|", 2)
+            result["in_recovery"] = recovery == "true"
+            result["replay_lsn"] = replay_lsn or None
+            result["replay_lag_seconds"] = float(lag_seconds) if lag_seconds else None
+        except Exception as exc:
+            result["status_error"] = str(exc)[:300]
+    return result
+
+
+def postgres_bootstrap_physical_replica(
+    *,
+    source_host: str,
+    source_port: int,
+    replication_user: str,
+    replication_password: str,
+) -> dict[str, Any]:
+    capabilities = postgres_physical_replication_capabilities()
+    if not capabilities.get("supported"):
+        raise RuntimeError("PostgreSQL physical replication is not safely configured on this hosting node")
+    if not source_host or any(ch.isspace() for ch in source_host) or "\x00" in source_host:
+        raise RuntimeError("PostgreSQL replication source host is invalid")
+    if not 1 <= int(source_port) <= 65535:
+        raise RuntimeError("PostgreSQL replication source port is invalid")
+    if not base.DB_USER_RE.fullmatch(replication_user):
+        raise RuntimeError("PostgreSQL replication user is invalid")
+    if len(replication_password) < 20 or len(replication_password) > 256:
+        raise RuntimeError("PostgreSQL replication password is invalid")
+
+    data_dir = pathlib.Path(POSTGRES_DATA_DIR)
+    if not data_dir.is_absolute() or data_dir == pathlib.Path("/"):
+        raise RuntimeError("PostgreSQL replication data directory is unsafe")
+    data_dir.mkdir(parents=True, exist_ok=True)
+    if any(data_dir.iterdir()):
+        raise RuntimeError("Refusing pg_basebackup into a non-empty PostgreSQL data directory")
+
+    base.command(["systemctl", "stop", POSTGRES_SERVICE], timeout=120)
+    try:
+        base.command(
+            [
+                PG_BASEBACKUP,
+                "--pgdata", str(data_dir),
+                "--host", source_host,
+                "--port", str(source_port),
+                "--username", replication_user,
+                "--wal-method=stream",
+                "--write-recovery-conf",
+                "--checkpoint=fast",
+                "--no-password",
+            ],
+            timeout=7200,
+            extra_env={"PGPASSWORD": replication_password},
+        )
+    except Exception:
+        # Do not start a partially initialized standby.
+        raise
+
+    base.command(["systemctl", "start", POSTGRES_SERVICE], timeout=120)
+    recovery = base.psql("SELECT pg_is_in_recovery()::text")
+    if recovery != "true":
+        base.command(["systemctl", "stop", POSTGRES_SERVICE], check=False, timeout=120)
+        raise RuntimeError("Bootstrapped PostgreSQL cluster did not enter standby recovery mode")
+    return {"bootstrapped": True, "in_recovery": True, "data_dir": str(data_dir)}
+
+
+def postgres_promote_physical_replica(*, source_fencing_confirmed: bool) -> dict[str, Any]:
+    capabilities = postgres_physical_replication_capabilities()
+    if not capabilities.get("supported"):
+        raise RuntimeError("PostgreSQL physical replication is not safely configured on this hosting node")
+    if not source_fencing_confirmed:
+        raise RuntimeError("Refusing PostgreSQL promotion without confirmed old-primary fencing")
+    if capabilities.get("in_recovery") is not True:
+        raise RuntimeError("Refusing PostgreSQL promotion because this node is not a standby")
+    promoted = base.psql("SELECT pg_promote(wait_seconds => 60)::text")
+    if promoted != "true":
+        raise RuntimeError("PostgreSQL did not confirm standby promotion")
+    if base.psql("SELECT pg_is_in_recovery()::text") != "false":
+        raise RuntimeError("PostgreSQL promotion returned but server remains in recovery")
+    return {"promoted": True, "in_recovery": False}
 
 
 def _psql_database(database_name: str, sql: str) -> str:
@@ -429,7 +543,16 @@ def main() -> int:
         now = time.monotonic()
         try:
             if now - last_heartbeat >= base.HEARTBEAT_SECONDS:
-                base.heartbeat()
+                base.api(
+                    "/hosting/agent/heartbeat",
+                    {
+                        "version": AGENT_VERSION,
+                        "origin_bind_ip": base.ORIGIN_BIND_IP or None,
+                        "capabilities": {
+                            "postgres_physical_replication": postgres_physical_replication_capabilities(),
+                        },
+                    },
+                )
                 last_heartbeat = now
 
             database_work = base.claim_database()

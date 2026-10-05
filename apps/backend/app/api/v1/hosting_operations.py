@@ -56,6 +56,7 @@ class DeploymentCreate(BaseModel):
 class AgentHeartbeat(BaseModel):
     version: str = Field(min_length=1, max_length=64)
     origin_bind_ip: str | None = Field(default=None, max_length=64)
+    capabilities: dict[str, object] = Field(default_factory=dict)
 
 
 class HostingNodeBootstrapCreate(BaseModel):
@@ -889,6 +890,10 @@ def agent_heartbeat(
     agent.agent_version = payload.version.strip()
     agent.last_seen_at = _now()
     agent.origin_bind_ip = _private_ipv4(payload.origin_bind_ip)
+    encoded_capabilities = json.dumps(payload.capabilities, sort_keys=True, separators=(",", ":"))
+    if len(encoded_capabilities) > 8000:
+        raise HTTPException(status_code=422, detail="Hosting agent capability payload is too large")
+    agent.capabilities_json = encoded_capabilities
     db.commit()
     return {"ok": True, "node_id": str(node.id), "node": node.name, "status": node.status}
 

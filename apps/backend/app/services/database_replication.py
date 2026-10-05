@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -9,6 +10,7 @@ from app.models import (
     HostingDatabase,
     HostingDatabaseReplica,
     HostingNode,
+    HostingNodeAgent,
     InfrastructureServer,
 )
 from app.services.replica_anti_affinity import anti_affinity_evaluation, anti_affinity_sort_key
@@ -79,6 +81,20 @@ def replica_promotion_evaluation(
         )
 
     node = db.get(HostingNode, replica.node_id) if replica.node_id else None
+    if database.engine == "postgresql" and replica.node_id is not None:
+        agent = db.get(HostingNodeAgent, replica.node_id)
+        capabilities = {}
+        if agent is not None:
+            try:
+                raw = json.loads(agent.capabilities_json or "{}")
+                capabilities = raw if isinstance(raw, dict) else {}
+            except (TypeError, ValueError, json.JSONDecodeError):
+                capabilities = {}
+        postgres_capability = capabilities.get("postgres_physical_replication")
+        if not isinstance(postgres_capability, dict) or postgres_capability.get("supported") is not True:
+            reasons.append("replica hosting agent does not advertise safe PostgreSQL physical replication")
+        elif postgres_capability.get("promotion_requires_source_fencing") is not True:
+            reasons.append("replica hosting agent does not require source fencing before PostgreSQL promotion")
     if node is None:
         reasons.append("replica hosting node is unavailable")
     else:
