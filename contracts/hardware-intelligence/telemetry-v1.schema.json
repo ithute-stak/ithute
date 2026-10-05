@@ -126,6 +126,35 @@
         }
       }
     },
+    "memory_reliability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "corrected_errors", "uncorrected_errors", "controllers"],
+      "properties": {
+        "available": {"type": "boolean"},
+        "corrected_errors": {"type": "integer", "minimum": 0},
+        "uncorrected_errors": {"type": "integer", "minimum": 0},
+        "controllers": {"type": "integer", "minimum": 0}
+      }
+    },
+    "bmc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "sensor_count", "critical_count", "warning_count"],
+      "properties": {
+        "available": {"type": "boolean"},
+        "sensor_count": {"type": "integer", "minimum": 0},
+        "critical_count": {"type": "integer", "minimum": 0},
+        "warning_count": {"type": "integer", "minimum": 0},
+        "max_temp_celsius": {"type": "number", "minimum": -100, "maximum": 250},
+        "min_fan_rpm": {"type": "number", "minimum": 0},
+        "faulty_sensors": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {"type": "string", "maxLength": 128}
+        }
+      }
+    },
     "storage_devices": {
       "type": "array",
       "maxItems": 64,
