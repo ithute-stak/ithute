@@ -185,7 +185,7 @@ jobs:
       - name: Build Go worker image
         run: |
           docker build --pull -t ithute-go-worker:engine-ci engines/go-worker
-          container="$(docker run -d -e ITHUTE_PUSH_GATEWAY_TOKEN=ci-push-gateway-secret -p 18080:8080 ithute-go-worker:engine-ci)"
+          container="$(docker run -d -e ITHUTE_PUSH_GATEWAY_TOKEN=ci-push-gateway-secret -e ITHUTE_REALTIME_GATEWAY_TOKEN=ci-realtime-gateway-secret -p 18080:8080 ithute-go-worker:engine-ci)"
           trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
           for attempt in $(seq 1 20); do
             if curl -fsS http://127.0.0.1:18080/healthz | grep -q '"engine":"go"'; then
@@ -214,6 +214,16 @@ jobs:
           assert body['checked']==1
           assert body['results'][0]['id']=='localhost'
           assert body['results'][0]['values']
+          PY
+          curl -fsS -H 'Authorization: Bearer ci-realtime-gateway-secret' \
+            'http://127.0.0.1:18080/v1/realtime/presence?application_id=loanhub&sub=00000000-0000-0000-0000-000000000001' \
+            > /tmp/go-realtime-presence.json
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/go-realtime-presence.json'))
+          assert body['engine']=='go'
+          assert body['online'] is False
+          assert body['connection_count']==0
           PY
           curl -fsS -H 'X-Ithute-Push-Endpoint: ci-device-endpoint-secret-12345' \
             'http://127.0.0.1:18080/v1/push/poll?timeout_seconds=5' > /tmp/go-push-poll.json &
