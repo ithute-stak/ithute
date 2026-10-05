@@ -504,6 +504,85 @@ def _ensure_verified_backup_local(storage_key: str, path: pathlib.Path, expected
         raise RuntimeError("Rehydrated database backup failed control-plane size/SHA-256 verification")
 
 
+def claim_postgres_topology_repair() -> dict[str, Any] | None:
+    result = base.api("/hosting/agent/postgres-topology-repairs/claim")
+    work = result.get("repair")
+    return work if isinstance(work, dict) else None
+
+
+def report_postgres_topology_repair(
+    repair_id: str,
+    token: str,
+    success: bool,
+    *,
+    method_used: str | None = None,
+    receive_lsn: str | None = None,
+    replay_lsn: str | None = None,
+    replay_backlog_bytes: int | None = None,
+    message: str | None = None,
+) -> dict[str, Any]:
+    return base.api(
+        f"/hosting/agent/postgres-topology-repairs/{repair_id}/status",
+        {
+            "token": token,
+            "success": success,
+            "method_used": method_used,
+            "receive_lsn": receive_lsn,
+            "replay_lsn": replay_lsn,
+            "replay_backlog_bytes": replay_backlog_bytes,
+            "message": message,
+        },
+    )
+
+
+def process_postgres_topology_repair(work: dict[str, Any]) -> None:
+    repair_id = str(work.get("id") or "")
+    token = str(work.get("token") or "")
+    method = str(work.get("method") or "")
+    source = work.get("source")
+    if not repair_id or len(token) < 20 or method not in {"rewind", "basebackup"} or not isinstance(source, dict):
+        raise RuntimeError("PostgreSQL topology repair job is incomplete")
+
+    source_host = str(source.get("host") or "")
+    source_port = int(source.get("port") or 0)
+    try:
+        postgres_repair_physical_replica(
+            source_host=source_host,
+            source_port=source_port,
+            method=method,
+        )
+        receive_lsn, replay_lsn, backlog = base.psql(
+            "SELECT COALESCE(pg_last_wal_receive_lsn()::text,'') || '|' || "
+            "COALESCE(pg_last_wal_replay_lsn()::text,'') || '|' || "
+            "COALESCE(pg_wal_lsn_diff(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn())::bigint::text,'')"
+        ).split("|", 2)
+        if not receive_lsn or not replay_lsn or not backlog:
+            raise RuntimeError("Repaired PostgreSQL node did not expose verified WAL positions")
+        report_postgres_topology_repair(
+            repair_id,
+            token,
+            True,
+            method_used=method,
+            receive_lsn=receive_lsn,
+            replay_lsn=replay_lsn,
+            replay_backlog_bytes=int(backlog),
+            message=f"PostgreSQL topology repaired with {method}",
+        )
+    except Exception as exc:
+        error = str(exc)[:1900]
+        base.log(f"postgres topology repair {repair_id} failed: {error}")
+        try:
+            report_postgres_topology_repair(
+                repair_id,
+                token,
+                False,
+                method_used=method,
+                message=error,
+            )
+        except Exception as report_exc:
+            base.log(f"could not report postgres topology repair failure: {report_exc}")
+
+
 def claim_postgres_group_failover() -> dict[str, Any] | None:
     result = base.api("/hosting/agent/postgres-group-failovers/claim")
     work = result.get("failover")
@@ -840,6 +919,11 @@ def main() -> int:
             group_failover = claim_postgres_group_failover()
             if group_failover:
                 process_postgres_group_failover(group_failover)
+                continue
+
+            topology_repair = claim_postgres_topology_repair()
+            if topology_repair:
+                process_postgres_topology_repair(topology_repair)
                 continue
 
             database_failover = claim_database_failover()
