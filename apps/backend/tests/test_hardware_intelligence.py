@@ -1,4 +1,7 @@
-from app.api.v1.hardware_intelligence import HardwareEnvelope, _health, _verify_signature, _go_json
+from datetime import datetime, timedelta, timezone
+
+from app.api.v1.hardware_intelligence import HardwareEnvelope, _go_json, _health, _verify_signature, _window_active_at
+from app.models import HardwareMaintenanceWindow
 import hashlib
 import hmac
 
@@ -88,3 +91,28 @@ def test_hardware_health_flags_uncorrected_ecc_and_bmc_critical():
     assert result["bmc_critical_count"] == 1
     assert any("ECC" in item for item in result["evidence"])
     assert any("BMC" in item for item in result["evidence"])
+
+
+
+def test_maintenance_window_active_boundaries():
+    now = datetime.now(timezone.utc)
+    active = HardwareMaintenanceWindow(
+        server_id="00000000-0000-0000-0000-000000000001",
+        starts_at=now - timedelta(minutes=5),
+        ends_at=now + timedelta(minutes=20),
+        reason="Planned kernel upgrade",
+        suppress_notifications=True,
+    )
+    assert _window_active_at(active, now) is True
+
+    future = HardwareMaintenanceWindow(
+        server_id="00000000-0000-0000-0000-000000000001",
+        starts_at=now + timedelta(minutes=5),
+        ends_at=now + timedelta(minutes=20),
+        reason="Future maintenance",
+        suppress_notifications=True,
+    )
+    assert _window_active_at(future, now) is False
+
+    active.cancelled_at = now
+    assert _window_active_at(active, now) is False
