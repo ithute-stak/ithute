@@ -92,10 +92,28 @@ def test_hosting_resource_meter_counts_database_and_zip_reservations(db, tenant_
         assert allowed is False
         assert reason == "Hosted source storage limit reached"
 
+        # A plan must explicitly opt in and price each exceeded resource before
+        # Ithute permits allocations above the included capacity.
+        plan.allow_metered_overages = True
+        plan.overage_database_minor = 2500
+        plan.overage_database_storage_gb_minor = 1500
+        plan.overage_source_storage_gb_minor = 1200
+        db.commit()
+
+        allowed, reason, _ = database_allocation_allowed(db, tenant.id, 1200)
+        assert allowed is True
+        assert reason == "metered overage"
+        allowed, reason, _ = source_allocation_allowed(db, tenant.id, 900 * 1024 * 1024)
+        assert allowed is True
+        assert reason == "metered overage"
+
         snapshot = capture_usage(db, tenant.id, now, now + timedelta(days=30))
         assert snapshot.hosting_database_count == 1
         assert snapshot.hosting_database_storage_bytes == 512 * 1024 * 1024
         assert snapshot.hosting_source_storage_bytes == 256 * 1024 * 1024
+        assert snapshot.api_keys == 0
+        assert snapshot.hosted_projects == 0
+        assert snapshot.hosting_storage_bytes == 0
     finally:
         db.rollback()
         db.execute(delete(UsageSnapshot).where(UsageSnapshot.tenant_id == tenant.id))
