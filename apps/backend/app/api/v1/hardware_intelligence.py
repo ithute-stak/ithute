@@ -151,6 +151,8 @@ def _prediction_point_from_health(
         block_io_ms_per_op=rate.get("block_io_ms_per_op"),
         block_weighted_ms_per_op=rate.get("block_weighted_ms_per_op"),
         media_error_delta=rate.get("media_error_delta"),
+        network_error_delta=rate.get("network_error_delta"),
+        tcp_retrans_delta=rate.get("tcp_retrans_delta"),
     )
 
 
