@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     push_url: str = "http://ithute-push:8080"
     push_enabled: bool = True
 
+    go_worker_url: str = "http://ithute-go-worker:8080"
+    go_gateway_token: str = ""
+    go_websocket_public_path: str = "/v1/native-ws"
+    engine_http_timeout_seconds: float = 1.5
+
     websocket_auth_timeout_seconds: int = 10
     websocket_presence_ttl_seconds: int = 90
     websocket_idle_timeout_seconds: int = 120
