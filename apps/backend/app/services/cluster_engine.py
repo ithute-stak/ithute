@@ -82,6 +82,17 @@ def _load_cluster() -> ctypes.CDLL | None:
     return library
 
 
+def cluster_engine_status() -> dict:
+    available = _load_cluster() is not None
+    return {
+        "available": available,
+        "mode": "native",
+        "library": str(CLUSTER_LIBRARY),
+        "capabilities": ["cluster-graph", "graph-reachability", "cluster-summary"] if available else [],
+        "fallback": "python",
+    }
+
+
 def _b(value: object) -> bytes:
     return str(value or "").encode("utf-8")
 
