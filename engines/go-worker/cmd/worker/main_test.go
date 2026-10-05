@@ -183,6 +183,7 @@ func TestVerifyRealtimeTicket(t *testing.T) {
 		ApplicationID: "loanhub",
 		Sub: "00000000-0000-0000-0000-000000000001",
 		DeviceKey: "device-installation-123",
+		Nonce: "nonce-value-123",
 		ExpiresAt: time.Now().Add(time.Minute).Unix(),
 	})
 	ticket, err := verifyRealtimeTicket(raw, secret)
@@ -203,6 +204,7 @@ func TestRealtimeBrokerPresenceLifecycle(t *testing.T) {
 		ApplicationID: "loanhub",
 		Sub: "00000000-0000-0000-0000-000000000001",
 		DeviceKey: "device-installation-123",
+		Nonce: "nonce-value-456",
 		ExpiresAt: time.Now().Add(time.Minute).Unix(),
 	}, nil)
 	if broker.presence(record.appID, record.sub) != 1 {
