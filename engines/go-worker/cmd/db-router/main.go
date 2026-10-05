@@ -29,6 +29,7 @@ type route struct {
 	TargetHost string `json:"target_host"`
 	TargetPort int `json:"target_port"`
 	Generation int64 `json:"generation"`
+	AppliedGeneration int64 `json:"applied_generation"`
 }
 type snapshot struct {
 	GatewayID string `json:"gateway_id"`
@@ -187,8 +188,14 @@ func (m *routeManager) apply(ctx context.Context, snap snapshot) ([]route, error
 	applied := make([]route, 0, len(snap.Routes))
 	for _, r := range snap.Routes {
 		if current, ok := m.routes[r.EndpointID]; ok {
+			previous := current.target.get()
 			current.target.set(r)
-			applied = append(applied, r)
+			if previous.Generation != r.Generation ||
+				previous.TargetHost != r.TargetHost ||
+				previous.TargetPort != r.TargetPort ||
+				r.AppliedGeneration != r.Generation {
+				applied = append(applied, r)
+			}
 			continue
 		}
 		address := net.JoinHostPort(m.bindIP, strconv.Itoa(r.ListenPort))
@@ -241,7 +248,12 @@ func (m *routeManager) proxyConnection(ctx context.Context, client net.Conn, tar
 	select {
 	case <-ctx.Done():
 	case <-done:
-		<-done
+	}
+	_ = client.Close()
+	_ = upstream.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
 	}
 }
 
