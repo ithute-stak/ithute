@@ -220,3 +220,25 @@ def test_go_origin_probe_returns_fallback_marker(monkeypatch):
     })
     assert body is None
     assert engine == "python-fallback"
+
+
+def test_python_push_envelope_scan_and_route_shard_fallback(monkeypatch):
+    monkeypatch.setattr(engine_runtime, "_load_rust", lambda: None)
+    monkeypatch.setattr(engine_runtime, "_load_cpp", lambda: None)
+
+    scan, scan_engine = engine_runtime.push_envelope_scan(b'{"type":"ping"}')
+    shard, shard_engine = engine_runtime.route_shard(b"loanhub:user-1", 64)
+
+    assert scan_engine == "python-fallback"
+    assert scan.utf8_valid is True
+    assert scan.json_object_shape is True
+    assert scan.nul_bytes == 0
+    assert 0 <= shard < 64
+    assert shard_engine == "python-fallback"
+
+
+def test_route_shard_is_deterministic_in_python_fallback(monkeypatch):
+    monkeypatch.setattr(engine_runtime, "_load_cpp", lambda: None)
+    first, _ = engine_runtime.route_shard(b"application:user", 128)
+    second, _ = engine_runtime.route_shard(b"application:user", 128)
+    assert first == second
