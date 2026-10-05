@@ -38,7 +38,7 @@ C hardware probe + eBPF kernel signals -> Rust validation/hardening -> Go long-r
 
 ### Phase 4 - Predictive analytics
 - [x] Baseline each server independently using robust median/MAD statistics and recent trend slope.
-- [x] Add first trend/anomaly features for temperature, memory pressure, I/O pressure and filesystem growth.\n- [ ] Extend predictive features to disk latency/error deltas, CPU steal/iowait and network error rates.
+- [x] Add first trend/anomaly features for temperature, memory pressure, I/O pressure and filesystem growth.\n- [x] Add block-I/O busy/queue-time proxies, SMART/NVMe media-error growth, CPU steal/iowait and network error/TCP retransmission deltas.\n- [ ] Replace block timing proxies with eBPF request-latency histograms when the privileged loader is complete.
 - [ ] Train and validate failure-risk scoring against historical incidents.
 - [ ] Require confidence plus evidence before presenting a predictive warning.
 - [ ] Track model version, false positives and operator acknowledgement.
