@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_platform_owner, require_tenant_permission
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
-from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingPostgresRpoPolicyOperation, HostingPostgresTopologyRepair, HostingProject, HostingSource, User
+from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingNodeHealthState, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingPostgresRpoPolicyOperation, HostingPostgresTopologyRepair, HostingProject, HostingSource, User
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
 from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
 from app.services.database_replication import build_database_failover_plan
@@ -879,6 +879,23 @@ def update_postgres_group_rto_policy(
             status_code=422,
             detail="Detection + fencing + promotion budgets cannot exceed the RTO target",
         )
+
+    if payload.auto_failover_enabled:
+        health_state = db.get(HostingNodeHealthState, group.primary_node_id)
+        if health_state is None or not health_state.automation_enabled:
+            raise HTTPException(
+                status_code=409,
+                detail="Primary node health automation must be enabled before PostgreSQL auto-failover",
+            )
+        plan = build_postgres_replication_group_plan(db, group=group)
+        if not plan.get("promotion_ready"):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "PostgreSQL auto-failover requires a currently safe standby",
+                    "reasons": plan.get("blockers", []),
+                },
+            )
 
     group.auto_failover_enabled = payload.auto_failover_enabled
     group.rto_target_seconds = payload.rto_target_seconds
