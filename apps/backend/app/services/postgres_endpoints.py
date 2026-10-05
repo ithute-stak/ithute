@@ -169,6 +169,7 @@ def gateway_route_snapshot(db: Session, *, gateway: HostingDatabaseGateway) -> d
                 "target_host": row.target_host,
                 "target_port": row.target_port,
                 "generation": row.generation,
+                "applied_generation": row.applied_generation,
             }
             for row in rows
         ],
