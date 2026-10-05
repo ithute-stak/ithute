@@ -177,6 +177,8 @@ def private_network_status(
         "edge_public_key": edge_public_key or None,
         "edge_endpoint": edge_endpoint or None,
         "reconciler_configured": reconciler_configured,
+        "policy_mode": "full_mesh",
+        "peer_communication_default": "allow",
         "items": [
             {
                 "id": str(row.id),
@@ -203,29 +205,6 @@ def edge_peer_configuration(
     if not expected or not supplied or not hmac.compare_digest(expected, supplied):
         raise HTTPException(status_code=401, detail="Private-network reconciler credential required")
     config = peer_list(db)
-    grants = db.scalars(
-        select(InfrastructureNetworkGrant)
-        .where(InfrastructureNetworkGrant.enabled.is_(True))
-        .order_by(InfrastructureNetworkGrant.created_at.asc())
-    ).all()
-    peer_by_server = {
-        row.server_id: row
-        for row in db.scalars(
-            select(InfrastructureWireGuardPeer).where(InfrastructureWireGuardPeer.status == "active")
-        ).all()
-    }
-    config["grants"] = [
-        {
-            "id": str(row.id),
-            "source_server_id": str(row.source_server_id),
-            "source_ip": peer_by_server[row.source_server_id].assigned_ipv4,
-            "target_server_id": str(row.target_server_id),
-            "target_ip": peer_by_server[row.target_server_id].assigned_ipv4,
-            "protocol": row.protocol,
-            "port": row.port,
-            "service": row.service,
-        }
-        for row in grants
-        if row.source_server_id in peer_by_server and row.target_server_id in peer_by_server
-    ]
+    config["policy_mode"] = "full_mesh"
+    config["peer_communication_default"] = "allow"
     return config

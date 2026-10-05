@@ -23,9 +23,8 @@ iptables -N "$MESH_CHAIN" >/dev/null 2>&1 || true
 iptables -C FORWARD -i ithute0 -o ithute0 -j "$MESH_CHAIN" >/dev/null 2>&1 ||
   iptables -I FORWARD 1 -i ithute0 -o ithute0 -j "$MESH_CHAIN"
 
-# Fail closed between Ithute peers until the reconciler installs explicit
-# service grants. Established reply traffic remains allowed once a grant
-# creates the connection.
+# Every enrolled Ithute node can communicate with every other enrolled node by
+# default across the private WireGuard mesh. Public interfaces are unaffected.
 iptables -F "$MESH_CHAIN"
 iptables -A "$MESH_CHAIN" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-iptables -A "$MESH_CHAIN" -j DROP
+iptables -A "$MESH_CHAIN" -j ACCEPT
