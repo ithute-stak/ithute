@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_tenant_permission
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
-from app.models import AuditLog, HostingDatabase, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingProject, HostingSource, User
+from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingProject, HostingSource, User
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
 from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
 from app.services.database_replication import build_database_failover_plan
@@ -48,6 +48,16 @@ class HostingDatabaseCreate(BaseModel):
     storage_mb: int = Field(default=1024, ge=128, le=102400)
     engine_version: str | None = Field(default=None, max_length=32)
     node_id: UUID | None = None
+
+
+class DatabaseFailoverRequest(BaseModel):
+    replica_id: UUID
+
+
+class DatabaseFailoverAgentStatus(BaseModel):
+    token: str = Field(min_length=20, max_length=64)
+    success: bool
+    message: str | None = Field(default=None, max_length=2000)
 
 
 class DatabaseAgentStatus(BaseModel):
@@ -211,6 +221,192 @@ def database_failover_plan(
     require_tenant_permission(tenant_id, "hosting.read", db, current)
     database = _database(db, tenant_id, database_id)
     return build_database_failover_plan(db, database=database)
+
+
+@router.post("/tenants/{tenant_id}/hosting/databases/{database_id}/failover", status_code=202)
+def request_database_failover(
+    tenant_id: UUID,
+    database_id: UUID,
+    payload: DatabaseFailoverRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "hosting.manage", db, current)
+    database = _database(db, tenant_id, database_id, lock=True)
+    if database.engine != "postgresql":
+        raise HTTPException(status_code=409, detail="Controlled failover execution currently supports PostgreSQL only")
+    if database.node_id is None:
+        raise HTTPException(status_code=409, detail="Database primary node is unavailable")
+
+    replica = db.scalar(
+        select(HostingDatabaseReplica).where(
+            HostingDatabaseReplica.id == payload.replica_id,
+            HostingDatabaseReplica.database_id == database.id,
+        )
+    )
+    if replica is None or replica.node_id is None:
+        raise HTTPException(status_code=404, detail="Database replica not found")
+
+    plan = build_database_failover_plan(db, database=database)
+    evaluation = next((item for item in plan["replicas"] if item["replica_id"] == str(replica.id)), None)
+    if evaluation is None or not evaluation["eligible"]:
+        raise HTTPException(status_code=409, detail={"message": "Replica is not safe to promote", "evaluation": evaluation})
+
+    active = db.scalar(
+        select(HostingDatabaseFailoverAttempt.id).where(
+            HostingDatabaseFailoverAttempt.database_id == database.id,
+            HostingDatabaseFailoverAttempt.status.in_(["requested", "fence_claimed", "source_fenced", "promote_claimed"]),
+        )
+    )
+    if active is not None:
+        raise HTTPException(status_code=409, detail="Database already has a failover attempt in progress")
+
+    attempt = HostingDatabaseFailoverAttempt(
+        database_id=database.id,
+        replica_id=replica.id,
+        source_node_id=database.node_id,
+        target_node_id=replica.node_id,
+        status="requested",
+        created_by_user_id=current.id,
+    )
+    db.add(attempt)
+    db.flush()
+    _audit(
+        db, current, tenant_id, "hosting.database.failover.request",
+        "hosting_database_failover_attempt", attempt.id,
+        {"database_id": str(database.id), "source_node_id": str(database.node_id), "target_node_id": str(replica.node_id)},
+    )
+    db.commit()
+    return {
+        "id": str(attempt.id),
+        "status": attempt.status,
+        "database_id": str(database.id),
+        "source_node_id": str(attempt.source_node_id),
+        "target_node_id": str(attempt.target_node_id),
+    }
+
+
+@router.post("/hosting/agent/database-failovers/claim")
+def claim_database_failover(
+    x_ithute_hosting_agent: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    agent, node = _agent_from_token(db, x_ithute_hosting_agent)
+    agent.last_seen_at = _now()
+
+    source = db.scalar(
+        select(HostingDatabaseFailoverAttempt)
+        .where(
+            HostingDatabaseFailoverAttempt.source_node_id == node.id,
+            HostingDatabaseFailoverAttempt.status == "requested",
+        )
+        .order_by(HostingDatabaseFailoverAttempt.created_at.asc())
+        .with_for_update(skip_locked=True)
+    )
+    if source is not None:
+        source.status = "fence_claimed"
+        source.source_fence_token = secrets.token_urlsafe(32)
+        db.commit()
+        return {
+            "failover": {
+                "id": str(source.id),
+                "action": "fence_source",
+                "token": source.source_fence_token,
+                "source_fencing_confirmed": False,
+            }
+        }
+
+    target = db.scalar(
+        select(HostingDatabaseFailoverAttempt)
+        .where(
+            HostingDatabaseFailoverAttempt.target_node_id == node.id,
+            HostingDatabaseFailoverAttempt.status == "source_fenced",
+            HostingDatabaseFailoverAttempt.source_fenced_at.is_not(None),
+        )
+        .order_by(HostingDatabaseFailoverAttempt.created_at.asc())
+        .with_for_update(skip_locked=True)
+    )
+    if target is not None:
+        target.status = "promote_claimed"
+        target.target_promote_token = secrets.token_urlsafe(32)
+        db.commit()
+        return {
+            "failover": {
+                "id": str(target.id),
+                "action": "promote_target",
+                "token": target.target_promote_token,
+                "source_fencing_confirmed": True,
+            }
+        }
+
+    db.commit()
+    return {"failover": None}
+
+
+@router.post("/hosting/agent/database-failovers/{attempt_id}/status")
+def report_database_failover(
+    attempt_id: UUID,
+    payload: DatabaseFailoverAgentStatus,
+    x_ithute_hosting_agent: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    agent, node = _agent_from_token(db, x_ithute_hosting_agent)
+    agent.last_seen_at = _now()
+    attempt = db.scalar(
+        select(HostingDatabaseFailoverAttempt)
+        .where(HostingDatabaseFailoverAttempt.id == attempt_id)
+        .with_for_update()
+    )
+    if attempt is None:
+        raise HTTPException(status_code=404, detail="Database failover attempt not found")
+
+    now = _now()
+    if attempt.status == "fence_claimed" and attempt.source_node_id == node.id:
+        if not attempt.source_fence_token or not secrets.compare_digest(attempt.source_fence_token, payload.token):
+            raise HTTPException(status_code=409, detail="Stale database source-fencing token")
+        attempt.source_fence_token = None
+        if not payload.success:
+            attempt.status = "failed"
+            attempt.failure_message = (payload.message or "Source fencing failed").strip()[:2000]
+        else:
+            attempt.status = "source_fenced"
+            attempt.source_fenced_at = now
+            attempt.failure_message = None
+        db.commit()
+        return {"id": str(attempt.id), "status": attempt.status}
+
+    if attempt.status == "promote_claimed" and attempt.target_node_id == node.id:
+        if not attempt.target_promote_token or not secrets.compare_digest(attempt.target_promote_token, payload.token):
+            raise HTTPException(status_code=409, detail="Stale database promotion token")
+        attempt.target_promote_token = None
+        if not payload.success:
+            attempt.status = "failed"
+            attempt.failure_message = (payload.message or "Replica promotion failed").strip()[:2000]
+            db.commit()
+            return {"id": str(attempt.id), "status": attempt.status}
+
+        if attempt.source_fenced_at is None:
+            raise HTTPException(status_code=409, detail="Source fencing has not been confirmed")
+        database = db.get(HostingDatabase, attempt.database_id)
+        replica = db.get(HostingDatabaseReplica, attempt.replica_id)
+        if database is None or replica is None:
+            raise HTTPException(status_code=409, detail="Database failover metadata is incomplete")
+        database.node_id = attempt.target_node_id
+        replica.role = "primary"
+        replica.status = "ready"
+        replica.healthy = True
+        attempt.status = "succeeded"
+        attempt.promoted_at = now
+        attempt.failure_message = None
+        _audit(
+            db, None, database.tenant_id, "hosting.database.failover.complete",
+            "hosting_database_failover_attempt", attempt.id,
+            {"database_id": str(database.id), "source_node_id": str(attempt.source_node_id), "target_node_id": str(attempt.target_node_id)},
+        )
+        db.commit()
+        return {"id": str(attempt.id), "status": attempt.status, "primary_node_id": str(database.node_id)}
+
+    raise HTTPException(status_code=409, detail="Failover action is not claimable by this hosting node")
 
 
 @router.get("/tenants/{tenant_id}/hosting/databases")
