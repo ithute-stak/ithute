@@ -18,10 +18,11 @@ C hardware probe + eBPF kernel signals -> Rust validation/hardening -> Go long-r
 - [x] Define telemetry v1 JSON contract.
 - [x] Add Go sampling agent command.
 - [ ] Add CI compilation and contract tests.
-- [ ] Add capability detection so eBPF is never assumed to be available.
+- [x] Add capability detection so eBPF is never assumed to be available.
 
 ### Phase 2 - Core agent
-- [ ] Add SMART/NVMe collection through bounded helpers.
+- [x] Add filesystem, block-I/O and Linux PSI pressure telemetry for predictive baselining.
+- [x] Add SMART/NVMe collection through bounded helpers.
 - [ ] Add hwmon/IPMI/EDAC/ECC adapters where the host exposes them.
 - [ ] Add eBPF loader with least-privilege capability checks.
 - [ ] Add local buffering, jitter, backoff and batch compression.
