@@ -22,6 +22,8 @@ class MetricPoint:
     block_io_ms_per_op: float | None = None
     block_weighted_ms_per_op: float | None = None
     media_error_delta: float | None = None
+    network_error_delta: float | None = None
+    tcp_retrans_delta: float | None = None
 
 
 @dataclass(frozen=True)
@@ -148,6 +150,8 @@ def derive_rate_features(previous_payload: dict | None, current_payload: dict | 
             "block_io_ms_per_op": None,
             "block_weighted_ms_per_op": None,
             "media_error_delta": None,
+            "network_error_delta": None,
+            "tcp_retrans_delta": None,
         }
 
     cpu_keys = ("user", "nice", "system", "idle", "iowait", "irq", "softirq", "steal")
@@ -200,12 +204,31 @@ def derive_rate_features(previous_payload: dict | None, current_payload: dict | 
         comparable = True
         media_error_delta += delta
 
+    network_error_delta = 0.0
+    network_comparable = False
+    for key in ("rx_errors", "tx_errors", "rx_dropped", "tx_dropped"):
+        delta = _counter_delta(
+            _mapping_number(previous_payload, "network", key),
+            _mapping_number(current_payload, "network", key),
+        )
+        if delta is None:
+            continue
+        network_comparable = True
+        network_error_delta += delta
+
+    tcp_retrans_delta = _counter_delta(
+        _mapping_number(previous_payload, "network", "tcp_retrans_segs"),
+        _mapping_number(current_payload, "network", "tcp_retrans_segs"),
+    )
+
     return {
         "cpu_iowait_percent": cpu_iowait_percent,
         "cpu_steal_percent": cpu_steal_percent,
         "block_io_ms_per_op": block_io_ms_per_op,
         "block_weighted_ms_per_op": block_weighted_ms_per_op,
         "media_error_delta": media_error_delta if comparable else None,
+        "network_error_delta": network_error_delta if network_comparable else None,
+        "tcp_retrans_delta": tcp_retrans_delta,
     }
 
 
@@ -298,6 +321,22 @@ def predict_hardware_drift(
             current.media_error_delta,
             minimum_scale=0.25,
             slope_scale=0.05,
+        ),
+        _metric(
+            "network_error_delta",
+            "network error/drop growth",
+            [point.network_error_delta for point in history],
+            current.network_error_delta,
+            minimum_scale=1.0,
+            slope_scale=0.20,
+        ),
+        _metric(
+            "tcp_retrans_delta",
+            "TCP retransmission growth",
+            [point.tcp_retrans_delta for point in history],
+            current.tcp_retrans_delta,
+            minimum_scale=2.0,
+            slope_scale=0.50,
         ),
     ]
     available = [metric for metric in metrics if metric is not None]
