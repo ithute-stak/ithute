@@ -51,6 +51,13 @@ type Sample struct {
 		IOMilliseconds    uint64 `json:"io_ms"`
 		WeightedIOMillis  uint64 `json:"weighted_io_ms"`
 	} `json:"block,omitempty"`
+	Network struct {
+		RxErrors       uint64 `json:"rx_errors"`
+		TxErrors       uint64 `json:"tx_errors"`
+		RxDropped      uint64 `json:"rx_dropped"`
+		TxDropped      uint64 `json:"tx_dropped"`
+		TCPRetransSegs uint64 `json:"tcp_retrans_segs"`
+	} `json:"network,omitempty"`
 	Capabilities struct {
 		Hwmon     bool `json:"hwmon"`
 		Thermal   bool `json:"thermal"`
