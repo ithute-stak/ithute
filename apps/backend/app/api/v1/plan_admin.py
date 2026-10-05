@@ -99,6 +99,16 @@ class PlanCreate(CommercialFields):
     included_domains: int = Field(default=1, ge=1, le=100_000)
     included_storage_mb: int = Field(default=36_864, ge=0, le=20_000_000)
     max_api_keys: int = Field(default=3, ge=0, le=100_000)
+    allow_metered_overages: bool = False
+    overage_mailbox_minor: int = Field(default=0, ge=0, le=2_000_000_000)
+    overage_domain_minor: int = Field(default=0, ge=0, le=2_000_000_000)
+    overage_storage_gb_minor: int = Field(default=0, ge=0, le=2_000_000_000)
+    overage_api_key_minor: int = Field(default=0, ge=0, le=2_000_000_000)
+    overage_hosted_project_minor: int = Field(default=0, ge=0, le=2_000_000_000)
+    overage_hosting_storage_gb_minor: int = Field(default=0, ge=0, le=2_000_000_000)
+    overage_database_minor: int = Field(default=0, ge=0, le=2_000_000_000)
+    overage_database_storage_gb_minor: int = Field(default=0, ge=0, le=2_000_000_000)
+    overage_source_storage_gb_minor: int = Field(default=0, ge=0, le=2_000_000_000)
     included_hosted_projects: int = Field(default=1, ge=0, le=10_000)
     hosting_storage_mb: int = Field(default=2048, ge=0, le=2_000_000)
     hosting_memory_mb_per_project: int = Field(default=512, ge=0, le=65_536)
@@ -159,6 +169,16 @@ class PlanUpdate(BaseModel):
     included_domains: int | None = Field(default=None, ge=1, le=100_000)
     included_storage_mb: int | None = Field(default=None, ge=0, le=20_000_000)
     max_api_keys: int | None = Field(default=None, ge=0, le=100_000)
+    allow_metered_overages: bool | None = None
+    overage_mailbox_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    overage_domain_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    overage_storage_gb_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    overage_api_key_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    overage_hosted_project_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    overage_hosting_storage_gb_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    overage_database_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    overage_database_storage_gb_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    overage_source_storage_gb_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
     included_hosted_projects: int | None = Field(default=None, ge=0, le=10_000)
     hosting_storage_mb: int | None = Field(default=None, ge=0, le=2_000_000)
     hosting_memory_mb_per_project: int | None = Field(default=None, ge=0, le=65_536)
@@ -216,6 +236,16 @@ def _plan_out(plan: BillingPlan) -> dict:
         "included_domains": plan.included_domains,
         "included_storage_mb": plan.included_storage_mb,
         "max_api_keys": plan.max_api_keys,
+        "allow_metered_overages": plan.allow_metered_overages,
+        "overage_mailbox_minor": plan.overage_mailbox_minor,
+        "overage_domain_minor": plan.overage_domain_minor,
+        "overage_storage_gb_minor": plan.overage_storage_gb_minor,
+        "overage_api_key_minor": plan.overage_api_key_minor,
+        "overage_hosted_project_minor": plan.overage_hosted_project_minor,
+        "overage_hosting_storage_gb_minor": plan.overage_hosting_storage_gb_minor,
+        "overage_database_minor": plan.overage_database_minor,
+        "overage_database_storage_gb_minor": plan.overage_database_storage_gb_minor,
+        "overage_source_storage_gb_minor": plan.overage_source_storage_gb_minor,
         "included_hosted_projects": plan.included_hosted_projects,
         "hosting_storage_mb": plan.hosting_storage_mb,
         "hosting_memory_mb_per_project": plan.hosting_memory_mb_per_project,
