@@ -106,3 +106,34 @@ def test_explicit_non_generated_smtp_setting_remains_first(monkeypatch):
 
     assert outgoing[0] == ("smtp.manual.example", 465, "ssl")
     assert ("smtp.provider.example", 587, "starttls") in outgoing
+
+
+def test_provider_detection_rejects_malformed_dns_domain_before_resolver(monkeypatch):
+    called = False
+
+    def fail_resolver(_domain: str):
+        nonlocal called
+        called = True
+        raise AssertionError("resolver should not receive malformed domain")
+
+    monkeypatch.setattr(detection, "_mx_hosts", fail_resolver)
+
+    import pytest
+    with pytest.raises(ValueError, match="valid email address"):
+        detection.provider_detection_payload("user@bad\\domain.example")
+
+    assert called is False
+
+
+def test_provider_detection_normalizes_unicode_domain_to_idna(monkeypatch):
+    seen: list[str] = []
+
+    def fake_mx(domain: str):
+        seen.append(domain)
+        return ()
+
+    monkeypatch.setattr(detection, "_mx_hosts", fake_mx)
+    payload = detection.provider_detection_payload("User@bücher.example")
+    assert payload["domain"] == "xn--bcher-kva.example"
+    assert payload["address"] == "user@xn--bcher-kva.example"
+    assert seen == ["xn--bcher-kva.example"]
