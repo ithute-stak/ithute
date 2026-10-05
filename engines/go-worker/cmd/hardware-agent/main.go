@@ -69,6 +69,8 @@ type Sample struct {
 		NVMeCLI   bool `json:"nvme_cli"`
 	} `json:"capabilities,omitempty"`
 	EBPF EBPFSnapshot `json:"ebpf,omitempty"`
+	MemoryReliability MemoryReliability `json:"memory_reliability,omitempty"`
+	BMC BMCSummary `json:"bmc,omitempty"`
 	StorageDevices []StorageHealth `json:"storage_devices,omitempty"`
 }
 
@@ -138,6 +140,13 @@ func main() {
 			if path, pathErr := smartctlPath(); pathErr == nil {
 				sample.StorageDevices = collectSmartStorage(ctx, path)
 			}
+		}
+		sample.MemoryReliability = collectEDAC()
+		if path := ipmitoolPath(); path != "" {
+			sample.BMC = collectBMC(ctx, path)
+		}
+		if err := validateReliability(sample); err != nil {
+			return err
 		}
 		if snapshot, snapshotErr := readEBPFSnapshot(*ebpfSnapshot, 90*time.Second); snapshotErr == nil {
 			sample.EBPF = snapshot
