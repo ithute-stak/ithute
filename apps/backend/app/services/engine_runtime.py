@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import hmac
 import os
 import socket
 import time
@@ -113,6 +114,14 @@ def _load_rust() -> ctypes.CDLL | None:
             ctypes.POINTER(ctypes.c_ubyte),
         ]
         library.ithute_rust_sha256.restype = ctypes.c_int
+        library.ithute_rust_hmac_sha256.argtypes = [
+            ctypes.POINTER(ctypes.c_ubyte),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_ubyte),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_ubyte),
+        ]
+        library.ithute_rust_hmac_sha256.restype = ctypes.c_int
     except (OSError, AttributeError):
         return None
     _rust = library
@@ -249,6 +258,43 @@ def sha256_digest(data: bytes) -> tuple[str, str]:
         return python_sha256(data), "python-fallback"
     if code != 0:
         return python_sha256(data), "python-fallback"
+    return bytes(output).hex(), "rust"
+
+
+def python_hmac_sha256(key: bytes, data: bytes) -> str:
+    return hmac.new(key, data, hashlib.sha256).hexdigest()
+
+
+def hmac_sha256(key: bytes, data: bytes) -> tuple[str, str]:
+    """Compute HMAC-SHA256 in Rust with an exact stdlib fallback."""
+    library = _load_rust()
+    if library is None:
+        return python_hmac_sha256(key, data), "python-fallback"
+
+    if key:
+        key_buffer = (ctypes.c_ubyte * len(key)).from_buffer_copy(key)
+        key_pointer = ctypes.cast(key_buffer, ctypes.POINTER(ctypes.c_ubyte))
+    else:
+        key_pointer = ctypes.POINTER(ctypes.c_ubyte)()
+    if data:
+        data_buffer = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
+        data_pointer = ctypes.cast(data_buffer, ctypes.POINTER(ctypes.c_ubyte))
+    else:
+        data_pointer = ctypes.POINTER(ctypes.c_ubyte)()
+
+    output = (ctypes.c_ubyte * 32)()
+    try:
+        code = library.ithute_rust_hmac_sha256(
+            key_pointer,
+            len(key),
+            data_pointer,
+            len(data),
+            output,
+        )
+    except (OSError, ValueError, ctypes.ArgumentError):
+        return python_hmac_sha256(key, data), "python-fallback"
+    if code != 0:
+        return python_hmac_sha256(key, data), "python-fallback"
     return bytes(output).hex(), "rust"
 
 
@@ -515,7 +561,7 @@ def engine_status() -> dict:
                 "available": rust_available,
                 "mode": "native",
                 "library": str(RUST_LIBRARY),
-                "capabilities": ["byte-stats", "mime-prescan", "sha256"] if rust_available else [],
+                "capabilities": ["byte-stats", "mime-prescan", "sha256", "hmac-sha256"] if rust_available else [],
                 "fallback": "python",
             },
             "go": go,
