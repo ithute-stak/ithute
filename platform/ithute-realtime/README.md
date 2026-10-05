@@ -1,3 +1,35 @@
+
+## Go-native WebSocket path
+
+Realtime now has an opt-in Go WebSocket transport while the existing Python
+`/v1/ws` endpoint remains available during migration.
+
+Authenticated clients first request a short-lived ticket from:
+
+```http
+POST /v1/native-ws-ticket?device_key=<installation-id>
+Authorization: Bearer <central-user-token>
+```
+
+The ticket contains only the product namespace, central subject, device key and
+a short expiration. It is HMAC-signed with an internal secret shared by Realtime
+and the Go worker; the original Auth token is never forwarded to Go.
+
+The client then connects to the returned public WebSocket URL, routed by Caddy
+to the Go engine. Durable events are published to both the existing Redis/Python
+hub and the Go broker during the migration window. Presence checks combine both
+engines so Push does not incorrectly treat a Go-connected user as offline.
+
+This gives Ithute a staged migration path:
+
+```text
+Python REST/Auth control plane
+          |
+          +-- existing Python WebSocket (compatibility)
+          |
+          +-- signed ticket -> Go WebSocket/fan-out engine
+```
+
 # !thute Realtime
 
 `!thute Realtime` is the centralized WebSocket, realtime-event and chat engine for the Ithute platform. It is a platform service beside `!thute Auth` and `!thute Push`; it is not owned by LoanHub, Mailbox, Ithute Pay or any other product.
