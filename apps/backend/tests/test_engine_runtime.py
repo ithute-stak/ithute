@@ -159,3 +159,64 @@ def test_cpp_blob_profile_falls_back_to_python(monkeypatch):
 
     assert engine == "python-fallback"
     assert profile == engine_runtime.python_blob_profile(raw)
+
+
+def test_python_hmac_sha256_matches_known_vector():
+    assert engine_runtime.python_hmac_sha256(
+        b"key",
+        b"The quick brown fox jumps over the lazy dog",
+    ) == "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+
+
+def test_go_dns_lookup_falls_back_to_python(monkeypatch):
+    class BrokenClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def post(self, *args, **kwargs):
+            raise engine_runtime.httpx.ConnectError("offline")
+
+    monkeypatch.setattr(engine_runtime.httpx, "Client", BrokenClient)
+    monkeypatch.setattr(
+        engine_runtime,
+        "python_dns_lookup",
+        lambda queries, concurrency=16: {
+            "engine": "python-fallback",
+            "checked": len(queries),
+            "results": [{"id": "a", "name": "example.test", "type": "A", "values": ["203.0.113.1"]}],
+        },
+    )
+    body, engine = engine_runtime.dns_lookup(
+        [{"id": "a", "name": "example.test", "type": "A"}],
+        concurrency=4,
+    )
+    assert engine == "python-fallback"
+    assert body["checked"] == 1
+
+
+def test_go_origin_probe_returns_fallback_marker(monkeypatch):
+    class BrokenClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def post(self, *args, **kwargs):
+            raise engine_runtime.httpx.ConnectError("offline")
+
+    monkeypatch.setattr(engine_runtime.httpx, "Client", BrokenClient)
+    body, engine = engine_runtime.go_origin_probe({
+        "scheme": "https",
+        "hostname": "example.test",
+        "target_ip": "1.1.1.1",
+        "port": 443,
+        "path": "/",
+        "expected_status": 200,
+        "timeout_ms": 1000,
+    })
+    assert body is None
+    assert engine == "python-fallback"
