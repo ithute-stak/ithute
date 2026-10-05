@@ -247,6 +247,9 @@ jobs:
       - name: Run Go tests
         working-directory: engines/go-worker
         run: go test -race ./...
+      - name: Fuzz public-target parser
+        working-directory: engines/go-worker
+        run: go test ./cmd/worker -run=^$ -fuzz=FuzzPublicTargetIPNeverPanics -fuzztime=10s
 
   cpp-sanitizers:
     name: C++ ASan and UBSan
