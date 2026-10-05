@@ -45,3 +45,22 @@ def test_recommended_transport_security_records():
     assert by_purpose["mta-sts-host"]["name"] == "mta-sts.example.com"
     assert by_purpose["mta-sts-host"]["value"] == "203.0.113.20"
     assert by_purpose["tls-rpt"]["value"] == "v=TLSRPTv1; rua=mailto:tls-reports@example.net"
+
+
+def test_dns_helper_uses_engine_router(monkeypatch):
+    from types import SimpleNamespace
+    from app.services import deliverability
+
+    monkeypatch.setattr(
+        deliverability,
+        "execute_dns",
+        lambda queries, concurrency=1: SimpleNamespace(
+            engine="go",
+            value={
+                "engine": "go",
+                "checked": 1,
+                "results": [{"id": "lookup", "name": queries[0]["name"], "type": queries[0]["type"], "values": ["203.0.113.10"]}],
+            },
+        ),
+    )
+    assert deliverability._dns_values("mail.example.test", "A") == ["203.0.113.10"]
