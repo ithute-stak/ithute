@@ -39,6 +39,7 @@ POSTGRES_REPLICATION_DEDICATED = os.getenv("ITHUTE_HOSTING_POSTGRES_REPLICATION_
 PG_BASEBACKUP = os.getenv("ITHUTE_HOSTING_PG_BASEBACKUP", "pg_basebackup").strip()
 PG_CTL = os.getenv("ITHUTE_HOSTING_PG_CTL", "pg_ctl").strip()
 PG_REWIND = os.getenv("ITHUTE_HOSTING_PG_REWIND", "pg_rewind").strip()
+PG_CONTROLDATA = os.getenv("ITHUTE_HOSTING_PG_CONTROLDATA", "pg_controldata").strip()
 POSTGRES_REPLICATION_USER = os.getenv("ITHUTE_HOSTING_POSTGRES_REPLICATION_USER", "").strip()
 POSTGRES_REPLICATION_PASSWORD = os.getenv("ITHUTE_HOSTING_POSTGRES_REPLICATION_PASSWORD", "")
 _SERVICE_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,128}$")
@@ -108,6 +109,7 @@ def postgres_physical_replication_capabilities() -> dict[str, Any]:
     basebackup_available = shutil.which(PG_BASEBACKUP) is not None
     pg_ctl_available = shutil.which(PG_CTL) is not None
     pg_rewind_available = shutil.which(PG_REWIND) is not None
+    pg_controldata_available = shutil.which(PG_CONTROLDATA) is not None
     replication_credentials_configured = (
         bool(base.DB_USER_RE.fullmatch(POSTGRES_REPLICATION_USER))
         and 20 <= len(POSTGRES_REPLICATION_PASSWORD) <= 256
@@ -131,6 +133,7 @@ def postgres_physical_replication_capabilities() -> dict[str, Any]:
         "pg_basebackup_available": basebackup_available,
         "pg_ctl_available": pg_ctl_available,
         "pg_rewind_available": pg_rewind_available,
+        "pg_controldata_available": pg_controldata_available,
         "replication_credentials_configured": replication_credentials_configured,
     }
     if configured:
@@ -221,6 +224,26 @@ def postgres_bootstrap_physical_replica(
     return {"bootstrapped": True, "in_recovery": True, "data_dir": str(data_dir)}
 
 
+def _postgres_checksums_enabled_offline() -> bool:
+    if shutil.which(PG_CONTROLDATA) is None:
+        return False
+    data_dir = _postgres_data_dir()
+    result = base.command(
+        [PG_CONTROLDATA, str(data_dir)],
+        check=False,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        return False
+    for line in result.stdout.splitlines():
+        if line.lower().startswith("data page checksum version:"):
+            try:
+                return int(line.split(":", 1)[1].strip()) > 0
+            except ValueError:
+                return False
+    return False
+
+
 def _postgres_data_dir() -> pathlib.Path:
     data_dir = pathlib.Path(POSTGRES_DATA_DIR)
     if not data_dir.is_absolute() or data_dir == pathlib.Path("/") or len(data_dir.parts) < 4:
@@ -269,8 +292,8 @@ def postgres_repair_physical_replica(
     if method == "rewind":
         if not capabilities.get("pg_rewind_available"):
             raise RuntimeError("pg_rewind is unavailable")
-        if not capabilities.get("pg_rewind_safe_prerequisites"):
-            raise RuntimeError("pg_rewind prerequisites are not proven")
+        if not _postgres_checksums_enabled_offline():
+            raise RuntimeError("pg_rewind requires locally verified PostgreSQL page checksums; use basebackup")
         base.command(["systemctl", "stop", POSTGRES_SERVICE], timeout=120)
         conninfo = (
             f"host={source_host} port={int(source_port)} "
