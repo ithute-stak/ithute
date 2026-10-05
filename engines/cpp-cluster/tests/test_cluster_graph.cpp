@@ -131,5 +131,65 @@ int main() {
     assert(placement_order[2] == 0);
     assert(placement_order[3] == 3);
 
+    ClusterGraph dependency_graph;
+    dependency_graph.upsert_node(node("frontend", "Frontend", "", NodeStatus::Online, true, 1, 0, 1, 0));
+    dependency_graph.upsert_node(node("backend", "Backend", "", NodeStatus::Online, true, 1, 0, 1, 0));
+    dependency_graph.upsert_node(node("postgres", "Postgres", "", NodeStatus::Online, true, 1, 0, 1, 0));
+    assert(dependency_graph.upsert_edge(Edge{
+        .source = "frontend",
+        .target = "backend",
+        .relation = Relation::DependsOn,
+    }));
+    assert(dependency_graph.upsert_edge(Edge{
+        .source = "backend",
+        .target = "postgres",
+        .relation = Relation::DependsOn,
+    }));
+    const auto dependency_order = dependency_graph.dependency_order();
+    assert(dependency_order.has_value());
+    assert((*dependency_order)[0] == "postgres");
+    assert((*dependency_order)[1] == "backend");
+    assert((*dependency_order)[2] == "frontend");
+
+    assert(dependency_graph.upsert_edge(Edge{
+        .source = "postgres",
+        .target = "frontend",
+        .relation = Relation::DependsOn,
+    }));
+    assert(!dependency_graph.dependency_order().has_value());
+
+    const char* dag_nodes[] = {"frontend", "backend", "postgres"};
+    const char* dag_dependents[] = {"frontend", "backend"};
+    const char* dag_dependencies[] = {"backend", "postgres"};
+    std::size_t dag_order[3] = {};
+    assert(
+        ithute_cluster_dependency_order(
+            dag_nodes,
+            3,
+            dag_dependents,
+            dag_dependencies,
+            2,
+            dag_order,
+            3
+        ) == 0
+    );
+    assert(dag_order[0] == 2);
+    assert(dag_order[1] == 1);
+    assert(dag_order[2] == 0);
+
+    const char* cycle_dependents[] = {"frontend", "backend", "postgres"};
+    const char* cycle_dependencies[] = {"backend", "postgres", "frontend"};
+    assert(
+        ithute_cluster_dependency_order(
+            dag_nodes,
+            3,
+            cycle_dependents,
+            cycle_dependencies,
+            3,
+            dag_order,
+            3
+        ) == 3
+    );
+
     return 0;
 }
