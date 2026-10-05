@@ -74,6 +74,16 @@ class DatabaseFailoverRequest(BaseModel):
     replica_id: UUID
 
 
+class PostgresTopologyRepairAgentStatus(BaseModel):
+    token: str = Field(min_length=20, max_length=64)
+    success: bool
+    method_used: str | None = Field(default=None, pattern=r"^(rewind|basebackup)$")
+    receive_lsn: str | None = Field(default=None, max_length=64)
+    replay_lsn: str | None = Field(default=None, max_length=64)
+    replay_backlog_bytes: int | None = Field(default=None, ge=0)
+    message: str | None = Field(default=None, max_length=2000)
+
+
 class DatabaseFailoverAgentStatus(BaseModel):
     token: str = Field(min_length=20, max_length=64)
     success: bool
@@ -620,6 +630,165 @@ def report_postgres_group_failover(
         }
 
     raise HTTPException(status_code=409, detail="Group failover action is not claimable by this hosting node")
+
+
+@router.post("/hosting/agent/postgres-topology-repairs/claim")
+def claim_postgres_topology_repair(
+    x_ithute_hosting_agent: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    agent, node = _agent_from_token(db, x_ithute_hosting_agent)
+    agent.last_seen_at = _now()
+
+    row = db.scalar(
+        select(HostingPostgresTopologyRepair)
+        .where(
+            HostingPostgresTopologyRepair.node_id == node.id,
+            HostingPostgresTopologyRepair.status == "queued",
+        )
+        .order_by(HostingPostgresTopologyRepair.created_at.asc(), HostingPostgresTopologyRepair.id.asc())
+        .with_for_update(skip_locked=True)
+    )
+    if row is None:
+        db.commit()
+        return {"repair": None}
+
+    group = db.get(HostingPostgresReplicationGroup, row.group_id)
+    if group is None or group.primary_node_id != row.source_node_id:
+        row.status = "failed"
+        row.failure_message = "Replication-group primary changed before topology repair was claimed"
+        row.completed_at = _now()
+        db.commit()
+        return {"repair": None}
+
+    source = topology_repair_source(db, repair=row)
+    row.status = "claimed"
+    row.claim_token = secrets.token_urlsafe(32)
+    row.attempt_count = int(row.attempt_count or 0) + 1
+    row.claimed_at = _now()
+    db.commit()
+    return {
+        "repair": {
+            "id": str(row.id),
+            "group_id": str(row.group_id),
+            "method": row.method,
+            "token": row.claim_token,
+            "source": source,
+        }
+    }
+
+
+@router.post("/hosting/agent/postgres-topology-repairs/{repair_id}/status")
+def report_postgres_topology_repair(
+    repair_id: UUID,
+    payload: PostgresTopologyRepairAgentStatus,
+    x_ithute_hosting_agent: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    agent, node = _agent_from_token(db, x_ithute_hosting_agent)
+    agent.last_seen_at = _now()
+    row = db.scalar(
+        select(HostingPostgresTopologyRepair)
+        .where(
+            HostingPostgresTopologyRepair.id == repair_id,
+            HostingPostgresTopologyRepair.node_id == node.id,
+        )
+        .with_for_update()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="PostgreSQL topology repair not found")
+    if row.status != "claimed" or not row.claim_token:
+        raise HTTPException(status_code=409, detail="PostgreSQL topology repair is not actively claimed")
+    if not secrets.compare_digest(row.claim_token, payload.token):
+        raise HTTPException(status_code=409, detail="Stale PostgreSQL topology repair token")
+
+    now = _now()
+    row.claim_token = None
+    row.completed_at = now
+    if not payload.success:
+        row.status = "failed"
+        row.failure_message = (payload.message or "PostgreSQL topology repair failed").strip()[:2000]
+        fallback_id = None
+        if row.method == "rewind":
+            active_fallback = db.scalar(
+                select(HostingPostgresTopologyRepair.id).where(
+                    HostingPostgresTopologyRepair.group_id == row.group_id,
+                    HostingPostgresTopologyRepair.node_id == row.node_id,
+                    HostingPostgresTopologyRepair.status.in_(["queued", "claimed"]),
+                )
+            )
+            if active_fallback is None:
+                fallback = HostingPostgresTopologyRepair(
+                    group_id=row.group_id,
+                    node_id=row.node_id,
+                    source_node_id=row.source_node_id,
+                    method="basebackup",
+                    status="queued",
+                )
+                db.add(fallback)
+                db.flush()
+                fallback_id = str(fallback.id)
+        db.commit()
+        return {
+            "id": str(row.id),
+            "status": row.status,
+            "fallback_repair_id": fallback_id,
+        }
+
+    if payload.method_used != row.method:
+        raise HTTPException(status_code=409, detail="Repair method does not match claimed topology repair job")
+    group = db.get(HostingPostgresReplicationGroup, row.group_id)
+    if group is None or group.primary_node_id != row.source_node_id:
+        raise HTTPException(status_code=409, detail="Replication-group primary changed during topology repair")
+
+    standby = db.scalar(
+        select(HostingPostgresReplicationStandby)
+        .where(
+            HostingPostgresReplicationStandby.group_id == row.group_id,
+            HostingPostgresReplicationStandby.node_id == row.node_id,
+        )
+        .with_for_update()
+    )
+    if standby is None:
+        standby = HostingPostgresReplicationStandby(
+            group_id=row.group_id,
+            node_id=row.node_id,
+            status="streaming",
+            healthy=True,
+        )
+        db.add(standby)
+    standby.status = "streaming"
+    standby.healthy = True
+    standby.receive_lsn = payload.receive_lsn
+    standby.replay_lsn = payload.replay_lsn
+    standby.replay_backlog_bytes = payload.replay_backlog_bytes
+    standby.in_recovery = True
+    standby.last_checked_at = now
+    standby.telemetry_error = None
+
+    row.status = "succeeded"
+    row.failure_message = None
+    db.add(AuditLog(
+        actor_user_id=None,
+        action="hosting.postgres_replication_group.topology_repair.complete",
+        resource_type="hosting_postgres_topology_repair",
+        resource_id=str(row.id),
+        metadata_json=json.dumps({
+            "group_id": str(row.group_id),
+            "node_id": str(row.node_id),
+            "source_node_id": str(row.source_node_id),
+            "method": row.method,
+            "receive_lsn": payload.receive_lsn,
+            "replay_lsn": payload.replay_lsn,
+            "replay_backlog_bytes": payload.replay_backlog_bytes,
+        }, sort_keys=True),
+    ))
+    db.commit()
+    return {
+        "id": str(row.id),
+        "status": row.status,
+        "standby_id": str(standby.id),
+    }
 
 
 @router.get("/platform/hosting/postgres-replication-groups/{group_id}/failover-plan")
