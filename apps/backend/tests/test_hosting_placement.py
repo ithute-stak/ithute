@@ -27,6 +27,10 @@ def test_automatic_placement_contract_exists():
     assert "Docker is unavailable" in placement
     assert "postgresql" in placement
     assert "mysql" in placement
+    assert "preferred_region" in placement
+    assert "region_penalty" in placement
+    assert '"region_match": region_match' in placement
+    assert '"infrastructure": {' in placement
 
     assert '@router.get("/platform/hosting/placement-preview")' in applications
     assert 'placement_mode": "manual_override" if preferred_node_id else "automatic"' in applications
@@ -38,3 +42,18 @@ def test_automatic_placement_contract_exists():
 
     assert "Automatic · healthiest available node" in frontend
     assert "Automatic placement considers live CPU, RAM, disk pressure" in frontend
+    assert "Preferred region" in frontend
+    assert "region preference" in frontend
+
+
+def test_infrastructure_control_centre_exposes_placement_planner():
+    root = Path(__file__).parents[2]
+    infrastructure_page = (root.parent / "frontend" / "app" / "infrastructure" / "servers" / "page.tsx").read_text(encoding="utf-8")
+    applications = (root / "app" / "api" / "v1" / "application_hosting.py").read_text(encoding="utf-8")
+
+    assert "Smart workload placement" in infrastructure_page
+    assert "Placement score" in infrastructure_page
+    assert "preferred_region" in infrastructure_page
+    assert "placement-preview" in infrastructure_page
+    assert "preferred_region: str | None" in applications
+    assert "placement_region_match" in applications

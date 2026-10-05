@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, Copy, Cpu, Database, HardDrive, KeyRound, Mail, MemoryStick, RefreshCw, Server, ShieldCheck, Wrench } from "lucide-react";
+import { Activity, AlertTriangle, Copy, Cpu, Database, HardDrive, KeyRound, Mail, MapPin, MemoryStick, RefreshCw, Server, ShieldCheck, Sparkles, Wrench } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { ControlShell } from "@/components/control-shell";
@@ -22,6 +22,19 @@ type Capacity = {
   allocated_cpu_millicores: number;
   available_cpu_millicores: number;
 };
+type PlacementCandidate = {
+  node_id: string;
+  name: string;
+  eligible: boolean;
+  score: number;
+  reasons: string[];
+  available: { storage_mb: number; memory_mb: number; cpu_millicores: number };
+  allocated: { storage_mb: number; memory_mb: number; cpu_millicores: number; projects: number };
+  telemetry: { cpu_percent?: number | null; memory_percent?: number | null; disk_percent?: number | null };
+  location: { requested_region?: string | null; server_region?: string | null; region_match: boolean; region_penalty: number };
+  infrastructure: { server_id?: string | null; server_name?: string | null; hostname?: string | null; provider?: string | null; region?: string | null };
+};
+
 type InfrastructureServer = {
   id: string;
   name: string;
@@ -139,6 +152,9 @@ export default function InfrastructureServersPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [newToken, setNewToken] = useState<{ server: string; token: string } | null>(null);
+  const [placement, setPlacement] = useState<PlacementCandidate[]>([]);
+  const [placementLoading, setPlacementLoading] = useState(false);
+  const [planner, setPlanner] = useState({ workload: "application", storageGb: 1, memoryMb: 512, cpuMillicores: 500, databaseEngine: "postgresql", preferredRegion: "" });
 
   const healthy = useMemo(() => servers.filter((server) => server.health === "healthy").length, [servers]);
   const configured = useMemo(() => servers.filter((server) => !server.configuration_required.length).length, [servers]);
@@ -157,6 +173,27 @@ export default function InfrastructureServersPage() {
     setServers(payload.items || []);
     setRoles(payload.roles || []);
     setLoading(false);
+    void loadPlacement();
+  }
+
+  async function loadPlacement() {
+    setPlacementLoading(true);
+    const params = new URLSearchParams({
+      workload: planner.workload,
+      storage_mb: String(Math.max(0, Math.round(planner.storageGb * 1024))),
+      memory_mb: String(Math.max(0, planner.memoryMb)),
+      cpu_millicores: String(Math.max(0, planner.cpuMillicores)),
+    });
+    if (planner.workload === "database") params.set("database_engine", planner.databaseEngine);
+    if (planner.preferredRegion.trim()) params.set("preferred_region", planner.preferredRegion.trim());
+    const response = await api("/platform/hosting/placement-preview?" + params.toString());
+    if (response.ok) {
+      const body = await response.json();
+      setPlacement(body.items || []);
+    } else {
+      setPlacement([]);
+    }
+    setPlacementLoading(false);
   }
 
   useEffect(() => {
@@ -251,6 +288,31 @@ export default function InfrastructureServersPage() {
         <div className="surface-card p-4"><ShieldCheck size={18} className="text-emerald-600"/><p className="mt-3 text-2xl font-black">{healthy}</p><p className="text-[10px] font-bold text-[var(--admin-muted)]">Healthy</p></div>
         <div className="surface-card p-4"><Wrench size={18} className="text-amber-600"/><p className="mt-3 text-2xl font-black">{configured}/{servers.length}</p><p className="text-[10px] font-bold text-[var(--admin-muted)]">Role links configured</p></div>
         <div className="surface-card p-4"><Activity size={18} className="text-blue-600"/><p className="mt-3 text-2xl font-black">{workloads}</p><p className="text-[10px] font-bold text-[var(--admin-muted)]">Managed workloads</p></div>
+      </section>
+
+      <section className="surface-card p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><div className="flex items-center gap-2"><Sparkles size={16} className="text-[#285b55]"/><h2 className="text-sm font-black">Smart workload placement</h2></div><p className="mt-1 max-w-3xl text-[10px] leading-5 text-[var(--admin-muted)]">Preview the exact scheduler ranking before allocating a workload. Lower scores are better; Ithute weighs live CPU/RAM/disk pressure, sellable capacity, workload capability, server health and preferred region.</p></div>
+          <button className="btn-secondary" disabled={placementLoading} onClick={() => void loadPlacement()}><RefreshCw size={13}/>{placementLoading ? "Scoring…" : "Recalculate"}</button>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+          <label><span className="eyebrow-label">Workload</span><select className="input mt-1" value={planner.workload} onChange={(event) => setPlanner((current) => ({ ...current, workload: event.target.value }))}><option value="application">Application</option><option value="database">Database</option></select></label>
+          <label><span className="eyebrow-label">Storage (GB)</span><input className="input mt-1" type="number" min="0.125" step="0.125" value={planner.storageGb} onChange={(event) => setPlanner((current) => ({ ...current, storageGb: Number(event.target.value) }))}/></label>
+          <label><span className="eyebrow-label">RAM (MB)</span><input className="input mt-1" type="number" min="0" step="128" value={planner.memoryMb} onChange={(event) => setPlanner((current) => ({ ...current, memoryMb: Number(event.target.value) }))}/></label>
+          <label><span className="eyebrow-label">CPU (millicores)</span><input className="input mt-1" type="number" min="0" step="100" value={planner.cpuMillicores} onChange={(event) => setPlanner((current) => ({ ...current, cpuMillicores: Number(event.target.value) }))}/></label>
+          {planner.workload === "database" ? <label><span className="eyebrow-label">Database</span><select className="input mt-1" value={planner.databaseEngine} onChange={(event) => setPlanner((current) => ({ ...current, databaseEngine: event.target.value }))}><option value="postgresql">PostgreSQL</option><option value="mysql">MySQL</option></select></label> : <div/>}
+          <label><span className="eyebrow-label">Preferred region</span><input className="input mt-1" value={planner.preferredRegion} onChange={(event) => setPlanner((current) => ({ ...current, preferredRegion: event.target.value }))} placeholder="e.g. lesotho"/></label>
+        </div>
+        <div className="mt-4 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+          {placement.slice(0, 6).map((candidate, index) => <article key={candidate.node_id} className={"rounded-2xl border p-4 " + (candidate.eligible && index === 0 ? "border-emerald-300 bg-emerald-50/40" : "border-[#dce5e0] bg-white")}>
+            <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black">{candidate.infrastructure.server_name || candidate.name}</p><p className="mt-1 text-[9px] text-[var(--admin-muted)]">{candidate.infrastructure.hostname || "Hosting node"}{candidate.infrastructure.provider ? " · " + candidate.infrastructure.provider : ""}</p></div><span className={"rounded-full px-2 py-1 text-[9px] font-black " + (candidate.eligible ? "bg-emerald-100 text-emerald-800" : "bg-red-50 text-red-700")}>{candidate.eligible ? (index === 0 ? "Recommended" : "Eligible") : "Rejected"}</span></div>
+            <div className="mt-3 flex items-center justify-between gap-2"><span className="text-[9px] font-black">Placement score {candidate.score.toFixed(1)}</span><span className="flex items-center gap-1 text-[9px] text-[var(--admin-muted)]"><MapPin size={11}/>{candidate.location.server_region || "region unknown"}{candidate.location.region_match ? " · preferred" : ""}</span></div>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-[8px]"><div className="rounded-lg bg-[#f5f8f6] p-2"><b>{gb(candidate.available.storage_mb)}</b><br/>disk free</div><div className="rounded-lg bg-[#f5f8f6] p-2"><b>{candidate.available.memory_mb} MB</b><br/>RAM free</div><div className="rounded-lg bg-[#f5f8f6] p-2"><b>{(candidate.available.cpu_millicores / 1000).toFixed(1)}</b><br/>CPU free</div></div>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-[8px]"><span>CPU <b>{candidate.telemetry.cpu_percent ?? "—"}%</b></span><span>RAM <b>{candidate.telemetry.memory_percent ?? "—"}%</b></span><span>Disk <b>{candidate.telemetry.disk_percent ?? "—"}%</b></span></div>
+            {candidate.reasons.length ? <p className="mt-3 text-[9px] leading-4 text-red-700">{candidate.reasons.join(" · ")}</p> : <p className="mt-3 text-[9px] leading-4 text-emerald-700">Healthy and capable of accepting this workload.</p>}
+          </article>)}
+          {!placementLoading && !placement.length ? <div className="rounded-2xl border border-dashed border-[#d6dfda] p-5 text-xs text-[var(--admin-muted)]">No hosting-node placement candidates are registered yet.</div> : null}
+        </div>
       </section>
 
       <section className="surface-card p-4 sm:p-5">
