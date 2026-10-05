@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -176,5 +178,45 @@ func TestRustValidatorBridge(t *testing.T) {
 	defer cancel()
 	if err := validateWithRust(ctx, path, sample); err != nil {
 		t.Fatalf("validator bridge returned error: %v", err)
+	}
+}
+
+
+func TestPostEnvelopeUsesAgentHeader(t *testing.T) {
+	key := []byte("ith_srv_0123456789abcdef0123456789abcdef")
+	var sample Sample
+	sample.SchemaVersion = 1
+	envelope, err := signSample("server-01", key, sample)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s", r.Method)
+		}
+		if got := r.Header.Get("X-Ithute-Server-Agent"); got != string(key) {
+			t.Fatalf("agent header = %q", got)
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("unexpected content type")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := postEnvelope(ctx, server.URL, key, envelope); err != nil {
+		t.Fatalf("postEnvelope returned error: %v", err)
+	}
+}
+
+func TestPostEnvelopeRequiresHTTPSAwayFromLocalhost(t *testing.T) {
+	var sample Sample
+	envelope := SignedEnvelope{EnvelopeVersion: 1, Algorithm: "HMAC-SHA256", AgentID: "server-01", Payload: sample}
+	err := postEnvelope(context.Background(), "http://example.com/telemetry", []byte("key"), envelope)
+	if err == nil {
+		t.Fatal("expected insecure remote endpoint rejection")
 	}
 }
