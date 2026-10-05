@@ -18,6 +18,7 @@ from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
 from app.services.resource_manager import node_resource_snapshot, release_reservation, reserve_capacity
 from app.services.postgres_replica_telemetry import persist_postgres_replica_telemetry
+from app.services.postgres_rpo_policy import persist_primary_rpo_telemetry
 from app.models import (
     AuditLog,
     HostingDeployment,
@@ -901,6 +902,12 @@ def agent_heartbeat(
         capabilities=payload.capabilities,
         now=agent.last_seen_at,
     )
+    rpo = persist_primary_rpo_telemetry(
+        db,
+        node=node,
+        capabilities=payload.capabilities,
+        now=agent.last_seen_at,
+    )
     db.commit()
     return {
         "ok": True,
@@ -908,6 +915,7 @@ def agent_heartbeat(
         "node": node.name,
         "status": node.status,
         "postgres_replica_telemetry": replication,
+        "postgres_rpo_telemetry": rpo,
     }
 
 
