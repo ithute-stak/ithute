@@ -137,6 +137,18 @@ jobs:
           provenance: mode=max
           sbom: true
 
+      - name: Publish database router image
+        if: steps.gates.outputs.publish == 'true'
+        id: db_router
+        uses: docker/build-push-action@v7
+        with:
+          context: engines/go-worker
+          file: engines/go-worker/Dockerfile.db-router
+          push: true
+          tags: ${{ env.REGISTRY }}/ithute-db-router:${{ env.RELEASE_SHA }}
+          provenance: mode=max
+          sbom: true
+
       - name: Publish Java worker image
         if: steps.gates.outputs.publish == 'true'
         id: java_worker
@@ -210,6 +222,14 @@ jobs:
           subject-digest: ${{ steps.go_worker.outputs.digest }}
           push-to-registry: true
 
+      - name: Attest database router image provenance
+        if: steps.gates.outputs.publish == 'true'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/ithute-db-router
+          subject-digest: ${{ steps.db_router.outputs.digest }}
+          push-to-registry: true
+
       - name: Attest Java worker image provenance
         if: steps.gates.outputs.publish == 'true'
         uses: actions/attest-build-provenance@v2
@@ -247,7 +267,7 @@ jobs:
         run: |
           echo "Ithute images are published only; no VPS deployment is performed."
           echo "Release SHA: $RELEASE_SHA"
-          for image in ithute-web ithute-app-api ithute-go-worker ithute-java-worker ithute-auth ithute-push ithute-realtime; do
+          for image in ithute-web ithute-app-api ithute-go-worker ithute-db-router ithute-java-worker ithute-auth ithute-push ithute-realtime; do
             echo "$REGISTRY/$image:$RELEASE_SHA"
           done
           echo "Production changes only when an operator deploys this exact SHA from the VPS."
