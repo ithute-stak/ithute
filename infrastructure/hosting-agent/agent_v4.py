@@ -38,6 +38,9 @@ POSTGRES_SERVICE = os.getenv("ITHUTE_HOSTING_POSTGRES_SERVICE", "").strip()
 POSTGRES_REPLICATION_DEDICATED = os.getenv("ITHUTE_HOSTING_POSTGRES_REPLICATION_DEDICATED", "false").lower() == "true"
 PG_BASEBACKUP = os.getenv("ITHUTE_HOSTING_PG_BASEBACKUP", "pg_basebackup").strip()
 PG_CTL = os.getenv("ITHUTE_HOSTING_PG_CTL", "pg_ctl").strip()
+PG_REWIND = os.getenv("ITHUTE_HOSTING_PG_REWIND", "pg_rewind").strip()
+POSTGRES_REPLICATION_USER = os.getenv("ITHUTE_HOSTING_POSTGRES_REPLICATION_USER", "").strip()
+POSTGRES_REPLICATION_PASSWORD = os.getenv("ITHUTE_HOSTING_POSTGRES_REPLICATION_PASSWORD", "")
 _SERVICE_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,128}$")
 if POSTGRES_REPLICATION_MODE not in {"disabled", "physical_cluster"}:
     raise RuntimeError("ITHUTE_HOSTING_POSTGRES_REPLICATION_MODE must be disabled or physical_cluster")
@@ -104,7 +107,20 @@ def postgres_physical_replication_capabilities() -> dict[str, Any]:
     service_ok = bool(POSTGRES_SERVICE) and bool(_SERVICE_RE.fullmatch(POSTGRES_SERVICE))
     basebackup_available = shutil.which(PG_BASEBACKUP) is not None
     pg_ctl_available = shutil.which(PG_CTL) is not None
-    supported = configured and POSTGRES_REPLICATION_DEDICATED and data_dir_ok and service_ok and basebackup_available and pg_ctl_available
+    pg_rewind_available = shutil.which(PG_REWIND) is not None
+    replication_credentials_configured = (
+        bool(base.DB_USER_RE.fullmatch(POSTGRES_REPLICATION_USER))
+        and 20 <= len(POSTGRES_REPLICATION_PASSWORD) <= 256
+    )
+    supported = (
+        configured
+        and POSTGRES_REPLICATION_DEDICATED
+        and data_dir_ok
+        and service_ok
+        and basebackup_available
+        and pg_ctl_available
+        and replication_credentials_configured
+    )
     result: dict[str, Any] = {
         "mode": POSTGRES_REPLICATION_MODE,
         "supported": supported,
@@ -114,6 +130,8 @@ def postgres_physical_replication_capabilities() -> dict[str, Any]:
         "service_configured": service_ok,
         "pg_basebackup_available": basebackup_available,
         "pg_ctl_available": pg_ctl_available,
+        "pg_rewind_available": pg_rewind_available,
+        "replication_credentials_configured": replication_credentials_configured,
     }
     if configured:
         try:
@@ -132,6 +150,17 @@ def postgres_physical_replication_capabilities() -> dict[str, Any]:
             result["replay_age_seconds"] = float(replay_age) if replay_age else None
             result["wal_receiver_status"] = receiver_status or None
             result["wal_receiver_streaming"] = receiver_status == "streaming"
+            try:
+                wal_log_hints = base.psql("SHOW wal_log_hints").strip().lower() == "on"
+                data_checksums = base.psql("SHOW data_checksums").strip().lower() == "on"
+                result["wal_log_hints"] = wal_log_hints
+                result["data_checksums"] = data_checksums
+                result["pg_rewind_safe_prerequisites"] = bool(
+                    pg_rewind_available and (wal_log_hints or data_checksums)
+                )
+            except Exception as exc:
+                result["pg_rewind_prerequisite_error"] = str(exc)[:300]
+                result["pg_rewind_safe_prerequisites"] = False
         except Exception as exc:
             result["status_error"] = str(exc)[:300]
     return result
@@ -190,6 +219,103 @@ def postgres_bootstrap_physical_replica(
         base.command(["systemctl", "stop", POSTGRES_SERVICE], check=False, timeout=120)
         raise RuntimeError("Bootstrapped PostgreSQL cluster did not enter standby recovery mode")
     return {"bootstrapped": True, "in_recovery": True, "data_dir": str(data_dir)}
+
+
+def _postgres_data_dir() -> pathlib.Path:
+    data_dir = pathlib.Path(POSTGRES_DATA_DIR)
+    if not data_dir.is_absolute() or data_dir == pathlib.Path("/") or len(data_dir.parts) < 4:
+        raise RuntimeError("PostgreSQL replication data directory is unsafe")
+    return data_dir
+
+
+def _reset_postgres_data_dir() -> pathlib.Path:
+    if not POSTGRES_REPLICATION_DEDICATED:
+        raise RuntimeError("Refusing to reset PostgreSQL data on a non-dedicated cluster")
+    data_dir = _postgres_data_dir()
+    base.command(["systemctl", "stop", POSTGRES_SERVICE], timeout=120)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    for child in data_dir.iterdir():
+        if child.is_symlink() or child.is_file():
+            child.unlink()
+        elif child.is_dir():
+            shutil.rmtree(child)
+        else:
+            raise RuntimeError(f"Unsupported PostgreSQL data-directory entry: {child.name}")
+    return data_dir
+
+
+def postgres_repair_physical_replica(
+    *,
+    source_host: str,
+    source_port: int,
+    method: str,
+) -> dict[str, Any]:
+    capabilities = postgres_physical_replication_capabilities()
+    if not capabilities.get("supported"):
+        raise RuntimeError("PostgreSQL physical replication is not safely configured on this hosting node")
+    if not source_host or any(ch.isspace() for ch in source_host) or "\x00" in source_host:
+        raise RuntimeError("PostgreSQL repair source host is invalid")
+    if not 1 <= int(source_port) <= 65535:
+        raise RuntimeError("PostgreSQL repair source port is invalid")
+    if method not in {"rewind", "basebackup"}:
+        raise RuntimeError("Unsupported PostgreSQL topology repair method")
+    if not base.DB_USER_RE.fullmatch(POSTGRES_REPLICATION_USER):
+        raise RuntimeError("PostgreSQL replication user is not configured")
+    if not 20 <= len(POSTGRES_REPLICATION_PASSWORD) <= 256:
+        raise RuntimeError("PostgreSQL replication password is not configured")
+
+    data_dir = _postgres_data_dir()
+    env = {"PGPASSWORD": POSTGRES_REPLICATION_PASSWORD}
+    if method == "rewind":
+        if not capabilities.get("pg_rewind_available"):
+            raise RuntimeError("pg_rewind is unavailable")
+        if not capabilities.get("pg_rewind_safe_prerequisites"):
+            raise RuntimeError("pg_rewind prerequisites are not proven")
+        base.command(["systemctl", "stop", POSTGRES_SERVICE], timeout=120)
+        conninfo = (
+            f"host={source_host} port={int(source_port)} "
+            f"user={POSTGRES_REPLICATION_USER} dbname={base.POSTGRES_ADMIN_DATABASE}"
+        )
+        base.command(
+            [
+                PG_REWIND,
+                "--target-pgdata", str(data_dir),
+                "--source-server", conninfo,
+                "--write-recovery-conf",
+                "--progress",
+            ],
+            timeout=7200,
+            extra_env=env,
+        )
+    else:
+        data_dir = _reset_postgres_data_dir()
+        base.command(
+            [
+                PG_BASEBACKUP,
+                "--pgdata", str(data_dir),
+                "--host", source_host,
+                "--port", str(source_port),
+                "--username", POSTGRES_REPLICATION_USER,
+                "--wal-method=stream",
+                "--write-recovery-conf",
+                "--checkpoint=fast",
+                "--no-password",
+            ],
+            timeout=7200,
+            extra_env=env,
+        )
+
+    base.command(["systemctl", "start", POSTGRES_SERVICE], timeout=120)
+    recovery = base.psql("SELECT pg_is_in_recovery()::text")
+    if recovery != "true":
+        base.command(["systemctl", "stop", POSTGRES_SERVICE], check=False, timeout=120)
+        raise RuntimeError("Repaired PostgreSQL node did not enter standby recovery mode")
+    receiver = base.psql(
+        "SELECT COALESCE((SELECT status FROM pg_stat_wal_receiver LIMIT 1),'')"
+    ).strip()
+    if receiver != "streaming":
+        raise RuntimeError("Repaired PostgreSQL node is not streaming WAL from the new primary")
+    return {"repaired": True, "method": method, "in_recovery": True, "wal_receiver_status": receiver}
 
 
 def postgres_promote_physical_replica(*, source_fencing_confirmed: bool) -> dict[str, Any]:
