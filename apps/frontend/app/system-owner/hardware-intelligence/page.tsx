@@ -14,7 +14,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
-import { apiJson } from "@/lib/platform-api";
+import { apiJson, apiMutation } from "@/lib/platform-api";
 
 type FleetItem = {
   server_id: string;
@@ -47,6 +47,17 @@ type FleetItem = {
   predictive_evidence: string[];
   evidence: string[];
   sampled_at?: string | null;
+  maintenance: {
+    active: boolean;
+    reason?: string | null;
+    ends_at?: string | null;
+    suppress_notifications: boolean;
+  };
+  acknowledgement: {
+    acknowledged: boolean;
+    note?: string | null;
+    acknowledged_at?: string | null;
+  };
 };
 
 type Fleet = {
@@ -135,6 +146,11 @@ export default function HardwareIntelligencePage() {
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [maintenanceReason, setMaintenanceReason] = useState("");
+  const [maintenanceHours, setMaintenanceHours] = useState("2");
+  const [ackNote, setAckNote] = useState("");
+  const [actionLoading, setActionLoading] = useState(false);
 
   const loadFleet = useCallback(async () => {
     setLoading(true);
@@ -149,6 +165,52 @@ export default function HardwareIntelligencePage() {
       setLoading(false);
     }
   }, []);
+
+  const createMaintenance = useCallback(async () => {
+    if (!selected || !maintenanceReason.trim()) return;
+    const hours = Math.max(0.25, Math.min(24 * 30, Number(maintenanceHours) || 2));
+    const starts = new Date();
+    const ends = new Date(starts.getTime() + hours * 3_600_000);
+    setActionLoading(true);
+    setActionError("");
+    try {
+      await apiMutation(`/hardware-intelligence/servers/${selected}/maintenance-windows`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          starts_at: starts.toISOString(),
+          ends_at: ends.toISOString(),
+          reason: maintenanceReason.trim(),
+          suppress_notifications: true,
+        }),
+      }, ["/hardware-intelligence/fleet"]);
+      setMaintenanceReason("");
+      await loadFleet();
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Unable to create maintenance window.");
+    } finally {
+      setActionLoading(false);
+    }
+  }, [selected, maintenanceReason, maintenanceHours, loadFleet]);
+
+  const acknowledgeCurrent = useCallback(async () => {
+    if (!selected) return;
+    setActionLoading(true);
+    setActionError("");
+    try {
+      await apiMutation(`/hardware-intelligence/servers/${selected}/acknowledge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: ackNote.trim() }),
+      }, ["/hardware-intelligence/fleet"]);
+      setAckNote("");
+      await loadFleet();
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Unable to acknowledge hardware alert.");
+    } finally {
+      setActionLoading(false);
+    }
+  }, [selected, ackNote, loadFleet]);
 
   const loadHistory = useCallback(async (serverId: string) => {
     if (!serverId) {
@@ -274,6 +336,19 @@ export default function HardwareIntelligencePage() {
                   <div className="mt-2 flex items-end justify-between"><p className="text-4xl font-black">{selectedServer.predictive_risk_score ?? 0}</p><p className="text-[10px] font-black uppercase">{selectedServer.predictive_state}</p></div>
                   <p className="mt-2 text-[9px] font-bold">Confidence {metric(selectedServer.predictive_confidence ? selectedServer.predictive_confidence * 100 : 0, "%")}</p>
                 </div>
+                <div className="rounded-xl border border-[var(--admin-line)] p-4">
+                  <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Operations</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className={`rounded-full border px-2 py-1 text-[8px] font-black uppercase ${selectedServer.maintenance.active ? "border-blue-200 bg-blue-50 text-blue-800" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
+                      {selectedServer.maintenance.active ? "Maintenance active" : "No maintenance"}
+                    </span>
+                    <span className={`rounded-full border px-2 py-1 text-[8px] font-black uppercase ${selectedServer.acknowledgement.acknowledged ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                      {selectedServer.acknowledgement.acknowledged ? "Current sample acknowledged" : "Unacknowledged"}
+                    </span>
+                  </div>
+                  {selectedServer.maintenance.active ? <p className="mt-2 text-[9px] text-[var(--admin-muted)]">{selectedServer.maintenance.reason} · until {selectedServer.maintenance.ends_at ? new Date(selectedServer.maintenance.ends_at).toLocaleString() : "unknown"}</p> : null}
+                  {selectedServer.acknowledgement.acknowledged && selectedServer.acknowledgement.note ? <p className="mt-2 text-[9px] text-[var(--admin-muted)]">Ack note: {selectedServer.acknowledgement.note}</p> : null}
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="rounded-xl border border-[var(--admin-line)] p-3"><Thermometer size={14}/><p className="mt-2 text-[8px] font-black uppercase text-[var(--admin-muted)]">Temperature</p><p className="mt-1 text-sm font-black">{metric(selectedServer.temperature_celsius, "°C")}</p></div>
                   <div className="rounded-xl border border-[var(--admin-line)] p-3"><Activity size={14}/><p className="mt-2 text-[8px] font-black uppercase text-[var(--admin-muted)]">Memory PSI</p><p className="mt-1 text-sm font-black">{metric(selectedServer.memory_pressure_avg10, "%")}</p></div>
@@ -310,6 +385,32 @@ export default function HardwareIntelligencePage() {
             ) : null}
           </div>
         </section>
+
+        {selectedServer ? (
+          <section className="surface-card p-5">
+            <p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">Operator controls</p>
+            <h2 className="mt-1 text-lg font-black">Acknowledge or schedule maintenance</h2>
+            {actionError ? <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-[10px] font-bold text-red-700">{actionError}</div> : null}
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <div className="rounded-xl border border-[var(--admin-line)] p-4">
+                <p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">Maintenance window</p>
+                <p className="mt-1 text-[10px] text-[var(--admin-muted)]">Health continues to be measured, but notification workflows can suppress planned-maintenance noise.</p>
+                <input value={maintenanceReason} onChange={(event) => setMaintenanceReason(event.target.value)} placeholder="Reason, e.g. kernel upgrade" className="mt-3 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]" />
+                <div className="mt-2 flex gap-2">
+                  <input value={maintenanceHours} onChange={(event) => setMaintenanceHours(event.target.value)} type="number" min="0.25" max="720" step="0.25" className="w-28 rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]" />
+                  <span className="self-center text-[9px] font-bold text-[var(--admin-muted)]">hours</span>
+                  <button disabled={actionLoading || !maintenanceReason.trim()} onClick={() => void createMaintenance()} className="ml-auto rounded-xl bg-[#18524d] px-4 py-2 text-[9px] font-black text-white disabled:opacity-50">Start maintenance</button>
+                </div>
+              </div>
+              <div className="rounded-xl border border-[var(--admin-line)] p-4">
+                <p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">Acknowledge current sample</p>
+                <p className="mt-1 text-[10px] text-[var(--admin-muted)]">Acknowledgement applies only to the latest telemetry snapshot. New telemetry requires a new acknowledgement.</p>
+                <input value={ackNote} onChange={(event) => setAckNote(event.target.value)} placeholder="Optional operator note" className="mt-3 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]" />
+                <button disabled={actionLoading || selectedServer.acknowledgement.acknowledged} onClick={() => void acknowledgeCurrent()} className="mt-2 rounded-xl bg-[#d8c56a] px-4 py-2 text-[9px] font-black text-[#123a38] disabled:opacity-50">{selectedServer.acknowledgement.acknowledged ? "Acknowledged" : "Acknowledge current sample"}</button>
+              </div>
+            </div>
+          </section>
+        ) : null}
 
         {selectedServer ? (
           <>
