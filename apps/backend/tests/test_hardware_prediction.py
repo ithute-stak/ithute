@@ -209,3 +209,59 @@ def test_prediction_detects_ebpf_oom_and_block_backlog_growth():
     assert result["state"] in {"elevated", "high"}
     assert result["risk_score"] >= 50
     assert any("eBPF" in item or "OOM" in item for item in result["evidence"])
+
+
+
+def test_ebpf_latency_histogram_derives_interval_percentiles():
+    previous = {
+        "ebpf": {
+            "block_latency_histogram": [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160]
+        }
+    }
+    current = {
+        "ebpf": {
+            "block_latency_histogram": [10, 20, 30, 40, 50, 60, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170]
+        }
+    }
+    features = derive_rate_features(previous, current)
+    assert features["ebpf_block_p50_ms"] is not None
+    assert features["ebpf_block_p95_ms"] is not None
+    assert features["ebpf_block_p99_ms"] is not None
+    assert features["ebpf_block_p50_ms"] <= features["ebpf_block_p95_ms"] <= features["ebpf_block_p99_ms"]
+
+
+def test_ebpf_latency_histogram_ignores_counter_reset():
+    previous = {"ebpf": {"block_latency_histogram": [10] * 16}}
+    current = {"ebpf": {"block_latency_histogram": [1] * 16}}
+    features = derive_rate_features(previous, current)
+    assert features["ebpf_block_p50_ms"] is None
+    assert features["ebpf_block_p95_ms"] is None
+    assert features["ebpf_block_p99_ms"] is None
+
+
+def test_prediction_detects_ebpf_p99_latency_drift():
+    history = [
+        MetricPoint(
+            temperature_celsius=45,
+            memory_pressure_avg10=1,
+            io_pressure_avg10=1,
+            filesystem_used_percent=50,
+            ebpf_block_p50_ms=0.5,
+            ebpf_block_p95_ms=2.0,
+            ebpf_block_p99_ms=4.0,
+        )
+        for _ in range(96)
+    ]
+    current = MetricPoint(
+        temperature_celsius=45,
+        memory_pressure_avg10=1,
+        io_pressure_avg10=1,
+        filesystem_used_percent=50,
+        ebpf_block_p50_ms=2.0,
+        ebpf_block_p95_ms=32.0,
+        ebpf_block_p99_ms=128.0,
+    )
+    result = predict_hardware_drift(history, current)
+    assert result["state"] in {"elevated", "high"}
+    assert result["risk_score"] >= 50
+    assert any("latency" in item.lower() for item in result["evidence"])
