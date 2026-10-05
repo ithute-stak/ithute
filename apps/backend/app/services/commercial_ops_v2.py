@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -16,7 +17,7 @@ from app.models import (
     TenantSubscription,
 )
 from app.models.commercial_ops_v2 import BillingContract
-from app.services.billing import capture_usage, tenant_usage
+from app.services.billing import calculate_overage, capture_usage, tenant_usage
 from app.services.catalog_entitlements import rebuild_effective_plan
 
 
@@ -161,12 +162,24 @@ def generate_contract_invoice(db: Session, subscription: TenantSubscription, con
     base = _base_price(plan, contract.billing_interval)
     plan_setup = 0 if contract.setup_fee_applied else int(plan.setup_fee_minor or 0)
     addon_setup, addon_assignments = _addon_setup_fees(db, subscription.tenant_id)
-    subtotal = base + plan_setup + addon_setup
+    fixed_subtotal = base + plan_setup + addon_setup
+
+    usage = tenant_usage(db, subscription.tenant_id)
+    overage = calculate_overage(plan, usage)
+    overage_amount = int(overage["estimated_minor"])
+    subtotal = fixed_subtotal + overage_amount
+
     discount = min(subtotal, (subtotal * max(0, min(100, contract.discount_percent))) // 100)
     after_discount = max(0, subtotal - discount)
     credit_used = min(after_discount, max(0, int(contract.credit_balance_minor)))
     total = max(0, after_discount - credit_used)
 
+    breakdown = {
+        **overage,
+        "fixed_subtotal_minor": fixed_subtotal,
+        "discount_minor": discount,
+        "credit_used_minor": credit_used,
+    }
     snapshot = capture_usage(db, subscription.tenant_id, subscription.current_period_start, subscription.current_period_end)
     invoice = BillingInvoice(
         tenant_id=subscription.tenant_id,
@@ -174,6 +187,9 @@ def generate_contract_invoice(db: Session, subscription: TenantSubscription, con
         usage_snapshot_id=snapshot.id,
         invoice_number=f"ITH-{now:%Y%m%d}-{uuid4().hex[:10].upper()}",
         currency=plan.currency,
+        base_amount_minor=fixed_subtotal,
+        overage_amount_minor=overage_amount,
+        usage_breakdown_json=json.dumps(breakdown, sort_keys=True),
         subtotal_minor=subtotal,
         total_minor=total,
         status=InvoiceStatus.open if total > 0 else InvoiceStatus.paid,
