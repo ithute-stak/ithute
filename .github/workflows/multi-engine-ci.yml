@@ -96,11 +96,14 @@ jobs:
           mkdir -p /tmp/ithute-java/classes
           javac --release 21 --add-modules jdk.httpserver -d /tmp/ithute-java/classes $(find engines/java-worker/src -name '*.java')
 
-      - name: Test C++ turbo library
+      - name: Test C++ engines
         run: |
           cmake -S engines/cpp-native -B /tmp/ithute-cpp-build -DCMAKE_BUILD_TYPE=Release
           cmake --build /tmp/ithute-cpp-build --parallel 2
           ctest --test-dir /tmp/ithute-cpp-build --output-on-failure
+          cmake -S engines/cpp-cluster -B /tmp/ithute-cpp-cluster-build -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/ithute-cpp-cluster-build --parallel 2
+          ctest --test-dir /tmp/ithute-cpp-cluster-build --output-on-failure
 
       - name: Test Python engine fallback
         working-directory: apps/backend
