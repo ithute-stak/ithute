@@ -111,6 +111,16 @@ def _load_cluster() -> ctypes.CDLL | None:
             ctypes.POINTER(ctypes.c_double),
         ]
         library.ithute_cluster_shortest_path.restype = ctypes.c_int
+        library.ithute_cluster_network_partitions.argtypes = [
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        library.ithute_cluster_network_partitions.restype = ctypes.c_int
     except (OSError, AttributeError):
         return None
     _cluster = library
@@ -123,7 +133,7 @@ def cluster_engine_status() -> dict:
         "available": available,
         "mode": "native",
         "library": str(CLUSTER_LIBRARY),
-        "capabilities": ["cluster-graph", "graph-reachability", "cluster-summary", "placement-priority-queue", "dependency-dag", "topological-order", "weighted-shortest-path"] if available else [],
+        "capabilities": ["cluster-graph", "graph-reachability", "cluster-summary", "placement-priority-queue", "dependency-dag", "topological-order", "weighted-shortest-path", "network-partitions"] if available else [],
         "fallback": "python",
     }
 
@@ -450,6 +460,70 @@ def shortest_weighted_path(node_ids: list[str], edges: list[dict], *, source: st
             "path": [node_ids[i] for i in path_indices],
             "total_weight": float(out_weight.value),
         }
+    except (OSError, RuntimeError, ValueError, ctypes.ArgumentError):
+        return fallback
+
+
+def _python_network_partitions(node_ids: list[str], links: list[tuple[str, str]]) -> dict:
+    if not node_ids or len(set(node_ids)) != len(node_ids):
+        return {"engine": "python-fallback", "components": [], "component_count": 0}
+    parent = {node_id: node_id for node_id in node_ids}
+
+    def find(node_id: str) -> str:
+        while parent[node_id] != node_id:
+            parent[node_id] = parent[parent[node_id]]
+            node_id = parent[node_id]
+        return node_id
+
+    def union(left: str, right: str) -> None:
+        root_left = find(left)
+        root_right = find(right)
+        if root_left != root_right:
+            if root_left < root_right:
+                parent[root_right] = root_left
+            else:
+                parent[root_left] = root_right
+
+    known = set(node_ids)
+    for left, right in links:
+        if left in known and right in known:
+            union(left, right)
+
+    grouped: dict[str, list[str]] = {}
+    for node_id in sorted(node_ids):
+        grouped.setdefault(find(node_id), []).append(node_id)
+    components = sorted(grouped.values(), key=lambda group: group[0] if group else "")
+    return {"engine": "python-fallback", "components": components, "component_count": len(components)}
+
+
+def network_partitions(node_ids: list[str], links: list[tuple[str, str]]) -> dict:
+    fallback = _python_network_partitions(node_ids, links)
+    if not node_ids:
+        return fallback
+    library = _load_cluster()
+    if library is None or len(set(node_ids)) != len(node_ids):
+        return fallback
+
+    index = {node_id: i for i, node_id in enumerate(node_ids)}
+    valid = [(index[left], index[right]) for left, right in links if left in index and right in index]
+    count = len(valid)
+    sources = (ctypes.c_size_t * count)(*[row[0] for row in valid]) if count else None
+    targets = (ctypes.c_size_t * count)(*[row[1] for row in valid]) if count else None
+    component_ids = (ctypes.c_size_t * len(node_ids))()
+    component_count = ctypes.c_size_t()
+
+    try:
+        code = library.ithute_cluster_network_partitions(
+            len(node_ids), sources, targets, count,
+            component_ids, len(node_ids), ctypes.byref(component_count),
+        )
+        if code != 0:
+            raise RuntimeError("native network partition detection failed")
+        grouped: dict[int, list[str]] = {}
+        for i, node_id in enumerate(node_ids):
+            grouped.setdefault(int(component_ids[i]), []).append(node_id)
+        components = [sorted(group) for _, group in sorted(grouped.items())]
+        return {"engine": "cpp", "components": components, "component_count": int(component_count.value)}
     except (OSError, RuntimeError, ValueError, ctypes.ArgumentError):
         return fallback
 
