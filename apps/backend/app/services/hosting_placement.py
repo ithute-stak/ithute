@@ -130,6 +130,7 @@ def score_node(
     memory_mb: int = 0,
     cpu_millicores: int = 0,
     database_engine: str | None = None,
+    preferred_region: str | None = None,
 ) -> dict:
     allocated = _allocated(db, node.id)
     available = {
@@ -220,6 +221,19 @@ def score_node(
     if server is None and agent is None:
         telemetry_penalty += 10.0
 
+    requested_region = (preferred_region or "").strip().lower()
+    server_region = (server.region if server else "").strip().lower()
+    region_match = bool(requested_region and server_region and requested_region == server_region)
+    # Region is a preference rather than a hard constraint. A healthy node in the
+    # requested region gets a meaningful advantage, while Ithute can still fall
+    # back to another region when local capacity or health is insufficient.
+    region_penalty = 0.0
+    if requested_region:
+        if server is None or not server_region:
+            region_penalty = 12.0
+        elif not region_match:
+            region_penalty = 18.0
+
     cpu_pct = _percent(telemetry, "cpu", "used_percent") or 0.0
     memory_pct = _percent(telemetry, "memory", "used_percent") or 0.0
     disk_pct = _disk_percent(telemetry) or 0.0
@@ -237,6 +251,7 @@ def score_node(
         + memory_util * 0.10
         + cpu_alloc_util * 0.10
         + telemetry_penalty
+        + region_penalty
     )
 
     return {
@@ -253,6 +268,19 @@ def score_node(
             "memory_percent": _percent(telemetry, "memory", "used_percent"),
             "disk_percent": _disk_percent(telemetry),
         },
+        "location": {
+            "requested_region": preferred_region,
+            "server_region": server.region if server else None,
+            "region_match": region_match,
+            "region_penalty": region_penalty,
+        },
+        "infrastructure": {
+            "server_id": str(server.id) if server else None,
+            "server_name": server.name if server else None,
+            "hostname": server.hostname if server else node.hostname,
+            "provider": server.provider if server else None,
+            "region": server.region if server else None,
+        },
         "infrastructure_server_id": str(server.id) if server else None,
     }
 
@@ -265,6 +293,7 @@ def rank_nodes(
     memory_mb: int = 0,
     cpu_millicores: int = 0,
     database_engine: str | None = None,
+    preferred_region: str | None = None,
     lock: bool = False,
 ) -> list[dict]:
     query = select(HostingNode).order_by(HostingNode.name.asc())
@@ -280,6 +309,7 @@ def rank_nodes(
             memory_mb=memory_mb,
             cpu_millicores=cpu_millicores,
             database_engine=database_engine,
+            preferred_region=preferred_region,
         )
         for node in nodes
     ]
@@ -295,6 +325,7 @@ def select_node(
     cpu_millicores: int = 0,
     database_engine: str | None = None,
     preferred_node_id: UUID | None = None,
+    preferred_region: str | None = None,
 ) -> tuple[HostingNode, dict]:
     ranked = rank_nodes(
         db,
@@ -303,6 +334,7 @@ def select_node(
         memory_mb=memory_mb,
         cpu_millicores=cpu_millicores,
         database_engine=database_engine,
+        preferred_region=preferred_region,
         lock=True,
     )
 
