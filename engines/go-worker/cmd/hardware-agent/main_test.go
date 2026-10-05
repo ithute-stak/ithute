@@ -44,3 +44,56 @@ func TestRunProbeRejectsUnknownSchema(t *testing.T) {
 		t.Fatal("expected unsupported schema error")
 	}
 }
+
+
+func TestParseSmartHealthNVMe(t *testing.T) {
+	payload := []byte(`{
+		"device":{"name":"/dev/nvme0","protocol":"NVMe"},
+		"model_name":"Example NVMe",
+		"serial_number":"ABC123",
+		"temperature":{"current":47},
+		"nvme_smart_health_information_log":{
+			"critical_warning":0,
+			"percentage_used":12,
+			"media_errors":3
+		}
+	}`)
+	health, err := parseSmartHealth("/dev/nvme0n1", payload)
+	if err != nil {
+		t.Fatalf("parseSmartHealth returned error: %v", err)
+	}
+	if health.Protocol != "NVMe" || health.Model != "Example NVMe" {
+		t.Fatalf("unexpected identity: %#v", health)
+	}
+	if health.TemperatureC == nil || *health.TemperatureC != 47 {
+		t.Fatalf("temperature not parsed: %#v", health.TemperatureC)
+	}
+	if health.PercentageUsed == nil || *health.PercentageUsed != 12 {
+		t.Fatalf("percentage used not parsed")
+	}
+	if health.MediaErrors == nil || *health.MediaErrors != 3 {
+		t.Fatalf("media errors not parsed")
+	}
+	if health.CriticalWarning == nil || *health.CriticalWarning != 0 {
+		t.Fatalf("critical warning not parsed")
+	}
+}
+
+func TestParseSmartHealthATA(t *testing.T) {
+	payload := []byte(`{
+		"device":{"name":"/dev/sda","protocol":"ATA"},
+		"model_name":"Example SSD",
+		"smart_status":{"passed":true},
+		"temperature":{"current":39}
+	}`)
+	health, err := parseSmartHealth("/dev/sda", payload)
+	if err != nil {
+		t.Fatalf("parseSmartHealth returned error: %v", err)
+	}
+	if health.HealthPassed == nil || !*health.HealthPassed {
+		t.Fatalf("SMART status not parsed")
+	}
+	if health.TemperatureC == nil || *health.TemperatureC != 39 {
+		t.Fatalf("temperature not parsed")
+	}
+}
