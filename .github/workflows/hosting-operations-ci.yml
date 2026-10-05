@@ -35,6 +35,7 @@ on:
       - "apps/backend/app/services/postgres_topology_repair.py"
       - "apps/backend/app/services/postgres_rpo_policy.py"
       - "apps/backend/app/services/postgres_rto_slo.py"
+      - "apps/backend/app/services/postgres_endpoints.py"
       - "apps/backend/app/services/hosting_node_health_daemon.py"
       - "apps/backend/app/services/hosting_webhooks.py"
       - "apps/backend/app/services/failure_domains.py"
@@ -60,6 +61,7 @@ on:
       - "apps/backend/tests/test_postgres_topology_repair_contract.py"
       - "apps/backend/tests/test_postgres_rpo_policy.py"
       - "apps/backend/tests/test_postgres_rto_slo.py"
+      - "apps/backend/tests/test_postgres_stable_endpoints.py"
       - "apps/backend/tests/test_hosting_builds_contract.py"
       - "apps/backend/tests/test_hosting_build_logs_contract.py"
       - "apps/backend/tests/test_hosting_git_webhooks_contract.py"
@@ -72,6 +74,7 @@ on:
       - "infrastructure/hosting-node/**"
       - "infrastructure/hosting-builder/**"
       - "infrastructure/hosting-upload/**"
+      - "infrastructure/database-gateway/**"
       - ".github/workflows/hosting-operations-ci.yml"
   workflow_dispatch:
 
