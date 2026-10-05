@@ -113,3 +113,25 @@ def test_dependency_order_fallback_rejects_cycle(monkeypatch):
 
     assert result["acyclic"] is False
     assert result["order"] == []
+
+
+
+def test_weighted_shortest_path_fallback(monkeypatch):
+    monkeypatch.setattr(cluster_engine, "_load_cluster", lambda: None)
+    result = cluster_engine.shortest_weighted_path(
+        ["a", "b", "c", "d"],
+        [
+            {"source": "a", "target": "b", "weight": 2.0},
+            {"source": "a", "target": "c", "weight": 10.0},
+            {"source": "b", "target": "d", "weight": 2.0},
+            {"source": "c", "target": "d", "weight": 1.0},
+        ],
+        source="a",
+        target="d",
+    )
+    assert result == {
+        "engine": "python-fallback",
+        "reachable": True,
+        "path": ["a", "b", "d"],
+        "total_weight": 4.0,
+    }
