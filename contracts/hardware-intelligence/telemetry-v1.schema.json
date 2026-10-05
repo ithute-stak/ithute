@@ -53,6 +53,54 @@
         "zones_seen": {"type": "integer", "minimum": 0},
         "max_celsius": {"type": "number"}
       }
+    },
+    "pressure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu_avg10", "memory_avg10", "io_avg10"],
+      "properties": {
+        "cpu_avg10": {"type": "number", "minimum": -1},
+        "memory_avg10": {"type": "number", "minimum": -1},
+        "io_avg10": {"type": "number", "minimum": -1}
+      }
+    },
+    "filesystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root_total_bytes", "root_available_bytes"],
+      "properties": {
+        "root_total_bytes": {"type": "integer", "minimum": 0},
+        "root_available_bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["devices", "reads_completed", "sectors_read", "writes_completed", "sectors_written", "io_ms", "weighted_io_ms"],
+      "properties": {
+        "devices": {"type": "integer", "minimum": 0},
+        "reads_completed": {"type": "integer", "minimum": 0},
+        "sectors_read": {"type": "integer", "minimum": 0},
+        "writes_completed": {"type": "integer", "minimum": 0},
+        "sectors_written": {"type": "integer", "minimum": 0},
+        "io_ms": {"type": "integer", "minimum": 0},
+        "weighted_io_ms": {"type": "integer", "minimum": 0}
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hwmon", "thermal", "edac", "ipmi", "bpf_fs", "kernel_btf", "smartctl", "nvme_cli"],
+      "properties": {
+        "hwmon": {"type": "boolean"},
+        "thermal": {"type": "boolean"},
+        "edac": {"type": "boolean"},
+        "ipmi": {"type": "boolean"},
+        "bpf_fs": {"type": "boolean"},
+        "kernel_btf": {"type": "boolean"},
+        "smartctl": {"type": "boolean"},
+        "nvme_cli": {"type": "boolean"}
+      }
     }
   }
 }
