@@ -15,12 +15,15 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_platform_owner, require_tenant_permission
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
-from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingProject, HostingSource, User
+from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingProject, HostingSource, User
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
 from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
 from app.services.database_replication import build_database_failover_plan
 from app.services.postgres_replication_groups import build_postgres_replication_group_plan
-from app.services.external_fencing import queue_external_fence_for_database_failover
+from app.services.external_fencing import (
+    queue_external_fence_for_database_failover,
+    queue_external_fence_for_postgres_group_failover,
+)
 
 router = APIRouter(tags=["shared-hosting"])
 
@@ -48,6 +51,10 @@ class PostgresReplicationGroupCreate(BaseModel):
     primary_node_id: UUID
     database_ids: list[UUID] = Field(min_length=1, max_length=500)
     standby_node_ids: list[UUID] = Field(default_factory=list, max_length=16)
+
+
+class PostgresReplicationGroupFailoverRequest(BaseModel):
+    standby_id: UUID
 
 
 class HostingDatabaseCreate(BaseModel):
