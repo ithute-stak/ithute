@@ -166,3 +166,46 @@ def test_prediction_detects_network_retransmission_drift():
     assert result["state"] in {"elevated", "high"}
     assert result["risk_score"] >= 50
     assert any("network" in item.lower() or "tcp" in item.lower() for item in result["evidence"])
+
+
+
+def test_counter_delta_features_capture_ebpf_backlog_and_oom_growth():
+    previous = {
+        "cpu": {"user": 1, "nice": 0, "system": 1, "idle": 10, "iowait": 0, "irq": 0, "softirq": 0, "steal": 0},
+        "block": {"reads_completed": 1, "writes_completed": 1, "io_ms": 1, "weighted_io_ms": 1},
+        "ebpf": {"block_requests_issued": 100, "block_requests_completed": 100, "oom_victims": 0},
+    }
+    current = {
+        "cpu": {"user": 2, "nice": 0, "system": 2, "idle": 20, "iowait": 0, "irq": 0, "softirq": 0, "steal": 0},
+        "block": {"reads_completed": 2, "writes_completed": 2, "io_ms": 2, "weighted_io_ms": 2},
+        "ebpf": {"block_requests_issued": 120, "block_requests_completed": 112, "oom_victims": 1},
+    }
+    features = derive_rate_features(previous, current)
+    assert features["ebpf_inflight_delta"] == 8.0
+    assert features["ebpf_oom_delta"] == 1.0
+
+
+def test_prediction_detects_ebpf_oom_and_block_backlog_growth():
+    history = [
+        MetricPoint(
+            temperature_celsius=45,
+            memory_pressure_avg10=1,
+            io_pressure_avg10=1,
+            filesystem_used_percent=50,
+            ebpf_inflight_delta=0,
+            ebpf_oom_delta=0,
+        )
+        for _ in range(96)
+    ]
+    current = MetricPoint(
+        temperature_celsius=45,
+        memory_pressure_avg10=1,
+        io_pressure_avg10=1,
+        filesystem_used_percent=50,
+        ebpf_inflight_delta=18,
+        ebpf_oom_delta=1,
+    )
+    result = predict_hardware_drift(history, current)
+    assert result["state"] in {"elevated", "high"}
+    assert result["risk_score"] >= 50
+    assert any("eBPF" in item or "OOM" in item for item in result["evidence"])
