@@ -28,6 +28,8 @@ type Mesh = {
   edge_public_key?: string | null;
   edge_endpoint?: string | null;
   reconciler_configured: boolean;
+  policy_mode: "full_mesh";
+  peer_communication_default: "allow";
   items: Peer[];
 };
 
@@ -162,7 +164,7 @@ export default function PrivateNetworkPage() {
       <PageHeader
         eyebrow="Infrastructure"
         title="Managed private network"
-        description="Ithute allocates private addresses and synchronizes approved hosting-node public keys to the edge. Node private keys remain on their VPS."
+        description="Ithute allocates private addresses and connects enrolled nodes in a private full mesh. Every enrolled node can communicate with every other enrolled node by default."
       />
 
       {error ? <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700">{error}</div> : null}
@@ -172,7 +174,7 @@ export default function PrivateNetworkPage() {
           <div className="surface-card p-4"><Network size={18}/><p className="mt-3 text-lg font-black">{mesh.subnet}</p><p className="text-[10px] font-bold text-[var(--admin-muted)]">Mesh subnet</p></div>
           <div className="surface-card p-4"><Server size={18}/><p className="mt-3 text-lg font-black">{mesh.edge_address}</p><p className="text-[10px] font-bold text-[var(--admin-muted)]">Edge address</p></div>
           <div className="surface-card p-4"><Activity size={18}/><p className="mt-3 text-2xl font-black">{connected}/{mesh.items.length}</p><p className="text-[10px] font-bold text-[var(--admin-muted)]">Recent handshakes</p></div>
-          <div className="surface-card p-4"><ShieldCheck size={18}/><p className="mt-3 text-lg font-black">{mesh.configured ? "Ready" : "Setup required"}</p><p className="text-[10px] font-bold text-[var(--admin-muted)]">Edge control plane</p></div>
+          <div className="surface-card p-4"><ShieldCheck size={18}/><p className="mt-3 text-lg font-black">{mesh.policy_mode === "full_mesh" ? "Full mesh" : "Setup required"}</p><p className="text-[10px] font-bold text-[var(--admin-muted)]">Peer communication</p></div>
         </section>
 
         <section className="surface-card p-4 sm:p-5">
@@ -188,10 +190,10 @@ export default function PrivateNetworkPage() {
         <section className="surface-card p-4 sm:p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="text-sm font-black">Private service grants</h2>
-              <p className="mt-1 text-[10px] text-[var(--admin-muted)]">Allow only the exact node-to-node service flows Ithute should route. All other WireGuard peer forwarding remains denied.</p>
+              <h2 className="text-sm font-black">Service relationship map</h2>
+              <p className="mt-1 text-[10px] text-[var(--admin-muted)]">All enrolled nodes can already communicate over the private mesh. These optional records document which services are intended to talk to each other.</p>
             </div>
-            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[9px] font-black text-emerald-700">Default deny</span>
+            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[9px] font-black text-emerald-700">Default allow · private mesh</span>
           </div>
 
           <form onSubmit={createGrant} className="mt-4 grid gap-3 rounded-2xl border border-[#dce5e0] bg-[#f8faf9] p-4 md:grid-cols-2 xl:grid-cols-6">
@@ -220,7 +222,7 @@ export default function PrivateNetworkPage() {
               <input name="service" required maxLength={80} placeholder="PostgreSQL" className="mt-1 min-h-10 w-full rounded-xl border border-[#dce5e0] bg-white px-3 text-xs" />
             </label>
             <div className="flex items-end">
-              <button type="submit" disabled={savingGrant} className="btn-primary min-h-10 w-full">{savingGrant ? "Applying…" : "Allow service"}</button>
+              <button type="submit" disabled={savingGrant} className="btn-primary min-h-10 w-full">{savingGrant ? "Saving…" : "Record service"}</button>
             </div>
           </form>
 
@@ -233,7 +235,7 @@ export default function PrivateNetworkPage() {
               </div>
               <button type="button" onClick={() => void removeGrant(grant.id)} className="icon-button text-red-700" aria-label={`Remove ${grant.service} grant`}><Trash2 size={14}/></button>
             </article>)}
-            {!grants.length ? <p className="text-xs text-[var(--admin-muted)]">No peer-to-peer service traffic is currently authorized.</p> : null}
+            {!grants.length ? <p className="text-xs text-[var(--admin-muted)]">No service relationships are documented yet. Node-to-node private communication is still enabled by default.</p> : null}
           </div>
         </section>
 
