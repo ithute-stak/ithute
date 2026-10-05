@@ -40,3 +40,16 @@ Production loading will be implemented through a privilege-separated agent. Norm
 All agent output must conform to contracts/hardware-intelligence/telemetry-v1.schema.json.
 
 The contract is versioned and additive so older agents can continue reporting during rolling upgrades.
+
+## Privilege-separated eBPF loader
+
+The normal Go hardware agent remains unprivileged. eBPF loading and map reads are isolated behind root-owned systemd units:
+
+- `ithute-ebpf.service` loads only the Ithute BPF object and pins it below `/sys/fs/bpf/ithute_hardware`.
+- `ithute-ebpf-snapshot.timer` refreshes a small JSON snapshot every 15 seconds.
+- The snapshot is written atomically to `/run/ithute-hardware/ebpf.json` as root-owned, mode 0644.
+- The Go agent reads that file only if it is not group/world writable and is no older than 90 seconds.
+
+The loader never enumerates, detaches or deletes BPF programs outside the Ithute pin tree.
+
+The current eBPF signal set contains cumulative block request issue/complete counts, process exits and OOM victims. These are useful for backlog and fault-growth detection. True request latency percentiles are still a separate roadmap item and must not be inferred from the current counters.
