@@ -56,7 +56,14 @@ push.ithute.co.ls {
 
 realtime.ithute.co.ls {
   header X-Ithute-Service "realtime"
-  reverse_proxy ithute-realtime:8080
+
+  handle /v1/native-ws* {
+    reverse_proxy ithute-go-worker:8080
+  }
+
+  handle {
+    reverse_proxy ithute-realtime:8080
+  }
 }
 
 # Public product routes owned by independent product repositories remain in
