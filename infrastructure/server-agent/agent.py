@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import platform
@@ -371,6 +373,25 @@ def sync_cluster_state() -> None:
     state = api_json("/platform/infrastructure/agent/cluster-state", method="GET")
     if not isinstance(state, dict) or state.get("version") != 1 or not isinstance(state.get("nodes"), list):
         raise RuntimeError("cluster-state response is invalid")
+
+    signature = str(state.get("signature_hmac_sha256") or "").strip().lower()
+    unsigned = {
+        key: state[key]
+        for key in (
+            "version",
+            "generated_at",
+            "self_server_id",
+            "node_count",
+            "reachability_engine",
+            "nodes",
+        )
+        if key in state
+    }
+    canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    expected = hmac.new(TOKEN.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+    if len(signature) != 64 or not hmac.compare_digest(signature, expected):
+        raise RuntimeError("cluster-state signature verification failed")
+
     CLUSTER_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     temporary = CLUSTER_STATE_PATH.with_suffix(".tmp")
     temporary.write_text(
