@@ -93,6 +93,7 @@ class Delivery(Base):
     message_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("messages.id", ondelete="CASCADE"), index=True)
     endpoint_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("push_endpoints.id", ondelete="CASCADE"), index=True)
     status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    transport_rank: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     provider_message_id: Mapped[str | None] = mapped_column(String(300), nullable=True)
     last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
