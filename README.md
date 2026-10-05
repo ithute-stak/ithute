@@ -316,6 +316,16 @@ Major services include:
 
 Production uses immutable Docker images tagged with the exact Git commit SHA. `compose.production.yml` does not build application source on the VPS.
 
+Canonical release image tags are:
+
+```text
+ithute-web:<commit-sha>
+ithute-app-api:<commit-sha>
+ithute-auth:<commit-sha>
+ithute-push:<commit-sha>
+ithute-realtime:<commit-sha>
+```
+
 The normal release path is:
 
 ```text
