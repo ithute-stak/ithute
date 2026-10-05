@@ -26,6 +26,7 @@ import {
   ShieldCheck,
   Sparkles,
   UsersRound,
+  TrendingUp,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -102,6 +103,7 @@ const navigation: NavGroup[] = [
     icon: CircleDollarSign,
     children: [
       { label: "Billing & subscription", href: "/billing", icon: CircleDollarSign },
+      { label: "Profitability centre", href: "/commercial-profitability", icon: TrendingUp },
       { label: "Notifications", href: "/notifications", icon: Bell },
       { label: "Support centre", href: "/support", icon: Headphones },
       { label: "Business operations", href: "/business-operations", icon: BriefcaseBusiness },
