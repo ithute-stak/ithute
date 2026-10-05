@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from functools import lru_cache
+import re
 
 import dns.exception
 import dns.resolver
@@ -121,7 +122,23 @@ def _normalize_address(address: str) -> tuple[str, str]:
     domain = domain.strip().rstrip(".")
     if not local or not domain or "." not in domain:
         raise ValueError("Enter a valid email address")
-    return mailbox, domain
+    try:
+        ascii_domain = domain.encode("idna").decode("ascii").lower()
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError("Enter a valid email address") from exc
+    if len(ascii_domain) > 253:
+        raise ValueError("Enter a valid email address")
+    labels = ascii_domain.split(".")
+    if any(
+        not label
+        or len(label) > 63
+        or label.startswith("-")
+        or label.endswith("-")
+        or re.fullmatch(r"[a-z0-9-]+", label) is None
+        for label in labels
+    ):
+        raise ValueError("Enter a valid email address")
+    return f"{local}@{ascii_domain}", ascii_domain
 
 
 def _profile(key: str, detected_by: str) -> MailProviderProfile:
@@ -152,7 +169,7 @@ def _mx_hosts(domain: str) -> tuple[str, ...]:
     try:
         answer = dns.resolver.resolve(domain, "MX", lifetime=2.5)
         return tuple(sorted(str(row.exchange).lower().rstrip(".") for row in answer))
-    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers, dns.exception.Timeout):
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers, dns.exception.DNSException, ValueError):
         return ()
 
 
