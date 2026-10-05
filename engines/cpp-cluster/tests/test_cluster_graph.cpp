@@ -1,4 +1,5 @@
 #include "cluster_graph.hpp"
+#include "ithute_cluster_c.h"
 
 #include <cassert>
 #include <cstdint>
@@ -92,5 +93,23 @@ int main() {
     assert(!graph.reachable("vps-a", "vps-c"));
 
     assert(!graph.remove_node("missing"));
+
+    void* handle = ithute_cluster_create();
+    assert(handle != nullptr);
+    assert(ithute_cluster_upsert_node(handle, "a", "A", "10.70.0.2", 1, 1, 10.0, 8, 2, 100, 10) == 0);
+    assert(ithute_cluster_upsert_node(handle, "b", "B", "10.70.0.3", 1, 1, 20.0, 16, 4, 200, 20) == 0);
+    assert(ithute_cluster_upsert_edge(handle, "a", "b", 2, "postgresql", "tcp", 5432) == 0);
+    assert(ithute_cluster_reachable(handle, "a", "b") == 1);
+    assert(ithute_cluster_reachable(handle, "b", "a") == 0);
+
+    ithute_cluster_summary native_summary{};
+    assert(ithute_cluster_summary_read(handle, &native_summary) == 0);
+    assert(native_summary.nodes == 2);
+    assert(native_summary.edges == 1);
+    assert(native_summary.online_nodes == 2);
+    assert(native_summary.healthy_nodes == 2);
+    assert(native_summary.memory_total_bytes == 24);
+    ithute_cluster_destroy(handle);
+
     return 0;
 }
