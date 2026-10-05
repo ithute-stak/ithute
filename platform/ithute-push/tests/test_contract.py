@@ -31,6 +31,8 @@ def _write_fcm_credentials(path) -> None:
 
 def test_provider_mapping() -> None:
     assert provider_for("android") == "fcm"
+    assert provider_for("android", "ithute") == "ithute"
+    assert provider_for("android", "fcm") == "fcm"
     assert provider_for("ios") == "apns"
     assert provider_for("web") == "webpush"
 
@@ -64,7 +66,7 @@ def test_android_fcm_is_default_readiness_baseline(tmp_path) -> None:
         vapid_private_key_file=str(vapid),
     )
     assert settings.required_provider_set == {"fcm"}
-    assert settings.provider_readiness() == {"fcm": False, "apns": False, "webpush": False}
+    assert settings.provider_readiness() == {"ithute": False, "fcm": False, "apns": False, "webpush": False}
     assert settings.missing_required_providers() == ["fcm"]
 
     fcm.write_text("{}", encoding="utf-8")
@@ -72,6 +74,24 @@ def test_android_fcm_is_default_readiness_baseline(tmp_path) -> None:
     _write_fcm_credentials(fcm)
     assert settings.provider_readiness()["fcm"] is True
     assert settings.missing_required_providers() == []
+
+
+def test_ithute_owned_transport_can_be_required_without_fcm() -> None:
+    settings = Settings(
+        database_url="sqlite://",
+        endpoint_encryption_key=_key(),
+        required_providers="ithute",
+        ithute_gateway_url="http://ithute-go-worker:8080",
+        ithute_gateway_token="gateway-secret",
+    )
+    assert settings.required_provider_set == {"ithute"}
+    assert settings.provider_readiness()["ithute"] is True
+    assert settings.missing_required_providers() == []
+
+
+def test_android_can_register_both_ithute_and_fcm_transports() -> None:
+    assert provider_for("android", "ithute") == "ithute"
+    assert provider_for("android", "fcm") == "fcm"
 
 
 def test_required_providers_can_expand_after_android_rollout(tmp_path) -> None:
