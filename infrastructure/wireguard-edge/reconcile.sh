@@ -97,10 +97,8 @@ iptables -C FORWARD -i ithute0 -o ithute0 -j "$MESH_CHAIN" >/dev/null 2>&1 ||
 iptables -F "$MESH_CHAIN"
 iptables -A "$MESH_CHAIN" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
-while IFS=
-
-iptables -A "$MESH_CHAIN" -j DROP
-\t' read -r source target protocol port; do
+TAB="$(printf '\\t')"
+while IFS="$TAB" read -r source target protocol port; do
   [ -n "$source" ] || continue
   iptables -A "$MESH_CHAIN" \
     -s "$source/32" \
