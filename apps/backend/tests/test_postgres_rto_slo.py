@@ -188,4 +188,28 @@ def test_failover_slo_snapshot_measures_service_and_repair_windows():
     assert snapshot["phase_seconds"]["promotion_and_control_plane_cutover"] == 35
     assert snapshot["phase_seconds"]["service_restoration"] == 120
     assert snapshot["phase_seconds"]["redundancy_repair"] == 300
+    assert snapshot["phase_budget_met"]["detection"] is True
+    assert snapshot["phase_budget_met"]["fencing"] is True
+    assert snapshot["phase_budget_met"]["promotion_and_control_plane_cutover"] is True
+    assert snapshot["phase_budget_met"]["redundancy_repair"] is True
     assert snapshot["rto_met"] is True
+
+
+def test_health_daemon_runs_postgres_auto_failover_reconcile():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    text = (root / "apps/backend/app/services/hosting_node_health_daemon.py").read_text()
+    assert "reconcile_postgres_auto_failover" in text
+    assert '"hosting_postgres_auto_failover_reconcile"' in text
+
+
+def test_rto_policy_never_treats_heartbeat_loss_as_fence_proof():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    text = (root / "apps/backend/app/services/postgres_rto_slo.py").read_text()
+    assert "blocked_no_fencing_path" in text
+    assert "queue_external_fence_for_postgres_group_failover" in text
+    assert "source_unreachable" not in text
+    assert "force_promote" not in text
