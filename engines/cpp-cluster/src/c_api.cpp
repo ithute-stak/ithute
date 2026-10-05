@@ -2,6 +2,7 @@
 #include "cluster_graph.hpp"
 #include "placement_scheduler.hpp"
 #include "weighted_network.hpp"
+#include "network_partitions.hpp"
 
 #include <memory>
 #include <mutex>
@@ -318,6 +319,39 @@ extern "C" int ithute_cluster_shortest_path(
         }
         *out_count = result->node_indices.size();
         *out_total_weight = result->total_weight;
+        return 0;
+    } catch (...) {
+        return 2;
+    }
+}
+
+
+extern "C" int ithute_cluster_network_partitions(
+    std::size_t node_count,
+    const std::size_t* edge_sources,
+    const std::size_t* edge_targets,
+    std::size_t edge_count,
+    std::size_t* out_component_ids,
+    std::size_t out_capacity,
+    std::size_t* out_component_count
+) {
+    if (node_count == 0 || out_component_ids == nullptr || out_component_count == nullptr || out_capacity < node_count) {
+        return 1;
+    }
+    if (edge_count > 0 && (edge_sources == nullptr || edge_targets == nullptr)) {
+        return 1;
+    }
+    try {
+        std::vector<std::pair<std::size_t, std::size_t>> links;
+        links.reserve(edge_count);
+        for (std::size_t i = 0; i < edge_count; ++i) {
+            links.emplace_back(edge_sources[i], edge_targets[i]);
+        }
+        const auto result = ithute::cluster::network_partitions(node_count, links);
+        for (std::size_t i = 0; i < node_count; ++i) {
+            out_component_ids[i] = result.component_by_node[i];
+        }
+        *out_component_count = result.components;
         return 0;
     } catch (...) {
         return 2;
