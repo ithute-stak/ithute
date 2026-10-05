@@ -42,7 +42,7 @@ class UTCDateTime(TypeDecorator[datetime]):
 class PushEndpoint(Base):
     __tablename__ = "push_endpoints"
     __table_args__ = (
-        UniqueConstraint("auth_user_id", "application_id", "device_key", name="uq_push_endpoint_identity"),
+        UniqueConstraint("auth_user_id", "application_id", "device_key", "provider", name="uq_push_endpoint_transport"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
