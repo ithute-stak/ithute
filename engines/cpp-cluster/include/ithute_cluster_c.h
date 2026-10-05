@@ -65,6 +65,16 @@ int ithute_cluster_rank_candidates(
     std::size_t out_capacity
 );
 
+int ithute_cluster_dependency_order(
+    const char* const* node_ids,
+    std::size_t node_count,
+    const char* const* dependent_ids,
+    const char* const* dependency_ids,
+    std::size_t dependency_count,
+    std::size_t* out_indices,
+    std::size_t out_capacity
+);
+
 #ifdef __cplusplus
 }
 #endif

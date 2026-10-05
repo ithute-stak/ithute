@@ -79,6 +79,7 @@ public:
     [[nodiscard]] const Node* get_node(const NodeId& node_id) const;
     [[nodiscard]] std::vector<const Node*> neighbors(const NodeId& node_id) const;
     [[nodiscard]] bool reachable(const NodeId& source, const NodeId& target) const;
+    [[nodiscard]] std::optional<std::vector<NodeId>> dependency_order() const;
     [[nodiscard]] ClusterSummary summary() const;
 
     [[nodiscard]] std::size_t node_count() const noexcept;
