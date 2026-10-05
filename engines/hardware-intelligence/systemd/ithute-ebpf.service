@@ -7,8 +7,8 @@ ConditionPathExists=/sys/kernel/btf/vmlinux
 
 [Service]
 Type=oneshot
-ExecStart=/opt/ithute/hardware-intelligence/ithute-ebpf-loader start
-ExecStop=/opt/ithute/hardware-intelligence/ithute-ebpf-loader stop
+ExecStart=/bin/bash /opt/ithute/hardware-intelligence/ithute-ebpf-loader start
+ExecStop=/bin/bash /opt/ithute/hardware-intelligence/ithute-ebpf-loader stop
 RemainAfterExit=yes
 User=root
 Group=root
