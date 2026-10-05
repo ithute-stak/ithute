@@ -205,6 +205,28 @@ services:
       start_period: 45s
     networks: [ithute]
 
+  ithute-native-engine:
+    image: ithute-app-api:${ITHUTE_IMAGE_TAG:?ITHUTE_IMAGE_TAG is required}
+    restart: unless-stopped
+    init: true
+    command: ["uvicorn", "app.native_engine_server:app", "--host", "0.0.0.0", "--port", "8080"]
+    environment:
+      ITHUTE_NATIVE_ENGINE_TOKEN: ${ITHUTE_NATIVE_ENGINE_TOKEN:-}
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks: [ithute]
+
   ithute-go-worker:
     image: ithute-go-worker:${ITHUTE_IMAGE_TAG:?ITHUTE_IMAGE_TAG is required}
     restart: unless-stopped
@@ -429,6 +451,9 @@ services:
       REALTIME_PUSH_ENABLED: ${ITHUTE_REALTIME_PUSH_ENABLED:-true}
       REALTIME_GO_WORKER_URL: http://ithute-go-worker:8080
       REALTIME_GO_GATEWAY_TOKEN: ${ITHUTE_REALTIME_GO_GATEWAY_TOKEN:-}
+      REALTIME_NATIVE_ENGINE_URL: http://ithute-native-engine:8080
+      REALTIME_NATIVE_ENGINE_TOKEN: ${ITHUTE_NATIVE_ENGINE_TOKEN:-}
+      REALTIME_ROUTE_SHARD_COUNT: ${ITHUTE_REALTIME_ROUTE_SHARD_COUNT:-64}
       REALTIME_GO_WEBSOCKET_PUBLIC_PATH: /v1/native-ws
       REALTIME_ENGINE_HTTP_TIMEOUT_SECONDS: ${ITHUTE_ENGINE_HTTP_TIMEOUT_SECONDS:-1.5}
     depends_on:
@@ -441,6 +466,8 @@ services:
       ithute-realtime-redis:
         condition: service_healthy
       ithute-go-worker:
+        condition: service_healthy
+      ithute-native-engine:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
