@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Activity, KeyRound, Network, RefreshCw, Server, ShieldCheck, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Activity, Network, RefreshCw, Server, ShieldCheck, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { ControlShell } from "@/components/control-shell";
@@ -107,7 +107,7 @@ export default function PrivateNetworkPage() {
     setLoading(false);
   }
 
-  async function createGrant(event: React.FormEvent<HTMLFormElement>) {
+  async function createGrant(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSavingGrant(true);
     setError("");
