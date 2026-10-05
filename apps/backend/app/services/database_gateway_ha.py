@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -66,15 +67,27 @@ def _reconcile_pool_dns(
     *,
     pool: HostingDatabaseGatewayPool,
     gateways: list[HostingDatabaseGateway],
+    now: datetime,
 ) -> dict:
     if pool.dns_domain_id is None:
-        return {"managed": False, "a": [], "aaaa": [], "error": None}
+        return {"managed": False, "changed": False, "a": [], "aaaa": [], "error": None}
     domain = db.get(Domain, pool.dns_domain_id)
     if domain is None:
-        return {"managed": True, "a": [], "aaaa": [], "error": "Managed DNS domain is unavailable"}
+        pool.dns_error = "Managed DNS domain is unavailable"
+        return {"managed": True, "changed": False, "a": [], "aaaa": [], "error": pool.dns_error}
 
     ipv4 = sorted({gateway.advertise_ipv4 for gateway in gateways if gateway and gateway.advertise_ipv4})
     ipv6 = sorted({gateway.advertise_ipv6 for gateway in gateways if gateway and gateway.advertise_ipv6})
+    ipv4_json = json.dumps(ipv4, separators=(",", ":"))
+    ipv6_json = json.dumps(ipv6, separators=(",", ":"))
+    changed = (
+        pool.published_ipv4_json != ipv4_json
+        or pool.published_ipv6_json != ipv6_json
+        or bool(pool.dns_error)
+    )
+    if not changed:
+        return {"managed": True, "changed": False, "a": ipv4, "aaaa": ipv6, "error": None}
+
     client = PowerDNSClient()
     try:
         if ipv4:
@@ -86,8 +99,15 @@ def _reconcile_pool_dns(
         else:
             client.delete_rrset(domain.ascii_name, pool.frontend_hostname, "AAAA")
     except PowerDNSError as exc:
-        return {"managed": True, "a": ipv4, "aaaa": ipv6, "error": str(exc)[:500]}
-    return {"managed": True, "a": ipv4, "aaaa": ipv6, "error": None}
+        pool.dns_error = str(exc)[:500]
+        pool.dns_last_reconciled_at = now
+        return {"managed": True, "changed": True, "a": ipv4, "aaaa": ipv6, "error": pool.dns_error}
+
+    pool.published_ipv4_json = ipv4_json
+    pool.published_ipv6_json = ipv6_json
+    pool.dns_last_reconciled_at = now
+    pool.dns_error = None
+    return {"managed": True, "changed": True, "a": ipv4, "aaaa": ipv6, "error": None}
 
 
 def reconcile_database_gateway_health(
@@ -116,7 +136,7 @@ def reconcile_database_gateway_health(
             if _fresh(now, db.get(HostingDatabaseGateway, gateway_id))
         ]
         fresh_gateways = len(fresh_members)
-        dns = _reconcile_pool_dns(db, pool=pool, gateways=fresh_members)
+        dns = _reconcile_pool_dns(db, pool=pool, gateways=fresh_members, now=now)
         desired_pool_status = (
             "active"
             if fresh_gateways >= int(pool.required_ready_gateways) and not dns["error"]
