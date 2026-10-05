@@ -9,6 +9,7 @@ operations queue for restart and bounded log snapshots.
 from __future__ import annotations
 
 import signal
+import threading
 import time
 import uuid
 from typing import Any
@@ -37,8 +38,16 @@ def claim_project_operation() -> dict[str, Any] | None:
     return work if isinstance(work, dict) else None
 
 
+def heartbeat_project_operation(operation_id: str, fencing_token: str) -> dict[str, Any]:
+    return base.api(
+        f"/hosting/agent/project-operations/{operation_id}/heartbeat",
+        {"fencing_token": fencing_token},
+    )
+
+
 def report_project_operation(
     operation_id: str,
+    fencing_token: str,
     success: bool,
     *,
     output: str | None = None,
@@ -46,16 +55,27 @@ def report_project_operation(
 ) -> dict[str, Any]:
     return base.api(
         f"/hosting/agent/project-operations/{operation_id}/status",
-        {"success": success, "output": output, "message": message},
+        {"fencing_token": fencing_token, "success": success, "output": output, "message": message},
     )
+
+
+def _lease_heartbeat_loop(operation_id: str, fencing_token: str, stop: threading.Event) -> None:
+    while not stop.wait(30):
+        try:
+            heartbeat_project_operation(operation_id, fencing_token)
+        except Exception as exc:
+            base.log(f"project operation {operation_id} lease heartbeat failed: {exc}")
 
 
 def process_project_operation(work: dict[str, Any]) -> None:
     operation_id = str(work.get("id") or "")
+    fencing_token = str(work.get("fencing_token") or "")
     operation = str(work.get("operation") or "")
     project = work.get("project")
     if not operation_id:
         raise RuntimeError("Project operation is missing its id")
+    if len(fencing_token) < 20:
+        raise RuntimeError("Project operation is missing its fencing token")
     if operation not in {"restart", "logs", "retire"}:
         raise RuntimeError("Unknown project runtime operation")
     if not isinstance(project, dict):
@@ -79,7 +99,7 @@ def process_project_operation(work: dict[str, Any]) -> None:
             base.docker("network", "rm", network, check=False)
         if base.exists("volume", volume):
             base.docker("volume", "rm", "-f", volume)
-        report_project_operation(operation_id, True, message="Stale source placement and disposable local data removed")
+        report_project_operation(operation_id, fencing_token, True, message="Stale source placement and disposable local data removed")
         base.log(f"project operation {operation_id} retire complete")
         return
 
@@ -98,7 +118,7 @@ def process_project_operation(work: dict[str, Any]) -> None:
         base.docker("restart", "--time", "20", container, timeout=60)
         ip = base.private_ip(container, network)
         base.wait_healthy(ip, port, health_path)
-        report_project_operation(operation_id, True, message="Container restarted and private health check passed")
+        report_project_operation(operation_id, fencing_token, True, message="Container restarted and private health check passed")
         base.log(f"project operation {operation_id} restart complete")
         return
 
@@ -112,22 +132,36 @@ def process_project_operation(work: dict[str, Any]) -> None:
     # Docker may write application log streams to stdout and/or stderr. Preserve
     # both but enforce a bounded payload before it reaches the control plane.
     combined = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
-    report_project_operation(operation_id, True, output=combined[-MAX_LOG_CHARS:])
+    report_project_operation(operation_id, fencing_token, True, output=combined[-MAX_LOG_CHARS:])
     base.log(f"project operation {operation_id} logs complete")
 
 
 def safe_process_project_operation(work: dict[str, Any]) -> None:
     operation_id = str(work.get("id") or "")
+    fencing_token = str(work.get("fencing_token") or "")
+    stop = threading.Event()
+    heartbeat_thread: threading.Thread | None = None
+    if operation_id and len(fencing_token) >= 20:
+        heartbeat_thread = threading.Thread(
+            target=_lease_heartbeat_loop,
+            args=(operation_id, fencing_token, stop),
+            daemon=True,
+        )
+        heartbeat_thread.start()
     try:
         process_project_operation(work)
     except Exception as exc:
         error = str(exc)[:1900]
         base.log(f"project operation {operation_id or '<unknown>'} failed: {error}")
-        if operation_id:
+        if operation_id and len(fencing_token) >= 20:
             try:
-                report_project_operation(operation_id, False, message=error)
+                report_project_operation(operation_id, fencing_token, False, message=error)
             except Exception as report_exc:
                 base.log(f"could not report project operation failure: {report_exc}")
+    finally:
+        stop.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=2)
 
 
 def handle_signal(signum: int, frame: Any) -> None:

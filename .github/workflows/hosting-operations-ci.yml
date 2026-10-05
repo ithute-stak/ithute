@@ -149,6 +149,8 @@ jobs:
           ! grep -Fq 'docker("pull"' infrastructure/hosting-agent/agent.py
           ! grep -Fq 'git clone' infrastructure/hosting-agent/agent.py
           grep -Fq '/hosting/agent/project-operations/claim' infrastructure/hosting-agent/agent_v3.py
+          grep -Fq '/heartbeat' infrastructure/hosting-agent/agent_v3.py
+          grep -Fq 'fencing_token' infrastructure/hosting-agent/agent_v3.py
           grep -Fq 'docker("restart"' infrastructure/hosting-agent/agent_v3.py
           grep -Fq 'docker("logs"' infrastructure/hosting-agent/agent_v3.py
           grep -Fq 'uuid.UUID(project_id)' infrastructure/hosting-agent/agent_v3.py

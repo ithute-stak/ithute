@@ -2,8 +2,11 @@ from datetime import datetime, timedelta, timezone
 
 from app.models import HostingNode, HostingProject, HostingProjectOperation
 from app.services.hosting_operation_scheduler import (
+    MAX_OPERATION_ATTEMPTS,
     claim_next_project_operation,
     operation_effective_priority,
+    reclaim_expired_project_operations,
+    renew_project_operation_lease,
 )
 
 
@@ -126,4 +129,93 @@ def test_operation_scheduler_enforces_node_concurrency_limit(db, platform_owner,
 
     assert claimed is None
     assert queued.status == "queued"
+    db.rollback()
+
+
+
+def test_claim_assigns_fencing_token_and_lease(db, platform_owner, tenant_admin):
+    _, tenant, _ = tenant_admin
+    now = datetime.now(timezone.utc)
+    node = _node(db, platform_owner)
+    project = _project(db, tenant, platform_owner, node)
+    queued = _operation(db, tenant, platform_owner, project, node, "restart", now)
+
+    claimed = claim_next_project_operation(db, node_id=node.id, now=now, concurrency_limit=1)
+
+    assert claimed is not None
+    assert claimed.id == queued.id
+    assert claimed.attempt_count == 1
+    assert claimed.fencing_token is not None
+    assert len(claimed.fencing_token) >= 20
+    assert claimed.lease_expires_at is not None
+    assert claimed.lease_expires_at > now
+    assert claimed.lease_heartbeat_at == now
+    db.rollback()
+
+
+def test_expired_lease_is_requeued_then_reclaimed_with_new_fence(db, platform_owner, tenant_admin):
+    _, tenant, _ = tenant_admin
+    now = datetime.now(timezone.utc)
+    node = _node(db, platform_owner)
+    project = _project(db, tenant, platform_owner, node)
+    row = _operation(db, tenant, platform_owner, project, node, "restart", now - timedelta(minutes=5))
+    row.status = "claimed"
+    row.claimed_at = now - timedelta(minutes=4)
+    row.attempt_count = 1
+    row.fencing_token = "old-fence-token-value-1234567890"
+    row.lease_heartbeat_at = now - timedelta(minutes=3)
+    row.lease_expires_at = now - timedelta(seconds=1)
+    db.flush()
+
+    claimed = claim_next_project_operation(db, node_id=node.id, now=now, concurrency_limit=1)
+
+    assert claimed is not None
+    assert claimed.id == row.id
+    assert claimed.attempt_count == 2
+    assert claimed.fencing_token != "old-fence-token-value-1234567890"
+    assert claimed.lease_expires_at > now
+    db.rollback()
+
+
+def test_expired_lease_fails_after_max_attempts(db, platform_owner, tenant_admin):
+    _, tenant, _ = tenant_admin
+    now = datetime.now(timezone.utc)
+    node = _node(db, platform_owner)
+    project = _project(db, tenant, platform_owner, node)
+    row = _operation(db, tenant, platform_owner, project, node, "restart", now - timedelta(hours=1))
+    row.status = "claimed"
+    row.claimed_at = now - timedelta(minutes=5)
+    row.attempt_count = MAX_OPERATION_ATTEMPTS
+    row.fencing_token = "expired-fence-token-value-123456"
+    row.lease_expires_at = now - timedelta(seconds=1)
+    db.flush()
+
+    result = reclaim_expired_project_operations(db, node_id=node.id, now=now)
+
+    assert result == {"requeued": 0, "failed": 1}
+    assert row.status == "failed"
+    assert row.completed_at == now
+    assert row.fencing_token is None
+    db.rollback()
+
+
+def test_lease_renewal_requires_current_fencing_token(db, platform_owner, tenant_admin):
+    _, tenant, _ = tenant_admin
+    now = datetime.now(timezone.utc)
+    node = _node(db, platform_owner)
+    project = _project(db, tenant, platform_owner, node)
+    _operation(db, tenant, platform_owner, project, node, "restart", now)
+    claimed = claim_next_project_operation(db, node_id=node.id, now=now, concurrency_limit=1)
+    assert claimed is not None
+    old_expiry = claimed.lease_expires_at
+
+    assert renew_project_operation_lease(
+        db, row=claimed, fencing_token="wrong-fencing-token-value-123456", now=now + timedelta(seconds=10)
+    ) is False
+    assert claimed.lease_expires_at == old_expiry
+
+    assert renew_project_operation_lease(
+        db, row=claimed, fencing_token=claimed.fencing_token, now=now + timedelta(seconds=10)
+    ) is True
+    assert claimed.lease_expires_at > old_expiry
     db.rollback()
