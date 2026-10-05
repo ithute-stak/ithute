@@ -49,6 +49,20 @@ jobs:
           python -m pip install --disable-pip-version-check -r requirements.txt
           python -m compileall -q app alembic
 
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23"
+          cache-dependency-path: engines/go-worker/go.sum
+
+      - name: Validate Hardware Intelligence foundation
+        run: |
+          set -euo pipefail
+          make -C engines/hardware-intelligence
+          engines/hardware-intelligence/build/ithute-hw-probe | python3 -m json.tool >/dev/null
+          cd engines/go-worker
+          go test ./cmd/hardware-agent
+
       - name: Validate deployment scripts
         run: |
           set -euo pipefail
