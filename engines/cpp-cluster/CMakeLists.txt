@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(ithute_cpp_cluster LANGUAGES CXX)
 
-add_library(ithute_cpp_cluster
+add_library(ithute_cpp_cluster SHARED
   src/cluster_graph.cpp
+  src/c_api.cpp
 )
 
 target_include_directories(ithute_cpp_cluster PUBLIC include)
