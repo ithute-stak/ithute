@@ -16,6 +16,7 @@ from .auth import AuthError, AuthVerifier, LifecyclePrincipal, ServicePrincipal,
 from .config import Settings, get_settings
 from .crypto import EndpointCipher, endpoint_hash
 from .db import get_db
+from .policy import rank_device_endpoints
 from .models import (
     ApplicationState,
     AuthLifecycleEvent,
@@ -455,10 +456,18 @@ def queue_message(
             raise
         return existing_message_response(existing, fingerprint)
 
-    for endpoint in endpoints:
-        db.add(Delivery(message_id=message.id, endpoint_id=endpoint.id))
+    ranked_endpoints = rank_device_endpoints(get_settings(), endpoints)
+    for endpoint, rank in ranked_endpoints:
+        db.add(
+            Delivery(
+                message_id=message.id,
+                endpoint_id=endpoint.id,
+                transport_rank=rank,
+                status="queued" if rank == 0 else "standby",
+            )
+        )
     db.commit()
-    return MessageResponse(id=message.id, status=message.status, delivery_count=len(endpoints))
+    return MessageResponse(id=message.id, status=message.status, delivery_count=len(ranked_endpoints))
 
 
 @app.post("/v1/deliveries/{delivery_id}/ack", response_model=DeliveryAckResponse)
