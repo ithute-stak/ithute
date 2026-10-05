@@ -233,7 +233,7 @@ class HostingPostgresEndpoint(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     group_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_postgres_replication_groups.id", ondelete="CASCADE"), nullable=False, unique=True)
     gateway_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_database_gateways.id", ondelete="RESTRICT"), nullable=False, index=True)
-    hostname: Mapped[str] = mapped_column(String(253), nullable=False, unique=True)
+    hostname: Mapped[str] = mapped_column(String(253), nullable=False)
     listen_port: Mapped[int] = mapped_column(Integer, default=5432, nullable=False)
     current_node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_nodes.id", ondelete="RESTRICT"), nullable=False, index=True)
     target_host: Mapped[str] = mapped_column(String(253), nullable=False)
