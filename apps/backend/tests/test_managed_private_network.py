@@ -48,25 +48,31 @@ def test_managed_network_contract_exists():
     assert "last handshake" in frontend.lower()
 
 
-def test_private_network_service_grants_are_default_deny_and_edge_enforced():
+def test_private_network_is_default_full_mesh_and_service_records_are_metadata():
     root = Path(__file__).parents[2]
     repo = root.parents[1]
     api = (root / "app" / "api" / "v1" / "managed_network.py").read_text(encoding="utf-8")
+    cluster_api = (root / "app" / "api" / "v1" / "infrastructure_servers.py").read_text(encoding="utf-8")
     model = (root / "app" / "models" / "infrastructure.py").read_text(encoding="utf-8")
     migration = (root / "alembic" / "versions" / "0076_infrastructure_network_grants.py").read_text(encoding="utf-8")
     reconcile = (repo / "infrastructure" / "wireguard-edge" / "reconcile.sh").read_text(encoding="utf-8")
     firewall = (repo / "infrastructure" / "wireguard-edge" / "firewall.sh").read_text(encoding="utf-8")
     bootstrap = (repo / "infrastructure" / "wireguard-edge" / "bootstrap.sh").read_text(encoding="utf-8")
+    frontend = (repo / "apps" / "frontend" / "app" / "infrastructure" / "network" / "page.tsx").read_text(encoding="utf-8")
 
     assert "class InfrastructureNetworkGrant" in model
     assert "infrastructure_network_grants" in migration
     assert '@router.post("/platform/infrastructure/private-network/grants"' in api
-    assert '@router.delete("/platform/infrastructure/private-network/grants/{grant_id}"' in api
-    assert '"source_ip"' in api and '"target_ip"' in api
+    assert '"policy_mode": "full_mesh"' in api
+    assert '"peer_communication_default": "allow"' in api
+    assert '"network_policy_mode": "full_mesh"' in cluster_api
+    assert '"mode": "full_mesh"' in cluster_api
+    assert '"default": "allow"' in cluster_api
     assert 'MESH_CHAIN="ITHUTE_WG_MESH"' in firewall
-    assert 'iptables -A "$MESH_CHAIN" -j DROP' in firewall
-    assert '--ctstate ESTABLISHED,RELATED -j ACCEPT' in firewall
-    assert '--ctstate NEW,ESTABLISHED' in reconcile
-    assert '-s "$source/32"' in reconcile
-    assert '-d "$target/32"' in reconcile
+    assert 'iptables -A "$MESH_CHAIN" -j ACCEPT' in firewall
+    assert 'iptables -A "$MESH_CHAIN" -j DROP' not in firewall
+    assert 'iptables -A "$MESH_CHAIN" -j ACCEPT' in reconcile
+    assert '--dport "$port"' not in reconcile
     assert 'net.ipv4.ip_forward=1' in bootstrap
+    assert "Default allow · private mesh" in frontend
+    assert "all enrolled nodes can already communicate" in frontend.lower()
