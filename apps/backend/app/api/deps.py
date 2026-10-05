@@ -62,7 +62,13 @@ COMMERCIAL_SERVICE_MUTATIONS = frozenset({
 })
 
 
+def _legacy_local_auth_allowed() -> bool:
+    return settings.environment.lower() != "production" or settings.legacy_local_auth_production_enabled
+
+
 def _decode_local_user(token: str, db: Session) -> User:
+    if not _legacy_local_auth_allowed():
+        raise HTTPException(status_code=401, detail="Legacy local authentication is disabled")
     try:
         payload = jwt.decode(
             token,
