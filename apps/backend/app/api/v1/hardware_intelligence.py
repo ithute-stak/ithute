@@ -158,6 +158,8 @@ def _prediction_point_from_health(
         ebpf_block_p50_ms=rate.get("ebpf_block_p50_ms"),
         ebpf_block_p95_ms=rate.get("ebpf_block_p95_ms"),
         ebpf_block_p99_ms=rate.get("ebpf_block_p99_ms"),
+        ecc_corrected_delta=rate.get("ecc_corrected_delta"),
+        ecc_uncorrected_delta=rate.get("ecc_uncorrected_delta"),
     )
 
 
@@ -250,6 +252,28 @@ def _health(payload: dict[str, Any]) -> dict[str, Any]:
             score -= 6
             evidence.append(f"root filesystem {fs_used_percent:.1f}% used")
 
+    reliability = payload.get("memory_reliability") if isinstance(payload.get("memory_reliability"), dict) else {}
+    ecc_corrected = _number(reliability, "corrected_errors") or 0
+    ecc_uncorrected = _number(reliability, "uncorrected_errors") or 0
+    if ecc_uncorrected > 0:
+        score -= 45
+        critical = True
+        evidence.append(f"ECC uncorrected memory errors={int(ecc_uncorrected)}")
+    elif ecc_corrected > 0:
+        score -= min(20, 4 + int(min(ecc_corrected, 16)))
+        evidence.append(f"ECC corrected memory errors={int(ecc_corrected)}")
+
+    bmc = payload.get("bmc") if isinstance(payload.get("bmc"), dict) else {}
+    bmc_critical = int(_number(bmc, "critical_count") or 0)
+    bmc_warning = int(_number(bmc, "warning_count") or 0)
+    if bmc_critical > 0:
+        score -= min(40, 20 + bmc_critical * 5)
+        critical = True
+        evidence.append(f"BMC reports {bmc_critical} critical sensor condition(s)")
+    elif bmc_warning > 0:
+        score -= min(15, bmc_warning * 3)
+        evidence.append(f"BMC reports {bmc_warning} warning sensor condition(s)")
+
     storage_warnings = 0
     devices = payload.get("storage_devices") if isinstance(payload.get("storage_devices"), list) else []
     for item in devices[:64]:
@@ -290,6 +314,10 @@ def _health(payload: dict[str, Any]) -> dict[str, Any]:
         "io_pressure_avg10": io_pressure,
         "filesystem_used_percent": fs_used_percent,
         "storage_warning_count": storage_warnings,
+        "ecc_corrected_errors": int(ecc_corrected),
+        "ecc_uncorrected_errors": int(ecc_uncorrected),
+        "bmc_critical_count": bmc_critical,
+        "bmc_warning_count": bmc_warning,
     }
 
 
@@ -471,6 +499,10 @@ def hardware_fleet_health(
             "io_pressure_avg10": latest.io_pressure_avg10 if latest else None,
             "filesystem_used_percent": latest.filesystem_used_percent if latest else None,
             "storage_warning_count": latest.storage_warning_count if latest else 0,
+            "ecc_corrected_errors": int(_number(payload.get("memory_reliability") if isinstance(payload.get("memory_reliability"), dict) else {}, "corrected_errors") or 0),
+            "ecc_uncorrected_errors": int(_number(payload.get("memory_reliability") if isinstance(payload.get("memory_reliability"), dict) else {}, "uncorrected_errors") or 0),
+            "bmc_critical_count": int(_number(payload.get("bmc") if isinstance(payload.get("bmc"), dict) else {}, "critical_count") or 0),
+            "bmc_warning_count": int(_number(payload.get("bmc") if isinstance(payload.get("bmc"), dict) else {}, "warning_count") or 0),
             "ebpf_block_latency_p50_ms": _number(ebpf, "block_latency_p50_ms"),
             "ebpf_block_latency_p95_ms": _number(ebpf, "block_latency_p95_ms"),
             "ebpf_block_latency_p99_ms": _number(ebpf, "block_latency_p99_ms"),
