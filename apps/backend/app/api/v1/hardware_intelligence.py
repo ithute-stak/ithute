@@ -315,3 +315,134 @@ def latest_hardware_health(
         "received_at": row.created_at.isoformat() if row.created_at else None,
         "payload": json.loads(row.payload_json),
     }
+
+
+@router.get("/fleet")
+def hardware_fleet_health(
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    servers = db.scalars(
+        select(InfrastructureServer)
+        .where(InfrastructureServer.status != "disabled")
+        .order_by(InfrastructureServer.name.asc())
+    ).all()
+
+    items: list[dict[str, Any]] = []
+    counts = {"healthy": 0, "warning": 0, "critical": 0, "offline": 0, "unknown": 0}
+    now = datetime.now(timezone.utc)
+    for server in servers:
+        agent = db.get(InfrastructureServerAgent, server.id)
+        latest = db.scalar(
+            select(HardwareTelemetrySnapshot)
+            .where(HardwareTelemetrySnapshot.server_id == server.id)
+            .order_by(HardwareTelemetrySnapshot.created_at.desc())
+        )
+
+        online = bool(
+            agent
+            and agent.last_seen_at
+            and now - (agent.last_seen_at if agent.last_seen_at.tzinfo else agent.last_seen_at.replace(tzinfo=timezone.utc))
+            <= timedelta(minutes=5)
+        )
+        if not online:
+            status = "offline"
+            score = 0
+        elif latest is None:
+            status = "unknown"
+            score = None
+        else:
+            status = latest.health_status
+            score = latest.health_score
+        counts[status] = counts.get(status, 0) + 1
+
+        evidence: list[str] = []
+        payload: dict[str, Any] = {}
+        if latest:
+            try:
+                payload = json.loads(latest.payload_json or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+            evidence = _health(payload)["evidence"]
+
+        items.append({
+            "server_id": str(server.id),
+            "name": server.name,
+            "hostname": server.hostname,
+            "provider": server.provider,
+            "region": server.region,
+            "roles": json.loads(server.roles_json or "[]"),
+            "status": status,
+            "health_score": score,
+            "online": online,
+            "last_seen_at": agent.last_seen_at.isoformat() if agent and agent.last_seen_at else None,
+            "temperature_celsius": latest.temperature_celsius if latest else None,
+            "memory_pressure_avg10": latest.memory_pressure_avg10 if latest else None,
+            "io_pressure_avg10": latest.io_pressure_avg10 if latest else None,
+            "filesystem_used_percent": latest.filesystem_used_percent if latest else None,
+            "storage_warning_count": latest.storage_warning_count if latest else 0,
+            "evidence": evidence,
+            "sampled_at": latest.issued_at.isoformat() if latest else None,
+        })
+
+    return {
+        "generated_at": now.isoformat(),
+        "counts": counts,
+        "total": len(items),
+        "items": items,
+    }
+
+
+@router.get("/servers/{server_id}/history")
+def hardware_health_history(
+    server_id: str,
+    hours: int = 24,
+    limit: int = 288,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    try:
+        from uuid import UUID
+        parsed = UUID(server_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid infrastructure server id") from exc
+
+    server = db.get(InfrastructureServer, parsed)
+    if server is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+
+    safe_hours = max(1, min(hours, 24 * 30))
+    safe_limit = max(1, min(limit, 2000))
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=safe_hours)
+    rows = db.scalars(
+        select(HardwareTelemetrySnapshot)
+        .where(
+            HardwareTelemetrySnapshot.server_id == parsed,
+            HardwareTelemetrySnapshot.created_at >= cutoff,
+        )
+        .order_by(HardwareTelemetrySnapshot.created_at.asc())
+        .limit(safe_limit)
+    ).all()
+
+    return {
+        "server_id": str(server.id),
+        "name": server.name,
+        "hostname": server.hostname,
+        "hours": safe_hours,
+        "items": [
+            {
+                "sampled_at": row.issued_at.isoformat(),
+                "received_at": row.created_at.isoformat() if row.created_at else None,
+                "health_score": row.health_score,
+                "health_status": row.health_status,
+                "temperature_celsius": row.temperature_celsius,
+                "memory_pressure_avg10": row.memory_pressure_avg10,
+                "io_pressure_avg10": row.io_pressure_avg10,
+                "filesystem_used_percent": row.filesystem_used_percent,
+                "storage_warning_count": row.storage_warning_count,
+            }
+            for row in rows
+        ],
+    }
