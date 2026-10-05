@@ -212,6 +212,7 @@ type realtimeTicket struct {
 	ApplicationID string `json:"application_id"`
 	Sub           string `json:"sub"`
 	DeviceKey     string `json:"device_key"`
+	Nonce         string `json:"nonce"`
 	ExpiresAt     int64  `json:"exp"`
 }
 
@@ -357,7 +358,7 @@ func verifyRealtimeTicket(raw, secret string) (realtimeTicket, error) {
 	if ticket.ExpiresAt < time.Now().Unix() || ticket.ExpiresAt > time.Now().Add(2*time.Minute).Unix() {
 		return ticket, errors.New("expired ticket")
 	}
-	if ticket.ApplicationID == "" || ticket.Sub == "" || len(ticket.DeviceKey) < 8 || len(ticket.DeviceKey) > 200 {
+	if ticket.ApplicationID == "" || ticket.Sub == "" || len(ticket.DeviceKey) < 8 || len(ticket.DeviceKey) > 200 || len(ticket.Nonce) < 8 || len(ticket.Nonce) > 64 {
 		return ticket, errors.New("invalid ticket")
 	}
 	return ticket, nil
@@ -807,6 +808,7 @@ func runOriginProbe(ctx context.Context, request originProbeRequest) (originProb
 
 func main() {
 	mux := http.NewServeMux()
+	var usedRealtimeTickets sync.Map
 	broker := newPushBroker()
 	realtime := newRealtimeBroker()
 	gatewayToken := strings.TrimSpace(os.Getenv("ITHUTE_PUSH_GATEWAY_TOKEN"))
@@ -824,6 +826,11 @@ func main() {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_ticket"})
 			return
 		}
+		if _, loaded := usedRealtimeTickets.LoadOrStore(rawTicket, struct{}{}); loaded {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "ticket_replayed"})
+			return
+		}
+		time.AfterFunc(2*time.Minute, func() { usedRealtimeTickets.Delete(rawTicket) })
 		upgrader := websocketUpgrader
 		upgrader.Subprotocols = []string{protocol}
 		conn, err := upgrader.Upgrade(w, r, nil)
