@@ -87,6 +87,18 @@
         "weighted_io_ms": {"type": "integer", "minimum": 0}
       }
     },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rx_errors", "tx_errors", "rx_dropped", "tx_dropped", "tcp_retrans_segs"],
+      "properties": {
+        "rx_errors": {"type": "integer", "minimum": 0},
+        "tx_errors": {"type": "integer", "minimum": 0},
+        "rx_dropped": {"type": "integer", "minimum": 0},
+        "tx_dropped": {"type": "integer", "minimum": 0},
+        "tcp_retrans_segs": {"type": "integer", "minimum": 0}
+      }
+    },
     "storage_devices": {
       "type": "array",
       "maxItems": 64,
