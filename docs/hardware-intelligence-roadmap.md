@@ -23,7 +23,7 @@ C hardware probe + eBPF kernel signals -> Rust validation/hardening -> Go long-r
 ### Phase 2 - Core agent
 - [x] Add filesystem, block-I/O and Linux PSI pressure telemetry for predictive baselining.
 - [x] Add SMART/NVMe collection through bounded helpers.
-- [ ] Add hwmon/IPMI/EDAC/ECC adapters where the host exposes them.
+- [x] Add EDAC/ECC counters from Linux sysfs and bounded local IPMI/BMC sensor collection when exposed by the host.
 - [x] Add privilege-separated eBPF loader/exporter with bounded Linux capabilities and read-only snapshot handoff.
 - [ ] Add local buffering, jitter, backoff and batch compression.
 - [x] Sign agent identity with per-agent HMAC envelopes.
