@@ -27,6 +27,8 @@ class Settings(BaseSettings):
 
     ithute_gateway_url: str | None = None
     ithute_gateway_token: str | None = None
+    java_worker_url: str = "http://ithute-java-worker:8080"
+    engine_http_timeout_seconds: float = 1.5
 
     fcm_project_id: str | None = None
     fcm_credentials_file: str = "/run/secrets/fcm-service-account.json"
