@@ -51,6 +51,7 @@ def upgrade() -> None:
         sa.CheckConstraint("generation >= 1", name="ck_pg_endpoint_generation"),
         sa.CheckConstraint("applied_generation >= 0", name="ck_pg_endpoint_applied_generation"),
         sa.CheckConstraint("status IN ('pending','ready','degraded')", name="ck_pg_endpoint_status"),
+        sa.UniqueConstraint("gateway_id", "listen_port", name="uq_pg_endpoint_gateway_port"),
     )
     op.create_index("ix_pg_endpoints_gateway", "hosting_postgres_endpoints", ["gateway_id"])
     op.create_index("ix_pg_endpoints_current_node", "hosting_postgres_endpoints", ["current_node_id"])
