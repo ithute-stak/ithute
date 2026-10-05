@@ -17,6 +17,11 @@ class MetricPoint:
     memory_pressure_avg10: float | None = None
     io_pressure_avg10: float | None = None
     filesystem_used_percent: float | None = None
+    cpu_iowait_percent: float | None = None
+    cpu_steal_percent: float | None = None
+    block_io_ms_per_op: float | None = None
+    block_weighted_ms_per_op: float | None = None
+    media_error_delta: float | None = None
 
 
 @dataclass(frozen=True)
@@ -98,6 +103,112 @@ def _metric(
     )
 
 
+
+def _counter_delta(previous: float | None, current: float | None) -> float | None:
+    if previous is None or current is None or not isfinite(previous) or not isfinite(current):
+        return None
+    delta = current - previous
+    return delta if delta >= 0 else None
+
+
+def _mapping_number(payload: dict, section: str, key: str) -> float | None:
+    container = payload.get(section)
+    if not isinstance(container, dict):
+        return None
+    value = container.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if isfinite(number) else None
+
+
+def _media_errors(payload: dict) -> dict[str, float]:
+    result: dict[str, float] = {}
+    devices = payload.get("storage_devices")
+    if not isinstance(devices, list):
+        return result
+    for item in devices[:64]:
+        if not isinstance(item, dict):
+            continue
+        device = item.get("device")
+        value = item.get("media_errors")
+        if not isinstance(device, str) or not device or isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        numeric = float(value)
+        if numeric >= 0 and isfinite(numeric):
+            result[device] = numeric
+    return result
+
+
+def derive_rate_features(previous_payload: dict | None, current_payload: dict | None) -> dict[str, float | None]:
+    if not isinstance(previous_payload, dict) or not isinstance(current_payload, dict):
+        return {
+            "cpu_iowait_percent": None,
+            "cpu_steal_percent": None,
+            "block_io_ms_per_op": None,
+            "block_weighted_ms_per_op": None,
+            "media_error_delta": None,
+        }
+
+    cpu_keys = ("user", "nice", "system", "idle", "iowait", "irq", "softirq", "steal")
+    deltas: dict[str, float] = {}
+    for key in cpu_keys:
+        delta = _counter_delta(
+            _mapping_number(previous_payload, "cpu", key),
+            _mapping_number(current_payload, "cpu", key),
+        )
+        if delta is None:
+            deltas = {}
+            break
+        deltas[key] = delta
+
+    cpu_total = sum(deltas.values()) if deltas else 0.0
+    cpu_iowait_percent = (deltas["iowait"] / cpu_total * 100.0) if cpu_total > 0 else None
+    cpu_steal_percent = (deltas["steal"] / cpu_total * 100.0) if cpu_total > 0 else None
+
+    reads_delta = _counter_delta(
+        _mapping_number(previous_payload, "block", "reads_completed"),
+        _mapping_number(current_payload, "block", "reads_completed"),
+    )
+    writes_delta = _counter_delta(
+        _mapping_number(previous_payload, "block", "writes_completed"),
+        _mapping_number(current_payload, "block", "writes_completed"),
+    )
+    io_ms_delta = _counter_delta(
+        _mapping_number(previous_payload, "block", "io_ms"),
+        _mapping_number(current_payload, "block", "io_ms"),
+    )
+    weighted_ms_delta = _counter_delta(
+        _mapping_number(previous_payload, "block", "weighted_io_ms"),
+        _mapping_number(current_payload, "block", "weighted_io_ms"),
+    )
+    ops_delta = (reads_delta + writes_delta) if reads_delta is not None and writes_delta is not None else None
+    block_io_ms_per_op = (io_ms_delta / ops_delta) if io_ms_delta is not None and ops_delta and ops_delta > 0 else None
+    block_weighted_ms_per_op = (weighted_ms_delta / ops_delta) if weighted_ms_delta is not None and ops_delta and ops_delta > 0 else None
+
+    previous_media = _media_errors(previous_payload)
+    current_media = _media_errors(current_payload)
+    media_error_delta = 0.0
+    comparable = False
+    for device, current_value in current_media.items():
+        previous_value = previous_media.get(device)
+        if previous_value is None:
+            continue
+        delta = _counter_delta(previous_value, current_value)
+        if delta is None:
+            continue
+        comparable = True
+        media_error_delta += delta
+
+    return {
+        "cpu_iowait_percent": cpu_iowait_percent,
+        "cpu_steal_percent": cpu_steal_percent,
+        "block_io_ms_per_op": block_io_ms_per_op,
+        "block_weighted_ms_per_op": block_weighted_ms_per_op,
+        "media_error_delta": media_error_delta if comparable else None,
+    }
+
+
 def predict_hardware_drift(
     history: Sequence[MetricPoint],
     current: MetricPoint,
@@ -146,6 +257,46 @@ def predict_hardware_drift(
             [point.filesystem_used_percent for point in history],
             current.filesystem_used_percent,
             minimum_scale=0.5,
+            slope_scale=0.05,
+        ),
+        _metric(
+            "cpu_iowait_percent",
+            "CPU iowait",
+            [point.cpu_iowait_percent for point in history],
+            current.cpu_iowait_percent,
+            minimum_scale=0.5,
+            slope_scale=0.10,
+        ),
+        _metric(
+            "cpu_steal_percent",
+            "CPU steal",
+            [point.cpu_steal_percent for point in history],
+            current.cpu_steal_percent,
+            minimum_scale=0.25,
+            slope_scale=0.05,
+        ),
+        _metric(
+            "block_io_ms_per_op",
+            "block I/O busy-time proxy",
+            [point.block_io_ms_per_op for point in history],
+            current.block_io_ms_per_op,
+            minimum_scale=0.5,
+            slope_scale=0.10,
+        ),
+        _metric(
+            "block_weighted_ms_per_op",
+            "block queue-time proxy",
+            [point.block_weighted_ms_per_op for point in history],
+            current.block_weighted_ms_per_op,
+            minimum_scale=0.75,
+            slope_scale=0.15,
+        ),
+        _metric(
+            "media_error_delta",
+            "SMART/NVMe media-error growth",
+            [point.media_error_delta for point in history],
+            current.media_error_delta,
+            minimum_scale=0.25,
             slope_scale=0.05,
         ),
     ]
