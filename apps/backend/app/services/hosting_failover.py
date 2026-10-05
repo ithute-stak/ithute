@@ -17,9 +17,11 @@ from app.models import (
     HostingNodeHealthState,
     HostingProject,
     HostingProjectOperation,
+    InfrastructureServer,
 )
 from app.services.hosting_edge_handoff import HostingOriginError, reconcile_project_edge
 from app.services.hosting_placement import rank_nodes
+from app.services.failure_domains import failure_domain_overlap, failure_domain_sort_key
 
 FAILOVER_AFTER_SECONDS = int(os.getenv("ITHUTE_HOSTING_FAILOVER_AFTER_SECONDS", "300"))
 ACTIVE_ATTEMPT_STATUSES = {"pending", "deploying", "edge_pending"}
@@ -99,6 +101,10 @@ def _next_release_number(db: Session, project_id) -> int:
     return int(current) + 1
 
 
+def _server_for_node(db: Session, node_id) -> InfrastructureServer | None:
+    return db.scalar(select(InfrastructureServer).where(InfrastructureServer.hosting_node_id == node_id))
+
+
 def _eligible_target(db: Session, project: HostingProject, source_node_id, preferred_target_node_id=None) -> tuple[HostingNode | None, str | None]:
     ranked = rank_nodes(
         db,
@@ -108,6 +114,8 @@ def _eligible_target(db: Session, project: HostingProject, source_node_id, prefe
         cpu_millicores=project.cpu_millicores,
         lock=True,
     )
+    source_server = _server_for_node(db, source_node_id)
+
     if preferred_target_node_id is not None:
         match = next((row for row in ranked if row["node"].id == preferred_target_node_id), None)
         if match is None:
@@ -116,13 +124,40 @@ def _eligible_target(db: Session, project: HostingProject, source_node_id, prefe
             return None, "Replacement node must be different from the current node."
         if not match["eligible"]:
             return None, "Requested replacement node is not eligible: " + "; ".join(match["reasons"])
+        target_server = _server_for_node(db, match["node"].id)
+        overlap = failure_domain_overlap(source_server, target_server)
+        if overlap["highest_risk"] in {"physical_host", "network_segment"}:
+            return None, (
+                "Requested replacement node shares a critical failure domain "
+                f"({overlap['highest_risk']}) with the source node."
+            )
         return match["node"], None
 
+    eligible_rows = []
     for row in ranked:
-        if row["node"].id == source_node_id:
+        if row["node"].id == source_node_id or not row["eligible"]:
             continue
-        if row["eligible"]:
-            return row["node"], None
+        target_server = _server_for_node(db, row["node"].id)
+        overlap = failure_domain_overlap(source_server, target_server)
+        eligible_rows.append((row, overlap))
+
+    if eligible_rows:
+        eligible_rows.sort(
+            key=lambda item: failure_domain_sort_key(
+                item[1],
+                placement_score=float(item[0].get("score") or 0.0),
+                name=item[0].get("name") or "",
+                node_id=str(item[0]["node"].id),
+            )
+        )
+        best_row, best_overlap = eligible_rows[0]
+        if best_overlap["highest_risk"] in {"physical_host", "network_segment"}:
+            return None, (
+                "No healthy replacement node is outside the source node's critical "
+                f"{best_overlap['highest_risk']} failure domain."
+            )
+        return best_row["node"], None
+
     details = [
         f"{row['name']}: {', '.join(row['reasons']) or 'not eligible'}"
         for row in ranked
