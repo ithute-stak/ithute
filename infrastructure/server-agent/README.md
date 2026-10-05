@@ -1,6 +1,6 @@
-# Ithute Server Agent v2
+# Ithute Server Agent v3
 
-Physical-server telemetry, container-inventory and guarded operations agent for Infrastructure → Servers.
+Physical-server telemetry, container-inventory, host-security posture and guarded operations agent for Infrastructure → Servers.
 
 It reports CPU, memory, local disks, uptime, OS/kernel, Docker state, managed-container inventory and detected capabilities for PostgreSQL, MySQL/MariaDB, MongoDB, Redis and mail services.
 
@@ -23,3 +23,19 @@ Create/rotate the server-agent token from Infrastructure → Servers. Copy this 
 The token is server-scoped and should never be placed in customer containers.
 
 The systemd unit runs as root because infrastructure telemetry and guarded Docker/systemd actions require host visibility, but it is constrained with `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `RestrictSUIDSGID` and read-only filesystem policy outside the Ithute log path.
+
+
+## Host security posture
+
+Version 3 adds read-only security evidence inspired by the consumed VPS control-plane donor:
+
+- effective SSH root-login and password-authentication policy;
+- host firewall presence/state;
+- Fail2ban state;
+- unattended security-update state;
+- Docker socket permissions;
+- count of running privileged containers;
+- public listeners for common database/cache ports;
+- availability of restic/rclone backup tooling.
+
+The agent reports evidence only. The Ithute control plane performs the authoritative scoring and recommendations. Security findings are canonicalized and fingerprinted through Ithute's Rust SHA-256 engine, while role-aware network readiness probes use the Go worker. Java and C++ continue to serve their specialist enterprise/XML and benchmarked native workloads through the common engine router.

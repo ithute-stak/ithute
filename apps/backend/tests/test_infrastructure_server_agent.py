@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.api.v1.infrastructure_servers import _json_roles, _roles, _validated_agent_command
+from app.api.v1.infrastructure_servers import _json_roles, _roles, _security_findings, _validated_agent_command
 
 
 def test_server_agent_roles_remain_scoped():
@@ -74,3 +74,51 @@ def test_agent_operations_and_container_drift_contract_exist():
     assert "poll_command" in agent
     assert "execute_structured_command" in agent
     assert "Agent operations & container drift" in frontend
+
+
+def test_host_security_findings_score_risky_configuration():
+    result = _security_findings({
+        "security": {
+            "sshd": {"permit_root_login": "yes", "password_authentication": "yes"},
+            "firewall": {"provider": "ufw", "active": False},
+            "fail2ban_active": False,
+            "unattended_upgrades_active": False,
+            "docker": {"socket_mode": "0o666", "socket_world_writable": True, "privileged_running_containers": 1},
+            "risky_public_listeners": [{"port": 5432, "bind": "0.0.0.0"}],
+        }
+    })
+    assert result["posture"] == "critical"
+    assert result["score"] < 50
+    assert len(result["fingerprint_sha256"]) == 64
+    keys = {item["key"] for item in result["findings"]}
+    assert "docker.socket_world_writable" in keys
+    assert "network.risky_public_ports" in keys
+
+
+def test_missing_v3_security_telemetry_fails_closed():
+    result = _security_findings({})
+    assert result["posture"] == "critical"
+    assert result["score"] == 50
+    assert result["findings"][0]["key"] == "agent.security_unavailable"
+
+
+def test_security_readiness_donor_contract_exists():
+    root = Path(__file__).parents[2]
+    api = (root / "app" / "api" / "v1" / "infrastructure_servers.py").read_text(encoding="utf-8")
+    model = (root / "app" / "models" / "infrastructure.py").read_text(encoding="utf-8")
+    migration = (root / "alembic" / "versions" / "0073_infrastructure_security.py").read_text(encoding="utf-8")
+    frontend = (root.parent / "frontend" / "app" / "infrastructure" / "servers" / "[serverId]" / "page.tsx").read_text(encoding="utf-8")
+    repo = root.parents[1]
+    agent = (repo / "infrastructure" / "server-agent" / "agent.py").read_text(encoding="utf-8")
+
+    assert "class InfrastructureSecuritySnapshot" in model
+    assert "infrastructure_security_snapshots" in migration
+    assert '@router.get("/servers/{server_id}/security")' in api
+    assert '@router.get("/servers/{server_id}/readiness")' in api
+    assert 'execute_binary("crypto.sha256"' in api
+    assert "execute_network(targets" in api
+    assert "security_posture" in agent
+    assert "backup_tools" in agent
+    assert "Production readiness & host security" in frontend
+    assert "Java remains the enterprise/XML engine" in frontend
+    assert "C++ remains the native blob/fingerprint accelerator" in frontend

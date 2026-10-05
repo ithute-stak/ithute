@@ -13,7 +13,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-AGENT_VERSION = "ithute-server-agent/2"
+AGENT_VERSION = "ithute-server-agent/3"
 API_URL = os.getenv("ITHUTE_API_URL", "https://ithute.co.ls/api/v1").rstrip("/")
 TOKEN = os.getenv("ITHUTE_SERVER_AGENT_TOKEN", "").strip()
 INTERVAL = max(30, int(os.getenv("ITHUTE_SERVER_AGENT_INTERVAL", "60")))
@@ -159,6 +159,100 @@ def docker_info() -> dict:
     }
 
 
+def _sshd_effective() -> dict:
+    if not command_exists("sshd"):
+        return {"available": False, "permit_root_login": None, "password_authentication": None}
+    raw = command_output(["sshd", "-T"], timeout=5)
+    if not raw:
+        return {"available": True, "permit_root_login": None, "password_authentication": None}
+    values = {}
+    for line in raw.splitlines():
+        key, _, value = line.partition(" ")
+        if key in {"permitrootlogin", "passwordauthentication"}:
+            values[key] = value.strip().lower()
+    return {
+        "available": True,
+        "permit_root_login": values.get("permitrootlogin"),
+        "password_authentication": values.get("passwordauthentication"),
+    }
+
+
+def _firewall_state() -> dict:
+    if command_exists("ufw"):
+        raw = command_output(["ufw", "status"], timeout=5) or ""
+        return {"provider": "ufw", "active": "status: active" in raw.lower()}
+    if service_active("firewalld"):
+        return {"provider": "firewalld", "active": True}
+    if command_exists("nft"):
+        raw = command_output(["nft", "list", "ruleset"], timeout=5)
+        return {"provider": "nftables", "active": bool(raw)}
+    return {"provider": None, "active": False}
+
+
+def _docker_security() -> dict:
+    socket_mode = None
+    world_writable = False
+    try:
+        mode = os.stat("/var/run/docker.sock").st_mode & 0o777
+        socket_mode = oct(mode)
+        world_writable = bool(mode & 0o002)
+    except OSError:
+        pass
+
+    privileged = 0
+    if command_exists("docker"):
+        ids = command_output(["docker", "ps", "-q"], timeout=5)
+        if ids:
+            argv = ["docker", "inspect", "--format", "{{.HostConfig.Privileged}}", *ids.splitlines()[:200]]
+            raw = command_output(argv, timeout=10)
+            if raw:
+                privileged = sum(1 for value in raw.splitlines() if value.strip().lower() == "true")
+    return {
+        "socket_mode": socket_mode,
+        "socket_world_writable": world_writable,
+        "privileged_running_containers": privileged,
+    }
+
+
+def _risky_listeners() -> list[dict]:
+    risky = {3306, 5432, 6379, 27017, 9200, 11211}
+    if not command_exists("ss"):
+        return []
+    raw = command_output(["ss", "-lntH"], timeout=5)
+    if not raw:
+        return []
+    found: list[dict] = []
+    for line in raw.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        local = parts[3]
+        host, sep, port_raw = local.rpartition(":")
+        if not sep:
+            continue
+        try:
+            port = int(port_raw)
+        except ValueError:
+            continue
+        if port not in risky:
+            continue
+        host = host.strip("[]")
+        if host in {"0.0.0.0", "::", "*"}:
+            found.append({"port": port, "bind": host})
+    return found[:50]
+
+
+def security_posture() -> dict:
+    return {
+        "sshd": _sshd_effective(),
+        "firewall": _firewall_state(),
+        "fail2ban_active": service_active("fail2ban"),
+        "unattended_upgrades_active": service_active("unattended-upgrades"),
+        "docker": _docker_security(),
+        "risky_public_listeners": _risky_listeners(),
+    }
+
+
 def wireguard_info() -> dict:
     if not command_exists("wg") or not command_exists("ip"):
         return {"installed": False, "interface": "ithute0", "up": False, "connected": False}
@@ -222,6 +316,8 @@ def capabilities() -> dict:
         "wireguard": command_exists("wg"),
         "structured_commands": command_exists("systemctl") or command_exists("docker"),
         "container_inventory": command_exists("docker"),
+        "host_security_scan": True,
+        "backup_tools": command_exists("restic") or command_exists("rclone"),
     }
 
 
@@ -245,6 +341,7 @@ def payload() -> dict:
             "disks": disks(),
             "docker": docker_info(),
             "wireguard": wireguard_info(),
+            "security": security_posture(),
         },
         "capabilities": capabilities(),
     }

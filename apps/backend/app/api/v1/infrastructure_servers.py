@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
-from app.services.engine_router import execute_network
+from app.services.engine_router import execute_binary, execute_network, routing_status
 from app.services.managed_network import update_peer_telemetry
 from app.models import (
     AuditLog,
@@ -25,6 +25,7 @@ from app.models import (
     HostingProject,
     InfrastructureAgentCommand,
     InfrastructureContainerSnapshot,
+    InfrastructureSecuritySnapshot,
     InfrastructureServer,
     InfrastructureServerAgent,
     InfrastructureTelemetrySnapshot,
@@ -210,6 +211,240 @@ def _container_drift(db: Session, server: InfrastructureServer, telemetry: dict)
         "missing_count": len(missing),
         "unexpected_count": len(unexpected),
         "drift_status": drift_status,
+    }
+
+
+def _security_findings(telemetry: dict) -> dict:
+    raw_security = telemetry.get("security")
+    security = raw_security if isinstance(raw_security, dict) else {}
+    if not security:
+        canonical = b'[{"key":"agent.security_unavailable","severity":"high"}]'
+        digest = execute_binary("crypto.sha256", canonical)
+        return {
+            "score": 50,
+            "posture": "critical",
+            "findings": [{
+                "key": "agent.security_unavailable",
+                "severity": "high",
+                "title": "Host security scan is unavailable",
+                "evidence": "The connected server agent has not reported v3 host-security telemetry.",
+                "recommendation": "Upgrade/restart the Ithute Server Agent so SSH, firewall, update and Docker security signals are reported.",
+            }],
+            "fingerprint_sha256": str(digest.value),
+            "fingerprint_engine": digest.engine,
+        }
+
+    sshd = security.get("sshd") if isinstance(security.get("sshd"), dict) else {}
+    firewall = security.get("firewall") if isinstance(security.get("firewall"), dict) else {}
+    docker = security.get("docker") if isinstance(security.get("docker"), dict) else {}
+    risky = security.get("risky_public_listeners") if isinstance(security.get("risky_public_listeners"), list) else []
+
+    findings: list[dict] = []
+
+    def add(key: str, severity: str, title: str, evidence: str, recommendation: str) -> None:
+        findings.append({
+            "key": key,
+            "severity": severity,
+            "title": title,
+            "evidence": evidence[:500],
+            "recommendation": recommendation[:1000],
+        })
+
+    root_login = str(sshd.get("permit_root_login") or "").lower()
+    if root_login in {"yes", "without-password", "prohibit-password"}:
+        add(
+            "ssh.root_login",
+            "high" if root_login == "yes" else "medium",
+            "SSH root login is permitted",
+            f"PermitRootLogin={root_login}",
+            "Prefer named administrative users with sudo and disable direct root SSH login.",
+        )
+
+    password_auth = str(sshd.get("password_authentication") or "").lower()
+    if password_auth == "yes":
+        add(
+            "ssh.password_auth",
+            "medium",
+            "SSH password authentication is enabled",
+            "PasswordAuthentication=yes",
+            "Prefer public-key authentication and disable SSH password authentication after access is verified.",
+        )
+
+    if firewall.get("active") is False:
+        add(
+            "firewall.inactive",
+            "high",
+            "Host firewall is not active",
+            f"provider={firewall.get('provider') or 'none'}",
+            "Enable and verify a host firewall with only the required Ithute, mail and application ports.",
+        )
+
+    if security.get("fail2ban_active") is False:
+        add(
+            "fail2ban.inactive",
+            "medium",
+            "Fail2ban is not active",
+            "fail2ban service inactive or unavailable",
+            "Enable Fail2ban or an equivalent brute-force protection control for exposed authentication services.",
+        )
+
+    if security.get("unattended_upgrades_active") is False:
+        add(
+            "updates.unattended_inactive",
+            "low",
+            "Automatic security updates are not active",
+            "unattended-upgrades service inactive or unavailable",
+            "Enable a controlled unattended security-update policy or document an equivalent patch cadence.",
+        )
+
+    if docker.get("socket_world_writable"):
+        add(
+            "docker.socket_world_writable",
+            "critical",
+            "Docker socket is world-writable",
+            f"mode={docker.get('socket_mode')}",
+            "Remove world-write permission from /var/run/docker.sock immediately.",
+        )
+
+    privileged = int(docker.get("privileged_running_containers") or 0)
+    if privileged > 0:
+        add(
+            "docker.privileged_containers",
+            "high",
+            "Privileged containers are running",
+            f"count={privileged}",
+            "Remove privileged mode unless explicitly required and replace it with narrowly scoped capabilities.",
+        )
+
+    if risky:
+        ports = sorted({str(item.get("port")) for item in risky if isinstance(item, dict) and item.get("port")})
+        add(
+            "network.risky_public_ports",
+            "high",
+            "Database/cache services are listening publicly",
+            "ports=" + ",".join(ports),
+            "Bind database/cache services to private interfaces or the Ithute managed network and enforce firewall rules.",
+        )
+
+    penalties = {"low": 5, "medium": 10, "high": 20, "critical": 40}
+    score = max(0, 100 - sum(penalties.get(item["severity"], 0) for item in findings))
+    posture = "healthy" if score >= 90 else "attention" if score >= 70 else "critical"
+    if any(item["severity"] == "critical" for item in findings):
+        posture = "critical"
+
+    canonical = json.dumps(findings, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = execute_binary("crypto.sha256", canonical)
+    return {
+        "score": score,
+        "posture": posture,
+        "findings": findings,
+        "fingerprint_sha256": str(digest.value),
+        "fingerprint_engine": digest.engine,
+    }
+
+
+def _network_health_for_server(server: InfrastructureServer) -> dict:
+    targets = _network_probe_targets(server)
+    if not targets:
+        return {"engine": "go", "checked": 0, "reachable": True, "checks": []}
+    execution = execute_network(targets, concurrency=min(8, len(targets)))
+    checks = list(execution.value.get("results", [])) if isinstance(execution.value, dict) else []
+    return {
+        "engine": execution.engine,
+        "checked": len(checks),
+        "reachable": all(bool(item.get("reachable")) for item in checks) if checks else False,
+        "checks": checks,
+    }
+
+
+def _readiness_for_server(db: Session, server: InfrastructureServer) -> dict:
+    agent = db.get(InfrastructureServerAgent, server.id)
+    latest_security = db.scalar(
+        select(InfrastructureSecuritySnapshot)
+        .where(InfrastructureSecuritySnapshot.server_id == server.id)
+        .order_by(InfrastructureSecuritySnapshot.created_at.desc())
+    )
+    latest_containers = db.scalar(
+        select(InfrastructureContainerSnapshot)
+        .where(InfrastructureContainerSnapshot.server_id == server.id)
+        .order_by(InfrastructureContainerSnapshot.created_at.desc())
+    )
+    server_view = _server_out(db, server)
+    network = _network_health_for_server(server)
+
+    capabilities = {}
+    if agent:
+        try:
+            capabilities = json.loads(agent.capabilities_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            capabilities = {}
+
+    checks = [
+        {
+            "key": "agent",
+            "weight": 20,
+            "passed": bool(agent and _fresh(agent.last_seen_at)),
+            "detail": "Physical server agent heartbeat is fresh.",
+        },
+        {
+            "key": "workload_health",
+            "weight": 20,
+            "passed": server_view["health"] in {"healthy", "registered"},
+            "detail": f"Derived server health is {server_view['health']}.",
+        },
+        {
+            "key": "container_drift",
+            "weight": 15,
+            "passed": bool(latest_containers and latest_containers.drift_status == "healthy"),
+            "detail": (
+                "Managed container inventory matches Ithute assignments."
+                if latest_containers and latest_containers.drift_status == "healthy"
+                else "Container inventory is missing or has drift."
+            ),
+        },
+        {
+            "key": "network",
+            "weight": 15,
+            "passed": bool(network["reachable"]),
+            "detail": f"{network['checked']} role-aware network probes checked by {network['engine']}.",
+        },
+        {
+            "key": "security",
+            "weight": 20,
+            "passed": bool(latest_security and latest_security.score >= 80),
+            "detail": (
+                f"Host security score {latest_security.score}/100 ({latest_security.posture})."
+                if latest_security
+                else "No host security snapshot has been reported yet."
+            ),
+        },
+        {
+            "key": "backup_recovery",
+            "weight": 10,
+            "passed": bool(server_view["mail"]["backup_ready"] or capabilities.get("backup_tools")),
+            "detail": (
+                "Backup tooling/readiness detected."
+                if server_view["mail"]["backup_ready"] or capabilities.get("backup_tools")
+                else "No host backup tooling or workload backup readiness has been reported."
+            ),
+        },
+    ]
+    score = sum(item["weight"] for item in checks if item["passed"])
+    status = "ready" if score >= 90 else "attention" if score >= 70 else "not_ready"
+    return {
+        "server_id": str(server.id),
+        "score": score,
+        "status": status,
+        "checks": checks,
+        "network": network,
+        "security": {
+            "score": latest_security.score if latest_security else None,
+            "posture": latest_security.posture if latest_security else "unknown",
+            "fingerprint_sha256": latest_security.fingerprint_sha256 if latest_security else None,
+            "checked_at": latest_security.created_at.isoformat() if latest_security and latest_security.created_at else None,
+        },
+        "engine_contributions": routing_status(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -709,6 +944,7 @@ def infrastructure_agent_heartbeat(
         .order_by(InfrastructureTelemetrySnapshot.created_at.desc())
     )
     container_drift = _container_drift(db, server, payload.telemetry)
+    security = _security_findings(payload.telemetry)
     if latest is None or not latest.created_at or now - (latest.created_at if latest.created_at.tzinfo else latest.created_at.replace(tzinfo=timezone.utc)) >= timedelta(minutes=5):
         values = _telemetry_values(payload.telemetry)
         db.add(InfrastructureTelemetrySnapshot(server_id=server.id, **values))
@@ -723,6 +959,15 @@ def infrastructure_agent_heartbeat(
                 drift_status=container_drift["drift_status"],
             )
         )
+        db.add(
+            InfrastructureSecuritySnapshot(
+                server_id=server.id,
+                score=security["score"],
+                posture=security["posture"],
+                findings_json=json.dumps(security["findings"], sort_keys=True, separators=(",", ":")),
+                fingerprint_sha256=security["fingerprint_sha256"],
+            )
+        )
         db.execute(
             delete(InfrastructureTelemetrySnapshot).where(
                 InfrastructureTelemetrySnapshot.server_id == server.id,
@@ -735,6 +980,12 @@ def infrastructure_agent_heartbeat(
                 InfrastructureContainerSnapshot.created_at < now - timedelta(days=7),
             )
         )
+        db.execute(
+            delete(InfrastructureSecuritySnapshot).where(
+                InfrastructureSecuritySnapshot.server_id == server.id,
+                InfrastructureSecuritySnapshot.created_at < now - timedelta(days=30),
+            )
+        )
     db.commit()
     return {
         "ok": True,
@@ -743,7 +994,56 @@ def infrastructure_agent_heartbeat(
         "container_drift": {
             key: value for key, value in container_drift.items() if key != "containers"
         },
+        "security": {
+            "score": security["score"],
+            "posture": security["posture"],
+            "findings": len(security["findings"]),
+            "fingerprint_engine": security["fingerprint_engine"],
+        },
     }
+
+
+@router.get("/servers/{server_id}/security")
+def server_security_posture(
+    server_id: UUID,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    server = db.get(InfrastructureServer, server_id)
+    if server is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+    rows = db.scalars(
+        select(InfrastructureSecuritySnapshot)
+        .where(InfrastructureSecuritySnapshot.server_id == server.id)
+        .order_by(InfrastructureSecuritySnapshot.created_at.desc())
+        .limit(max(1, min(limit, 100)))
+    ).all()
+    return {
+        "server_id": str(server.id),
+        "items": [
+            {
+                "score": row.score,
+                "posture": row.posture,
+                "findings": json.loads(row.findings_json or "[]"),
+                "fingerprint_sha256": row.fingerprint_sha256,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.get("/servers/{server_id}/readiness")
+def server_readiness(
+    server_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    server = db.get(InfrastructureServer, server_id)
+    if server is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+    return _readiness_for_server(db, server)
 
 
 @router.get("/servers/{server_id}/commands")
