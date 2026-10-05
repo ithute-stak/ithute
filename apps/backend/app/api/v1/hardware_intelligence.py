@@ -155,6 +155,9 @@ def _prediction_point_from_health(
         tcp_retrans_delta=rate.get("tcp_retrans_delta"),
         ebpf_inflight_delta=rate.get("ebpf_inflight_delta"),
         ebpf_oom_delta=rate.get("ebpf_oom_delta"),
+        ebpf_block_p50_ms=rate.get("ebpf_block_p50_ms"),
+        ebpf_block_p95_ms=rate.get("ebpf_block_p95_ms"),
+        ebpf_block_p99_ms=rate.get("ebpf_block_p99_ms"),
     )
 
 
