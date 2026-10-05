@@ -41,7 +41,12 @@ from app.services.auth_security import (
 )
 from app.services.signup_security import send_system_email
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+def _require_local_auth_surface() -> None:
+    if settings.environment.lower() == "production" and not settings.legacy_local_auth_production_enabled:
+        raise HTTPException(status_code=404, detail="Local authentication is disabled")
+
+
+router = APIRouter(prefix="/auth", tags=["auth"], dependencies=[Depends(_require_local_auth_surface)])
 PASSWORD_RESET_EXPIRE_MINUTES = 30
 # Always perform an expensive password verification even when the email address
 # does not exist. This makes unknown-user responses less useful for timing based
