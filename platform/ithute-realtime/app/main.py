@@ -17,6 +17,7 @@ from .config import Settings, get_settings
 from .db import SessionLocal, get_db
 from .events import EventConflict, deliver_event, event_wire, pending_or_dead_counts, queue_event, replay_events
 from .hub import ConnectionLimitError, hub
+from .native_ws import issue_realtime_ticket
 from .models import (
     AuditEvent,
     Conversation,
@@ -379,6 +380,30 @@ async def readyz(db: Annotated[Session, Depends(get_db)], settings: Annotated[Se
         "auth": settings.auth_issuer,
         "push_enabled": settings.push_enabled,
         "disabled_clients": sorted(settings.disabled_client_set),
+    }
+
+
+@app.post("/v1/native-ws-ticket")
+def native_websocket_ticket(
+    principal: Annotated[UserPrincipal, Depends(user_principal)],
+    device_key: str = Query(min_length=8, max_length=200),
+) -> dict[str, object]:
+    settings = get_settings()
+    try:
+        ticket = issue_realtime_ticket(
+            secret=settings.go_gateway_token,
+            application_id=principal.client_id,
+            sub=principal.sub,
+            device_key=device_key,
+            lifetime_seconds=60,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+    return {
+        "engine": "go",
+        "ticket": ticket,
+        "expires_in_seconds": 60,
+        "websocket_url": settings.public_url.rstrip("/") + settings.go_websocket_public_path,
     }
 
 
