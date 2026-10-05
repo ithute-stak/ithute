@@ -61,6 +61,7 @@ type Sample struct {
 		Smartctl  bool `json:"smartctl"`
 		NVMeCLI   bool `json:"nvme_cli"`
 	} `json:"capabilities,omitempty"`
+	StorageDevices []StorageHealth `json:"storage_devices,omitempty"`
 }
 
 func runProbe(ctx context.Context, path string) (Sample, error) {
@@ -105,6 +106,11 @@ func main() {
 		sample, err := runProbe(ctx, *probe)
 		if err != nil {
 			return err
+		}
+		if sample.Capabilities.Smartctl {
+			if path, pathErr := smartctlPath(); pathErr == nil {
+				sample.StorageDevices = collectSmartStorage(ctx, path)
+			}
 		}
 		encoded, err := json.Marshal(sample)
 		if err != nil {
