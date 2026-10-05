@@ -35,6 +35,8 @@ PREFERRED_ENGINES: dict[str, str] = {
     "native.fingerprint": "cpp",
     "native.blob_profile": "cpp",
     "network.concurrent": "go",
+    "network.dns": "go",
+    "network.origin": "go",
     "enterprise.xml": "java",
 }
 
@@ -76,6 +78,18 @@ def execute_network(targets: list[dict], concurrency: int = 16) -> EngineExecuti
     """Route bounded concurrent network probes to Go with Python fallback."""
     value, engine = engine_runtime.network_probe(targets, concurrency)
     return EngineExecution(operation="network.concurrent", engine=engine, value=value)
+
+
+def execute_dns(queries: list[dict], concurrency: int = 16) -> EngineExecution:
+    """Route bounded DNS batches to Go with a Python resolver fallback."""
+    value, engine = engine_runtime.dns_lookup(queries, concurrency)
+    return EngineExecution(operation="network.dns", engine=engine, value=value)
+
+
+def execute_origin_probe(payload: dict) -> EngineExecution:
+    """Attempt an SSRF-policy-vetted origin HTTP/TLS probe in Go."""
+    value, engine = engine_runtime.go_origin_probe(payload)
+    return EngineExecution(operation="network.origin", engine=engine, value=value)
 
 
 def execute_enterprise_xml(xml_bytes: bytes) -> EngineExecution:
