@@ -106,6 +106,9 @@ def test_database_failover_plan_accepts_fresh_low_lag_safe_replica(db, tenant_ad
         healthy=True,
         lag_bytes=1024,
         lag_seconds=1.5,
+        receive_lsn="0/200",
+        replay_lsn="0/1F0",
+        in_recovery=True,
         last_replayed_at=now,
         last_checked_at=now,
     )
@@ -136,6 +139,9 @@ def test_database_failover_plan_rejects_stale_high_lag_replica(db, tenant_admin,
         healthy=True,
         lag_bytes=100 * 1024 * 1024,
         lag_seconds=90.0,
+        receive_lsn="0/300",
+        replay_lsn="0/100",
+        in_recovery=True,
         last_checked_at=now - timedelta(minutes=10),
     ))
     db.flush()
@@ -166,6 +172,9 @@ def test_database_failover_plan_rejects_same_network_segment(db, tenant_admin, p
         healthy=True,
         lag_bytes=0,
         lag_seconds=0.0,
+        receive_lsn="0/200",
+        replay_lsn="0/200",
+        in_recovery=True,
         last_checked_at=now,
     ))
     db.flush()
@@ -193,6 +202,9 @@ def test_database_failover_plan_rejects_replica_without_physical_capability(db, 
         healthy=True,
         lag_bytes=0,
         lag_seconds=0.0,
+        receive_lsn="0/200",
+        replay_lsn="0/200",
+        in_recovery=True,
         last_checked_at=now,
     ))
     db.flush()
@@ -201,4 +213,36 @@ def test_database_failover_plan_rejects_replica_without_physical_capability(db, 
 
     assert plan["promotion_ready"] is False
     assert any("does not advertise safe PostgreSQL physical replication" in reason for reason in plan["replicas"][0]["reasons"])
+    db.rollback()
+
+
+
+def test_postgres_failover_requires_single_active_database_on_source_cluster(db, tenant_admin, platform_owner):
+    user, tenant, _ = tenant_admin
+    now = datetime.now(timezone.utc)
+    primary = _node(db, platform_owner, "primary-shared")
+    replica_node = _node(db, platform_owner, "replica-shared")
+    _server(db, platform_owner, primary, provider="p1", region="r1", datacenter="dc1", physical_host="h1", network_segment="s1")
+    _server(db, platform_owner, replica_node, provider="p2", region="r2", datacenter="dc2", physical_host="h2", network_segment="s2")
+    _replication_agent(db, platform_owner, replica_node)
+    database = _database(db, tenant, user, primary)
+    _database(db, tenant, user, primary)
+    db.add(HostingDatabaseReplica(
+        database_id=database.id,
+        node_id=replica_node.id,
+        status="streaming",
+        healthy=True,
+        lag_bytes=0,
+        lag_seconds=0.0,
+        receive_lsn="0/200",
+        replay_lsn="0/200",
+        in_recovery=True,
+        last_checked_at=now,
+    ))
+    db.flush()
+
+    plan = build_database_failover_plan(db, database=database, now=now)
+
+    assert plan["promotion_ready"] is False
+    assert any("exactly one active Ithute-managed database" in reason for reason in plan["blockers"])
     db.rollback()
