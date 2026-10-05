@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -16,8 +15,6 @@ from app.models import (
     HostingPostgresReplicationMember,
 )
 
-
-_DNS_RE = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$")
 _ENDPOINT_PORT_START = int(os.getenv("ITHUTE_POSTGRES_ENDPOINT_PORT_START", "20000"))
 _ENDPOINT_PORT_END = int(os.getenv("ITHUTE_POSTGRES_ENDPOINT_PORT_END", "39999"))
 
