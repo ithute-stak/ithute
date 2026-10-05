@@ -15,12 +15,15 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_platform_owner, require_tenant_permission
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
-from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingProject, HostingSource, User
+from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingProject, HostingSource, User
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
 from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
 from app.services.database_replication import build_database_failover_plan
 from app.services.postgres_replication_groups import build_postgres_replication_group_plan
-from app.services.external_fencing import queue_external_fence_for_database_failover
+from app.services.external_fencing import (
+    queue_external_fence_for_database_failover,
+    queue_external_fence_for_postgres_group_failover,
+)
 
 router = APIRouter(tags=["shared-hosting"])
 
@@ -48,6 +51,10 @@ class PostgresReplicationGroupCreate(BaseModel):
     primary_node_id: UUID
     database_ids: list[UUID] = Field(min_length=1, max_length=500)
     standby_node_ids: list[UUID] = Field(default_factory=list, max_length=16)
+
+
+class PostgresReplicationGroupFailoverRequest(BaseModel):
+    standby_id: UUID
 
 
 class HostingDatabaseCreate(BaseModel):
@@ -252,6 +259,24 @@ def create_postgres_replication_group(
     if existing is not None:
         raise HTTPException(status_code=409, detail="A selected database already belongs to a PostgreSQL replication group")
 
+    primary_agent = db.get(HostingNodeAgent, primary.id)
+    primary_capabilities = {}
+    if primary_agent is not None:
+        try:
+            primary_capabilities = json.loads(primary_agent.capabilities_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            primary_capabilities = {}
+    primary_postgres = (
+        primary_capabilities.get("postgres_physical_replication")
+        if isinstance(primary_capabilities, dict) else None
+    )
+    if (
+        not isinstance(primary_postgres, dict)
+        or primary_postgres.get("supported") is not True
+        or primary_postgres.get("dedicated_cluster") is not True
+    ):
+        raise HTTPException(status_code=409, detail="Primary node is not a dedicated PostgreSQL physical-replication cluster")
+
     standby_nodes = []
     for node_id in standby_node_ids:
         node = db.get(HostingNode, node_id)
@@ -259,6 +284,36 @@ def create_postgres_replication_group(
             raise HTTPException(status_code=404, detail=f"Standby hosting node {node_id} not found")
         if node.status != "active":
             raise HTTPException(status_code=409, detail=f"Standby hosting node {node.name} is not active")
+        already_used = db.scalar(
+            select(HostingPostgresReplicationStandby.id).where(
+                HostingPostgresReplicationStandby.node_id == node.id
+            )
+        )
+        if already_used is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Standby hosting node {node.name} already belongs to a PostgreSQL physical replication group",
+            )
+        standby_agent = db.get(HostingNodeAgent, node.id)
+        standby_capabilities = {}
+        if standby_agent is not None:
+            try:
+                standby_capabilities = json.loads(standby_agent.capabilities_json or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                standby_capabilities = {}
+        standby_postgres = (
+            standby_capabilities.get("postgres_physical_replication")
+            if isinstance(standby_capabilities, dict) else None
+        )
+        if (
+            not isinstance(standby_postgres, dict)
+            or standby_postgres.get("supported") is not True
+            or standby_postgres.get("dedicated_cluster") is not True
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Standby hosting node {node.name} is not a dedicated PostgreSQL physical-replication cluster",
+            )
         standby_nodes.append(node)
 
     group = HostingPostgresReplicationGroup(
@@ -292,6 +347,267 @@ def create_postgres_replication_group(
     ))
     db.commit()
     return build_postgres_replication_group_plan(db, group=group)
+
+
+@router.post("/platform/hosting/postgres-replication-groups/{group_id}/failover", status_code=202)
+def request_postgres_replication_group_failover(
+    group_id: UUID,
+    payload: PostgresReplicationGroupFailoverRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    group = db.scalar(
+        select(HostingPostgresReplicationGroup)
+        .where(HostingPostgresReplicationGroup.id == group_id)
+        .with_for_update()
+    )
+    if group is None:
+        raise HTTPException(status_code=404, detail="PostgreSQL replication group not found")
+
+    standby = db.scalar(
+        select(HostingPostgresReplicationStandby).where(
+            HostingPostgresReplicationStandby.id == payload.standby_id,
+            HostingPostgresReplicationStandby.group_id == group.id,
+        )
+    )
+    if standby is None:
+        raise HTTPException(status_code=404, detail="PostgreSQL replication standby not found")
+
+    plan = build_postgres_replication_group_plan(db, group=group)
+    evaluation = next(
+        (item for item in plan["standbys"] if item["standby_id"] == str(standby.id)),
+        None,
+    )
+    if evaluation is None or not evaluation["eligible"]:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Standby is not safe to promote", "evaluation": evaluation},
+        )
+
+    active = db.scalar(
+        select(HostingPostgresGroupFailoverAttempt.id).where(
+            HostingPostgresGroupFailoverAttempt.group_id == group.id,
+            HostingPostgresGroupFailoverAttempt.status.in_(
+                ["requested", "fence_claimed", "source_fenced", "promote_claimed"]
+            ),
+        )
+    )
+    if active is not None:
+        raise HTTPException(status_code=409, detail="Replication group already has a failover attempt in progress")
+
+    attempt = HostingPostgresGroupFailoverAttempt(
+        group_id=group.id,
+        standby_id=standby.id,
+        source_node_id=group.primary_node_id,
+        target_node_id=standby.node_id,
+        status="requested",
+        created_by_user_id=current.id,
+    )
+    db.add(attempt)
+    db.flush()
+    external_fence = queue_external_fence_for_postgres_group_failover(
+        db,
+        failover=attempt,
+        requested_by_user_id=current.id,
+    )
+    db.add(AuditLog(
+        actor_user_id=current.id,
+        action="hosting.postgres_replication_group.failover.request",
+        resource_type="hosting_postgres_group_failover",
+        resource_id=str(attempt.id),
+        metadata_json=json.dumps({
+            "group_id": str(group.id),
+            "source_node_id": str(group.primary_node_id),
+            "target_node_id": str(standby.node_id),
+            "standby_id": str(standby.id),
+            "external_fence_attempt_id": str(external_fence.id) if external_fence else None,
+        }, sort_keys=True),
+    ))
+    db.commit()
+    return {
+        "id": str(attempt.id),
+        "status": attempt.status,
+        "group_id": str(group.id),
+        "source_node_id": str(attempt.source_node_id),
+        "target_node_id": str(attempt.target_node_id),
+    }
+
+
+@router.post("/hosting/agent/postgres-group-failovers/claim")
+def claim_postgres_group_failover(
+    x_ithute_hosting_agent: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    agent, node = _agent_from_token(db, x_ithute_hosting_agent)
+    agent.last_seen_at = _now()
+
+    source = db.scalar(
+        select(HostingPostgresGroupFailoverAttempt)
+        .where(
+            HostingPostgresGroupFailoverAttempt.source_node_id == node.id,
+            HostingPostgresGroupFailoverAttempt.status == "requested",
+        )
+        .order_by(HostingPostgresGroupFailoverAttempt.created_at.asc())
+        .with_for_update(skip_locked=True)
+    )
+    if source is not None:
+        source.status = "fence_claimed"
+        source.source_fence_token = secrets.token_urlsafe(32)
+        db.commit()
+        return {
+            "failover": {
+                "id": str(source.id),
+                "action": "fence_source",
+                "token": source.source_fence_token,
+                "source_fencing_confirmed": False,
+            }
+        }
+
+    target = db.scalar(
+        select(HostingPostgresGroupFailoverAttempt)
+        .where(
+            HostingPostgresGroupFailoverAttempt.target_node_id == node.id,
+            HostingPostgresGroupFailoverAttempt.status == "source_fenced",
+            HostingPostgresGroupFailoverAttempt.source_fenced_at.is_not(None),
+        )
+        .order_by(HostingPostgresGroupFailoverAttempt.created_at.asc())
+        .with_for_update(skip_locked=True)
+    )
+    if target is not None:
+        target.status = "promote_claimed"
+        target.target_promote_token = secrets.token_urlsafe(32)
+        db.commit()
+        return {
+            "failover": {
+                "id": str(target.id),
+                "action": "promote_target",
+                "token": target.target_promote_token,
+                "source_fencing_confirmed": True,
+            }
+        }
+
+    db.commit()
+    return {"failover": None}
+
+
+@router.post("/hosting/agent/postgres-group-failovers/{attempt_id}/status")
+def report_postgres_group_failover(
+    attempt_id: UUID,
+    payload: DatabaseFailoverAgentStatus,
+    x_ithute_hosting_agent: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    agent, node = _agent_from_token(db, x_ithute_hosting_agent)
+    agent.last_seen_at = _now()
+    attempt = db.scalar(
+        select(HostingPostgresGroupFailoverAttempt)
+        .where(HostingPostgresGroupFailoverAttempt.id == attempt_id)
+        .with_for_update()
+    )
+    if attempt is None:
+        raise HTTPException(status_code=404, detail="PostgreSQL group failover attempt not found")
+
+    now = _now()
+    if attempt.status == "fence_claimed" and attempt.source_node_id == node.id:
+        if not attempt.source_fence_token or not secrets.compare_digest(attempt.source_fence_token, payload.token):
+            raise HTTPException(status_code=409, detail="Stale PostgreSQL group source-fencing token")
+        attempt.source_fence_token = None
+        if not payload.success:
+            attempt.status = "failed"
+            attempt.failure_message = (payload.message or "Source fencing failed").strip()[:2000]
+        else:
+            attempt.status = "source_fenced"
+            attempt.source_fenced_at = now
+            attempt.failure_message = None
+        db.commit()
+        return {"id": str(attempt.id), "status": attempt.status}
+
+    if attempt.status == "promote_claimed" and attempt.target_node_id == node.id:
+        if not attempt.target_promote_token or not secrets.compare_digest(attempt.target_promote_token, payload.token):
+            raise HTTPException(status_code=409, detail="Stale PostgreSQL group promotion token")
+        attempt.target_promote_token = None
+        if not payload.success:
+            attempt.status = "failed"
+            attempt.failure_message = (payload.message or "Group standby promotion failed").strip()[:2000]
+            db.commit()
+            return {"id": str(attempt.id), "status": attempt.status}
+        if attempt.source_fenced_at is None:
+            raise HTTPException(status_code=409, detail="Source fencing has not been confirmed")
+
+        group = db.scalar(
+            select(HostingPostgresReplicationGroup)
+            .where(HostingPostgresReplicationGroup.id == attempt.group_id)
+            .with_for_update()
+        )
+        standby = db.scalar(
+            select(HostingPostgresReplicationStandby)
+            .where(HostingPostgresReplicationStandby.id == attempt.standby_id)
+            .with_for_update()
+        )
+        if group is None or standby is None:
+            raise HTTPException(status_code=409, detail="Replication group failover metadata is incomplete")
+        if group.primary_node_id != attempt.source_node_id or standby.node_id != attempt.target_node_id:
+            raise HTTPException(status_code=409, detail="Replication group topology changed during failover")
+
+        member_ids = db.scalars(
+            select(HostingPostgresReplicationMember.database_id)
+            .where(HostingPostgresReplicationMember.group_id == group.id)
+        ).all()
+        members = db.scalars(
+            select(HostingDatabase)
+            .where(HostingDatabase.id.in_(member_ids))
+            .with_for_update()
+        ).all() if member_ids else []
+        if len(members) != len(member_ids):
+            raise HTTPException(status_code=409, detail="Replication group membership changed during failover")
+        if any(row.node_id != attempt.source_node_id for row in members):
+            raise HTTPException(status_code=409, detail="One or more member databases moved during failover")
+
+        other_standbys = db.scalars(
+            select(HostingPostgresReplicationStandby)
+            .where(
+                HostingPostgresReplicationStandby.group_id == group.id,
+                HostingPostgresReplicationStandby.id != standby.id,
+            )
+            .with_for_update()
+        ).all()
+
+        for database in members:
+            database.node_id = attempt.target_node_id
+        group.primary_node_id = attempt.target_node_id
+        standby.status = "promoted"
+        standby.healthy = True
+        standby.in_recovery = False
+        standby.telemetry_error = None
+        for row in other_standbys:
+            row.status = "failed"
+            row.healthy = False
+            row.telemetry_error = "Standby must be reconfigured to follow the newly promoted primary"
+        attempt.status = "succeeded"
+        attempt.promoted_at = now
+        attempt.failure_message = None
+        db.add(AuditLog(
+            actor_user_id=None,
+            action="hosting.postgres_replication_group.failover.complete",
+            resource_type="hosting_postgres_group_failover",
+            resource_id=str(attempt.id),
+            metadata_json=json.dumps({
+                "group_id": str(group.id),
+                "source_node_id": str(attempt.source_node_id),
+                "target_node_id": str(attempt.target_node_id),
+                "database_ids": [str(row.id) for row in members],
+            }, sort_keys=True),
+        ))
+        db.commit()
+        return {
+            "id": str(attempt.id),
+            "status": attempt.status,
+            "group_id": str(group.id),
+            "primary_node_id": str(group.primary_node_id),
+            "database_ids": [str(row.id) for row in members],
+        }
+
+    raise HTTPException(status_code=409, detail="Group failover action is not claimable by this hosting node")
 
 
 @router.get("/platform/hosting/postgres-replication-groups/{group_id}/failover-plan")
@@ -328,6 +644,16 @@ def request_database_failover(
 ):
     require_tenant_permission(tenant_id, "hosting.manage", db, current)
     database = _database(db, tenant_id, database_id, lock=True)
+    grouped = db.scalar(
+        select(HostingPostgresReplicationMember.group_id).where(
+            HostingPostgresReplicationMember.database_id == database.id
+        )
+    )
+    if grouped is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Database belongs to a physical PostgreSQL replication group; use group failover",
+        )
     if database.engine != "postgresql":
         raise HTTPException(status_code=409, detail="Controlled failover execution currently supports PostgreSQL only")
     if database.node_id is None:

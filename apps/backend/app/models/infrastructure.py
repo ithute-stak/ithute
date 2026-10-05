@@ -164,6 +164,7 @@ class InfrastructureFenceAttempt(Base):
     server_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("infrastructure_servers.id", ondelete="CASCADE"), nullable=False, index=True)
     controller_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("infrastructure_fence_controllers.id", ondelete="RESTRICT"), nullable=False, index=True)
     database_failover_attempt_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_database_failover_attempts.id", ondelete="CASCADE"), nullable=True, index=True)
+    postgres_group_failover_attempt_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_postgres_group_failovers.id", ondelete="CASCADE"), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(24), default="queued", nullable=False, index=True)
     claim_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     requested_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)

@@ -355,6 +355,74 @@ def _ensure_verified_backup_local(storage_key: str, path: pathlib.Path, expected
         raise RuntimeError("Rehydrated database backup failed control-plane size/SHA-256 verification")
 
 
+def claim_postgres_group_failover() -> dict[str, Any] | None:
+    result = base.api("/hosting/agent/postgres-group-failovers/claim")
+    work = result.get("failover")
+    return work if isinstance(work, dict) else None
+
+
+def report_postgres_group_failover(
+    attempt_id: str,
+    token: str,
+    success: bool,
+    *,
+    message: str | None = None,
+) -> dict[str, Any]:
+    return base.api(
+        f"/hosting/agent/postgres-group-failovers/{attempt_id}/status",
+        {"token": token, "success": success, "message": message},
+    )
+
+
+def process_postgres_group_failover(work: dict[str, Any]) -> None:
+    attempt_id = str(work.get("id") or "")
+    action = str(work.get("action") or "")
+    token = str(work.get("token") or "")
+    if not attempt_id or len(token) < 20:
+        raise RuntimeError("PostgreSQL group failover job is incomplete")
+
+    try:
+        capabilities = postgres_physical_replication_capabilities()
+        if not capabilities.get("supported"):
+            raise RuntimeError("Dedicated PostgreSQL physical replication capability is unavailable")
+
+        if action == "fence_source":
+            if capabilities.get("in_recovery") is True:
+                raise RuntimeError("Refusing to fence a PostgreSQL standby as the old group primary")
+            base.command(["systemctl", "stop", POSTGRES_SERVICE], timeout=120)
+            active = base.command(["systemctl", "is-active", POSTGRES_SERVICE], check=False, timeout=30)
+            if active.returncode == 0:
+                raise RuntimeError("PostgreSQL group primary remained active after fencing request")
+            report_postgres_group_failover(
+                attempt_id,
+                token,
+                True,
+                message="Old PostgreSQL group primary stopped and verified inactive",
+            )
+            return
+
+        if action == "promote_target":
+            if work.get("source_fencing_confirmed") is not True:
+                raise RuntimeError("Control plane did not confirm PostgreSQL group source fencing")
+            postgres_promote_physical_replica(source_fencing_confirmed=True)
+            report_postgres_group_failover(
+                attempt_id,
+                token,
+                True,
+                message="PostgreSQL group standby promoted and verified out of recovery",
+            )
+            return
+
+        raise RuntimeError("Unknown PostgreSQL group failover action")
+    except Exception as exc:
+        error = str(exc)[:1900]
+        base.log(f"postgres group failover {attempt_id} failed: {error}")
+        try:
+            report_postgres_group_failover(attempt_id, token, False, message=error)
+        except Exception as report_exc:
+            base.log(f"could not report postgres group failover failure: {report_exc}")
+
+
 def claim_database_failover() -> dict[str, Any] | None:
     result = base.api("/hosting/agent/database-failovers/claim")
     work = result.get("failover")
@@ -619,6 +687,11 @@ def main() -> int:
                     },
                 )
                 last_heartbeat = now
+
+            group_failover = claim_postgres_group_failover()
+            if group_failover:
+                process_postgres_group_failover(group_failover)
+                continue
 
             database_failover = claim_database_failover()
             if database_failover:

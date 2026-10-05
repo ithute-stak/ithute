@@ -52,6 +52,7 @@ on:
       - "apps/backend/tests/test_external_fencing_contract.py"
       - "apps/backend/tests/test_postgres_replica_telemetry.py"
       - "apps/backend/tests/test_postgres_replication_groups.py"
+      - "apps/backend/tests/test_postgres_group_failover_execution_contract.py"
       - "apps/backend/tests/test_hosting_builds_contract.py"
       - "apps/backend/tests/test_hosting_build_logs_contract.py"
       - "apps/backend/tests/test_hosting_git_webhooks_contract.py"
