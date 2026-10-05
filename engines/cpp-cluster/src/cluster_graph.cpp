@@ -1,6 +1,7 @@
 #include "cluster_graph.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <queue>
 #include <utility>
 
@@ -135,6 +136,71 @@ bool ClusterGraph::reachable(const NodeId& source, const NodeId& target) const {
         }
     }
     return false;
+}
+
+
+std::optional<std::vector<NodeId>> ClusterGraph::dependency_order() const {
+    std::unordered_map<NodeId, std::size_t> dependency_count;
+    std::unordered_map<NodeId, std::vector<NodeId>> dependents;
+    dependency_count.reserve(nodes_.size());
+    dependents.reserve(nodes_.size());
+
+    for (const auto& [id, node] : nodes_) {
+        (void)node;
+        dependency_count.emplace(id, 0);
+        dependents.try_emplace(id);
+    }
+
+    for (const auto& [source, edges] : adjacency_) {
+        for (const auto& edge : edges) {
+            if (edge.relation != Relation::DependsOn) {
+                continue;
+            }
+            if (!nodes_.contains(source) || !nodes_.contains(edge.target)) {
+                continue;
+            }
+            ++dependency_count[source];
+            dependents[edge.target].push_back(source);
+        }
+    }
+
+    std::priority_queue<NodeId, std::vector<NodeId>, std::greater<>> ready;
+    for (const auto& [id, count] : dependency_count) {
+        if (count == 0) {
+            ready.push(id);
+        }
+    }
+
+    std::vector<NodeId> order;
+    order.reserve(nodes_.size());
+    while (!ready.empty()) {
+        auto current = ready.top();
+        ready.pop();
+        order.push_back(current);
+
+        auto found = dependents.find(current);
+        if (found == dependents.end()) {
+            continue;
+        }
+        auto children = found->second;
+        std::sort(children.begin(), children.end());
+        children.erase(std::unique(children.begin(), children.end()), children.end());
+        for (const auto& dependent : children) {
+            auto count = dependency_count.find(dependent);
+            if (count == dependency_count.end() || count->second == 0) {
+                continue;
+            }
+            --count->second;
+            if (count->second == 0) {
+                ready.push(dependent);
+            }
+        }
+    }
+
+    if (order.size() != nodes_.size()) {
+        return std::nullopt;
+    }
+    return order;
 }
 
 ClusterSummary ClusterGraph::summary() const {
