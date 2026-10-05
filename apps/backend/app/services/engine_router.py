@@ -21,6 +21,7 @@ _BINARY_OPERATIONS: dict[str, BinaryHandler] = {
     "mail.mime_scan": engine_runtime.mime_scan,
     "mail.sha256": engine_runtime.sha256_digest,
     "native.fingerprint": engine_runtime.fast_fingerprint,
+    "native.blob_profile": engine_runtime.blob_profile,
 }
 
 
@@ -29,6 +30,7 @@ PREFERRED_ENGINES: dict[str, str] = {
     "mail.mime_scan": "rust",
     "mail.sha256": "rust",
     "native.fingerprint": "cpp",
+    "native.blob_profile": "cpp",
     "network.concurrent": "go",
     "enterprise.xml": "java",
 }

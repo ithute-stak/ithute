@@ -138,3 +138,24 @@ def test_enterprise_xml_rejects_doctype_in_python_fallback():
         assert "DTD/entities" in str(exc)
     else:
         raise AssertionError("DOCTYPE payload should be rejected")
+
+
+def test_python_blob_profile_matches_reference_values():
+    raw = bytes([65, 0, 1, 9, 10, 13, 128, 255])
+    profile = engine_runtime.python_blob_profile(raw)
+
+    assert profile.bytes == len(raw)
+    assert profile.nul_bytes == 1
+    assert profile.control_bytes == 2
+    assert profile.high_bytes == 2
+    assert profile.fnv1a64 == engine_runtime._python_fnv1a64(raw)
+
+
+def test_cpp_blob_profile_falls_back_to_python(monkeypatch):
+    monkeypatch.setattr(engine_runtime, "_load_cpp", lambda: None)
+    raw = b"abc\x00\x01\xff"
+
+    profile, engine = engine_runtime.blob_profile(raw)
+
+    assert engine == "python-fallback"
+    assert profile == engine_runtime.python_blob_profile(raw)

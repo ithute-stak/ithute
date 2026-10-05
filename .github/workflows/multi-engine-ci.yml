@@ -115,6 +115,7 @@ jobs:
           PY
           docker run --rm --entrypoint python ithute-app-api:engine-ci -m benchmarks.benchmark_mime_scan
           docker run --rm --entrypoint python ithute-app-api:engine-ci -m benchmarks.benchmark_sha256
+          docker run --rm --entrypoint python ithute-app-api:engine-ci -m benchmarks.benchmark_blob_profile
 
       - name: Build and test Java worker image
         run: |

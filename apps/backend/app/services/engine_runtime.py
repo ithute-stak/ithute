@@ -64,6 +64,25 @@ class _RustMimeScan(ctypes.Structure):
     ]
 
 
+@dataclass(frozen=True)
+class BlobProfile:
+    bytes: int
+    nul_bytes: int
+    control_bytes: int
+    high_bytes: int
+    fnv1a64: int
+
+
+class _CppBlobProfile(ctypes.Structure):
+    _fields_ = [
+        ("bytes", ctypes.c_size_t),
+        ("nul_bytes", ctypes.c_size_t),
+        ("control_bytes", ctypes.c_size_t),
+        ("high_bytes", ctypes.c_size_t),
+        ("fnv1a64", ctypes.c_uint64),
+    ]
+
+
 _rust: ctypes.CDLL | None = None
 _cpp: ctypes.CDLL | None = None
 
@@ -110,6 +129,12 @@ def _load_cpp() -> ctypes.CDLL | None:
         library = ctypes.CDLL(str(CPP_LIBRARY))
         library.ithute_cpp_fnv1a64.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t]
         library.ithute_cpp_fnv1a64.restype = ctypes.c_uint64
+        library.ithute_cpp_blob_profile_scan.argtypes = [
+            ctypes.POINTER(ctypes.c_ubyte),
+            ctypes.c_size_t,
+            ctypes.POINTER(_CppBlobProfile),
+        ]
+        library.ithute_cpp_blob_profile_scan.restype = ctypes.c_int
     except (OSError, AttributeError):
         return None
     _cpp = library
@@ -247,6 +272,42 @@ def fast_fingerprint(data: bytes) -> tuple[int, str]:
         pointer = ctypes.POINTER(ctypes.c_ubyte)()
     return int(library.ithute_cpp_fnv1a64(pointer, len(data))), "cpp"
 
+
+
+def python_blob_profile(data: bytes) -> BlobProfile:
+    return BlobProfile(
+        bytes=len(data),
+        nul_bytes=data.count(b"\x00"),
+        control_bytes=sum(1 for value in data if value < 32 and value not in {9, 10, 13}),
+        high_bytes=sum(1 for value in data if value >= 128),
+        fnv1a64=_python_fnv1a64(data),
+    )
+
+
+def blob_profile(data: bytes) -> tuple[BlobProfile, str]:
+    """Profile binary payloads in one C++ pass with an exact Python fallback."""
+    library = _load_cpp()
+    if library is None:
+        return python_blob_profile(data), "python-fallback"
+    if data:
+        buffer = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
+        pointer = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte))
+    else:
+        pointer = ctypes.POINTER(ctypes.c_ubyte)()
+    output = _CppBlobProfile()
+    try:
+        code = library.ithute_cpp_blob_profile_scan(pointer, len(data), ctypes.byref(output))
+    except (OSError, ValueError, ctypes.ArgumentError):
+        return python_blob_profile(data), "python-fallback"
+    if code != 0:
+        return python_blob_profile(data), "python-fallback"
+    return BlobProfile(
+        bytes=output.bytes,
+        nul_bytes=output.nul_bytes,
+        control_bytes=output.control_bytes,
+        high_bytes=output.high_bytes,
+        fnv1a64=int(output.fnv1a64),
+    ), "cpp"
 
 def go_worker_status() -> dict:
     try:
@@ -463,7 +524,7 @@ def engine_status() -> dict:
                 "available": cpp_available,
                 "mode": "native",
                 "library": str(CPP_LIBRARY),
-                "capabilities": ["fnv1a64"] if cpp_available else [],
+                "capabilities": ["fnv1a64", "blob-profile"] if cpp_available else [],
                 "fallback": "python",
             },
         },

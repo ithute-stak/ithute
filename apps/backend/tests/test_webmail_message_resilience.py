@@ -172,6 +172,17 @@ def test_attachment_metadata_includes_engine_routed_sha256(monkeypatch):
         if operation == "mail.sha256":
             assert value == b"ithute"
             return SimpleNamespace(value="digest-from-rust", engine="rust")
+        if operation == "native.blob_profile":
+            assert value == b"ithute"
+            return SimpleNamespace(
+                value=SimpleNamespace(
+                    fnv1a64=123456,
+                    nul_bytes=0,
+                    control_bytes=0,
+                    high_bytes=0,
+                ),
+                engine="cpp",
+            )
         raise AssertionError(operation)
 
     monkeypatch.setattr(webmail, "execute_binary", fake_execute)
@@ -185,5 +196,10 @@ def test_attachment_metadata_includes_engine_routed_sha256(monkeypatch):
             "content_type": "application/octet-stream",
             "size": 6,
             "sha256": "digest-from-rust",
+            "fingerprint": "123456",
+            "nul_bytes": 0,
+            "control_bytes": 0,
+            "high_bytes": 0,
+            "profile_engine": "cpp",
         }
     ]

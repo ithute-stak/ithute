@@ -298,6 +298,7 @@ def _attachments(message, scan: MimeScan | None = None) -> list[dict]:
         if filename or disposition == "attachment":
             payload = part.get_payload(decode=True) or b""
             digest = execute_binary("mail.sha256", payload)
+            profile = execute_binary("native.blob_profile", payload)
             rows.append(
                 {
                     "index": attachment_index,
@@ -305,6 +306,11 @@ def _attachments(message, scan: MimeScan | None = None) -> list[dict]:
                     "content_type": part.get_content_type(),
                     "size": len(payload),
                     "sha256": digest.value,
+                    "fingerprint": str(profile.value.fnv1a64),
+                    "nul_bytes": profile.value.nul_bytes,
+                    "control_bytes": profile.value.control_bytes,
+                    "high_bytes": profile.value.high_bytes,
+                    "profile_engine": profile.engine,
                 }
             )
             attachment_index += 1
