@@ -44,6 +44,7 @@ on:
       - "apps/backend/app/services/hosting_failover.py"
       - "apps/backend/app/services/billing.py"
       - "apps/backend/alembic/versions/*hosting*.py"
+      - "apps/backend/alembic/versions/00*_pg_*.py"
       - "apps/backend/alembic/versions/*zip*.py"
       - "apps/backend/tests/test_application_hosting.py"
       - "apps/backend/tests/test_hosting_operations*.py"
@@ -147,6 +148,16 @@ jobs:
           tests/test_maintenance_drain_planner.py
           tests/test_database_replication.py
           tests/test_database_failover_orchestration_contract.py
+          tests/test_external_fencing_contract.py
+          tests/test_postgres_replica_telemetry.py
+          tests/test_postgres_replication_groups.py
+          tests/test_postgres_group_failover_execution_contract.py
+          tests/test_postgres_topology_repair_contract.py
+          tests/test_postgres_rpo_policy.py
+          tests/test_postgres_rto_slo.py
+          tests/test_postgres_stable_endpoints.py
+          tests/test_postgres_stable_endpoint_contract.py
+          tests/test_database_gateway_ha.py
           tests/test_hosting_builds_contract.py
           tests/test_hosting_build_logs_contract.py
           tests/test_hosting_git_webhooks_contract.py
@@ -154,6 +165,16 @@ jobs:
           tests/test_hosting_metering.py
           tests/test_shared_hosting_contract.py
           tests/test_alembic_single_head.py
+
+      - name: Set up Go for database router chaos tests
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23"
+          cache-dependency-path: engines/go-worker/go.sum
+
+      - name: Run database router race and chaos tests
+        working-directory: engines/go-worker
+        run: go test -race ./cmd/db-router
 
       - name: Run ZIP quarantine, retention, builder, backup-remote and network-policy regressions
         run: |
