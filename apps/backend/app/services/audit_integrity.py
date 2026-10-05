@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import hmac
 import json
 from typing import Any
@@ -11,6 +10,7 @@ from sqlalchemy.engine import Connection
 from app.core.config import settings
 from app.models.entities import AuditLog
 from app.models.ithute_operating import IthuteSecurityEvent
+from app.services.engine_router import execute_binary, execute_hmac_sha256
 from app.services.security_event_rules import audit_security_severity
 
 
@@ -48,8 +48,14 @@ def _canonical(row: AuditLog, metadata: dict[str, Any], prev_signature: str) -> 
 
 
 def _sign(payload: bytes) -> str:
-    key = hashlib.sha256((settings.secret_key + "|ithute-audit-integrity-v1").encode("utf-8")).digest()
-    return hmac.new(key, payload, hashlib.sha256).hexdigest()
+    key_hex = str(
+        execute_binary(
+            "crypto.sha256",
+            (settings.secret_key + "|ithute-audit-integrity-v1").encode("utf-8"),
+        ).value
+    )
+    key = bytes.fromhex(key_hex)
+    return str(execute_hmac_sha256(key, payload).value)
 
 
 def _latest_anchor(connection: Connection) -> str:
