@@ -88,9 +88,12 @@ func TestOriginProbeRejectsPrivateTargetBeforeDial(t *testing.T) {
 }
 
 
-func TestPushBrokerQueuesAndDelivers(t *testing.T) {
+func TestPushBrokerDeliversToActiveReceiver(t *testing.T) {
 	broker := newPushBroker()
 	endpoint := "device-endpoint-secret-12345"
+	waiter := broker.register(endpoint)
+	defer broker.unregister(endpoint, waiter)
+
 	response, err := broker.deliver(pushDeliveryRequest{
 		Endpoint: endpoint,
 		DeliveryID: "delivery-1",
@@ -104,7 +107,7 @@ func TestPushBrokerQueuesAndDelivers(t *testing.T) {
 		t.Fatalf("unexpected response: %#v", response)
 	}
 	select {
-	case message := <-broker.queue(endpoint):
+	case message := <-waiter:
 		if message.DeliveryID != "delivery-1" {
 			t.Fatalf("unexpected delivery id: %s", message.DeliveryID)
 		}
@@ -112,7 +115,19 @@ func TestPushBrokerQueuesAndDelivers(t *testing.T) {
 			t.Fatalf("unexpected notification: %#v", message.Notification)
 		}
 	default:
-		t.Fatal("expected queued push envelope")
+		t.Fatal("expected delivered push envelope")
+	}
+}
+
+func TestPushBrokerRejectsOfflineEndpoint(t *testing.T) {
+	broker := newPushBroker()
+	_, err := broker.deliver(pushDeliveryRequest{
+		Endpoint: "device-endpoint-secret-12345",
+		TTLSeconds: 60,
+		Notification: map[string]any{"title": "Hello"},
+	})
+	if err == nil || err.Error() != "endpoint is not actively connected" {
+		t.Fatalf("expected offline endpoint error, got %v", err)
 	}
 }
 
