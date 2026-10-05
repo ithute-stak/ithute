@@ -5,7 +5,7 @@ Requires=ithute-ebpf.service
 
 [Service]
 Type=oneshot
-ExecStart=/opt/ithute/hardware-intelligence/ithute-ebpf-loader snapshot
+ExecStart=/bin/bash /opt/ithute/hardware-intelligence/ithute-ebpf-loader snapshot
 User=root
 Group=root
 NoNewPrivileges=yes
