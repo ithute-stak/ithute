@@ -78,7 +78,7 @@ def test_drain_plan_blocks_stateful_and_database_dependent_workload(db, tenant_a
     app = next(item for item in plan["migration_order"] if item["kind"] == "application")
     assert app["movable"] is False
     assert any("stateless_auto" in reason for reason in app["blockers"])
-    assert any("database failover" in reason for reason in app["blockers"])
+    assert any("safe replica promotion target" in reason for reason in app["blockers"])
     db.rollback()
 
 

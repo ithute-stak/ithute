@@ -18,6 +18,7 @@ from app.db.session import get_db
 from app.models import AuditLog, HostingDatabase, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingProject, HostingSource, User
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
 from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
+from app.services.database_replication import build_database_failover_plan
 
 router = APIRouter(tags=["shared-hosting"])
 
@@ -198,6 +199,18 @@ def runtime_catalog():
         "database_engines": ["postgresql", "mysql"],
         "custom_runtime_policy": "Applications outside managed runtimes can use a reviewed Dockerfile build path.",
     }
+
+
+@router.get("/tenants/{tenant_id}/hosting/databases/{database_id}/failover-plan")
+def database_failover_plan(
+    tenant_id: UUID,
+    database_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    require_tenant_permission(tenant_id, "hosting.read", db, current)
+    database = _database(db, tenant_id, database_id)
+    return build_database_failover_plan(db, database=database)
 
 
 @router.get("/tenants/{tenant_id}/hosting/databases")
