@@ -29,6 +29,7 @@ from app.models import (
     InfrastructureServer,
     InfrastructureServerAgent,
     InfrastructureTelemetrySnapshot,
+    InfrastructureWireGuardPeer,
     MailNode,
     Mailbox,
     User,
@@ -870,6 +871,92 @@ def _server_agent_from_token(db: Session, token: str | None) -> tuple[Infrastruc
     return agent, server
 
 
+def _cluster_node_out(db: Session, server: InfrastructureServer, *, self_server_id: UUID) -> dict:
+    """Return the sanitized node view shared with trusted Ithute server agents.
+
+    Cluster awareness deliberately contains operational discovery data only.
+    It never exposes agent credentials, environment variables, private keys,
+    command queues, audit history, or customer secrets.
+    """
+    view = _server_out(db, server)
+    peer = db.scalar(
+        select(InfrastructureWireGuardPeer).where(
+            InfrastructureWireGuardPeer.server_id == server.id,
+            InfrastructureWireGuardPeer.status == "active",
+        )
+    )
+    telemetry = view["agent"]["telemetry"] if isinstance(view["agent"].get("telemetry"), dict) else {}
+    docker = telemetry.get("docker") if isinstance(telemetry.get("docker"), dict) else {}
+    raw_containers = docker.get("containers") if isinstance(docker.get("containers"), list) else []
+    containers: list[dict] = []
+    for item in raw_containers[:250]:
+        if not isinstance(item, dict):
+            continue
+        labels = item.get("labels") if isinstance(item.get("labels"), dict) else {}
+        containers.append({
+            "name": str(item.get("name") or "")[:160],
+            "image": str(item.get("image") or "")[:500],
+            "state": str(item.get("state") or "")[:32],
+            "project_id": str(labels.get("ithute.project_id") or "")[:80] or None,
+        })
+
+    resource_usage = _telemetry_values(telemetry)
+    capabilities = view["agent"]["capabilities"] if isinstance(view["agent"].get("capabilities"), dict) else {}
+    safe_capabilities = {
+        str(key)[:80]: value
+        for key, value in capabilities.items()
+        if isinstance(value, (bool, int, float, str)) and len(str(key)) <= 80
+    }
+
+    return {
+        "server_id": view["id"],
+        "self": server.id == self_server_id,
+        "name": view["name"],
+        "hostname": view["hostname"],
+        "region": view["region"],
+        "provider": view["provider"],
+        "roles": view["roles"],
+        "status": view["status"],
+        "health": view["health"],
+        "online": bool(view["agent"]["online"]),
+        "last_seen_at": view["agent"]["last_seen_at"],
+        "private_network": {
+            "interface": "ithute0",
+            "ipv4": peer.assigned_ipv4 if peer else None,
+            "connected": bool(
+                peer
+                and peer.last_handshake_at
+                and _fresh(peer.last_handshake_at)
+            ),
+            "last_handshake_at": peer.last_handshake_at.isoformat() if peer and peer.last_handshake_at else None,
+        },
+        "workloads": view["workloads"],
+        "hosting": {
+            "linked": view["hosting"]["linked"],
+            "status": view["hosting"]["status"],
+            "online": view["hosting"]["online"],
+            "accepts_new_projects": view["hosting"]["accepts_new_projects"],
+            "capacity": view["hosting"]["capacity"],
+        },
+        "mail": {
+            "linked": view["mail"]["linked"],
+            "status": view["mail"]["status"],
+            "online": view["mail"]["online"],
+            "ready": view["mail"]["ready"],
+        },
+        "resource_usage": resource_usage,
+        "capabilities": safe_capabilities,
+        "docker": {
+            "installed": bool(docker.get("installed")),
+            "reachable": bool(docker.get("reachable")),
+            "version": str(docker.get("version") or "")[:80] or None,
+            "containers_running": int(docker.get("containers_running") or 0),
+            "containers_total": int(docker.get("containers_total") or 0),
+            "containers": containers,
+        },
+    }
+
+
 @router.post("/servers/{server_id}/agent-token")
 def rotate_server_agent_token(server_id: UUID, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     server = db.get(InfrastructureServer, server_id)
@@ -903,6 +990,31 @@ def rotate_server_agent_token(server_id: UUID, db: Session = Depends(get_db), cu
         "token": raw,
         "token_hint": raw[:18],
         "warning": "This credential is shown once. Store it only on the Ithute Server Agent host.",
+    }
+
+
+@router.get("/agent/cluster-state")
+def infrastructure_agent_cluster_state(
+    x_ithute_server_agent: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    _agent, current_server = _server_agent_from_token(db, x_ithute_server_agent)
+    rows = db.scalars(
+        select(InfrastructureServer)
+        .where(InfrastructureServer.status != "disabled")
+        .order_by(InfrastructureServer.name.asc())
+    ).all()
+    nodes = [_cluster_node_out(db, row, self_server_id=current_server.id) for row in rows]
+    canonical = json.dumps(nodes, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = execute_binary("crypto.sha256", canonical)
+    return {
+        "version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "self_server_id": str(current_server.id),
+        "node_count": len(nodes),
+        "fingerprint_sha256": str(digest.value),
+        "fingerprint_engine": digest.engine,
+        "nodes": nodes,
     }
 
 
