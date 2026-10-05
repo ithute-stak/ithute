@@ -50,7 +50,8 @@ C hardware probe + eBPF kernel signals -> Rust validation/hardening -> Go long-r
 ### Phase 5 - Enterprise response
 - [ ] Java policy workflow for escalation, maintenance tasks and notification routing.
 - [ ] Integrate iMail, Ithute Push and approved SMS/WhatsApp channels.
-- [ ] Role-based acknowledgement, maintenance windows and suppression.
+- [x] Add platform-owner maintenance windows and per-snapshot acknowledgement state.
+- [ ] Wire maintenance suppression into Java/iMail/Push notification delivery.
 - [ ] Multi-tenant and multi-server fleet health views.
 
 ### Phase 6 - Production rollout
