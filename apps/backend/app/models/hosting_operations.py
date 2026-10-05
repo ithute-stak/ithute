@@ -19,6 +19,7 @@ class HostingNodeAgent(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     token_hint: Mapped[str] = mapped_column(String(24), nullable=False)
     agent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    capabilities_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     origin_bind_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     rotated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
