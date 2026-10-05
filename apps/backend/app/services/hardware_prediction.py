@@ -26,6 +26,9 @@ class MetricPoint:
     tcp_retrans_delta: float | None = None
     ebpf_inflight_delta: float | None = None
     ebpf_oom_delta: float | None = None
+    ebpf_block_p50_ms: float | None = None
+    ebpf_block_p95_ms: float | None = None
+    ebpf_block_p99_ms: float | None = None
 
 
 @dataclass(frozen=True)
@@ -144,6 +147,52 @@ def _media_errors(payload: dict) -> dict[str, float]:
     return result
 
 
+LATENCY_BUCKET_UPPER_MS = [
+    0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0,
+    32.0, 64.0, 128.0, 256.0, 512.0, 1000.0, 2000.0, 4000.0,
+]
+
+
+def _histogram(payload: dict) -> list[float] | None:
+    ebpf = payload.get("ebpf")
+    if not isinstance(ebpf, dict):
+        return None
+    raw = ebpf.get("block_latency_histogram")
+    if not isinstance(raw, list) or len(raw) != len(LATENCY_BUCKET_UPPER_MS):
+        return None
+    values: list[float] = []
+    for item in raw:
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            return None
+        value = float(item)
+        if not isfinite(value) or value < 0:
+            return None
+        values.append(value)
+    return values
+
+
+def _histogram_percentile(previous_payload: dict, current_payload: dict, percentile: float) -> float | None:
+    previous = _histogram(previous_payload)
+    current = _histogram(current_payload)
+    if previous is None or current is None:
+        return None
+    delta: list[float] = []
+    for old, new in zip(previous, current):
+        if new < old:
+            return None
+        delta.append(new - old)
+    total = sum(delta)
+    if total <= 0:
+        return None
+    target = total * percentile
+    running = 0.0
+    for count, upper_ms in zip(delta, LATENCY_BUCKET_UPPER_MS):
+        running += count
+        if running >= target:
+            return upper_ms
+    return LATENCY_BUCKET_UPPER_MS[-1]
+
+
 def derive_rate_features(previous_payload: dict | None, current_payload: dict | None) -> dict[str, float | None]:
     if not isinstance(previous_payload, dict) or not isinstance(current_payload, dict):
         return {
@@ -156,6 +205,9 @@ def derive_rate_features(previous_payload: dict | None, current_payload: dict | 
             "tcp_retrans_delta": None,
             "ebpf_inflight_delta": None,
             "ebpf_oom_delta": None,
+            "ebpf_block_p50_ms": None,
+            "ebpf_block_p95_ms": None,
+            "ebpf_block_p99_ms": None,
         }
 
     cpu_keys = ("user", "nice", "system", "idle", "iowait", "irq", "softirq", "steal")
@@ -240,6 +292,10 @@ def derive_rate_features(previous_payload: dict | None, current_payload: dict | 
         _mapping_number(current_payload, "ebpf", "oom_victims"),
     )
 
+    ebpf_block_p50_ms = _histogram_percentile(previous_payload, current_payload, 0.50)
+    ebpf_block_p95_ms = _histogram_percentile(previous_payload, current_payload, 0.95)
+    ebpf_block_p99_ms = _histogram_percentile(previous_payload, current_payload, 0.99)
+
     return {
         "cpu_iowait_percent": cpu_iowait_percent,
         "cpu_steal_percent": cpu_steal_percent,
@@ -250,6 +306,9 @@ def derive_rate_features(previous_payload: dict | None, current_payload: dict | 
         "tcp_retrans_delta": tcp_retrans_delta,
         "ebpf_inflight_delta": ebpf_inflight_delta,
         "ebpf_oom_delta": ebpf_oom_delta,
+        "ebpf_block_p50_ms": ebpf_block_p50_ms,
+        "ebpf_block_p95_ms": ebpf_block_p95_ms,
+        "ebpf_block_p99_ms": ebpf_block_p99_ms,
     }
 
 
@@ -374,6 +433,30 @@ def predict_hardware_drift(
             current.ebpf_oom_delta,
             minimum_scale=0.25,
             slope_scale=0.05,
+        ),
+        _metric(
+            "ebpf_block_p50_ms",
+            "eBPF block latency p50",
+            [point.ebpf_block_p50_ms for point in history],
+            current.ebpf_block_p50_ms,
+            minimum_scale=0.25,
+            slope_scale=0.05,
+        ),
+        _metric(
+            "ebpf_block_p95_ms",
+            "eBPF block latency p95",
+            [point.ebpf_block_p95_ms for point in history],
+            current.ebpf_block_p95_ms,
+            minimum_scale=0.5,
+            slope_scale=0.10,
+        ),
+        _metric(
+            "ebpf_block_p99_ms",
+            "eBPF block latency p99",
+            [point.ebpf_block_p99_ms for point in history],
+            current.ebpf_block_p99_ms,
+            minimum_scale=1.0,
+            slope_scale=0.20,
         ),
     ]
     available = [metric for metric in metrics if metric is not None]
