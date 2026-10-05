@@ -113,3 +113,56 @@ def test_prediction_detects_media_error_growth_and_cpu_steal():
     assert result["risk_score"] >= 50
     labels = " ".join(result["evidence"])
     assert "CPU" in labels or "media-error" in labels or "block" in labels
+
+
+
+def test_counter_delta_features_capture_network_fault_growth():
+    previous = {
+        "cpu": {"user": 10, "nice": 0, "system": 5, "idle": 100, "iowait": 1, "irq": 0, "softirq": 0, "steal": 0},
+        "block": {"reads_completed": 10, "writes_completed": 10, "io_ms": 100, "weighted_io_ms": 120},
+        "network": {"rx_errors": 1, "tx_errors": 2, "rx_dropped": 3, "tx_dropped": 4, "tcp_retrans_segs": 10},
+    }
+    current = {
+        "cpu": {"user": 20, "nice": 0, "system": 10, "idle": 180, "iowait": 2, "irq": 0, "softirq": 0, "steal": 0},
+        "block": {"reads_completed": 20, "writes_completed": 20, "io_ms": 200, "weighted_io_ms": 240},
+        "network": {"rx_errors": 3, "tx_errors": 3, "rx_dropped": 8, "tx_dropped": 4, "tcp_retrans_segs": 16},
+    }
+    features = derive_rate_features(previous, current)
+    assert features["network_error_delta"] == 8.0
+    assert features["tcp_retrans_delta"] == 6.0
+
+
+def test_prediction_detects_network_retransmission_drift():
+    history = [
+        MetricPoint(
+            temperature_celsius=45,
+            memory_pressure_avg10=1,
+            io_pressure_avg10=1,
+            filesystem_used_percent=50,
+            cpu_iowait_percent=0.5,
+            cpu_steal_percent=0.1,
+            block_io_ms_per_op=1,
+            block_weighted_ms_per_op=1,
+            media_error_delta=0,
+            network_error_delta=0,
+            tcp_retrans_delta=1,
+        )
+        for _ in range(96)
+    ]
+    current = MetricPoint(
+        temperature_celsius=45,
+        memory_pressure_avg10=1,
+        io_pressure_avg10=1,
+        filesystem_used_percent=50,
+        cpu_iowait_percent=0.5,
+        cpu_steal_percent=0.1,
+        block_io_ms_per_op=1,
+        block_weighted_ms_per_op=1,
+        media_error_delta=0,
+        network_error_delta=20,
+        tcp_retrans_delta=40,
+    )
+    result = predict_hardware_drift(history, current)
+    assert result["state"] in {"elevated", "high"}
+    assert result["risk_score"] >= 50
+    assert any("network" in item.lower() or "tcp" in item.lower() for item in result["evidence"])
