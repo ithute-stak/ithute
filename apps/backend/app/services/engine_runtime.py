@@ -77,6 +77,25 @@ class BlobProfile:
     fnv1a64: int
 
 
+@dataclass(frozen=True)
+class PushEnvelopeScan:
+    bytes: int
+    utf8_valid: bool
+    json_object_shape: bool
+    nul_bytes: int
+    control_bytes: int
+
+
+class _RustPushEnvelopeScan(ctypes.Structure):
+    _fields_ = [
+        ("bytes", ctypes.c_size_t),
+        ("utf8_valid", ctypes.c_uint8),
+        ("json_object_shape", ctypes.c_uint8),
+        ("nul_bytes", ctypes.c_size_t),
+        ("control_bytes", ctypes.c_size_t),
+    ]
+
+
 class _CppBlobProfile(ctypes.Structure):
     _fields_ = [
         ("bytes", ctypes.c_size_t),
