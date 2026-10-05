@@ -215,20 +215,20 @@ jobs:
           assert body['results'][0]['id']=='localhost'
           assert body['results'][0]['values']
           PY
+          curl -fsS -H 'X-Ithute-Push-Endpoint: ci-device-endpoint-secret-12345' \
+            'http://127.0.0.1:18080/v1/push/poll?timeout_seconds=5' > /tmp/go-push-poll.json &
+          poll_pid=$!
+          sleep 1
           curl -fsS -X POST -H 'Authorization: Bearer ci-push-gateway-secret' -H 'Content-Type: application/json' \
             --data '{"endpoint":"ci-device-endpoint-secret-12345","delivery_id":"ci-delivery-1","ttl_seconds":60,"notification":{"title":"Hello","body":"World"}}' \
             http://127.0.0.1:18080/v1/push/deliver > /tmp/go-push-delivery.json
+          wait "$poll_pid"
           python3 - <<'PY'
           import json
-          body=json.load(open('/tmp/go-push-delivery.json'))
-          assert body['engine']=='go'
-          assert body['queued'] is True
-          assert body['message_id']
-          PY
-          curl -fsS -H 'X-Ithute-Push-Endpoint: ci-device-endpoint-secret-12345' \
-            'http://127.0.0.1:18080/v1/push/poll?timeout_seconds=2' > /tmp/go-push-poll.json
-          python3 - <<'PY'
-          import json
+          delivery=json.load(open('/tmp/go-push-delivery.json'))
+          assert delivery['engine']=='go'
+          assert delivery['queued'] is True
+          assert delivery['message_id']
           body=json.load(open('/tmp/go-push-poll.json'))
           assert body['delivery_id']=='ci-delivery-1'
           assert body['notification']['title']=='Hello'
