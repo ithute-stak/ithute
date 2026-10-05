@@ -1,4 +1,4 @@
-from app.services.hardware_prediction import MetricPoint, predict_hardware_drift
+from app.services.hardware_prediction import MetricPoint, derive_rate_features, predict_hardware_drift
 
 
 def _point(temp=45.0, memory=1.0, io=1.0, disk=50.0):
@@ -39,3 +39,77 @@ def test_prediction_uses_multiple_independent_signals():
     assert result["state"] == "high"
     assert result["risk_score"] >= 75
     assert len(result["evidence"]) >= 2
+
+
+
+def test_counter_delta_features_capture_iowait_steal_and_block_pressure():
+    previous = {
+        "cpu": {"user": 100, "nice": 0, "system": 40, "idle": 800, "iowait": 10, "irq": 0, "softirq": 5, "steal": 0},
+        "block": {"reads_completed": 1000, "writes_completed": 500, "io_ms": 2000, "weighted_io_ms": 2600},
+        "storage_devices": [{"device": "/dev/nvme0n1", "media_errors": 2}],
+    }
+    current = {
+        "cpu": {"user": 150, "nice": 0, "system": 60, "idle": 870, "iowait": 30, "irq": 0, "softirq": 10, "steal": 5},
+        "block": {"reads_completed": 1030, "writes_completed": 520, "io_ms": 2250, "weighted_io_ms": 3000},
+        "storage_devices": [{"device": "/dev/nvme0n1", "media_errors": 3}],
+    }
+    features = derive_rate_features(previous, current)
+    assert features["cpu_iowait_percent"] is not None
+    assert features["cpu_iowait_percent"] > 0
+    assert features["cpu_steal_percent"] is not None
+    assert features["cpu_steal_percent"] > 0
+    assert features["block_io_ms_per_op"] == 5.0
+    assert features["block_weighted_ms_per_op"] == 8.0
+    assert features["media_error_delta"] == 1.0
+
+
+def test_counter_delta_features_ignore_counter_resets():
+    previous = {
+        "cpu": {"user": 100, "nice": 0, "system": 10, "idle": 500, "iowait": 20, "irq": 0, "softirq": 0, "steal": 1},
+        "block": {"reads_completed": 100, "writes_completed": 50, "io_ms": 1000, "weighted_io_ms": 1200},
+        "storage_devices": [{"device": "/dev/nvme0n1", "media_errors": 5}],
+    }
+    current = {
+        "cpu": {"user": 1, "nice": 0, "system": 1, "idle": 5, "iowait": 0, "irq": 0, "softirq": 0, "steal": 0},
+        "block": {"reads_completed": 1, "writes_completed": 1, "io_ms": 10, "weighted_io_ms": 10},
+        "storage_devices": [{"device": "/dev/nvme0n1", "media_errors": 0}],
+    }
+    features = derive_rate_features(previous, current)
+    assert features["cpu_iowait_percent"] is None
+    assert features["cpu_steal_percent"] is None
+    assert features["block_io_ms_per_op"] is None
+    assert features["block_weighted_ms_per_op"] is None
+    assert features["media_error_delta"] is None
+
+
+def test_prediction_detects_media_error_growth_and_cpu_steal():
+    history = [
+        MetricPoint(
+            temperature_celsius=45,
+            memory_pressure_avg10=1,
+            io_pressure_avg10=1,
+            filesystem_used_percent=50,
+            cpu_iowait_percent=0.5,
+            cpu_steal_percent=0.2,
+            block_io_ms_per_op=1.0,
+            block_weighted_ms_per_op=1.5,
+            media_error_delta=0,
+        )
+        for _ in range(96)
+    ]
+    current = MetricPoint(
+        temperature_celsius=45,
+        memory_pressure_avg10=1,
+        io_pressure_avg10=1,
+        filesystem_used_percent=50,
+        cpu_iowait_percent=8,
+        cpu_steal_percent=6,
+        block_io_ms_per_op=6,
+        block_weighted_ms_per_op=10,
+        media_error_delta=1,
+    )
+    result = predict_hardware_drift(history, current)
+    assert result["state"] in {"elevated", "high"}
+    assert result["risk_score"] >= 50
+    labels = " ".join(result["evidence"])
+    assert "CPU" in labels or "media-error" in labels or "block" in labels
