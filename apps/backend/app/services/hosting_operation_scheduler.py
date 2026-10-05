@@ -60,6 +60,8 @@ def reclaim_expired_project_operations(
 
     requeued = failed = 0
     for row in rows:
+        from app.services.operation_resource_locks import release_operation_resources
+        release_operation_resources(db, row.id)
         if int(row.attempt_count or 0) >= MAX_OPERATION_ATTEMPTS:
             row.status = "failed"
             row.failure_message = "Operation lease expired after maximum retry attempts"
@@ -94,6 +96,8 @@ def renew_project_operation_lease(
         return False
     row.lease_heartbeat_at = now
     row.lease_expires_at = now + timedelta(seconds=operation_lease_seconds())
+    from app.services.operation_resource_locks import renew_operation_resource_leases
+    renew_operation_resource_leases(db, operation=row)
     db.flush()
     return True
 
@@ -187,5 +191,22 @@ def claim_next_project_operation(
     row.fencing_token = secrets.token_urlsafe(32)
     row.lease_heartbeat_at = now
     row.lease_expires_at = now + timedelta(seconds=operation_lease_seconds())
+
+    from app.services.operation_resource_locks import acquire_operation_resources
+    lock_result = acquire_operation_resources(
+        db,
+        operation=row,
+        resource_keys=[f"project:{row.project_id}:runtime"],
+        now=now,
+    )
+    if not lock_result["acquired"]:
+        row.status = "queued"
+        row.claimed_at = None
+        row.fencing_token = None
+        row.lease_expires_at = None
+        row.lease_heartbeat_at = None
+        db.flush()
+        return None
+
     db.flush()
     return row
