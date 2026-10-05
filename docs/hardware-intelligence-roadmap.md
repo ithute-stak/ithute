@@ -30,10 +30,10 @@ C hardware probe + eBPF kernel signals -> Rust validation/hardening -> Go long-r
 - [x] Add Rust telemetry safety validation boundary for core host signals.
 
 ### Phase 3 - Backend integration
-- [ ] Persist immutable telemetry samples with retention/downsampling policy.
-- [ ] Add agent-ingest endpoint with service authentication and replay protection.
+- [x] Persist immutable hardware telemetry samples with nonce replay protection and 30-day retention.
+- [x] Add signed agent-ingest endpoint with infrastructure-agent authentication, HMAC verification, clock-skew checks and replay protection.
 - [ ] Publish current health through Ithute Realtime.
-- [ ] Add deterministic warning/critical policies.
+- [x] Add deterministic hardware health scoring and warning/critical evidence.
 - [ ] Add System Owner hardware-health API and dashboard.
 
 ### Phase 4 - Predictive analytics
