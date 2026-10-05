@@ -151,6 +151,24 @@ class HostingPostgresGroupFailoverAttempt(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+
+class HostingPostgresTopologyRepair(Base):
+    __tablename__ = "hosting_postgres_topology_repairs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    group_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_postgres_replication_groups.id", ondelete="CASCADE"), nullable=False, index=True)
+    node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_nodes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    source_node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_nodes.id", ondelete="RESTRICT"), nullable=False)
+    method: Mapped[str] = mapped_column(String(24), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="queued", nullable=False, index=True)
+    claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failure_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class HostingSourceCredential(Base):
     __tablename__ = "hosting_source_credentials"
     __table_args__ = (UniqueConstraint("project_id", "name", name="uq_hosting_source_credential_project_name"),)
