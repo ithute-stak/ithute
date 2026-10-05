@@ -52,6 +52,34 @@ type networkProbeResponse struct {
 	Results []networkProbeResult `json:"results"`
 }
 
+type topologyProbeRequest struct {
+	SourceID    string          `json:"source_id"`
+	Targets     []networkTarget `json:"targets"`
+	Samples     int             `json:"samples,omitempty"`
+	Concurrency int             `json:"concurrency,omitempty"`
+}
+
+type topologyProbeResult struct {
+	ID                 string  `json:"id"`
+	Host               string  `json:"host"`
+	Port               int     `json:"port"`
+	Attempts            int     `json:"attempts"`
+	Successes           int     `json:"successes"`
+	Reachable           bool    `json:"reachable"`
+	ConnectLossPercent  float64 `json:"connect_loss_percent"`
+	LatencyMinMS        float64 `json:"latency_min_ms"`
+	LatencyAverageMS    float64 `json:"latency_average_ms"`
+	LatencyMaxMS        float64 `json:"latency_max_ms"`
+	JitterAverageMS     float64 `json:"jitter_average_ms"`
+}
+
+type topologyProbeResponse struct {
+	Engine   string                `json:"engine"`
+	SourceID string                `json:"source_id"`
+	Samples  int                   `json:"samples"`
+	Results  []topologyProbeResult `json:"results"`
+}
+
 type dnsQuery struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
@@ -105,8 +133,8 @@ type originProbeResponse struct {
 var engineStatus = status{
 	Service:      "ithute-go-worker",
 	Engine:       "go",
-	Version:      "0.3.0",
-	Capabilities: []string{"health", "network-concurrency", "tcp-reachability", "dns-lookup", "origin-http-tls"},
+	Version:      "0.4.0",
+	Capabilities: []string{"health", "network-concurrency", "tcp-reachability", "network-topology-row", "dns-lookup", "origin-http-tls"},
 }
 
 func writeJSON(w http.ResponseWriter, code int, value any) {
@@ -186,6 +214,112 @@ func runProbes(ctx context.Context, request networkProbeRequest) (networkProbeRe
 	}
 	wg.Wait()
 	return networkProbeResponse{Engine: "go", Checked: len(results), Results: results}, nil
+}
+
+
+func probeTopologyTarget(ctx context.Context, target networkTarget, samples int) topologyProbeResult {
+	result := topologyProbeResult{
+		ID: target.ID,
+		Host: target.Host,
+		Port: target.Port,
+		Attempts: samples,
+	}
+	latencies := make([]float64, 0, samples)
+	for attempt := 0; attempt < samples; attempt++ {
+		probe := probeTCP(ctx, target)
+		if !probe.Reachable {
+			continue
+		}
+		result.Successes++
+		latencies = append(latencies, probe.LatencyMS)
+	}
+	result.Reachable = result.Successes > 0
+	result.ConnectLossPercent = (1.0 - float64(result.Successes)/float64(samples)) * 100.0
+	if len(latencies) == 0 {
+		return result
+	}
+
+	result.LatencyMinMS = latencies[0]
+	result.LatencyMaxMS = latencies[0]
+	var total float64
+	var jitterTotal float64
+	for index, latency := range latencies {
+		total += latency
+		if latency < result.LatencyMinMS {
+			result.LatencyMinMS = latency
+		}
+		if latency > result.LatencyMaxMS {
+			result.LatencyMaxMS = latency
+		}
+		if index > 0 {
+			delta := latency - latencies[index-1]
+			if delta < 0 {
+				delta = -delta
+			}
+			jitterTotal += delta
+		}
+	}
+	result.LatencyAverageMS = total / float64(len(latencies))
+	if len(latencies) > 1 {
+		result.JitterAverageMS = jitterTotal / float64(len(latencies)-1)
+	}
+	return result
+}
+
+func runTopologyProbe(ctx context.Context, request topologyProbeRequest) (topologyProbeResponse, error) {
+	sourceID := strings.TrimSpace(request.SourceID)
+	if sourceID == "" || len(sourceID) > 128 {
+		return topologyProbeResponse{}, errors.New("source_id is required and must be at most 128 characters")
+	}
+	if len(request.Targets) == 0 || len(request.Targets) > 64 {
+		return topologyProbeResponse{}, errors.New("targets must contain between 1 and 64 items")
+	}
+	for _, target := range request.Targets {
+		if err := validateTarget(target); err != nil {
+			return topologyProbeResponse{}, fmt.Errorf("%s: %w", target.ID, err)
+		}
+		if target.ID == sourceID {
+			return topologyProbeResponse{}, errors.New("source_id must not also appear as a target id")
+		}
+	}
+
+	samples := request.Samples
+	if samples <= 0 {
+		samples = 3
+	}
+	if samples > 10 {
+		return topologyProbeResponse{}, errors.New("samples must be between 1 and 10")
+	}
+
+	concurrency := request.Concurrency
+	if concurrency <= 0 {
+		concurrency = 8
+	}
+	if concurrency > 16 {
+		concurrency = 16
+	}
+
+	results := make([]topologyProbeResult, len(request.Targets))
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for index, target := range request.Targets {
+		index, target := index, target
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[index] = probeTopologyTarget(ctx, target, samples)
+		}()
+	}
+	wg.Wait()
+
+	return topologyProbeResponse{
+		Engine: "go",
+		SourceID: sourceID,
+		Samples: samples,
+		Results: results,
+	}, nil
 }
 
 func validateDNSQuery(query dnsQuery) error {
@@ -525,6 +659,22 @@ func main() {
 			return
 		}
 		response, err := runProbes(r.Context(), request)
+		if err != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, response)
+	})
+	mux.HandleFunc("POST /v1/network/topology", func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
+		decoder.DisallowUnknownFields()
+		var request topologyProbeRequest
+		if err := decoder.Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		response, err := runTopologyProbe(r.Context(), request)
 		if err != nil {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 			return
