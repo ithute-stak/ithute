@@ -75,6 +75,20 @@ int ithute_cluster_dependency_order(
     std::size_t out_capacity
 );
 
+int ithute_cluster_shortest_path(
+    std::size_t node_count,
+    const std::size_t* edge_sources,
+    const std::size_t* edge_targets,
+    const double* edge_weights,
+    std::size_t edge_count,
+    std::size_t source_index,
+    std::size_t target_index,
+    std::size_t* out_indices,
+    std::size_t out_capacity,
+    std::size_t* out_count,
+    double* out_total_weight
+);
+
 #ifdef __cplusplus
 }
 #endif
