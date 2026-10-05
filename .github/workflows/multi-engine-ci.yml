@@ -88,6 +88,11 @@ jobs:
           go test ./...
           go vet ./...
           go build ./cmd/worker
+          go build ./cmd/db-router
+
+      - name: Build Go database router image
+        run: |
+          docker build --pull -f engines/go-worker/Dockerfile.db-router -t ithute-db-router:engine-ci engines/go-worker
 
       - name: Set up Java
         uses: actions/setup-java@v5
