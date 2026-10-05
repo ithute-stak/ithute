@@ -45,6 +45,7 @@ required = (
     "ITHUTE_APP_RECOVERY_OPS_TOKEN",
     "ITHUTE_APP_POWERDNS_API_KEY",
     "ITHUTE_PUSH_ITHUTE_GATEWAY_TOKEN",
+    "ITHUTE_REALTIME_GO_GATEWAY_TOKEN",
 )
 
 lines = path.read_text(encoding="utf-8").splitlines()
