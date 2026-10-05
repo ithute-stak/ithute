@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_platform_owner, require_tenant_permission
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
-from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingDatabaseGateway, HostingNode, HostingNodeAgent, HostingNodeHealthState, HostingPostgresEndpoint, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingPostgresRpoPolicyOperation, HostingPostgresTopologyRepair, HostingProject, HostingSource, User
+from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingDatabaseGateway, HostingDatabaseGatewayPool, HostingDatabaseGatewayPoolMember, HostingNode, HostingNodeAgent, HostingNodeHealthState, HostingPostgresEndpoint, HostingPostgresGroupFailoverAttempt, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingPostgresRpoPolicyOperation, HostingPostgresTopologyRepair, HostingProject, HostingSource, User
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
 from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
 from app.services.database_replication import build_database_failover_plan
@@ -35,6 +35,7 @@ from app.services.postgres_rto_slo import (
 from app.services.postgres_endpoints import (
     acknowledge_route_generation,
     ensure_postgres_endpoint,
+    ensure_postgres_ha_endpoint,
     gateway_route_snapshot,
     switch_postgres_endpoint_to_primary,
 )
@@ -76,6 +77,13 @@ class DatabaseGatewayCreate(BaseModel):
     hostname: str = Field(min_length=1, max_length=253)
 
 
+class DatabaseGatewayPoolCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    frontend_hostname: str = Field(min_length=1, max_length=253)
+    gateway_ids: list[UUID] = Field(min_length=2, max_length=8)
+    required_ready_gateways: int = Field(default=2, ge=1, le=8)
+
+
 class DatabaseGatewayHeartbeat(BaseModel):
     version: str = Field(min_length=1, max_length=64)
 
@@ -85,7 +93,8 @@ class DatabaseGatewayRouteAck(BaseModel):
 
 
 class PostgresEndpointCreate(BaseModel):
-    gateway_id: UUID
+    gateway_id: UUID | None = None
+    gateway_pool_id: UUID | None = None
 
 
 class PostgresReplicationGroupFailoverRequest(BaseModel):
@@ -431,6 +440,58 @@ def create_database_gateway(
     }
 
 
+@router.post("/platform/hosting/database-gateway-pools", status_code=201)
+def create_database_gateway_pool(
+    payload: DatabaseGatewayPoolCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    gateway_ids = list(dict.fromkeys(payload.gateway_ids))
+    if len(gateway_ids) < 2:
+        raise HTTPException(status_code=422, detail="HA database gateway pool requires at least two distinct gateways")
+    if payload.required_ready_gateways > len(gateway_ids):
+        raise HTTPException(status_code=422, detail="Gateway readiness quorum cannot exceed pool membership")
+    hostname = payload.frontend_hostname.strip().lower()
+    if re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*", hostname) is None:
+        raise HTTPException(status_code=422, detail="Gateway pool frontend hostname is invalid")
+
+    gateways = [db.get(HostingDatabaseGateway, gateway_id) for gateway_id in gateway_ids]
+    if any(gateway is None or gateway.status != "active" for gateway in gateways):
+        raise HTTPException(status_code=409, detail="All database gateway pool members must be active")
+
+    pool = HostingDatabaseGatewayPool(
+        name=payload.name.strip(),
+        frontend_hostname=hostname,
+        required_ready_gateways=payload.required_ready_gateways,
+        status="active",
+        created_by_user_id=current.id,
+    )
+    db.add(pool)
+    db.flush()
+    for gateway in gateways:
+        db.add(HostingDatabaseGatewayPoolMember(pool_id=pool.id, gateway_id=gateway.id))
+    db.add(AuditLog(
+        actor_user_id=current.id,
+        action="hosting.database_gateway_pool.create",
+        resource_type="hosting_database_gateway_pool",
+        resource_id=str(pool.id),
+        metadata_json=json.dumps({
+            "frontend_hostname": pool.frontend_hostname,
+            "gateway_ids": [str(value) for value in gateway_ids],
+            "required_ready_gateways": pool.required_ready_gateways,
+        }, sort_keys=True),
+    ))
+    db.commit()
+    return {
+        "id": str(pool.id),
+        "name": pool.name,
+        "frontend_hostname": pool.frontend_hostname,
+        "gateway_ids": [str(value) for value in gateway_ids],
+        "required_ready_gateways": pool.required_ready_gateways,
+        "status": pool.status,
+    }
+
+
 @router.post("/platform/hosting/postgres-replication-groups/{group_id}/endpoint", status_code=201)
 def create_postgres_group_endpoint(
     group_id: UUID,
@@ -441,12 +502,25 @@ def create_postgres_group_endpoint(
     group = db.get(HostingPostgresReplicationGroup, group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="PostgreSQL replication group not found")
-    gateway = db.get(HostingDatabaseGateway, payload.gateway_id)
-    if gateway is None or gateway.status != "active":
-        raise HTTPException(status_code=409, detail="Database gateway is unavailable")
+    if (payload.gateway_id is None) == (payload.gateway_pool_id is None):
+        raise HTTPException(
+            status_code=422,
+            detail="Specify exactly one of gateway_id or gateway_pool_id",
+        )
 
+    gateway = None
+    pool = None
     try:
-        endpoint = ensure_postgres_endpoint(db, group=group, gateway=gateway)
+        if payload.gateway_pool_id is not None:
+            pool = db.get(HostingDatabaseGatewayPool, payload.gateway_pool_id)
+            if pool is None or pool.status != "active":
+                raise HTTPException(status_code=409, detail="Database gateway pool is unavailable")
+            endpoint = ensure_postgres_ha_endpoint(db, group=group, pool=pool)
+        else:
+            gateway = db.get(HostingDatabaseGateway, payload.gateway_id)
+            if gateway is None or gateway.status != "active":
+                raise HTTPException(status_code=409, detail="Database gateway is unavailable")
+            endpoint = ensure_postgres_endpoint(db, group=group, gateway=gateway)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     db.add(AuditLog(
@@ -456,7 +530,8 @@ def create_postgres_group_endpoint(
         resource_id=str(endpoint.id),
         metadata_json=json.dumps({
             "group_id": str(group.id),
-            "gateway_id": str(gateway.id),
+            "gateway_id": str(gateway.id) if gateway else None,
+            "gateway_pool_id": str(pool.id) if pool else None,
             "hostname": endpoint.hostname,
             "listen_port": endpoint.listen_port,
             "generation": endpoint.generation,
@@ -468,7 +543,9 @@ def create_postgres_group_endpoint(
         "group_id": str(group.id),
         "hostname": endpoint.hostname,
         "port": endpoint.listen_port,
-        "gateway_hostname": gateway.hostname,
+        "gateway_hostname": gateway.hostname if gateway else None,
+        "gateway_pool_id": str(endpoint.gateway_pool_id) if endpoint.gateway_pool_id else None,
+        "required_gateway_acks": endpoint.required_gateway_acks,
         "generation": endpoint.generation,
         "applied_generation": endpoint.applied_generation,
         "status": endpoint.status,
@@ -536,7 +613,7 @@ def database_gateway_route_ack(
 ):
     gateway = _database_gateway_from_token(db, x_ithute_database_gateway)
     try:
-        endpoint = acknowledge_route_generation(
+        endpoint, ready_gateways = acknowledge_route_generation(
             db,
             endpoint_id=endpoint_id,
             gateway_id=gateway.id,
@@ -576,7 +653,12 @@ def database_gateway_route_ack(
             port=endpoint.listen_port,
         )
 
-    if attempt is not None:
+    quorum_ready = (
+        endpoint.status == "ready"
+        and int(endpoint.applied_generation) == int(endpoint.generation)
+        and ready_gateways >= int(endpoint.required_gateway_acks)
+    )
+    if attempt is not None and quorum_ready:
         restored_at = _now()
         attempt.service_restored_at = restored_at
         detected = attempt.failure_detected_at or attempt.created_at
@@ -594,8 +676,11 @@ def database_gateway_route_ack(
         "endpoint_id": str(endpoint.id),
         "generation": endpoint.generation,
         "status": endpoint.status,
-        "service_restored": attempt is not None,
-        "rto_seconds": attempt.rto_seconds if attempt else None,
+        "ready_gateways": ready_gateways,
+        "required_gateway_acks": endpoint.required_gateway_acks,
+        "quorum_ready": quorum_ready,
+        "service_restored": attempt is not None and quorum_ready,
+        "rto_seconds": attempt.rto_seconds if attempt and quorum_ready else None,
         "rto_met": attempt.rto_met if attempt else None,
     }
 
