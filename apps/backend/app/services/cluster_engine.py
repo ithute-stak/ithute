@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import heapq
 import math
 import os
 from collections import deque
@@ -86,6 +87,16 @@ def _load_cluster() -> ctypes.CDLL | None:
             ctypes.c_size_t,
         ]
         library.ithute_cluster_rank_candidates.restype = ctypes.c_int
+        library.ithute_cluster_dependency_order.argtypes = [
+            ctypes.POINTER(ctypes.c_char_p),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_char_p),
+            ctypes.POINTER(ctypes.c_char_p),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.c_size_t,
+        ]
+        library.ithute_cluster_dependency_order.restype = ctypes.c_int
     except (OSError, AttributeError):
         return None
     _cluster = library
@@ -98,7 +109,7 @@ def cluster_engine_status() -> dict:
         "available": available,
         "mode": "native",
         "library": str(CLUSTER_LIBRARY),
-        "capabilities": ["cluster-graph", "graph-reachability", "cluster-summary", "placement-priority-queue"] if available else [],
+        "capabilities": ["cluster-graph", "graph-reachability", "cluster-summary", "placement-priority-queue", "dependency-dag", "topological-order"] if available else [],
         "fallback": "python",
     }
 
@@ -234,6 +245,99 @@ def rank_placement_candidates(rows: list[dict]) -> list[dict]:
         return [rows[index] for index in ranked_indices]
     except (OSError, RuntimeError, ValueError, ctypes.ArgumentError):
         return _python_rank_candidates(rows)
+
+
+def _dependency_ids(nodes: list[dict]) -> list[str]:
+    return [str(node.get("id") or "") for node in nodes]
+
+
+def _dependency_edges(edges: list[dict]) -> list[tuple[str, str]]:
+    result: list[tuple[str, str]] = []
+    for edge in edges:
+        if str(edge.get("relation") or "").lower() != "depends_on":
+            continue
+        result.append((str(edge.get("source") or ""), str(edge.get("target") or "")))
+    return result
+
+
+def _python_dependency_order(nodes: list[dict], edges: list[dict]) -> dict:
+    ids = _dependency_ids(nodes)
+    if not ids:
+        return {"engine": "python-fallback", "acyclic": True, "order": []}
+    if any(not node_id for node_id in ids) or len(set(ids)) != len(ids):
+        return {"engine": "python-fallback", "acyclic": False, "order": [], "error": "invalid node ids"}
+
+    known = set(ids)
+    remaining = {node_id: 0 for node_id in ids}
+    dependents = {node_id: set() for node_id in ids}
+    for dependent, dependency in _dependency_edges(edges):
+        if dependent not in known or dependency not in known or dependent == dependency:
+            return {"engine": "python-fallback", "acyclic": False, "order": [], "error": "invalid dependency edge"}
+        if dependent in dependents[dependency]:
+            continue
+        dependents[dependency].add(dependent)
+        remaining[dependent] += 1
+
+    ready = [node_id for node_id, count in remaining.items() if count == 0]
+    heapq.heapify(ready)
+    order: list[str] = []
+    while ready:
+        current = heapq.heappop(ready)
+        order.append(current)
+        for dependent in sorted(dependents[current]):
+            remaining[dependent] -= 1
+            if remaining[dependent] == 0:
+                heapq.heappush(ready, dependent)
+
+    return {
+        "engine": "python-fallback",
+        "acyclic": len(order) == len(ids),
+        "order": order if len(order) == len(ids) else [],
+    }
+
+
+def dependency_order(nodes: list[dict], edges: list[dict]) -> dict:
+    """Return dependency-first deployment order; reject cyclic dependency graphs."""
+    ids = _dependency_ids(nodes)
+    if not ids:
+        return {"engine": "cpp" if _load_cluster() is not None else "python-fallback", "acyclic": True, "order": []}
+
+    fallback = _python_dependency_order(nodes, edges)
+    if not fallback["acyclic"] and fallback.get("error"):
+        return fallback
+
+    library = _load_cluster()
+    if library is None:
+        return fallback
+
+    dependency_pairs = _dependency_edges(edges)
+    count = len(ids)
+    edge_count = len(dependency_pairs)
+    node_ids = (ctypes.c_char_p * count)(*[_b(node_id) for node_id in ids])
+    dependents = (ctypes.c_char_p * edge_count)(*[_b(pair[0]) for pair in dependency_pairs]) if edge_count else None
+    dependencies = (ctypes.c_char_p * edge_count)(*[_b(pair[1]) for pair in dependency_pairs]) if edge_count else None
+    order = (ctypes.c_size_t * count)()
+
+    try:
+        code = library.ithute_cluster_dependency_order(
+            node_ids,
+            count,
+            dependents,
+            dependencies,
+            edge_count,
+            order,
+            count,
+        )
+        if code == 3:
+            return {"engine": "cpp", "acyclic": False, "order": []}
+        if code != 0:
+            raise RuntimeError("native dependency ordering failed")
+        ranked_indices = [int(order[index]) for index in range(count)]
+        if sorted(ranked_indices) != list(range(count)):
+            raise RuntimeError("native dependency ordering returned invalid indices")
+        return {"engine": "cpp", "acyclic": True, "order": [ids[index] for index in ranked_indices]}
+    except (OSError, RuntimeError, ValueError, ctypes.ArgumentError):
+        return fallback
 
 
 def cluster_graph_analysis(
