@@ -1,12 +1,11 @@
 import base64
 import re
 
-import dns.resolver
-import dns.reversename
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from app.core.security import encrypt_dkim_secret
+from app.services.engine_router import execute_dns
 
 SELECTOR_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
@@ -62,44 +61,36 @@ def recommended_records(
     return records
 
 
-def _txt_values(name: str) -> list[str]:
-    try:
-        answers = dns.resolver.resolve(name, "TXT", lifetime=5)
-    except Exception:
+def _dns_values(name: str, rtype: str) -> list[str]:
+    execution = execute_dns(
+        [{"id": "lookup", "name": name, "type": rtype, "timeout_ms": 5000}],
+        concurrency=1,
+    )
+    results = execution.value.get("results", []) if isinstance(execution.value, dict) else []
+    if not results:
         return []
-    values = []
-    for answer in answers:
-        values.append("".join(part.decode() if isinstance(part, bytes) else str(part) for part in answer.strings))
-    return values
+    values = results[0].get("values") if isinstance(results[0], dict) else []
+    return [str(value).strip() for value in (values or []) if str(value).strip()]
+
+
+def _txt_values(name: str) -> list[str]:
+    return _dns_values(name, "TXT")
 
 
 def _mx_hosts(domain: str) -> list[str]:
-    try:
-        answers = dns.resolver.resolve(domain, "MX", lifetime=5)
-    except Exception:
-        return []
-    return [str(answer.exchange).rstrip(".").lower() for answer in answers]
+    hosts: list[str] = []
+    for value in _dns_values(domain, "MX"):
+        _, separator, host = value.partition(" ")
+        hosts.append((host if separator else value).rstrip(".").lower())
+    return hosts
 
 
 def _host_addresses(hostname: str) -> list[str]:
-    values: list[str] = []
-    for rrtype in ("A", "AAAA"):
-        try:
-            answers = dns.resolver.resolve(hostname, rrtype, lifetime=5)
-        except Exception:
-            continue
-        values.extend(str(answer).strip() for answer in answers)
-    return values
+    return _dns_values(hostname, "A") + _dns_values(hostname, "AAAA")
 
 
 def _ptr_hosts(public_ip: str) -> list[str]:
-    try:
-        reverse_name = dns.reversename.from_address(public_ip)
-        answers = dns.resolver.resolve(reverse_name, "PTR", lifetime=5)
-    except Exception:
-        return []
-    return [str(answer.target).rstrip(".").lower() for answer in answers]
-
+    return [value.rstrip(".").lower() for value in _dns_values(public_ip, "PTR")]
 
 def dns_readiness(
     domain: str,
