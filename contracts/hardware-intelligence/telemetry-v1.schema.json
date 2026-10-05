@@ -117,6 +117,7 @@
         "block_latency_p50_ms": {"type": ["number", "null"], "minimum": 0},
         "block_latency_p95_ms": {"type": ["number", "null"], "minimum": 0},
         "block_latency_p99_ms": {"type": ["number", "null"], "minimum": 0},
+        "block_latency_percentiles_capped": {"type": "boolean"},
         "block_latency_histogram": {
           "type": "array",
           "minItems": 16,
