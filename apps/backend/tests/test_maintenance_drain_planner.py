@@ -63,7 +63,7 @@ def test_drain_plan_blocks_stateful_and_database_dependent_workload(db, tenant_a
         internal_port=5432,
         storage_mb=1024,
         status="ready",
-        operation="idle",
+        operation="provision",
         created_by_user_id=user.id,
     )
     db.add(database)
