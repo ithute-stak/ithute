@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
-from app.models import HardwareTelemetrySnapshot, InfrastructureServer, InfrastructureServerAgent, User
+from app.models import HardwareAlertAcknowledgement, HardwareMaintenanceWindow, HardwareTelemetrySnapshot, InfrastructureServer, InfrastructureServerAgent, User
 from app.services.hardware_prediction import MetricPoint, derive_rate_features, predict_hardware_drift
 
 router = APIRouter(prefix="/hardware-intelligence", tags=["hardware-intelligence"])
@@ -32,6 +33,54 @@ class HardwareEnvelope(BaseModel):
     nonce: str = Field(min_length=32, max_length=32, pattern=r"^[0-9a-f]{32}$")
     payload: dict[str, Any]
     signature: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+
+
+class MaintenanceWindowCreate(BaseModel):
+    starts_at: datetime
+    ends_at: datetime
+    reason: str = Field(min_length=3, max_length=500)
+    suppress_notifications: bool = True
+
+
+class AlertAcknowledgementCreate(BaseModel):
+    note: str = Field(default="", max_length=1000)
+
+
+def _utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _window_active_at(window: HardwareMaintenanceWindow, at: datetime) -> bool:
+    return (
+        window.cancelled_at is None
+        and _utc(window.starts_at) <= at
+        and _utc(window.ends_at) > at
+    )
+
+
+def _active_maintenance(db: Session, server_id, at: datetime | None = None) -> HardwareMaintenanceWindow | None:
+    now = at or datetime.now(timezone.utc)
+    rows = db.scalars(
+        select(HardwareMaintenanceWindow)
+        .where(
+            HardwareMaintenanceWindow.server_id == server_id,
+            HardwareMaintenanceWindow.cancelled_at.is_(None),
+            HardwareMaintenanceWindow.starts_at <= now,
+            HardwareMaintenanceWindow.ends_at > now,
+        )
+        .order_by(HardwareMaintenanceWindow.ends_at.asc())
+    ).all()
+    return rows[0] if rows else None
+
+
+def _ack_for_snapshot(db: Session, snapshot_id) -> HardwareAlertAcknowledgement | None:
+    if snapshot_id is None:
+        return None
+    return db.scalar(
+        select(HardwareAlertAcknowledgement).where(
+            HardwareAlertAcknowledgement.snapshot_id == snapshot_id
+        )
+    )
 
 
 def _agent_from_token(db: Session, token: str | None) -> tuple[str, InfrastructureServerAgent, InfrastructureServer]:
@@ -341,6 +390,7 @@ def ingest_hardware_telemetry(
     _validate_payload(payload.payload)
     health = _health(payload.payload)
     prediction = _prediction_for_server(db, server.id, health, payload.payload)
+    active_maintenance = _active_maintenance(db, server.id, now)
 
     row = HardwareTelemetrySnapshot(
         server_id=server.id,
@@ -385,6 +435,11 @@ def ingest_hardware_telemetry(
             "evidence": health["evidence"],
         },
         "prediction": prediction,
+        "maintenance": {
+            "active": active_maintenance is not None,
+            "suppress_notifications": bool(active_maintenance and active_maintenance.suppress_notifications),
+            "ends_at": active_maintenance.ends_at.isoformat() if active_maintenance else None,
+        },
     }
 
 
@@ -453,6 +508,8 @@ def hardware_fleet_health(
             .where(HardwareTelemetrySnapshot.server_id == server.id)
             .order_by(HardwareTelemetrySnapshot.created_at.desc())
         )
+        maintenance = _active_maintenance(db, server.id, now)
+        acknowledgement = _ack_for_snapshot(db, latest.id if latest else None)
 
         online = bool(
             agent
@@ -514,6 +571,17 @@ def hardware_fleet_health(
             "predictive_evidence": json.loads(latest.predictive_evidence_json or "[]") if latest else [],
             "evidence": evidence,
             "sampled_at": latest.issued_at.isoformat() if latest else None,
+            "maintenance": {
+                "active": maintenance is not None,
+                "reason": maintenance.reason if maintenance else None,
+                "ends_at": maintenance.ends_at.isoformat() if maintenance else None,
+                "suppress_notifications": bool(maintenance and maintenance.suppress_notifications),
+            },
+            "acknowledgement": {
+                "acknowledged": acknowledgement is not None,
+                "note": acknowledgement.note if acknowledgement else None,
+                "acknowledged_at": acknowledgement.acknowledged_at.isoformat() if acknowledgement else None,
+            },
         })
 
     return {
@@ -579,4 +647,157 @@ def hardware_health_history(
             }
             for row in rows
         ],
+    }
+
+
+@router.get("/servers/{server_id}/maintenance-windows")
+def list_hardware_maintenance_windows(
+    server_id: str,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    try:
+        parsed = UUID(server_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid infrastructure server id") from exc
+    if db.get(InfrastructureServer, parsed) is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+
+    rows = db.scalars(
+        select(HardwareMaintenanceWindow)
+        .where(HardwareMaintenanceWindow.server_id == parsed)
+        .order_by(HardwareMaintenanceWindow.starts_at.desc())
+        .limit(100)
+    ).all()
+    now = datetime.now(timezone.utc)
+    return {
+        "server_id": server_id,
+        "items": [
+            {
+                "id": str(row.id),
+                "starts_at": row.starts_at.isoformat(),
+                "ends_at": row.ends_at.isoformat(),
+                "reason": row.reason,
+                "suppress_notifications": row.suppress_notifications,
+                "active": _window_active_at(row, now),
+                "cancelled_at": row.cancelled_at.isoformat() if row.cancelled_at else None,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.post("/servers/{server_id}/maintenance-windows", status_code=201)
+def create_hardware_maintenance_window(
+    server_id: str,
+    body: MaintenanceWindowCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    try:
+        parsed = UUID(server_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid infrastructure server id") from exc
+    if db.get(InfrastructureServer, parsed) is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+
+    starts_at = _utc(body.starts_at)
+    ends_at = _utc(body.ends_at)
+    if ends_at <= starts_at:
+        raise HTTPException(status_code=422, detail="Maintenance end must be after start")
+    if ends_at - starts_at > timedelta(days=30):
+        raise HTTPException(status_code=422, detail="Maintenance window cannot exceed 30 days")
+    if ends_at <= datetime.now(timezone.utc) - timedelta(minutes=1):
+        raise HTTPException(status_code=422, detail="Maintenance window has already ended")
+
+    row = HardwareMaintenanceWindow(
+        server_id=parsed,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        reason=body.reason.strip(),
+        suppress_notifications=body.suppress_notifications,
+        created_by_user_id=current.id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": str(row.id),
+        "server_id": server_id,
+        "starts_at": row.starts_at.isoformat(),
+        "ends_at": row.ends_at.isoformat(),
+        "reason": row.reason,
+        "suppress_notifications": row.suppress_notifications,
+    }
+
+
+@router.delete("/maintenance-windows/{window_id}", status_code=204)
+def cancel_hardware_maintenance_window(
+    window_id: str,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    try:
+        parsed = UUID(window_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid maintenance window id") from exc
+    row = db.get(HardwareMaintenanceWindow, parsed)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Maintenance window not found")
+    if row.cancelled_at is None:
+        row.cancelled_at = datetime.now(timezone.utc)
+        db.commit()
+    return None
+
+
+@router.post("/servers/{server_id}/acknowledge", status_code=201)
+def acknowledge_hardware_alert(
+    server_id: str,
+    body: AlertAcknowledgementCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    try:
+        parsed = UUID(server_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid infrastructure server id") from exc
+    if db.get(InfrastructureServer, parsed) is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+
+    latest = db.scalar(
+        select(HardwareTelemetrySnapshot)
+        .where(HardwareTelemetrySnapshot.server_id == parsed)
+        .order_by(HardwareTelemetrySnapshot.created_at.desc())
+    )
+    if latest is None:
+        raise HTTPException(status_code=404, detail="No hardware telemetry to acknowledge")
+
+    existing = _ack_for_snapshot(db, latest.id)
+    if existing is not None:
+        return {
+            "id": str(existing.id),
+            "snapshot_id": str(existing.snapshot_id),
+            "acknowledged_at": existing.acknowledged_at.isoformat(),
+            "note": existing.note,
+            "already_acknowledged": True,
+        }
+
+    row = HardwareAlertAcknowledgement(
+        server_id=parsed,
+        snapshot_id=latest.id,
+        acknowledged_by_user_id=current.id,
+        note=body.note.strip(),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": str(row.id),
+        "snapshot_id": str(row.snapshot_id),
+        "acknowledged_at": row.acknowledged_at.isoformat(),
+        "note": row.note,
+        "already_acknowledged": False,
     }
