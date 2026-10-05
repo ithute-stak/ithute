@@ -5,6 +5,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import httpx
 import redis.asyncio as redis
 from fastapi import WebSocket
 
@@ -48,6 +49,61 @@ class RealtimeHub:
 
     def _last_seen_key(self, application_id: str, sub: str) -> str:
         return f"ithute:realtime:lastseen:{application_id}:{sub}"
+
+
+    def _go_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.settings.go_gateway_token}"}
+
+    async def _go_presence(self, application_id: str, sub: str) -> dict:
+        if not self.settings.go_gateway_token:
+            return {"online": False, "connection_count": 0}
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.settings.engine_http_timeout_seconds,
+                trust_env=False,
+            ) as client:
+                response = await client.get(
+                    self.settings.go_worker_url.rstrip("/") + "/v1/realtime/presence",
+                    headers=self._go_headers(),
+                    params={"application_id": application_id, "sub": sub},
+                )
+                response.raise_for_status()
+                body = response.json()
+            if not isinstance(body, dict) or body.get("engine") != "go":
+                raise ValueError("invalid Go realtime presence response")
+            return {
+                "online": bool(body.get("online")),
+                "connection_count": max(0, int(body.get("connection_count") or 0)),
+            }
+        except (httpx.HTTPError, ValueError, TypeError):
+            return {"online": False, "connection_count": 0}
+
+    async def _publish_go(self, application_id: str, event: dict) -> int:
+        if not self.settings.go_gateway_token:
+            return 0
+        payload = {
+            "application_id": application_id,
+            "recipients": [str(value) for value in event.get("recipients", [])],
+            "broadcast_connected": bool(event.get("broadcast_connected")),
+            "event": event,
+        }
+        try:
+            async with httpx.AsyncClient(
+                timeout=max(self.settings.engine_http_timeout_seconds, 2.0),
+                trust_env=False,
+            ) as client:
+                response = await client.post(
+                    self.settings.go_worker_url.rstrip("/") + "/v1/realtime/publish",
+                    headers=self._go_headers(),
+                    json=payload,
+                )
+                response.raise_for_status()
+                body = response.json()
+            if not isinstance(body, dict) or body.get("engine") != "go":
+                raise ValueError("invalid Go realtime publish response")
+            return max(0, int(body.get("delivered") or 0))
+        except (httpx.HTTPError, ValueError, TypeError):
+            return 0
 
     async def _remote_presence(self, application_id: str, sub: str) -> list[dict]:
         rows: list[dict] = []
@@ -98,24 +154,34 @@ class RealtimeHub:
         await self.redis.hincrby("ithute:realtime:metrics", "connections_closed", 1)
 
     async def is_online(self, application_id: str, sub: str) -> bool:
-        return bool(await self._remote_presence(application_id, sub))
+        if await self._remote_presence(application_id, sub):
+            return True
+        return bool((await self._go_presence(application_id, sub))["online"])
 
     async def presence(self, application_id: str, sub: str) -> dict:
         rows = await self._remote_presence(application_id, sub)
+        go = await self._go_presence(application_id, sub)
         raw_last = await self.redis.get(self._last_seen_key(application_id, sub))
         return {
-            "online": bool(rows),
-            "connection_count": len(rows),
+            "online": bool(rows) or bool(go["online"]),
+            "connection_count": len(rows) + int(go["connection_count"]),
             "device_keys": sorted({str(item.get("device_key") or "") for item in rows if item.get("device_key")}),
             "last_seen_at": raw_last,
+            "go_connections": int(go["connection_count"]),
         }
 
     async def publish(self, application_id: str, event: dict) -> None:
-        await self.redis.publish(
-            f"ithute:realtime:events:{application_id}",
-            json.dumps(event, separators=(",", ":"), default=str),
+        go_delivered, _ = await asyncio.gather(
+            self._publish_go(application_id, event),
+            self.redis.publish(
+                f"ithute:realtime:events:{application_id}",
+                json.dumps(event, separators=(",", ":"), default=str),
+            ),
+            return_exceptions=False,
         )
         await self.redis.hincrby("ithute:realtime:metrics", "events_published", 1)
+        if go_delivered:
+            await self.redis.hincrby("ithute:realtime:metrics", "go_frames_delivered", int(go_delivered))
 
     async def metrics(self) -> dict[str, int]:
         raw = await self.redis.hgetall("ithute:realtime:metrics")
