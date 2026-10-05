@@ -389,6 +389,70 @@ def blob_profile(data: bytes) -> tuple[BlobProfile, str]:
         fnv1a64=int(output.fnv1a64),
     ), "cpp"
 
+def python_push_envelope_scan(data: bytes) -> PushEnvelopeScan:
+    if len(data) > 64 * 1024:
+        raise ValueError("push/realtime envelope exceeds 64 KiB")
+    try:
+        data.decode("utf-8")
+        utf8_valid = True
+    except UnicodeDecodeError:
+        utf8_valid = False
+    stripped = data.strip()
+    return PushEnvelopeScan(
+        bytes=len(data),
+        utf8_valid=utf8_valid,
+        json_object_shape=bool(stripped.startswith(b"{") and stripped.endswith(b"}")),
+        nul_bytes=data.count(b"\x00"),
+        control_bytes=sum(1 for value in data if value < 32 and value not in {9, 10, 13}),
+    )
+
+
+def push_envelope_scan(data: bytes) -> tuple[PushEnvelopeScan, str]:
+    if len(data) > 64 * 1024:
+        raise ValueError("push/realtime envelope exceeds 64 KiB")
+    library = _load_rust()
+    if library is None:
+        return python_push_envelope_scan(data), "python-fallback"
+    output = _RustPushEnvelopeScan()
+    if data:
+        buffer = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
+        pointer = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte))
+    else:
+        pointer = ctypes.POINTER(ctypes.c_ubyte)()
+    try:
+        code = library.ithute_rust_push_envelope_scan(pointer, len(data), ctypes.byref(output))
+    except (OSError, ValueError, ctypes.ArgumentError):
+        return python_push_envelope_scan(data), "python-fallback"
+    if code != 0:
+        return python_push_envelope_scan(data), "python-fallback"
+    return PushEnvelopeScan(
+        bytes=output.bytes,
+        utf8_valid=bool(output.utf8_valid),
+        json_object_shape=bool(output.json_object_shape),
+        nul_bytes=output.nul_bytes,
+        control_bytes=output.control_bytes,
+    ), "rust"
+
+
+def route_shard(key: bytes, shard_count: int) -> tuple[int, str]:
+    count = int(shard_count)
+    if count < 1 or count > 65536:
+        raise ValueError("shard_count must be between 1 and 65536")
+    library = _load_cpp()
+    if library is None:
+        return _python_fnv1a64(key) % count, "python-fallback"
+    if key:
+        buffer = (ctypes.c_ubyte * len(key)).from_buffer_copy(key)
+        pointer = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte))
+    else:
+        pointer = ctypes.POINTER(ctypes.c_ubyte)()
+    try:
+        value = int(library.ithute_cpp_route_shard(pointer, len(key), count))
+    except (OSError, ValueError, ctypes.ArgumentError):
+        return _python_fnv1a64(key) % count, "python-fallback"
+    return value, "cpp"
+
+
 def go_worker_status() -> dict:
     try:
         with httpx.Client(timeout=ENGINE_HTTP_TIMEOUT_SECONDS, trust_env=False) as client:
@@ -693,7 +757,7 @@ def engine_status() -> dict:
                 "available": rust_available,
                 "mode": "native",
                 "library": str(RUST_LIBRARY),
-                "capabilities": ["byte-stats", "mime-prescan", "sha256", "hmac-sha256"] if rust_available else [],
+                "capabilities": ["byte-stats", "mime-prescan", "sha256", "hmac-sha256", "push-envelope-scan"] if rust_available else [],
                 "fallback": "python",
             },
             "go": go,
@@ -702,7 +766,7 @@ def engine_status() -> dict:
                 "available": cpp_available,
                 "mode": "native",
                 "library": str(CPP_LIBRARY),
-                "capabilities": ["fnv1a64", "blob-profile"] if cpp_available else [],
+                "capabilities": ["fnv1a64", "blob-profile", "route-shard"] if cpp_available else [],
                 "fallback": "python",
             },
         },
