@@ -38,6 +38,18 @@ def main() -> int:
     assert "default-src 'none'" in header(headers, "content-security-policy")
     assert "camera=()" in header(headers, "permissions-policy")
     assert header(headers, "referrer-policy").lower() == "same-origin"
+    assert header(headers, "cross-origin-resource-policy").lower() == "same-site"
+
+    status, _, body = request(args.base_url, "/api/v1/public/platform-mode")
+    assert status == 200, (status, body[:500])
+    parsed = json.loads(body.decode("utf-8"))
+    assert parsed.get("mode") in {"bootstrap", "domain_active", "domain_pending", "domain_verified"}
+
+    status, _, body = request(
+        args.base_url,
+        "/api/v1/webmail/external/provider-detect?address=%24%7Bbad%7D%5C%40example.com",
+    )
+    assert status in {200, 422}, (status, body[:500])
 
     status, _, _ = request(args.base_url, "/health/live", method="TRACE")
     assert status >= 400, f"TRACE unexpectedly accepted with HTTP {status}"
