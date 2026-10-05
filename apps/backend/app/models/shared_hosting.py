@@ -40,6 +40,27 @@ class HostingDatabase(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+
+class HostingDatabaseReplica(Base):
+    __tablename__ = "hosting_database_replicas"
+    __table_args__ = (
+        UniqueConstraint("database_id", "node_id", name="uq_hosting_database_replica_database_node"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    database_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_databases.id", ondelete="CASCADE"), nullable=False, index=True)
+    node_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_nodes.id", ondelete="SET NULL"), nullable=True, index=True)
+    role: Mapped[str] = mapped_column(String(24), default="replica", nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="planned", nullable=False, index=True)
+    healthy: Mapped[bool] = mapped_column(default=False, nullable=False)
+    lag_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    lag_seconds: Mapped[float | None] = mapped_column(nullable=True)
+    last_replayed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class HostingSourceCredential(Base):
     __tablename__ = "hosting_source_credentials"
     __table_args__ = (UniqueConstraint("project_id", "name", name="uq_hosting_source_credential_project_name"),)
