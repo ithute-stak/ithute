@@ -21,6 +21,7 @@ type EBPFSnapshot struct {
 	BlockLatencyP50MS      *float64 `json:"block_latency_p50_ms,omitempty"`
 	BlockLatencyP95MS      *float64 `json:"block_latency_p95_ms,omitempty"`
 	BlockLatencyP99MS      *float64 `json:"block_latency_p99_ms,omitempty"`
+	BlockLatencyPercentilesCapped bool `json:"block_latency_percentiles_capped,omitempty"`
 	BlockLatencyHistogram  []uint64 `json:"block_latency_histogram,omitempty"`
 }
 
