@@ -21,7 +21,8 @@ from app.models import (
 )
 from app.services.hosting_edge_handoff import HostingOriginError, reconcile_project_edge
 from app.services.hosting_placement import rank_nodes
-from app.services.failure_domains import failure_domain_overlap, failure_domain_sort_key
+from app.services.failure_domains import failure_domain_overlap
+from app.services.smart_failover_ranking import rank_failover_candidates
 
 FAILOVER_AFTER_SECONDS = int(os.getenv("ITHUTE_HOSTING_FAILOVER_AFTER_SECONDS", "300"))
 ACTIVE_ATTEMPT_STATUSES = {"pending", "deploying", "edge_pending"}
@@ -137,26 +138,22 @@ def _eligible_target(db: Session, project: HostingProject, source_node_id, prefe
     for row in ranked:
         if row["node"].id == source_node_id or not row["eligible"]:
             continue
-        target_server = _server_for_node(db, row["node"].id)
-        overlap = failure_domain_overlap(source_server, target_server)
-        eligible_rows.append((row, overlap))
+        eligible_rows.append((row, _server_for_node(db, row["node"].id)))
 
     if eligible_rows:
-        eligible_rows.sort(
-            key=lambda item: failure_domain_sort_key(
-                item[1],
-                placement_score=float(item[0].get("score") or 0.0),
-                name=item[0].get("name") or "",
-                node_id=str(item[0]["node"].id),
-            )
+        ranked_failover = rank_failover_candidates(
+            db,
+            source_server=source_server,
+            candidates=eligible_rows,
         )
-        best_row, best_overlap = eligible_rows[0]
+        best = ranked_failover[0]
+        best_overlap = best["failure_domain"]
         if best_overlap["highest_risk"] in {"physical_host", "network_segment"}:
             return None, (
                 "No healthy replacement node is outside the source node's critical "
                 f"{best_overlap['highest_risk']} failure domain."
             )
-        return best_row["node"], None
+        return best["placement"]["node"], None
 
     details = [
         f"{row['name']}: {', '.join(row['reasons']) or 'not eligible'}"
