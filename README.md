@@ -1,79 +1,347 @@
 # Ithute
 
-Ithute is a **standalone deployment** for the Ithute website and Ithute-owned platform services. It does not join LoanHub, NBros, Tutor, Pay, or any other product Docker network, and it does not reuse or delete their containers, databases, images, volumes, or deployment directories.
+Ithute is a **commercial hosting, communications and infrastructure control platform** operated as a standalone Ithute deployment.
 
-## Runtime
+It combines customer-facing hosting and business services with the control-plane capabilities needed to provision, secure, monitor, meter and commercialize infrastructure. The current repository includes web hosting, application hosting, business email/webmail, authoritative DNS, domains, billing and finance, quotations, infrastructure-node management, backups, observability, centralized identity, Push, Realtime, multi-language specialist engines and production automation.
 
-The production application project is `ithute`:
+Ithute is intentionally isolated from LoanHub, NBros/BuildTrack, Tutor, Pay and other products. It does not share their application databases, Docker networks, volumes or deployment directories. Other products may integrate through approved HTTPS/WSS contracts, but they do not become part of the Ithute runtime.
 
-- `ithute-web` — `https://ithute.co.ls`
-- `ithute-app-api` — the FastAPI application behind `/api/v1`, including Mail, DNS, Hosting, Billing, Finance and Business Operations APIs
-- `ithute-auth` — `https://auth.ithute.co.ls`
-- `ithute-push` — `https://push.ithute.co.ls`
-- `ithute-realtime` — `https://realtime.ithute.co.ls`
-- `ithute-dns` — authoritative DNS for the `ithute.co.ls` zone on TCP/UDP 53
-- dedicated application, Auth, Push and Realtime PostgreSQL services
-- dedicated application and Realtime Redis services
-- a Caddy instance that routes **only** Ithute hostnames
+## Product direction
 
-`compose.production.yml` contains **no application build contexts**. Production uses immutable Docker images tagged with the exact Git commit SHA.
+The long-term product is broader than a conventional shared-hosting panel.
 
-## Authoritative DNS and registrar delegation
+Ithute is being built as a **hosting operating system and commercial infrastructure platform** for:
 
-Ithute serves its own authoritative `ithute.co.ls` zone from the production infrastructure. The initial single-node deployment uses:
+- direct hosting customers;
+- professional-email customers;
+- developers and software companies;
+- businesses that need managed application hosting;
+- hosting resellers and IT service providers;
+- white-label partners;
+- operators managing multiple VPS and dedicated-server nodes.
+
+The core business idea is to connect infrastructure to Ithute, convert raw infrastructure into safely sellable capacity, provision managed services from that capacity, and connect every allocation to billing, margin, monitoring and operational control.
+
+## Current platform capabilities
+
+The main FastAPI control plane already exposes application areas for:
+
+### Hosting and infrastructure
+
+- infrastructure-server inventory;
+- shared hosting;
+- application hosting;
+- hosting catalogues and plans;
+- project provisioning and lifecycle operations;
+- source credentials;
+- Git webhook deployment;
+- ZIP/source uploads;
+- build settings, builds and build logs;
+- database backup operations;
+- metering;
+- public hosting;
+- edge routing;
+- managed networking;
+- hosting-node health and automatic placement controls.
+
+The production configuration includes private hosting-network support using configurable WireGuard ranges, health reconciliation, auto-activation, auto-draining, recovery and delayed failover policy for eligible stateless workloads.
+
+### Mail and webmail
+
+Ithute includes a substantial mail platform rather than only mailbox provisioning:
+
+- professional email;
+- mailbox creation and routing;
+- mail-node provisioning and operations;
+- external mailbox connections;
+- rich-message composition;
+- attachments;
+- drafts;
+- forwarding;
+- mailbox events;
+- migration tools;
+- mail intelligence;
+- deliverability controls;
+- transactional email;
+- known-correspondent and preference handling;
+- webmail productivity features;
+- realtime mailbox-change events.
+
+Mail state is isolated in the independent `ithute-mail` deployment and host storage.
+
+### DNS and domains
+
+The control plane includes:
+
+- authoritative DNS;
+- domain onboarding;
+- domain orders;
+- domain and mail-health checks;
+- DNS lifecycle operations;
+- customer edge routes.
+
+Ithute is authoritative for the `ithute.co.ls` zone in the current production topology.
+
+### Billing, finance and commercial operations
+
+The repository includes:
+
+- canonical pricing;
+- plan administration;
+- billing;
+- payments;
+- commercial operations;
+- profitability analysis;
+- corporate quotations;
+- finance documents;
+- finance operations;
+- accounting;
+- finance controls;
+- governance;
+- finance reporting;
+- customer applications.
+
+This allows infrastructure and service provisioning to be connected to commercial records instead of operating as an isolated technical panel.
+
+### Security and governance
+
+The application includes:
+
+- audit trails;
+- security-operation workflows;
+- security approvals and dual control;
+- tenant controls;
+- delegated identity;
+- system-owner telemetry;
+- request hardening;
+- rate controls;
+- production safety checks;
+- backup/restore assurance.
+
+Destructive or high-risk operational actions should remain explicit, auditable and role-scoped.
+
+## Architecture
+
+The production application is organized around a Python control plane and separate Ithute-owned platform services.
 
 ```text
-ns1.ithute.co.ls -> 204.12.205.224
-ns2.ithute.co.ls -> 204.12.205.224
+                         Internet
+                            |
+                          Caddy
+                            |
+          +-----------------+------------------+
+          |                 |                  |
+       Ithute Web       Ithute API        Platform services
+       Next.js          FastAPI           Auth / Push / Realtime
+                            |
+       +--------------------+-------------------------+
+       |          |          |          |             |
+     Hosting     Mail       DNS      Finance       Billing
+       |          |          |          |             |
+       +----------+----------+----------+-------------+
+                            |
+                    specialist engines
+                 Rust / Go / C++ / Java
 ```
 
-Because both nameservers are children of `ithute.co.ls`, the `.ls` parent cannot discover their addresses from the child zone until the registrar/reseller publishes **glue records**. At the domain reseller, register both child nameserver/host records above, then delegate `ithute.co.ls` to:
+### Frontend
+
+`apps/frontend` is a Next.js/React application using TypeScript and Tailwind CSS.
+
+Current core versions include:
+
+- Next.js 15;
+- React 19;
+- TypeScript;
+- Tailwind CSS 4.
+
+The frontend is built into an immutable production image and served behind Caddy.
+
+### Main control plane
+
+`apps/backend` is the authoritative business/control plane.
+
+Core technologies include:
+
+- Python 3.12;
+- FastAPI;
+- SQLAlchemy;
+- PostgreSQL;
+- Redis;
+- Alembic;
+- Pydantic;
+- Prometheus metrics;
+- cryptographic and authentication libraries.
+
+Python remains authoritative for tenancy, authorization, billing, orchestration and business decisions.
+
+### Specialist multi-engine architecture
+
+Ithute deliberately uses five backend languages where each has a bounded role:
+
+| Engine | Primary role |
+| --- | --- |
+| Python / FastAPI | control plane, authorization, tenancy, billing, orchestration and business rules |
+| Rust | memory-safe CPU-heavy parsing, MIME pre-scans, hashing and bounded transformations |
+| Go | concurrent/network-oriented workers and probes |
+| C++ | narrow benchmark-proven native hot paths |
+| Java | enterprise XML, reporting and standards-heavy integration workloads |
+
+The rule is simple:
+
+> Python decides **what may happen**. Specialist engines execute bounded **how work**.
+
+Specialist engines do not independently authorize tenant actions or reimplement billing/permission policy. Routed operations retain safe fallback behavior where appropriate.
+
+The app API image currently compiles and embeds the Rust and C++ native libraries. Go is an independently deployable worker path, while Java is deployed as a hardened internal worker.
+
+## Ithute-owned platform services
+
+The `platform/` directory contains reusable services owned by Ithute.
+
+### !thute Auth
+
+Public origin:
 
 ```text
-ns1.ithute.co.ls
-ns2.ithute.co.ls
+https://auth.ithute.co.ls
 ```
 
-The production zone also publishes the apex, `www`, `auth`, `push`, `realtime`, and `mail` A records, together with Ithute MX/SPF/DMARC/CAA policy records. CI validates the authoritative seed before merge.
+Auth provides centralized identity and SSO, including:
 
-Two nameserver names on one IPv4 are **not infrastructure redundancy**. Production readiness therefore treats independent secondary DNS as an external infrastructure requirement: `ns2.ithute.co.ls` should ultimately run on a different server/network and receive the zone through an approved replicated/transfer mechanism. The repository cannot manufacture that independent network from the primary VPS.
+- RS256 access and ID tokens;
+- JWKS;
+- Authorization Code + PKCE;
+- refresh-token rotation;
+- centrally revocable sessions;
+- TOTP MFA;
+- recovery codes;
+- account recovery;
+- email/phone verification adapters;
+- WebAuthn/passkeys;
+- account lockout and failed-login throttling;
+- security audit events;
+- signing-key rollover;
+- platform-admin and account portals.
 
-## Build once in GitHub, run on the VPS
+Product business data remains outside Auth. Products link local profiles to the immutable Auth `sub`.
 
-Application source is compiled and packaged only on GitHub Actions runners. `Ithute Standalone CI` validates the frontend, backend and deployment boundary, and builds these five application images:
+### !thute Push
+
+Public origin:
 
 ```text
-ithute-web:<commit-sha>
-ithute-app-api:<commit-sha>
-ithute-auth:<commit-sha>
-ithute-push:<commit-sha>
-ithute-realtime:<commit-sha>
+https://push.ithute.co.ls
 ```
 
-Release automation publishes immutable commit-SHA images. Production deployment loads/runs the exact release images and starts the Compose project with `--no-build`.
+Push owns device endpoints, queued notification delivery, retries and delivery-state handling.
 
-The VPS does **not** need the Git repository, `apps/`, `platform/`, Node.js source, Python source, `npm`, or `pip` to deploy Ithute. It only needs Docker/Compose, runtime configuration, secrets and persistent volumes.
+Firebase Cloud Messaging may be used as an Android **last-mile transport**, but Firebase does not own Ithute identity, product data, business rules or notification history. Push can start without a mandatory provider and external providers remain adapters behind the Ithute service.
 
-Production runtime files live under:
+### !thute Realtime
+
+Public origin:
+
+```text
+https://realtime.ithute.co.ls
+wss://realtime.ithute.co.ls/v1/ws
+```
+
+Realtime provides:
+
+- authenticated WebSockets;
+- conversations;
+- messages;
+- memberships;
+- read state;
+- typing events;
+- presence;
+- Redis-backed fan-out;
+- PostgreSQL-backed history;
+- Push fallback for offline recipients.
+
+Each product is isolated by authenticated application namespace.
+
+### Ithute Notification
+
+`platform/ithute-notification` exists as a multi-channel notification gateway for Push/email/SMS coordination, but it is **intentionally deferred as a required production dependency** until its activation checklist is complete.
+
+Auth, Mail, DNS, Web, Push and Realtime must not depend on an unfinished Notification rollout.
+
+## Repository map
+
+```text
+.
+├── apps/
+│   ├── frontend/              Next.js customer/admin web application
+│   └── backend/               FastAPI commercial and infrastructure control plane
+├── platform/
+│   ├── ithute-auth/           identity, SSO, MFA and passkeys
+│   ├── ithute-push/           push delivery platform
+│   ├── ithute-realtime/       WebSocket/chat/realtime platform
+│   └── ithute-notification/   deferred multi-channel notification gateway
+├── engines/
+│   ├── rust-core/             memory-safe native engine
+│   ├── go-worker/             concurrent/network worker
+│   ├── cpp-native/            benchmark-gated native hot paths
+│   └── java-worker/           enterprise XML/report integration worker
+├── mail/                      isolated Ithute mail runtime assets
+├── infrastructure/            Caddy, DNS and infrastructure configuration
+├── contracts/                 cross-component contracts
+├── docs/                      architecture and operational documentation
+├── scripts/                   deployment, maintenance and verification tooling
+├── .github/workflows/         CI, security, release and production operations
+├── compose.production.yml     immutable-image production application stack
+├── compose.backup.yml         backup/restore assurance stack
+├── compose.telemetry.yml      telemetry support
+└── SECURITY.md                repository security policy
+```
+
+## Production runtime
+
+The primary production application project is `ithute`.
+
+Major services include:
+
+- `ithute-web`;
+- `ithute-app-api`;
+- `ithute-auth`;
+- `ithute-push`;
+- `ithute-realtime`;
+- `ithute-dns`;
+- `ithute-java-worker`;
+- dedicated PostgreSQL services;
+- Redis services;
+- Caddy edge routing.
+
+Production uses immutable Docker images tagged with the exact Git commit SHA. `compose.production.yml` does not build application source on the VPS.
+
+The normal release path is:
+
+```text
+GitHub source
+  -> CI and security checks
+  -> immutable image build
+  -> release image publication
+  -> controlled production deployment
+  -> migrations/bootstrap
+  -> service health checks
+  -> production readiness verification
+```
+
+The VPS therefore does not require a Git clone of the application source to run a release.
+
+## Production isolation boundary
+
+Ithute must remain non-destructive outside its own resources.
+
+Production automation may manage Ithute-owned Compose projects and runtime directories only. It must not perform VPS-wide Docker prune/delete operations or remove another product's containers, images, networks, volumes or deployment directories.
+
+The main runtime directory is:
 
 ```text
 /home/administrator/ithute-platform
 ```
-
-The required application runtime files are limited to items such as:
-
-```text
-.env.production
-.image.env
-.ithute-bootstrapped
-compose.production.yml
-infrastructure/caddy/Caddyfile
-infrastructure/dns/named.conf
-infrastructure/dns/zones/db.ithute.co.ls
-secrets/
-```
-
-A directory that still contains `apps/`, `platform/` or `.git` is legacy material from the former source-based deployment. The current Compose/deployment path does not use those directories.
 
 Independent mail state lives under:
 
@@ -89,104 +357,114 @@ Fresh production bootstraps one authoritative Ithute system owner:
 thekoetlisi@ithute.co.ls
 ```
 
-The password is never stored in Git. Protected production secrets are written only to protected runtime storage. Auth synchronizes the account on startup. The account is active, email-verified and platform-admin.
+The password and production cryptographic secrets are never stored in Git.
 
-## Safe VPS bootstrap
+## DNS and edge
 
-`Safe Ithute VPS Bootstrap` is manual and intended only for a new production runtime. It builds the application images on the GitHub runner, transfers runtime configuration, loads the images on the VPS and generates production secrets. It does **not** clone the repository onto the VPS.
+Ithute currently serves the `ithute.co.ls` authoritative zone.
 
-The bootstrap is intentionally non-destructive outside Ithute. It does not run VPS-wide Docker container/image/volume deletion, Docker prune operations, or delete/move other product deployment directories.
-
-After bootstrap creates both:
+Initial nameserver configuration:
 
 ```text
-/home/administrator/ithute-platform/.env.production
-/home/administrator/ithute-platform/.ithute-bootstrapped
+ns1.ithute.co.ls -> 204.12.205.224
+ns2.ithute.co.ls -> 204.12.205.224
 ```
 
-normal production release/deployment procedures may be used.
+Because both names are children of `ithute.co.ls`, registrar glue records are required.
 
-All production workflows that mutate the VPS must share the same Ithute production concurrency boundary so application deployment, bootstrap and mail finalization cannot modify Ithute production simultaneously.
+Two nameserver names on one IPv4 do **not** provide infrastructure redundancy. An independent secondary DNS node on a different server/network remains an external production-readiness requirement.
 
-## Deployment safety boundary
+Caddy provides the web/API/platform edge and imports validated customer hosting routes from controlled runtime storage.
 
-CI rejects deployment scripts that contain VPS-wide Docker deletion/prune commands or VPS-side Git clone/fetch/reset operations. It also rejects application `build:` contexts in `compose.production.yml` and source directories in the production runtime bundle.
+## Mail deployment
 
-The Ithute deployment may manage the `ithute` and `ithute-mail` Compose projects only. LoanHub, NBros, Tutor, Pay and other repositories manage their own runtime resources independently.
+Mail is an independent Compose project, `ithute-mail`, attached only to its private mail network and the controlled bridge required for Ithute application integration.
 
-Routine application deployment follows this path:
+Mail/DNS readiness includes:
 
-```text
-GitHub source
-  -> CI tests
-  -> immutable Docker build on GitHub runner
-  -> release images
-  -> controlled VPS deployment
-  -> database migrations
-  -> service health checks
-  -> live readiness verification
-```
+- MX;
+- SPF;
+- DKIM;
+- DMARC;
+- MTA-STS/TLS policy where configured;
+- provider-controlled PTR/reverse DNS;
+- deliverability checks.
 
-## Backups and restore assurance
+PTR is controlled by the upstream IP/VPS provider and cannot be created by this repository alone.
 
-Backup readiness means **restorability**, not merely the existence of dump files. `Backup Assurance CI` performs a real backup and restores it into an isolated PostgreSQL restore-drill database. Production backup assurance also records backup and restore-drill status for operational health reporting.
+## Backups, restore and telemetry
 
-Do not mark backup health as complete if restore drills are stale or failing.
+Ithute treats backup health as **restorability**, not merely successful file creation.
 
-## Mail-only domains
+Repository automation includes backup/restore assurance, telemetry configuration and production readiness checks. A backup should not be considered healthy when restore drills are stale or failing.
 
-Mail is a separate Docker Compose project, `ithute-mail`, with its own host storage under `/home/administrator/ithute-platform-mail`. Mail attaches only to its private mail network and the controlled Ithute application bridge required for internal application-to-mail traffic.
+The API exposes Prometheus-compatible metrics and health/readiness endpoints.
 
-The deployment provisions these mailboxes when public mail DNS is ready:
+## CI/CD and operational automation
 
-```text
-info@ithute.co.ls
-info@lelefadebtcollectors.co.ls
-info@lelefachambers.co.ls
-info@tjekatjeka.co.ls
-```
+The repository contains dedicated GitHub Actions workflows for areas including:
 
-`ithute.co.ls` remains the Ithute website as well as a mail domain. The other requested domains are not added to Caddy and therefore are not served as Ithute websites.
+- standalone CI;
+- release images;
+- production safety;
+- production readiness;
+- security;
+- multi-engine CI;
+- Auth;
+- Push;
+- Realtime;
+- Auth/Push integration;
+- Notification validation;
+- platform mail;
+- hosting build plane;
+- hosting operations;
+- backup assurance;
+- telemetry;
+- DNS cutover;
+- mail finalization;
+- owner-access recovery;
+- VPS disk maintenance.
 
-The mail provisioning process writes protected operational files under `/home/administrator/ithute-platform-mail`.
-
-Ithute is authoritative for the `ithute.co.ls` DNS zone. Other mail-only domains remain authoritative wherever their registrars currently delegate them unless separately migrated to Ithute DNS. Their MX/SPF/DKIM/DMARC records must be correct at their authoritative DNS providers. The public IPv4 reverse-DNS/PTR must also identify the intended Ithute mail hostname; PTR is controlled by the IP/VPS provider and cannot be created by this repository alone.
-
+Production workflows that mutate the same Ithute runtime must share a controlled concurrency boundary.
 
 ## Commercial roadmap — Partner / Reseller Mode
 
-The next major commercial capability is **Ithute Partner / Reseller Mode**. It is designed for hosting companies, IT firms, web developers, software houses, domain resellers and managed-service providers that want to sell hosting, email, applications and infrastructure under their own brand while using Ithute as the platform underneath.
+The next major commercial capability is **Ithute Partner / Reseller Mode**.
 
-The model is B2B-first: a partner keeps its brand, pricing and customer relationship while Ithute provides the operational control plane.
+It targets hosting companies, IT firms, software houses, developers, domain resellers and managed-service providers that want to keep their own brand and customer relationships while using Ithute as the infrastructure and automation platform underneath.
 
-### Partner workspace and white labelling
+### Partner workspace
 
-Each partner should receive an isolated reseller workspace with:
+A partner should receive an isolated workspace with:
 
-- organisation profile, users, roles and delegated permissions;
-- logo, colours, support identity and customer-facing service name;
-- custom portal hostname;
-- configurable notification identity;
-- partner-owned service catalogue, package names and pricing;
-- customer organisations and end-user accounts;
-- complete audit history for provisioning, billing and infrastructure actions.
+- users and delegated roles;
+- white-label branding;
+- custom customer portal hostname;
+- partner-owned packages and pricing;
+- customer organisations;
+- audit history;
+- wholesale and retail commercial views.
 
-White labelling changes presentation only. Authentication, authorisation, tenant isolation, secret handling and audit controls remain platform-enforced.
+White labelling changes presentation only; platform security and isolation remain centrally enforced.
 
 ### Bring-your-own infrastructure
 
-A partner can connect one or more VPS or dedicated-server nodes to a private infrastructure pool. Each node should record:
+Partners should be able to connect multiple VPS or dedicated-server nodes.
 
-- provider and region;
-- CPU, RAM and physical storage;
-- reserved system capacity and sellable capacity;
-- operating cost and billing cycle;
-- supported workloads and database engines;
-- health, utilisation and availability state;
-- customer allocations;
-- backup and restore status.
+For each node Ithute should track:
 
-Commercial capacity must be calculated from **usable capacity**, not raw disk size. Configurable headroom is reserved for the operating system, containers, databases, logs, temporary files, backups and operational safety.
+- provider/region;
+- CPU and RAM;
+- physical storage;
+- reserved platform capacity;
+- safely sellable capacity;
+- infrastructure cost;
+- health;
+- utilisation;
+- customer/service allocations;
+- backup/restore state.
+
+Raw storage must not equal sellable storage. Ithute should reserve configurable operational headroom before capacity becomes commercially allocatable.
 
 Example:
 
@@ -199,183 +477,163 @@ Target monthly revenue:   M1,200
 Target gross contribution: M1,030
 ```
 
-These are examples only. Costs, margins, taxes, discounts and price books must be configurable.
+These are example values only. Costs, prices, margins, taxes and discounts remain configurable.
 
-### Reseller service catalogue
+### Managed reseller packages
 
-Partners should be able to sell managed packages that combine:
+Partners should be able to combine:
 
-- website hosting;
-- application/container hosting;
-- business email and mailbox quotas;
-- MySQL and PostgreSQL databases;
-- DNS and domain services;
-- SSL/TLS automation;
-- Git or ZIP deployment;
-- backups and restore points;
-- monitoring and uptime checks;
-- storage and bandwidth allowances;
-- support/SLA levels;
-- optional dedicated compute.
+- websites;
+- application hosting;
+- mailboxes;
+- MySQL/PostgreSQL databases;
+- DNS/domain services;
+- SSL/TLS;
+- Git/ZIP deployment;
+- backups;
+- monitoring;
+- storage/bandwidth quotas;
+- support/SLA levels.
 
-A package therefore represents a **managed service**, not merely raw disk space.
+The commercial product is a managed service, not merely raw disk space.
 
-### Customer and sub-account management
+### Automated provisioning
 
-Each partner can create customer organisations containing users, domains, mailboxes, websites, applications, databases, allocations, quotations, invoices, payment records, support requests and usage history.
-
-The partner controls what end customers can see. Ithute platform access remains role-scoped and auditable.
-
-### Automated provisioning and placement
-
-When a partner sells a package, Ithute should:
-
-1. validate available capacity and policy;
-2. select an eligible infrastructure node;
-3. reserve the required quotas;
-4. provision hosting, mail, database and DNS resources;
-5. attach resources to the correct partner and customer;
-6. create billing records;
-7. record the provisioning audit trail;
-8. start health, capacity and backup monitoring.
-
-Placement must consider capacity, compatibility, reserved headroom and failure-domain policy.
-
-### Commercial intelligence
-
-At node, partner, customer and package level, Ithute should track:
-
-- infrastructure cost;
-- allocated and available capacity;
-- recurring and one-off revenue;
-- estimated gross contribution;
-- gross margin percentage;
-- revenue per GB and per node;
-- customer concentration;
-- utilisation;
-- break-even utilisation;
-- expiring or unpaid services.
-
-The dashboard should answer:
+A reseller sale should be able to flow through:
 
 ```text
-How much does this node cost?
-How much capacity is safely sellable?
-How much revenue is allocated to it?
-Has the node reached break-even?
-Which packages are most profitable?
-Which customer consumes the most capacity?
-Where should the next workload be placed?
+package/order
+   -> capacity + policy validation
+   -> eligible node selection
+   -> quota reservation
+   -> hosting/mail/database/DNS provisioning
+   -> customer binding
+   -> billing record
+   -> audit event
+   -> monitoring + backup state
 ```
 
 ### Wholesale capacity pools
 
-Ithute should support wholesale reseller pools in addition to retail packages.
-
-Example:
+Ithute should also support reseller pools such as:
 
 ```text
 Partner: Zeecom Technologies
 Wholesale pool: 500 GB
 Allocated: 318 GB
 Available: 182 GB
-Partner monthly fee: configurable
+Partner fee: configurable
 Retail customers: partner-managed
 Retail pricing: partner-managed
 Branding: partner-managed
 ```
 
-Zeecom Technologies is an example target customer profile; the capability must remain generic for any authorised reseller.
+Zeecom Technologies is an example target profile only. The feature must remain generic for any authorized partner.
 
-Wholesale pools require enforced quotas so a reseller cannot exceed contracted capacity without an approved upgrade or configured burst policy.
+### Commercial intelligence
 
-### Billing, quotations and invoicing
+Partner, package, customer and node dashboards should connect technical usage with business performance:
 
-Partner / Reseller Mode should integrate with Ithute Billing and Finance and support:
+- infrastructure cost;
+- recurring revenue;
+- gross contribution;
+- gross margin;
+- break-even utilisation;
+- revenue per GB;
+- revenue per node;
+- allocated vs available capacity;
+- most profitable packages;
+- customer concentration;
+- overdue or expiring services.
 
-- monthly, quarterly and annual billing;
-- setup and migration fees;
-- wholesale and retail price books;
-- discounts and negotiated pricing;
-- quotations that convert into subscriptions;
-- invoices, statements and credit adjustments;
-- taxes and configurable currencies;
-- payment status and ageing;
-- controlled suspension and reactivation policies.
+The commercial goal is:
 
-Ithute administrators should see platform revenue from the partner while the partner separately sees its own retail revenue and margin.
+> **Partners keep their brand, pricing and customer relationships. Ithute provides the infrastructure control plane, provisioning, hosting, mail, DNS, databases, billing, monitoring, security and commercial intelligence underneath.**
 
-### Security and isolation requirements
+## Security principles
 
-Partner / Reseller Mode is complete only when it preserves production-grade isolation:
+Security design across the repository follows these rules:
 
-- strict partner and tenant scoping;
-- least-privilege RBAC;
-- separate customer secrets and credentials;
-- encrypted secret storage;
-- auditable infrastructure actions;
-- no cross-partner resource visibility;
-- rate limits and abuse controls;
-- safe suspension and deletion workflows;
-- backup and restore ownership boundaries;
-- explicit approval for destructive actions.
+- strict tenant and partner scoping;
+- least-privilege authorization;
+- centralized identity with signed short-lived tokens;
+- no direct cross-product database access;
+- production secrets outside Git;
+- protected node credentials;
+- encrypted sensitive data where required;
+- safe proxy/header handling;
+- anti-cross-site mutation controls;
+- secure response headers;
+- auditability;
+- dual control for sensitive operations;
+- explicit destructive-action approval;
+- no unrestricted reseller host access;
+- recoverable backups;
+- CI-enforced deployment boundaries.
 
-Connecting infrastructure must not give a reseller unrestricted access to the host. Ithute should expose only the operational capabilities required for provisioning, monitoring and lifecycle management.
-
-### Partner dashboard
-
-A partner dashboard should combine infrastructure and business performance:
-
-```text
-Customers:                 327
-Hosting accounts:          246
-Mailboxes:               1,820
-Connected nodes:             8
-Total usable capacity:    7.4 TB
-Allocated:                4.8 TB
-Available:                2.6 TB
-Monthly infrastructure:   Mxx,xxx
-Monthly customer revenue: Mxx,xxx
-Gross contribution:       Mxx,xxx
-Gross margin:                  xx%
-```
-
-### Commercial outcome
-
-This feature moves Ithute from serving only direct customers into a **hosting operating system for other service providers**.
-
-> Partners keep their brand, pricing and customer relationships. Ithute provides the infrastructure control plane, provisioning, hosting, mail, DNS, databases, billing, monitoring, security and commercial intelligence underneath.
-
-This allows one Ithute platform to serve direct customers, wholesale customers and white-label resellers while keeping infrastructure, tenant isolation and financial visibility under one controlled system.
-
+See `SECURITY.md` and component-specific documentation for detailed controls.
 
 ## Production readiness
 
-A release is not considered fully verified merely because it has merged. Final production verification should confirm:
+A merge is not the same as a verified production release.
 
-- application, Auth, Push and Realtime health endpoints;
-- current Alembic migration head applied successfully;
-- authoritative DNS answers over both UDP and TCP;
-- TLS and explicit host routing;
-- mail MX/SPF/DKIM/DMARC and provider-controlled PTR/reverse DNS;
-- successful backup plus a recent restore drill;
-- Finance delegated-role boundaries and customer portal access;
-- a live end-to-end customer path covering authentication, provisioning, billing/Finance and the relevant service.
+Final readiness should confirm:
 
-Use `scripts/verify-production-readiness.sh` for the repository-supported public checks. External requirements such as an independent secondary DNS node and provider-controlled PTR must be completed with the appropriate infrastructure provider.
+- Web, API, Auth, Push and Realtime health;
+- current database migrations;
+- authoritative DNS over UDP and TCP;
+- TLS and correct edge routing;
+- MX/SPF/DKIM/DMARC and provider-controlled PTR;
+- backup plus recent restore drill;
+- finance/delegated-role boundaries;
+- hosting placement and node health;
+- customer provisioning path;
+- billing/quotation path;
+- live end-to-end authentication and service use.
 
-## Local website
+Use:
+
+```bash
+scripts/verify-production-readiness.sh
+```
+
+for repository-supported public checks.
+
+## Local development
+
+Frontend:
 
 ```bash
 cd apps/frontend
 npm ci
-npm run check
 npm run build
 npm run dev
 ```
 
+Backend and platform services have their own requirements, migrations and component-specific documentation under `apps/backend`, `platform/` and `engines/`.
+
 ## Production configuration
 
-Copy `.env.example` only as a reference. Production secrets live exclusively in protected runtime storage and the untracked `secrets/` directory.
+`.env.example` is a configuration reference only.
 
-The fresh bootstrap generates independent database passwords, encryption keys and JWT signing keys. Push starts without a mandatory FCM provider so the platform can become healthy on a clean server; FCM can be enabled later by installing its service-account credential and setting `ITHUTE_PUSH_REQUIRED_PROVIDERS=fcm`.
+Production secrets belong in protected runtime configuration and the untracked secrets store. Fresh bootstrap generates independent database passwords, encryption keys and JWT signing material.
+
+Push deliberately does not require Firebase to make the clean platform healthy. FCM becomes required only when explicitly enabled for the Android delivery rollout.
+
+## Documentation
+
+For deeper implementation details, consult:
+
+- `platform/README.md`;
+- `engines/README.md`;
+- `platform/ithute-auth/README.md`;
+- `platform/ithute-push/README.md`;
+- `platform/ithute-realtime/README.md`;
+- `platform/ithute-notification/README.md`;
+- `SECURITY.md`;
+- `docs/`;
+- `scripts/`.
+
+---
+
+Ithute is no longer only a website, mailbox application or DNS server. The repository now represents a **multi-tenant commercial hosting and infrastructure platform** designed to operate direct services and, increasingly, to become the underlying operating platform for other service providers.
