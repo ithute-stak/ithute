@@ -273,6 +273,25 @@ def _queue_database_operation(row: HostingDatabase, operation: str) -> None:
     row.status = "deleting" if operation == "delete" else "queued"
 
 
+def _database_gateway_from_token(
+    db: Session,
+    token: str | None,
+) -> HostingDatabaseGateway:
+    raw = (token or "").strip()
+    if not raw or not raw.startswith("ith_dbgw_"):
+        raise HTTPException(status_code=401, detail="Database gateway credential required")
+    gateway = db.scalar(
+        select(HostingDatabaseGateway).where(
+            HostingDatabaseGateway.token_hash == hash_token(raw),
+            HostingDatabaseGateway.status == "active",
+        )
+    )
+    if gateway is None:
+        raise HTTPException(status_code=401, detail="Invalid database gateway credential")
+    gateway.last_seen_at = _now()
+    return gateway
+
+
 def _agent_from_token(db: Session, token: str | None) -> tuple[HostingNodeAgent, HostingNode]:
     raw = (token or "").strip()
     if not raw or not raw.startswith("ith_host_"):
@@ -293,6 +312,188 @@ def runtime_catalog():
         "source_types": ["git", "zip"],
         "database_engines": ["postgresql", "mysql"],
         "custom_runtime_policy": "Applications outside managed runtimes can use a reviewed Dockerfile build path.",
+    }
+
+
+@router.post("/platform/hosting/database-gateways", status_code=201)
+def create_database_gateway(
+    payload: DatabaseGatewayCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    hostname = payload.hostname.strip().lower()
+    if re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*", hostname) is None:
+        raise HTTPException(status_code=422, detail="Database gateway hostname is invalid")
+    raw = "ith_dbgw_" + secrets.token_urlsafe(36)
+    row = HostingDatabaseGateway(
+        name=payload.name.strip(),
+        hostname=hostname,
+        token_hash=hash_token(raw),
+        token_hint=raw[-12:],
+        status="active",
+        created_by_user_id=current.id,
+    )
+    db.add(row)
+    db.flush()
+    db.add(AuditLog(
+        actor_user_id=current.id,
+        action="hosting.database_gateway.create",
+        resource_type="hosting_database_gateway",
+        resource_id=str(row.id),
+        metadata_json=json.dumps({"name": row.name, "hostname": row.hostname}, sort_keys=True),
+    ))
+    db.commit()
+    return {
+        "id": str(row.id),
+        "name": row.name,
+        "hostname": row.hostname,
+        "status": row.status,
+        "token": raw,
+    }
+
+
+@router.post("/platform/hosting/postgres-replication-groups/{group_id}/endpoint", status_code=201)
+def create_postgres_group_endpoint(
+    group_id: UUID,
+    payload: PostgresEndpointCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    group = db.get(HostingPostgresReplicationGroup, group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="PostgreSQL replication group not found")
+    gateway = db.get(HostingDatabaseGateway, payload.gateway_id)
+    if gateway is None or gateway.status != "active":
+        raise HTTPException(status_code=409, detail="Database gateway is unavailable")
+
+    try:
+        endpoint = ensure_postgres_endpoint(db, group=group, gateway=gateway)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    db.add(AuditLog(
+        actor_user_id=current.id,
+        action="hosting.postgres_replication_group.endpoint.ensure",
+        resource_type="hosting_postgres_endpoint",
+        resource_id=str(endpoint.id),
+        metadata_json=json.dumps({
+            "group_id": str(group.id),
+            "gateway_id": str(gateway.id),
+            "hostname": endpoint.hostname,
+            "listen_port": endpoint.listen_port,
+            "generation": endpoint.generation,
+        }, sort_keys=True),
+    ))
+    db.commit()
+    return {
+        "id": str(endpoint.id),
+        "group_id": str(group.id),
+        "hostname": endpoint.hostname,
+        "port": endpoint.listen_port,
+        "gateway_hostname": gateway.hostname,
+        "generation": endpoint.generation,
+        "applied_generation": endpoint.applied_generation,
+        "status": endpoint.status,
+    }
+
+
+@router.get("/platform/hosting/postgres-replication-groups/{group_id}/endpoint")
+def get_postgres_group_endpoint(
+    group_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    endpoint = db.scalar(
+        select(HostingPostgresEndpoint).where(HostingPostgresEndpoint.group_id == group_id)
+    )
+    if endpoint is None:
+        raise HTTPException(status_code=404, detail="PostgreSQL stable endpoint not configured")
+    gateway = db.get(HostingDatabaseGateway, endpoint.gateway_id)
+    return {
+        "id": str(endpoint.id),
+        "group_id": str(endpoint.group_id),
+        "hostname": endpoint.hostname,
+        "port": endpoint.listen_port,
+        "gateway_hostname": gateway.hostname if gateway else None,
+        "generation": endpoint.generation,
+        "applied_generation": endpoint.applied_generation,
+        "status": endpoint.status,
+        "current_node_id": str(endpoint.current_node_id),
+        "target_host": endpoint.target_host,
+        "target_port": endpoint.target_port,
+        "last_routed_at": endpoint.last_routed_at.isoformat() if endpoint.last_routed_at else None,
+    }
+
+
+@router.post("/hosting/database-gateway/heartbeat")
+def database_gateway_heartbeat(
+    payload: DatabaseGatewayHeartbeat,
+    x_ithute_database_gateway: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    gateway = _database_gateway_from_token(db, x_ithute_database_gateway)
+    gateway.agent_version = payload.version.strip()
+    gateway.last_seen_at = _now()
+    db.commit()
+    return {"ok": True, "gateway_id": str(gateway.id), "status": gateway.status}
+
+
+@router.get("/hosting/database-gateway/routes")
+def database_gateway_routes(
+    x_ithute_database_gateway: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    gateway = _database_gateway_from_token(db, x_ithute_database_gateway)
+    snapshot = gateway_route_snapshot(db, gateway=gateway)
+    db.commit()
+    return snapshot
+
+
+@router.post("/hosting/database-gateway/routes/{endpoint_id}/ack")
+def database_gateway_route_ack(
+    endpoint_id: UUID,
+    payload: DatabaseGatewayRouteAck,
+    x_ithute_database_gateway: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    gateway = _database_gateway_from_token(db, x_ithute_database_gateway)
+    try:
+        endpoint = acknowledge_route_generation(
+            db,
+            endpoint_id=endpoint_id,
+            gateway_id=gateway.id,
+            generation=payload.generation,
+            now=_now(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    attempt = db.scalar(
+        select(HostingPostgresGroupFailoverAttempt)
+        .where(
+            HostingPostgresGroupFailoverAttempt.group_id == endpoint.group_id,
+            HostingPostgresGroupFailoverAttempt.status == "succeeded",
+            HostingPostgresGroupFailoverAttempt.target_node_id == endpoint.current_node_id,
+            HostingPostgresGroupFailoverAttempt.service_restored_at.is_(None),
+        )
+        .order_by(HostingPostgresGroupFailoverAttempt.promoted_at.desc())
+        .with_for_update()
+    )
+    if attempt is not None:
+        group = db.get(HostingPostgresReplicationGroup, endpoint.group_id)
+        restored_at = _now()
+        attempt.service_restored_at = restored_at
+        detected = attempt.failure_detected_at or attempt.created_at
+        detected = detected if detected.tzinfo else detected.replace(tzinfo=timezone.utc)
+        attempt.rto_seconds = max(0, int((restored_at - detected).total_seconds()))
+        attempt.rto_met = bool(group and attempt.rto_seconds <= int(group.rto_target_seconds))
+    db.commit()
+    return {
+        "endpoint_id": str(endpoint.id),
+        "generation": endpoint.generation,
+        "status": endpoint.status,
+        "service_restored": attempt is not None,
+        "rto_seconds": attempt.rto_seconds if attempt else None,
+        "rto_met": attempt.rto_met if attempt else None,
     }
 
 
