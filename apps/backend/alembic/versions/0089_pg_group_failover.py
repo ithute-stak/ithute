@@ -15,6 +15,16 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.drop_constraint(
+        "ck_pg_replication_standby_status",
+        "hosting_postgres_replication_standbys",
+        type_="check",
+    )
+    op.create_check_constraint(
+        "ck_pg_replication_standby_status",
+        "hosting_postgres_replication_standbys",
+        "status IN ('planned','streaming','ready','promoted','failed')",
+    )
     op.create_table(
         "hosting_postgres_group_failovers",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
@@ -66,3 +76,13 @@ def downgrade() -> None:
     op.drop_index("ix_pg_group_failovers_source", table_name="hosting_postgres_group_failovers")
     op.drop_index("ix_pg_group_failovers_group", table_name="hosting_postgres_group_failovers")
     op.drop_table("hosting_postgres_group_failovers")
+    op.drop_constraint(
+        "ck_pg_replication_standby_status",
+        "hosting_postgres_replication_standbys",
+        type_="check",
+    )
+    op.create_check_constraint(
+        "ck_pg_replication_standby_status",
+        "hosting_postgres_replication_standbys",
+        "status IN ('planned','streaming','ready','failed')",
+    )
