@@ -18,7 +18,6 @@ permissions:
 
 jobs:
   deploy:
-    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production
@@ -47,7 +46,19 @@ jobs:
             echo "No Ithute Release Images run exists for $DEPLOY_SHA." >&2
             exit 1
           }
-          IFS=
+          IFS=$'\t' read -r status conclusion url <<< "$row"
+          echo "Release Images: status=$status conclusion=${conclusion:-pending} $url"
+          test "$status" = "completed" && test "$conclusion" = "success" || {
+            echo "Release Images is not green for $DEPLOY_SHA." >&2
+            exit 1
+          }
+
+      - name: Checkout validated commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          persist-credentials: false
+
       - name: Validate backup runtime inputs
         run: |
           set -euo pipefail
@@ -131,161 +142,7 @@ jobs:
           compose pull ithute-backup ithute-restore-drill-db ithute-restore-drill
 
           # Backup assurance is not allowed to recreate the core application.
-          # Production already proved ithute-app-api healthy for this exact SHA.
-          app_id="$(compose ps -q ithute-app-api)"
-          test -n "$app_id"
-          compose exec -T ithute-app-api curl -fsS http://127.0.0.1:8000/health/ready | grep -q '"status":"ready"'
-          compose up -d --no-build ithute-backup ithute-restore-drill-db
-
-          for attempt in $(seq 1 60); do
-            if compose exec -T ithute-backup sh -c "grep -q '\"status\": \"success\"' /backup-status/status/last-run.json" >/dev/null 2>&1; then
-              break
-            fi
-            test "$attempt" -lt 60 || { compose logs --tail=160 ithute-backup >&2; exit 1; }
-            sleep 5
-          done
-
-          before="$(compose exec -T ithute-backup sh -c 'wc -l < /backup-status/status/restore-drills.jsonl 2>/dev/null || echo 0' | tr -d '\r ' | tail -n1)"
-          case "$before" in ''|*[!0-9]*) before=0 ;; esac
-          compose up -d --no-build --force-recreate ithute-restore-drill
-
-          for attempt in $(seq 1 120); do
-            after="$(compose exec -T ithute-backup sh -c 'wc -l < /backup-status/status/restore-drills.jsonl 2>/dev/null || echo 0' | tr -d '\r ' | tail -n1)"
-            case "$after" in ''|*[!0-9]*) after=0 ;; esac
-            if [ "$after" -gt "$before" ]; then
-              compose exec -T ithute-backup sh -c "tail -n1 /backup-status/status/restore-drills.jsonl | grep -q '\"status\":\"success\"'"
-              break
-            fi
-            test "$attempt" -lt 120 || { compose logs --tail=200 ithute-restore-drill ithute-restore-drill-db >&2; exit 1; }
-            sleep 5
-          done
-
-          compose exec -T ithute-app-api python -c 'from app.services.backup_status import backup_operational_status, restore_drill_history; s=backup_operational_status(); d=restore_drill_history(1); assert s["healthy"], s; assert d and d[0].get("status") == "success", d'
-
-          for service in ithute-backup ithute-restore-drill-db ithute-restore-drill; do
-            id="$(compose ps -q "$service")"
-            test -n "$id"
-            ports="$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$id")"
-            test "$ports" = "{}" || test "$ports" = "null"
-          done
-          REMOTE
-\t' read -r status conclusion url <<< "$row"
-          echo "Release Images: status=$status conclusion=${conclusion:-pending} $url"
-          test "$status" = "completed" && test "$conclusion" = "success" || {
-            echo "Release Images is not green for $DEPLOY_SHA." >&2
-            exit 1
-          }
-
-      - name: Checkout validated commit
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ env.DEPLOY_SHA }}
-          persist-credentials: false
-
-      - name: Validate backup runtime inputs
-        run: |
-          set -euo pipefail
-          test -n "$VPS_HOST"
-          test -n "$VPS_USER"
-          test -n "$VPS_SSH_KEY"
-          test "$VPS_HOST" = "$EXPECTED_IPV4"
-          test -f compose.backup.yml
-          bash -n infrastructure/backup/backup-loop.sh
-          bash -n infrastructure/backup/restore-drill-loop.sh
-          ! grep -Eq '^[[:space:]]+ports:' compose.backup.yml
-
-      - name: Wait for exact production deployment
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          ready=0
-          for attempt in $(seq 1 150); do
-            runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-production.yml/runs?branch=main&per_page=30")"
-            row="$(printf '%s' "$runs" | jq -r --arg sha "$DEPLOY_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] | if . == null then "" else [.status, (.conclusion // ""), (.html_url // "")] | @tsv end')"
-            if [ -z "$row" ]; then
-              echo "Production run has not been created yet (${attempt}/150)."
-              sleep 8
-              continue
-            fi
-            IFS=$'\t' read -r status conclusion url <<< "$row"
-            echo "Production: status=${status} conclusion=${conclusion:-pending} ${url}"
-            if [ "$status" = "completed" ]; then
-              if [ "$conclusion" = "success" ]; then
-                ready=1
-              else
-                echo "Production did not deploy successfully; backup runtime will remain unchanged."
-              fi
-              break
-            fi
-            if [ "$attempt" -ge 150 ]; then
-              echo "Timed out waiting for production; backup runtime will remain unchanged."
-              break
-            fi
-            sleep 8
-          done
-          printf 'PRODUCTION_READY=%s\n' "$ready" >> "$GITHUB_ENV"
-
-      - name: Configure SSH
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.ssh"
-          chmod 700 "$HOME/.ssh"
-          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/ithute_deploy"
-          chmod 600 "$HOME/.ssh/ithute_deploy"
-          eval "$(ssh-agent -s)"
-          printf 'SSH_AUTH_SOCK=%s\n' "$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
-          printf 'SSH_AGENT_PID=%s\n' "$SSH_AGENT_PID" >> "$GITHUB_ENV"
-          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
-            cat > /tmp/ithute-askpass.sh <<'SH'
-          #!/usr/bin/env sh
-          printf '%s\n' "$VPS_SSH_PASSPHRASE"
-          SH
-            chmod 700 /tmp/ithute-askpass.sh
-            SSH_ASKPASS=/tmp/ithute-askpass.sh SSH_ASKPASS_REQUIRE=force DISPLAY=:0 setsid -w ssh-add "$HOME/.ssh/ithute_deploy" </dev/null
-            rm -f /tmp/ithute-askpass.sh
-          else
-            ssh-add "$HOME/.ssh/ithute_deploy" </dev/null
-          fi
-          ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
-          chmod 600 "$HOME/.ssh/known_hosts"
-
-      - name: Install backup runtime configuration
-        run: |
-          set -euo pipefail
-          remote="${VPS_USER}@${VPS_HOST}"
-          tar -czf /tmp/ithute-backup-runtime.tgz compose.backup.yml infrastructure/backup
-          scp /tmp/ithute-backup-runtime.tgz "$remote:/tmp/ithute-backup-runtime.tgz"
-          ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' bash -s" <<'REMOTE'
-          set -euo pipefail
-          test -f "$APP_DIR/compose.production.yml"
-          test -f "$APP_DIR/.env.production"
-          test -f "$APP_DIR/.image.env"
-          grep -Fxq "ITHUTE_IMAGE_TAG=$DEPLOY_SHA" "$APP_DIR/.image.env"
-          tar -xzf /tmp/ithute-backup-runtime.tgz -C "$APP_DIR"
-          rm -f /tmp/ithute-backup-runtime.tgz
-          if ! grep -q '^ITHUTE_RESTORE_DRILL_DB_PASSWORD=' "$APP_DIR/.env.production"; then
-            password="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
-            printf '\nITHUTE_RESTORE_DRILL_DB_PASSWORD=%s\n' "$password" >> "$APP_DIR/.env.production"
-          fi
-          chmod 600 "$APP_DIR/.env.production"
-          REMOTE
-
-      - name: Start backup services and run controlled restore drill
-        run: |
-          set -euo pipefail
-          remote="${VPS_USER}@${VPS_HOST}"
-          ssh "$remote" "APP_DIR='$VPS_APP_DIR' bash -s" <<'REMOTE'
-          set -euo pipefail
-          cd "$APP_DIR"
-          compose() {
-            docker compose --env-file .env.production --env-file .image.env -p ithute -f compose.production.yml -f compose.backup.yml "$@"
-          }
-          compose config >/tmp/ithute-backup-rendered.yml
-          compose pull ithute-backup ithute-restore-drill-db ithute-restore-drill
-
-          # Backup assurance is not allowed to recreate the core application.
-          # Production already proved ithute-app-api healthy for this exact SHA.
+          # Production must already be healthy on the exact requested SHA.
           app_id="$(compose ps -q ithute-app-api)"
           test -n "$app_id"
           compose exec -T ithute-app-api curl -fsS http://127.0.0.1:8000/health/ready | grep -q '"status":"ready"'
