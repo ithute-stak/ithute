@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class DeviceRequest(BaseModel):
     device_key: str = Field(min_length=8, max_length=200)
     platform: str = Field(pattern="^(android|ios|web)$")
+    provider: str | None = Field(default=None, pattern="^(ithute|fcm|apns|webpush)$")
     provider_endpoint: str = Field(min_length=8, max_length=8192)
 
 
@@ -16,6 +17,7 @@ class DeviceResponse(BaseModel):
     device_key: str
     application_id: str
     platform: str
+    provider: str
     active: bool
     last_seen_at: datetime | None = None
 

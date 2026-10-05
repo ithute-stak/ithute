@@ -174,11 +174,18 @@ jobs:
           PY
           code="$(curl -sS -o /tmp/xml-xxe.json -w '%{http_code}' -X POST -H 'Content-Type: application/xml' --data-binary @/tmp/xxe.xml http://127.0.0.1:18081/v1/xml/inspect)"
           test "$code" = "422"
+          curl -fsS 'http://127.0.0.1:18081/v1/push/policy?platform=android&online=false&ithute=true&fcm=true' > /tmp/java-push-policy.json
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/java-push-policy.json'))
+          assert body['engine']=='java'
+          assert body['transports']==['ithute','fcm']
+          PY
 
       - name: Build Go worker image
         run: |
           docker build --pull -t ithute-go-worker:engine-ci engines/go-worker
-          container="$(docker run -d -p 18080:8080 ithute-go-worker:engine-ci)"
+          container="$(docker run -d -e ITHUTE_PUSH_GATEWAY_TOKEN=ci-push-gateway-secret -p 18080:8080 ithute-go-worker:engine-ci)"
           trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
           for attempt in $(seq 1 20); do
             if curl -fsS http://127.0.0.1:18080/healthz | grep -q '"engine":"go"'; then
@@ -207,4 +214,22 @@ jobs:
           assert body['checked']==1
           assert body['results'][0]['id']=='localhost'
           assert body['results'][0]['values']
+          PY
+          curl -fsS -X POST -H 'Authorization: Bearer ci-push-gateway-secret' -H 'Content-Type: application/json' \
+            --data '{"endpoint":"ci-device-endpoint-secret-12345","delivery_id":"ci-delivery-1","ttl_seconds":60,"notification":{"title":"Hello","body":"World"}}' \
+            http://127.0.0.1:18080/v1/push/deliver > /tmp/go-push-delivery.json
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/go-push-delivery.json'))
+          assert body['engine']=='go'
+          assert body['queued'] is True
+          assert body['message_id']
+          PY
+          curl -fsS -H 'X-Ithute-Push-Endpoint: ci-device-endpoint-secret-12345' \
+            'http://127.0.0.1:18080/v1/push/poll?timeout_seconds=2' > /tmp/go-push-poll.json
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/go-push-poll.json'))
+          assert body['delivery_id']=='ci-delivery-1'
+          assert body['notification']['title']=='Hello'
           PY

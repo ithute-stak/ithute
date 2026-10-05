@@ -121,8 +121,17 @@ def require_live_service_state(db: Session, principal: ServicePrincipal) -> None
         raise HTTPException(status_code=403, detail="product disabled")
 
 
-def provider_for(platform: str) -> str:
-    return {"android": "fcm", "ios": "apns", "web": "webpush"}[platform]
+def provider_for(platform: str, requested: str | None = None) -> str:
+    defaults = {"android": "fcm", "ios": "apns", "web": "webpush"}
+    allowed = {
+        "android": {"ithute", "fcm"},
+        "ios": {"apns"},
+        "web": {"webpush"},
+    }
+    provider = requested or defaults[platform]
+    if provider not in allowed[platform]:
+        raise HTTPException(status_code=422, detail=f"{provider} is not supported for {platform}")
+    return provider
 
 
 def message_fingerprint(payload: MessageRequest) -> str:
@@ -278,11 +287,13 @@ def register_device(
     db: Annotated[Session, Depends(get_db)],
 ) -> DeviceResponse:
     user_id, session_id = require_live_user_state(db, principal)
+    provider = provider_for(payload.platform, payload.provider)
     endpoint = db.scalar(
         select(PushEndpoint).where(
             PushEndpoint.auth_user_id == user_id,
             PushEndpoint.application_id == principal.client_id,
             PushEndpoint.device_key == payload.device_key,
+            PushEndpoint.provider == provider,
         )
     )
     encrypted = cipher().encrypt(payload.provider_endpoint)
@@ -308,7 +319,7 @@ def register_device(
             application_id=principal.client_id,
             device_key=payload.device_key,
             platform=payload.platform,
-            provider=provider_for(payload.platform),
+            provider=provider,
             endpoint_ciphertext=encrypted,
             endpoint_hash=digest,
         )
@@ -316,7 +327,7 @@ def register_device(
     else:
         endpoint.auth_session_id = session_id
         endpoint.platform = payload.platform
-        endpoint.provider = provider_for(payload.platform)
+        endpoint.provider = provider
         endpoint.endpoint_ciphertext = encrypted
         endpoint.endpoint_hash = digest
         endpoint.active = True
@@ -327,6 +338,7 @@ def register_device(
         device_key=endpoint.device_key,
         application_id=endpoint.application_id,
         platform=endpoint.platform,
+        provider=endpoint.provider,
         active=endpoint.active,
         last_seen_at=endpoint.last_seen_at,
     )
@@ -350,6 +362,7 @@ def list_devices(
             device_key=item.device_key,
             application_id=item.application_id,
             platform=item.platform,
+            provider=item.provider,
             active=item.active,
             last_seen_at=item.last_seen_at,
         )
@@ -364,15 +377,18 @@ def revoke_device(
     db: Annotated[Session, Depends(get_db)],
 ) -> None:
     user_id, _ = require_live_user_state(db, principal)
-    endpoint = db.scalar(
-        select(PushEndpoint).where(
-            PushEndpoint.auth_user_id == user_id,
-            PushEndpoint.application_id == principal.client_id,
-            PushEndpoint.device_key == device_key,
+    endpoints = list(
+        db.scalars(
+            select(PushEndpoint).where(
+                PushEndpoint.auth_user_id == user_id,
+                PushEndpoint.application_id == principal.client_id,
+                PushEndpoint.device_key == device_key,
+            )
         )
     )
-    if endpoint is not None:
-        endpoint.active = False
+    if endpoints:
+        for endpoint in endpoints:
+            endpoint.active = False
         db.commit()
 
 

@@ -21,10 +21,14 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = 2.0
     max_attempts: int = 4
 
-    # Android/FCM is the v1 production baseline. APNs and Web Push remain
-    # implemented providers, but they do not block readiness until explicitly
-    # added to PUSH_REQUIRED_PROVIDERS.
+    # FCM remains available for Android last-mile fallback, but Ithute can
+    # operate its own transport through the Go delivery gateway.
     required_providers: str = "fcm"
+
+    ithute_gateway_url: str | None = None
+    ithute_gateway_token: str | None = None
+    java_worker_url: str = "http://ithute-java-worker:8080"
+    engine_http_timeout_seconds: float = 1.5
 
     fcm_project_id: str | None = None
     fcm_credentials_file: str = "/run/secrets/fcm-service-account.json"
@@ -61,7 +65,7 @@ class Settings(BaseSettings):
     @property
     def required_provider_set(self) -> set[str]:
         providers = {item.strip().lower() for item in self.required_providers.split(",") if item.strip()}
-        unknown = providers - {"fcm", "apns", "webpush"}
+        unknown = providers - {"ithute", "fcm", "apns", "webpush"}
         if unknown:
             raise ValueError(f"unsupported required providers: {', '.join(sorted(unknown))}")
         return providers
@@ -86,6 +90,7 @@ class Settings(BaseSettings):
 
     def provider_readiness(self) -> dict[str, bool]:
         return {
+            "ithute": bool(self.ithute_gateway_url and self.ithute_gateway_token),
             "fcm": self.fcm_ready(),
             "apns": bool(
                 self.apns_team_id

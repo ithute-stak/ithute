@@ -73,6 +73,50 @@ def _fcm_error(response: httpx.Response) -> tuple[str, set[str]]:
     return status, codes
 
 
+
+def send_ithute(settings: Settings, endpoint: str, message, delivery_id: str | None = None) -> ProviderResult:
+    if not settings.ithute_gateway_url or not settings.ithute_gateway_token:
+        raise ProviderNotConfigured("Ithute push gateway is not configured")
+    ttl = _ttl_seconds(message)
+    if ttl <= 0:
+        raise PermanentProviderError("notification expired before Ithute delivery")
+    payload = {
+        "endpoint": endpoint,
+        "delivery_id": delivery_id,
+        "ttl_seconds": ttl,
+        "notification": {
+            "title": message.title,
+            "body": message.body,
+            "route": message.route,
+            "sound": message.sound,
+            "data": _payload(message, delivery_id),
+        },
+    }
+    try:
+        response = httpx.post(
+            settings.ithute_gateway_url.rstrip("/") + "/v1/push/deliver",
+            headers={"Authorization": f"Bearer {settings.ithute_gateway_token}"},
+            json=payload,
+            timeout=10,
+        )
+    except httpx.HTTPError as exc:
+        raise RetryableProviderError("Ithute push gateway request failed") from exc
+
+    if response.status_code in {404, 410}:
+        raise InvalidEndpointError("Ithute push endpoint is no longer registered")
+    if response.status_code in {401, 403}:
+        raise ProviderNotConfigured("Ithute push gateway rejected service credentials")
+    if response.status_code == 429 or response.status_code >= 500:
+        raise RetryableProviderError(f"Ithute push gateway temporary error {response.status_code}")
+    if response.is_error:
+        raise PermanentProviderError(f"Ithute push gateway rejected message: {response.status_code}")
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+    return ProviderResult(provider_message_id=str(body.get("message_id") or "") or None)
+
+
 def send_fcm(settings: Settings, token: str, message, delivery_id: str | None = None) -> ProviderResult:
     if not settings.fcm_project_id:
         raise ProviderNotConfigured("FCM project is not configured")
@@ -241,6 +285,8 @@ def deliver(
     message,
     delivery_id: str | None = None,
 ) -> ProviderResult:
+    if provider == "ithute":
+        return send_ithute(settings, endpoint, message, delivery_id)
     if provider == "fcm":
         return send_fcm(settings, endpoint, message, delivery_id)
     if provider == "apns":

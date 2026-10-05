@@ -37,8 +37,8 @@ public final class Main {
             write(exchange, 200, json(Map.of(
                 "service", "ithute-java-worker",
                 "engine", "java",
-                "version", "0.2.0",
-                "capabilities", List.of("health", "dmarc-aggregate-xml", "enterprise-xml-inspect")
+                "version", "0.3.0",
+                "capabilities", List.of("health", "dmarc-aggregate-xml", "enterprise-xml-inspect", "push-routing-policy")
             )));
         });
         server.createContext("/v1/capabilities", exchange -> {
@@ -49,10 +49,38 @@ public final class Main {
             write(exchange, 200, json(Map.of(
                 "service", "ithute-java-worker",
                 "engine", "java",
-                "version", "0.2.0",
-                "capabilities", List.of("dmarc-aggregate-xml", "enterprise-xml-inspect")
+                "version", "0.3.0",
+                "capabilities", List.of("dmarc-aggregate-xml", "enterprise-xml-inspect", "push-routing-policy")
             )));
         });
+
+        server.createContext("/v1/push/policy", exchange -> {
+            if (!"GET".equals(exchange.getRequestMethod())) {
+                write(exchange, 405, json(Map.of("error", "method_not_allowed")));
+                return;
+            }
+            try {
+                Map<String, String> query = queryParameters(exchange.getRequestURI().getRawQuery());
+                String platform = lower(query.getOrDefault("platform", ""));
+                boolean online = boolValue(query.get("online"));
+                boolean ithuteAvailable = boolValue(query.get("ithute"));
+                boolean fcmAvailable = boolValue(query.get("fcm"));
+                boolean apnsAvailable = boolValue(query.get("apns"));
+                boolean webpushAvailable = boolValue(query.get("webpush"));
+                List<String> transports = pushTransportPolicy(
+                    platform, online, ithuteAvailable, fcmAvailable, apnsAvailable, webpushAvailable
+                );
+                write(exchange, 200, json(Map.of(
+                    "engine", "java",
+                    "policy_version", "1",
+                    "platform", platform,
+                    "transports", transports
+                )));
+            } catch (IllegalArgumentException exc) {
+                write(exchange, 422, json(Map.of("error", "invalid_push_policy_request")));
+            }
+        });
+
         server.createContext("/v1/dmarc/parse", exchange -> {
             if (!"POST".equals(exchange.getRequestMethod())) {
                 write(exchange, 405, json(Map.of("error", "method_not_allowed")));
@@ -92,6 +120,54 @@ public final class Main {
         });
         server.start();
         System.out.println("ithute-java-worker listening on :8080");
+    }
+
+
+    private static Map<String, String> queryParameters(String rawQuery) {
+        Map<String, String> result = new LinkedHashMap<>();
+        if (rawQuery == null || rawQuery.isBlank()) return result;
+        for (String part : rawQuery.split("&")) {
+            int split = part.indexOf('=');
+            String rawKey = split >= 0 ? part.substring(0, split) : part;
+            String rawValue = split >= 0 ? part.substring(split + 1) : "";
+            String key = java.net.URLDecoder.decode(rawKey, StandardCharsets.UTF_8);
+            String value = java.net.URLDecoder.decode(rawValue, StandardCharsets.UTF_8);
+            result.put(key, value);
+        }
+        return result;
+    }
+
+    private static boolean boolValue(String value) {
+        return value != null && ("1".equals(value) || "true".equalsIgnoreCase(value) || "yes".equalsIgnoreCase(value));
+    }
+
+    private static List<String> pushTransportPolicy(
+        String platform,
+        boolean online,
+        boolean ithuteAvailable,
+        boolean fcmAvailable,
+        boolean apnsAvailable,
+        boolean webpushAvailable
+    ) {
+        if (!List.of("android", "ios", "web").contains(platform)) {
+            throw new IllegalArgumentException("unsupported platform");
+        }
+        List<String> transports = new ArrayList<>();
+        if (online) transports.add("realtime");
+        switch (platform) {
+            case "android" -> {
+                if (ithuteAvailable) transports.add("ithute");
+                if (fcmAvailable) transports.add("fcm");
+            }
+            case "ios" -> {
+                if (apnsAvailable) transports.add("apns");
+            }
+            case "web" -> {
+                if (webpushAvailable) transports.add("webpush");
+            }
+            default -> throw new IllegalArgumentException("unsupported platform");
+        }
+        return transports;
     }
 
     private static byte[] readBounded(InputStream input, int limit) throws IOException, PayloadTooLargeException {
