@@ -16,6 +16,7 @@ from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
 from app.models import HardwareTelemetrySnapshot, InfrastructureServer, InfrastructureServerAgent, User
+from app.services.hardware_prediction import MetricPoint, predict_hardware_drift
 
 router = APIRouter(prefix="/hardware-intelligence", tags=["hardware-intelligence"])
 
@@ -123,6 +124,36 @@ def _validate_payload(payload: dict[str, Any]) -> None:
     devices = payload.get("storage_devices")
     if devices is not None and (not isinstance(devices, list) or len(devices) > 64):
         raise HTTPException(status_code=422, detail="Invalid storage telemetry")
+
+
+
+def _prediction_point_from_health(health: dict[str, Any]) -> MetricPoint:
+    return MetricPoint(
+        temperature_celsius=health.get("temperature_celsius"),
+        memory_pressure_avg10=health.get("memory_pressure_avg10"),
+        io_pressure_avg10=health.get("io_pressure_avg10"),
+        filesystem_used_percent=health.get("filesystem_used_percent"),
+    )
+
+
+def _prediction_for_server(db: Session, server_id, current_health: dict[str, Any]) -> dict[str, Any]:
+    rows = db.scalars(
+        select(HardwareTelemetrySnapshot)
+        .where(HardwareTelemetrySnapshot.server_id == server_id)
+        .order_by(HardwareTelemetrySnapshot.created_at.desc())
+        .limit(96)
+    ).all()
+    history = [
+        MetricPoint(
+            temperature_celsius=row.temperature_celsius,
+            memory_pressure_avg10=row.memory_pressure_avg10,
+            io_pressure_avg10=row.io_pressure_avg10,
+            filesystem_used_percent=row.filesystem_used_percent,
+        )
+        for row in reversed(rows)
+    ]
+    return predict_hardware_drift(history, _prediction_point_from_health(current_health))
+
 
 
 def _health(payload: dict[str, Any]) -> dict[str, Any]:
@@ -239,6 +270,7 @@ def ingest_hardware_telemetry(
 
     _validate_payload(payload.payload)
     health = _health(payload.payload)
+    prediction = _prediction_for_server(db, server.id, health)
 
     row = HardwareTelemetrySnapshot(
         server_id=server.id,
@@ -254,6 +286,10 @@ def ingest_hardware_telemetry(
         io_pressure_avg10=health["io_pressure_avg10"],
         filesystem_used_percent=health["filesystem_used_percent"],
         storage_warning_count=health["storage_warning_count"],
+        predictive_risk_score=prediction["risk_score"],
+        predictive_state=prediction["state"],
+        predictive_confidence=prediction["confidence"],
+        predictive_evidence_json=json.dumps(prediction["evidence"], ensure_ascii=False, separators=(",", ":")),
     )
     db.add(row)
     agent.last_seen_at = now
@@ -278,6 +314,7 @@ def ingest_hardware_telemetry(
             "status": health["status"],
             "evidence": health["evidence"],
         },
+        "prediction": prediction,
     }
 
 
@@ -311,6 +348,12 @@ def latest_hardware_health(
         "io_pressure_avg10": row.io_pressure_avg10,
         "filesystem_used_percent": row.filesystem_used_percent,
         "storage_warning_count": row.storage_warning_count,
+        "prediction": {
+            "risk_score": row.predictive_risk_score,
+            "state": row.predictive_state or "learning",
+            "confidence": row.predictive_confidence,
+            "evidence": json.loads(row.predictive_evidence_json or "[]"),
+        },
         "sampled_at": row.issued_at.isoformat(),
         "received_at": row.created_at.isoformat() if row.created_at else None,
         "payload": json.loads(row.payload_json),
@@ -382,6 +425,10 @@ def hardware_fleet_health(
             "io_pressure_avg10": latest.io_pressure_avg10 if latest else None,
             "filesystem_used_percent": latest.filesystem_used_percent if latest else None,
             "storage_warning_count": latest.storage_warning_count if latest else 0,
+            "predictive_risk_score": latest.predictive_risk_score if latest else None,
+            "predictive_state": (latest.predictive_state or "learning") if latest else "learning",
+            "predictive_confidence": latest.predictive_confidence if latest else None,
+            "predictive_evidence": json.loads(latest.predictive_evidence_json or "[]") if latest else [],
             "evidence": evidence,
             "sampled_at": latest.issued_at.isoformat() if latest else None,
         })
@@ -442,6 +489,9 @@ def hardware_health_history(
                 "io_pressure_avg10": row.io_pressure_avg10,
                 "filesystem_used_percent": row.filesystem_used_percent,
                 "storage_warning_count": row.storage_warning_count,
+                "predictive_risk_score": row.predictive_risk_score,
+                "predictive_state": row.predictive_state or "learning",
+                "predictive_confidence": row.predictive_confidence,
             }
             for row in rows
         ],
