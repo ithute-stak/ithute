@@ -1,4 +1,5 @@
 import uuid
+from types import SimpleNamespace
 from datetime import datetime, timezone
 
 from sqlalchemy import delete
@@ -178,3 +179,34 @@ def test_dns_analytics_live_and_snapshot(client, db, tenant_admin, monkeypatch):
     assert len(history.json()["history"]) == 1
 
     cleanup(db, tenant.id, domain.id)
+
+
+def test_public_origin_uses_go_after_python_ssrf_validation(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.edge_inspection._public_addresses",
+        lambda hostname, port: ["1.1.1.1"],
+    )
+    monkeypatch.setattr(
+        "app.services.edge_inspection.execute_origin_probe",
+        lambda payload: SimpleNamespace(
+            engine="go",
+            value={
+                "engine": "go",
+                "healthy": True,
+                "resolved_ip": "1.1.1.1",
+                "status_code": 200,
+                "latency_ms": 12,
+                "tls_version": "TLSv1.3",
+                "cipher": "TLS_AES_128_GCM_SHA256",
+                "certificate_issuer": "CN=Example CA",
+                "certificate_not_after": "2027-01-01T00:00:00Z",
+                "certificate_days_remaining": 88,
+                "error": None,
+            },
+        ),
+    )
+    result = inspect_public_origin("https://origin.example", "/health", 200, 2)
+    assert result["healthy"] is True
+    assert result["status_code"] == 200
+    assert result["tls_version"] == "TLSv1.3"
+    assert result["certificate_not_after"].year == 2027

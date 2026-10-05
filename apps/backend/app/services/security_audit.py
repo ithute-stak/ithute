@@ -1,4 +1,3 @@
-import hashlib
 import json
 from uuid import UUID
 
@@ -6,12 +5,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import AuditLog, Mailbox
+from app.services.engine_router import execute_binary
 
 _ALLOWED_METADATA_KEYS = {"client_ip", "user_agent", "request_id", "outcome", "retry_after"}
 
 
 def _target_digest(address: str) -> str:
-    return hashlib.sha256(address.strip().lower().encode("utf-8")).hexdigest()[:24]
+    digest = execute_binary("crypto.sha256", address.strip().lower().encode("utf-8"))
+    return str(digest.value)[:24]
 
 
 def record_webmail_security_event(

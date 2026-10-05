@@ -238,6 +238,59 @@ fn sha256_digest(bytes: &[u8]) -> [u8; 32] {
     digest
 }
 
+fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
+    let mut key_block = [0u8; 64];
+    if key.len() > 64 {
+        let digest = sha256_digest(key);
+        key_block[..digest.len()].copy_from_slice(&digest);
+    } else {
+        key_block[..key.len()].copy_from_slice(key);
+    }
+
+    let mut inner_pad = [0u8; 64];
+    let mut outer_pad = [0u8; 64];
+    for index in 0..64 {
+        inner_pad[index] = key_block[index] ^ 0x36;
+        outer_pad[index] = key_block[index] ^ 0x5c;
+    }
+
+    let mut inner = Vec::with_capacity(64 + data.len());
+    inner.extend_from_slice(&inner_pad);
+    inner.extend_from_slice(data);
+    let inner_digest = sha256_digest(&inner);
+
+    let mut outer = Vec::with_capacity(64 + inner_digest.len());
+    outer.extend_from_slice(&outer_pad);
+    outer.extend_from_slice(&inner_digest);
+    sha256_digest(&outer)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ithute_rust_hmac_sha256(
+    key: *const u8,
+    key_len: usize,
+    data: *const u8,
+    data_len: usize,
+    out: *mut u8,
+) -> i32 {
+    if out.is_null() || (key.is_null() && key_len != 0) || (data.is_null() && data_len != 0) {
+        return 1;
+    }
+    let key_bytes = if key_len == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(key, key_len)
+    };
+    let data_bytes = if data_len == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(data, data_len)
+    };
+    let digest = hmac_sha256(key_bytes, data_bytes);
+    std::ptr::copy_nonoverlapping(digest.as_ptr(), out, digest.len());
+    0
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ithute_rust_sha256(
     data: *const u8,
@@ -325,6 +378,38 @@ mod tests {
         let code = unsafe { ithute_rust_sha256(raw.as_ptr(), raw.len(), out.as_mut_ptr()) };
         assert_eq!(code, 0);
         assert_eq!(out, sha256_digest(raw));
+    }
+
+    #[test]
+    fn hmac_sha256_matches_standard_vector() {
+        let digest = hmac_sha256(b"key", b"The quick brown fox jumps over the lazy dog");
+        assert_eq!(
+            digest,
+            [
+                0xf7, 0xbc, 0x83, 0xf4, 0x30, 0x53, 0x84, 0x24,
+                0xb1, 0x32, 0x98, 0xe6, 0xaa, 0x6f, 0xb1, 0x43,
+                0xef, 0x4d, 0x59, 0xa1, 0x49, 0x46, 0x17, 0x59,
+                0x97, 0x47, 0x9d, 0xbc, 0x2d, 0x1a, 0x3c, 0xd8,
+            ]
+        );
+    }
+
+    #[test]
+    fn hmac_sha256_ffi_writes_digest() {
+        let key = b"ithute-key";
+        let data = b"audit-record";
+        let mut out = [0u8; 32];
+        let code = unsafe {
+            ithute_rust_hmac_sha256(
+                key.as_ptr(),
+                key.len(),
+                data.as_ptr(),
+                data.len(),
+                out.as_mut_ptr(),
+            )
+        };
+        assert_eq!(code, 0);
+        assert_eq!(out, hmac_sha256(key, data));
     }
 
     #[test]

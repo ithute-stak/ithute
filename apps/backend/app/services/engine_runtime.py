@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import hmac
 import os
 import socket
 import time
@@ -10,6 +11,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+import dns.exception
+import dns.resolver
+import dns.reversename
 import httpx
 
 
@@ -113,6 +117,14 @@ def _load_rust() -> ctypes.CDLL | None:
             ctypes.POINTER(ctypes.c_ubyte),
         ]
         library.ithute_rust_sha256.restype = ctypes.c_int
+        library.ithute_rust_hmac_sha256.argtypes = [
+            ctypes.POINTER(ctypes.c_ubyte),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_ubyte),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_ubyte),
+        ]
+        library.ithute_rust_hmac_sha256.restype = ctypes.c_int
     except (OSError, AttributeError):
         return None
     _rust = library
@@ -252,6 +264,43 @@ def sha256_digest(data: bytes) -> tuple[str, str]:
     return bytes(output).hex(), "rust"
 
 
+def python_hmac_sha256(key: bytes, data: bytes) -> str:
+    return hmac.new(key, data, hashlib.sha256).hexdigest()
+
+
+def hmac_sha256(key: bytes, data: bytes) -> tuple[str, str]:
+    """Compute HMAC-SHA256 in Rust with an exact stdlib fallback."""
+    library = _load_rust()
+    if library is None:
+        return python_hmac_sha256(key, data), "python-fallback"
+
+    if key:
+        key_buffer = (ctypes.c_ubyte * len(key)).from_buffer_copy(key)
+        key_pointer = ctypes.cast(key_buffer, ctypes.POINTER(ctypes.c_ubyte))
+    else:
+        key_pointer = ctypes.POINTER(ctypes.c_ubyte)()
+    if data:
+        data_buffer = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
+        data_pointer = ctypes.cast(data_buffer, ctypes.POINTER(ctypes.c_ubyte))
+    else:
+        data_pointer = ctypes.POINTER(ctypes.c_ubyte)()
+
+    output = (ctypes.c_ubyte * 32)()
+    try:
+        code = library.ithute_rust_hmac_sha256(
+            key_pointer,
+            len(key),
+            data_pointer,
+            len(data),
+            output,
+        )
+    except (OSError, ValueError, ctypes.ArgumentError):
+        return python_hmac_sha256(key, data), "python-fallback"
+    if code != 0:
+        return python_hmac_sha256(key, data), "python-fallback"
+    return bytes(output).hex(), "rust"
+
+
 def _python_fnv1a64(data: bytes) -> int:
     value = 14695981039346656037
     for byte in data:
@@ -379,6 +428,104 @@ def network_probe(targets: list[dict], concurrency: int = 16) -> tuple[dict, str
     except (httpx.HTTPError, ValueError, TypeError):
         body = python_network_probe(payload["targets"], payload["concurrency"])
         return body, "python-fallback"
+
+
+def _python_dns_query(query: dict) -> dict:
+    query_id = str(query.get("id") or "")
+    name = str(query.get("name") or "").strip()
+    rtype = str(query.get("type") or "").strip().upper()
+    values: list[str] = []
+    error = ""
+    try:
+        if rtype == "PTR":
+            reverse_name = dns.reversename.from_address(name)
+            answers = dns.resolver.resolve(reverse_name, "PTR", lifetime=5)
+            values = [str(answer.target).rstrip(".").lower() for answer in answers]
+        else:
+            answers = dns.resolver.resolve(name, rtype, lifetime=5)
+            if rtype == "CNAME":
+                values = [str(answer.target).rstrip(".").lower() for answer in answers]
+            elif rtype == "MX":
+                values = [
+                    f"{int(answer.preference)} {str(answer.exchange).rstrip('.').lower()}"
+                    for answer in answers
+                ]
+            elif rtype == "NS":
+                values = [str(answer.target).rstrip(".").lower() for answer in answers]
+            elif rtype == "TXT":
+                rows: list[str] = []
+                for answer in answers:
+                    parts = getattr(answer, "strings", None)
+                    if parts is not None:
+                        rows.append("".join(part.decode() if isinstance(part, bytes) else str(part) for part in parts))
+                    else:
+                        rows.append(str(answer).strip().strip('"'))
+                values = rows
+            else:
+                values = [str(answer).strip().rstrip(".").lower() for answer in answers]
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+        error = "not_found"
+    except (dns.resolver.NoNameservers, dns.exception.Timeout, OSError, ValueError):
+        error = "lookup_failed"
+    return {
+        "id": query_id,
+        "name": name,
+        "type": rtype,
+        "values": values,
+        **({"error": error} if error else {}),
+    }
+
+
+def python_dns_lookup(queries: list[dict], concurrency: int = 16) -> dict:
+    bounded = queries[:64]
+    workers = max(1, min(int(concurrency or 16), 32))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(_python_dns_query, bounded))
+    return {"engine": "python-fallback", "checked": len(results), "results": results}
+
+
+def dns_lookup(queries: list[dict], concurrency: int = 16) -> tuple[dict, str]:
+    """Resolve bounded DNS batches in Go with dnspython as the compatibility fallback."""
+    if not queries:
+        return {"engine": "python-fallback", "checked": 0, "results": []}, "python-fallback"
+    payload = {
+        "queries": queries[:64],
+        "concurrency": max(1, min(int(concurrency or 16), 32)),
+    }
+    try:
+        with httpx.Client(timeout=max(ENGINE_HTTP_TIMEOUT_SECONDS, 6.0), trust_env=False) as client:
+            response = client.post(f"{GO_WORKER_URL}/v1/dns/lookup", json=payload)
+            response.raise_for_status()
+            body = response.json()
+        results = body.get("results") if isinstance(body, dict) else None
+        if body.get("engine") != "go" or not isinstance(results, list):
+            raise ValueError("invalid Go DNS response")
+        if int(body.get("checked") or -1) != len(results):
+            raise ValueError("invalid Go DNS result count")
+        return body, "go"
+    except (httpx.HTTPError, ValueError, TypeError):
+        return python_dns_lookup(payload["queries"], payload["concurrency"]), "python-fallback"
+
+
+def go_origin_probe(payload: dict) -> tuple[dict | None, str]:
+    """Run the already policy-vetted public origin probe in Go.
+
+    The caller remains responsible for URL parsing and SSRF/public-address policy.
+    Returning None means the caller should execute its established Python fallback.
+    """
+    try:
+        with httpx.Client(timeout=max(ENGINE_HTTP_TIMEOUT_SECONDS, 35.0), trust_env=False) as client:
+            response = client.post(f"{GO_WORKER_URL}/v1/network/origin", json=payload)
+            response.raise_for_status()
+            body = response.json()
+        if not isinstance(body, dict) or body.get("engine") != "go":
+            raise ValueError("invalid Go origin probe response")
+        required = {"healthy", "resolved_ip", "status_code", "latency_ms", "error"}
+        if any(key not in body for key in required):
+            raise ValueError("invalid Go origin probe shape")
+        return body, "go"
+    except (httpx.HTTPError, ValueError, TypeError):
+        return None, "python-fallback"
 
 
 def _xml_local_name(tag: str) -> str:
@@ -515,7 +662,7 @@ def engine_status() -> dict:
                 "available": rust_available,
                 "mode": "native",
                 "library": str(RUST_LIBRARY),
-                "capabilities": ["byte-stats", "mime-prescan", "sha256"] if rust_available else [],
+                "capabilities": ["byte-stats", "mime-prescan", "sha256", "hmac-sha256"] if rust_available else [],
                 "fallback": "python",
             },
             "go": go,

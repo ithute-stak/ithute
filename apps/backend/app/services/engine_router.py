@@ -20,6 +20,7 @@ _BINARY_OPERATIONS: dict[str, BinaryHandler] = {
     "mail.byte_stats": engine_runtime.byte_stats,
     "mail.mime_scan": engine_runtime.mime_scan,
     "mail.sha256": engine_runtime.sha256_digest,
+    "crypto.sha256": engine_runtime.sha256_digest,
     "native.fingerprint": engine_runtime.fast_fingerprint,
     "native.blob_profile": engine_runtime.blob_profile,
 }
@@ -29,9 +30,13 @@ PREFERRED_ENGINES: dict[str, str] = {
     "mail.byte_stats": "rust",
     "mail.mime_scan": "rust",
     "mail.sha256": "rust",
+    "crypto.sha256": "rust",
+    "crypto.hmac_sha256": "rust",
     "native.fingerprint": "cpp",
     "native.blob_profile": "cpp",
     "network.concurrent": "go",
+    "network.dns": "go",
+    "network.origin": "go",
     "enterprise.xml": "java",
 }
 
@@ -53,6 +58,12 @@ def execute_binary(operation: str, data: bytes) -> EngineExecution:
     return EngineExecution(operation=operation, engine=engine, value=value)
 
 
+def execute_hmac_sha256(key: bytes, data: bytes) -> EngineExecution:
+    """Route integrity/signature HMAC work to Rust with Python fallback."""
+    value, engine = engine_runtime.hmac_sha256(key, data)
+    return EngineExecution(operation="crypto.hmac_sha256", engine=engine, value=value)
+
+
 def routing_status() -> dict[str, dict[str, str]]:
     return {
         operation: {
@@ -67,6 +78,18 @@ def execute_network(targets: list[dict], concurrency: int = 16) -> EngineExecuti
     """Route bounded concurrent network probes to Go with Python fallback."""
     value, engine = engine_runtime.network_probe(targets, concurrency)
     return EngineExecution(operation="network.concurrent", engine=engine, value=value)
+
+
+def execute_dns(queries: list[dict], concurrency: int = 16) -> EngineExecution:
+    """Route bounded DNS batches to Go with a Python resolver fallback."""
+    value, engine = engine_runtime.dns_lookup(queries, concurrency)
+    return EngineExecution(operation="network.dns", engine=engine, value=value)
+
+
+def execute_origin_probe(payload: dict) -> EngineExecution:
+    """Attempt an SSRF-policy-vetted origin HTTP/TLS probe in Go."""
+    value, engine = engine_runtime.go_origin_probe(payload)
+    return EngineExecution(operation="network.origin", engine=engine, value=value)
 
 
 def execute_enterprise_xml(xml_bytes: bytes) -> EngineExecution:

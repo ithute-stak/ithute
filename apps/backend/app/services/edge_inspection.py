@@ -7,6 +7,8 @@ import ssl
 import time
 from urllib.parse import urlsplit
 
+from app.services.engine_router import execute_origin_probe
+
 
 class EdgeInspectionError(ValueError):
     pass
@@ -105,6 +107,39 @@ def inspect_public_origin(url: str, health_path: str = "/", expected_status: int
     path = (base_path.rstrip("/") + probe_path) or "/"
     if parsed.query:
         path += "?" + parsed.query
+
+    execution = execute_origin_probe({
+        "scheme": parsed.scheme,
+        "hostname": hostname,
+        "target_ip": target_ip,
+        "port": port,
+        "path": path,
+        "expected_status": expected_status,
+        "timeout_ms": timeout_seconds * 1000,
+    })
+    if execution.engine == "go" and isinstance(execution.value, dict):
+        body = execution.value
+        cert_not_after = None
+        raw_not_after = body.get("certificate_not_after")
+        if raw_not_after:
+            try:
+                cert_not_after = datetime.fromisoformat(str(raw_not_after).replace("Z", "+00:00"))
+            except ValueError:
+                cert_not_after = None
+        status_value = body.get("status_code")
+        days_value = body.get("certificate_days_remaining")
+        return {
+            "healthy": bool(body.get("healthy")),
+            "resolved_ip": str(body.get("resolved_ip") or target_ip),
+            "status_code": int(status_value) if status_value is not None else None,
+            "latency_ms": max(0, int(body.get("latency_ms") or 0)),
+            "tls_version": str(body.get("tls_version")) if body.get("tls_version") else None,
+            "cipher": str(body.get("cipher")) if body.get("cipher") else None,
+            "certificate_issuer": str(body.get("certificate_issuer")) if body.get("certificate_issuer") else None,
+            "certificate_not_after": cert_not_after,
+            "certificate_days_remaining": int(days_value) if days_value is not None else None,
+            "error": str(body.get("error"))[:300] if body.get("error") else None,
+        }
 
     started = time.perf_counter()
     tls_version = None

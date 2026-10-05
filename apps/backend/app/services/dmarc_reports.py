@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import gzip
-import hashlib
 import io
 import zipfile
 from datetime import datetime, timezone
@@ -10,6 +9,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 
+from app.services.engine_router import execute_binary
 from app.services.engine_runtime import ENGINE_HTTP_TIMEOUT_SECONDS, JAVA_WORKER_URL
 
 MAX_DMARC_COMPRESSED_BYTES = 10 * 1024 * 1024
@@ -280,7 +280,7 @@ def normalized_report(result: dict, expected_domain: str) -> dict:
 
 
 def report_sha256(xml_bytes: bytes) -> str:
-    return hashlib.sha256(xml_bytes).hexdigest()
+    return str(execute_binary("crypto.sha256", xml_bytes).value)
 
 
 def epoch_datetime(value: int) -> datetime | None:
