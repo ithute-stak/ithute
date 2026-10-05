@@ -86,3 +86,62 @@ func TestOriginProbeRejectsPrivateTargetBeforeDial(t *testing.T) {
 		t.Fatal("private target should be rejected")
 	}
 }
+
+
+func TestPushBrokerQueuesAndDelivers(t *testing.T) {
+	broker := newPushBroker()
+	endpoint := "device-endpoint-secret-12345"
+	response, err := broker.deliver(pushDeliveryRequest{
+		Endpoint: endpoint,
+		DeliveryID: "delivery-1",
+		TTLSeconds: 60,
+		Notification: map[string]any{"title": "Hello"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !response.Queued || response.Engine != "go" || response.MessageID == "" {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+	select {
+	case message := <-broker.queue(endpoint):
+		if message.DeliveryID != "delivery-1" {
+			t.Fatalf("unexpected delivery id: %s", message.DeliveryID)
+		}
+		if message.Notification["title"] != "Hello" {
+			t.Fatalf("unexpected notification: %#v", message.Notification)
+		}
+	default:
+		t.Fatal("expected queued push envelope")
+	}
+}
+
+func TestPushBrokerRejectsInvalidEndpointAndTTL(t *testing.T) {
+	broker := newPushBroker()
+	if _, err := broker.deliver(pushDeliveryRequest{
+		Endpoint: "short",
+		TTLSeconds: 60,
+		Notification: map[string]any{"title": "Hello"},
+	}); err == nil {
+		t.Fatal("expected endpoint validation error")
+	}
+	if _, err := broker.deliver(pushDeliveryRequest{
+		Endpoint: "device-endpoint-secret-12345",
+		TTLSeconds: 0,
+		Notification: map[string]any{"title": "Hello"},
+	}); err == nil {
+		t.Fatal("expected ttl validation error")
+	}
+}
+
+func TestConstantTimeTokenMatch(t *testing.T) {
+	if !constantTimeTokenMatch("secret-token", "secret-token") {
+		t.Fatal("expected token match")
+	}
+	if constantTimeTokenMatch("secret-token", "wrong-token") {
+		t.Fatal("unexpected token match")
+	}
+	if constantTimeTokenMatch("", "") {
+		t.Fatal("empty configured token must never authenticate")
+	}
+}
