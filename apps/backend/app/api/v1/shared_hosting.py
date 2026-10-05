@@ -1925,48 +1925,36 @@ def report_database_operation(database_id: UUID, payload: DatabaseAgentStatus, x
     row.failure_message = None
     row.completed_at = now
 
-    # Automatic provisioning can create a project-scoped database before the
-    # hosting agent knows its final internal host. Once provisioning completes,
-    # reconcile connection metadata into the existing encrypted environment
-    # store so the next application deployment receives usable credentials.
-    if row.project_id and row.status == "ready" and row.internal_host:
-        try:
-            password = decrypt_secret(row.encrypted_password)
-        except ValueError:
-            password = None
-        values = {
-            "DATABASE_HOST": (row.internal_host, False),
-            "DATABASE_PORT": (str(row.internal_port), False),
-            "DATABASE_NAME": (row.database_name, False),
-            "DATABASE_USER": (row.username, True),
-        }
-        if password is not None:
-            scheme = "postgresql" if row.engine == "postgresql" else "mysql"
-            values["DATABASE_PASSWORD"] = (password, True)
-            values["DATABASE_URL"] = (
-                f"{scheme}://{row.username}:{password}@{row.internal_host}:{row.internal_port}/{row.database_name}",
-                True,
+    # Keep application connection metadata on the stable gateway endpoint when
+    # this PostgreSQL database belongs to a routed replication group.
+    connection_host = row.internal_host
+    connection_port = row.internal_port
+    if row.engine == "postgresql":
+        group_id = db.scalar(
+            select(HostingPostgresReplicationMember.group_id).where(
+                HostingPostgresReplicationMember.database_id == row.id
             )
-        for key, (value, secret) in values.items():
-            env = db.scalar(select(HostingEnvironmentVariable).where(
-                HostingEnvironmentVariable.project_id == row.project_id,
-                HostingEnvironmentVariable.key == key,
-            ))
-            encrypted = encrypt_secret(value)
-            if env is None:
-                env = HostingEnvironmentVariable(
-                    project_id=row.project_id,
-                    key=key,
-                    encrypted_value=encrypted,
-                    is_secret=secret,
-                    created_by_user_id=row.created_by_user_id,
-                    updated_by_user_id=row.created_by_user_id,
+        )
+        endpoint = (
+            db.scalar(
+                select(HostingPostgresEndpoint).where(
+                    HostingPostgresEndpoint.group_id == group_id,
+                    HostingPostgresEndpoint.status == "ready",
                 )
-                db.add(env)
-            else:
-                env.encrypted_value = encrypted
-                env.is_secret = secret
-                env.updated_by_user_id = row.created_by_user_id
+            )
+            if group_id is not None
+            else None
+        )
+        if endpoint is not None:
+            connection_host = endpoint.hostname
+            connection_port = endpoint.listen_port
+    if connection_host:
+        _sync_database_connection_env(
+            db,
+            row,
+            host=connection_host,
+            port=connection_port,
+        )
 
     _audit(db, None, row.tenant_id, f"hosting.database.{operation}.complete", "hosting_database", row.id, {"node_id": str(node.id), "host": row.internal_host, "port": row.internal_port})
     db.commit()
