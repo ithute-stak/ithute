@@ -64,3 +64,27 @@ def test_hardware_health_flags_nvme_failure_and_pressure():
     assert result["score"] < 50
     assert result["storage_warning_count"] >= 1
     assert result["evidence"]
+
+
+
+def test_hardware_health_flags_uncorrected_ecc_and_bmc_critical():
+    payload = _payload()
+    payload["memory_reliability"] = {
+        "available": True,
+        "corrected_errors": 4,
+        "uncorrected_errors": 1,
+        "controllers": 2,
+    }
+    payload["bmc"] = {
+        "available": True,
+        "sensor_count": 12,
+        "critical_count": 1,
+        "warning_count": 2,
+        "faulty_sensors": ["PSU1 Status"],
+    }
+    result = _health(payload)
+    assert result["status"] == "critical"
+    assert result["ecc_uncorrected_errors"] == 1
+    assert result["bmc_critical_count"] == 1
+    assert any("ECC" in item for item in result["evidence"])
+    assert any("BMC" in item for item in result["evidence"])
