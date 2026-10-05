@@ -69,3 +69,13 @@ Because histogram buckets are cumulative from loader start, the backend derives 
 Where Linux exposes EDAC memory-controller counters, the Go agent reads corrected and uncorrected ECC totals directly from sysfs. Counter deltas are fed into the per-server predictor so a rising corrected-error rate can be detected before an uncorrected memory failure occurs.
 
 Where a local BMC/IPMI interface and `ipmitool` are available, the agent runs a bounded read-only sensor query and summarizes sensor warnings, critical conditions, highest reported temperature, lowest active fan RPM and a short list of faulty sensor names. Missing EDAC/IPMI support is treated as unavailable telemetry rather than a healthy signal.
+
+
+## Operator state
+
+Hardware Intelligence keeps measurement separate from operational suppression:
+
+- A maintenance window does not make a server healthy and does not discard telemetry.
+- Health and predictive risk continue to be calculated and stored during maintenance.
+- The active window is returned to the control plane so notification workflows can suppress planned-maintenance noise.
+- Acknowledgement is tied to one immutable telemetry snapshot. A new sample is therefore unacknowledged by default, preventing an old acknowledgement from hiding a new failure.
