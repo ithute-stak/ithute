@@ -33,7 +33,6 @@ def upgrade() -> None:
         sa.CheckConstraint("method IN ('rewind','basebackup')", name="ck_pg_topology_repair_method"),
         sa.CheckConstraint("status IN ('queued','claimed','succeeded','failed')", name="ck_pg_topology_repair_status"),
         sa.CheckConstraint("attempt_count >= 0", name="ck_pg_topology_repair_attempt_count"),
-        sa.UniqueConstraint("group_id", "node_id", "status", name="uq_pg_topology_repair_group_node_status"),
     )
     op.create_index("ix_pg_topology_repairs_group", "hosting_postgres_topology_repairs", ["group_id"])
     op.create_index("ix_pg_topology_repairs_node", "hosting_postgres_topology_repairs", ["node_id"])
