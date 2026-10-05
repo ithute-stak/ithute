@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, ArrowLeft, Cpu, Database, HardDrive, MemoryStick, RefreshCw, Server, ShieldCheck } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, Box, Cpu, Database, HardDrive, MemoryStick, RefreshCw, Send, Server, ShieldCheck } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
 import { ControlShell } from "@/components/control-shell";
@@ -12,6 +12,16 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
 
 type Me = { email: string; is_platform_owner: boolean };
 type Point = { created_at: string; cpu_percent?: number | null; memory_percent?: number | null; disk_percent?: number | null; load_1m?: number | null; docker_running?: number | null; docker_total?: number | null };
+type ContainerInventory = {
+  status: string;
+  expected_count?: number;
+  running_count?: number;
+  missing_count?: number;
+  unexpected_count?: number;
+  checked_at?: string | null;
+  containers: Array<{ name?: string; image?: string; state?: string; project_id?: string | null }>;
+};
+type AgentCommand = { id: string; kind: string; status: string; error?: string | null; created_at?: string | null };
 type ServerData = {
   id: string; name: string; hostname: string; public_ip?: string | null; region: string; provider?: string | null; roles: string[]; health: string;
   thresholds: { cpu_percent: number; memory_percent: number; disk_percent: number; offline_minutes: number };
@@ -77,6 +87,8 @@ export default function InfrastructureServerDetailPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [server, setServer] = useState<ServerData | null>(null);
   const [history, setHistory] = useState<Point[]>([]);
+  const [inventory, setInventory] = useState<ContainerInventory | null>(null);
+  const [commands, setCommands] = useState<AgentCommand[]>([]);
   const [hours, setHours] = useState(24);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -84,13 +96,17 @@ export default function InfrastructureServerDetailPage() {
 
   async function load() {
     setLoading(true); setError("");
-    const [serverResponse, historyResponse] = await Promise.all([
+    const [serverResponse, historyResponse, inventoryResponse, commandsResponse] = await Promise.all([
       api(`/platform/infrastructure/servers/${serverId}`),
       api(`/platform/infrastructure/servers/${serverId}/history?hours=${hours}&limit=1000`),
+      api(`/platform/infrastructure/servers/${serverId}/container-inventory`),
+      api(`/platform/infrastructure/servers/${serverId}/commands?limit=10`),
     ]);
     if (!serverResponse.ok) { setError("Unable to load server monitoring."); setLoading(false); return; }
     setServer(await serverResponse.json());
     setHistory(historyResponse.ok ? ((await historyResponse.json()).items || []) : []);
+    setInventory(inventoryResponse.ok ? await inventoryResponse.json() : null);
+    setCommands(commandsResponse.ok ? ((await commandsResponse.json()).items || []) : []);
     setLoading(false);
   }
 
@@ -110,6 +126,17 @@ export default function InfrastructureServerDetailPage() {
     const timer = window.setInterval(() => void load(), 60000);
     return () => window.clearInterval(timer);
   }, [serverId, hours]);
+
+  async function pingAgent() {
+    setMessage(""); setError("");
+    const response = await api(`/platform/infrastructure/servers/${serverId}/commands`, {
+      method: "POST",
+      body: JSON.stringify({ kind: "agent.ping", payload: {} }),
+    });
+    if (!response.ok) { setError("Unable to queue agent ping."); return; }
+    setMessage("Structured agent ping queued. The VPS agent will claim it on its next poll.");
+    await load();
+  }
 
   async function saveThresholds(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -153,6 +180,14 @@ export default function InfrastructureServerDetailPage() {
         </section>
 
         <div className="grid gap-5 xl:grid-cols-2">
+          <section className="surface-card p-4 sm:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-black">Agent operations & container drift</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">Consumed from the VPS control-plane donor: agents claim allowlisted commands and container inventory is compared with Ithute-managed projects.</p></div><button className="btn-secondary" disabled={!server.agent.configured} onClick={() => void pingAgent()}><Send size={13}/>Ping agent</button></div>
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 text-[10px]"><div className="rounded-xl bg-[#f5f8f6] p-3"><Box size={13}/><b className="mt-2 block text-lg">{inventory?.running_count ?? "—"}</b>running</div><div className="rounded-xl bg-[#f5f8f6] p-3"><b className="block text-lg">{inventory?.expected_count ?? "—"}</b>expected</div><div className="rounded-xl bg-[#f5f8f6] p-3"><b className="block text-lg">{inventory?.missing_count ?? "—"}</b>missing</div><div className="rounded-xl bg-[#f5f8f6] p-3"><b className="block text-lg">{inventory?.unexpected_count ?? "—"}</b>unexpected</div></div>
+            <p className={"mt-3 text-[10px] font-black " + (inventory?.status === "healthy" ? "text-emerald-700" : inventory?.status === "attention" ? "text-amber-700" : "text-[var(--admin-muted)]")}>Drift status: {(inventory?.status || "awaiting agent").replaceAll("_", " ")}</p>
+            {inventory?.containers?.length ? <div className="mt-3 space-y-1">{inventory.containers.slice(0, 8).map((item, index) => <div key={(item.name || "container") + index} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#e4e9e6] px-3 py-2 text-[9px]"><span><b>{item.name || "unnamed"}</b> · {item.image || "image unknown"}</span><span className="font-bold">{item.state || "unknown"}{item.project_id ? " · managed" : ""}</span></div>)}</div> : null}
+            <div className="mt-4"><p className="text-[10px] font-black">Recent structured commands</p><div className="mt-2 flex flex-wrap gap-1.5">{commands.length ? commands.map((command) => <span key={command.id} className="rounded-full border border-[#dce5e0] bg-white px-2 py-1 text-[8px] font-black">{command.kind} · {command.status}</span>) : <span className="text-[9px] text-[var(--admin-muted)]">No agent commands yet.</span>}</div></div>
+          </section>
+
           <section className="surface-card p-4 sm:p-5"><h2 className="text-sm font-black">Service & capability health</h2><div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">{Object.entries(server.agent.capabilities || {}).map(([name, enabled]) => <div key={name} className={`rounded-xl border p-3 text-[10px] font-black ${enabled ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}><Database size={13}/><p className="mt-2 capitalize">{name}</p><p className="mt-1 text-[9px]">{enabled ? "Detected" : "Not detected"}</p></div>)}</div><div className="mt-4 rounded-xl bg-[#f5f8f6] p-3 text-[10px]"><b>Docker:</b> {server.agent.telemetry.docker?.reachable ? `online · ${server.agent.telemetry.docker.version || "version unknown"} · ${server.agent.telemetry.docker.containers_running || 0}/${server.agent.telemetry.docker.containers_total || 0} containers running` : "not reachable"}</div></section>
 
           <section className="surface-card p-4 sm:p-5"><h2 className="text-sm font-black">Alert thresholds</h2><p className="mt-1 text-[10px] text-[var(--admin-muted)]">These limits control the warnings shown for this server.</p><form onSubmit={saveThresholds} className="mt-4 grid grid-cols-2 gap-3"><label className="text-[10px] font-bold">CPU %<input name="cpu" type="number" min="50" max="100" defaultValue={server.thresholds.cpu_percent} className="input mt-1"/></label><label className="text-[10px] font-bold">RAM %<input name="memory" type="number" min="50" max="100" defaultValue={server.thresholds.memory_percent} className="input mt-1"/></label><label className="text-[10px] font-bold">Disk %<input name="disk" type="number" min="50" max="100" defaultValue={server.thresholds.disk_percent} className="input mt-1"/></label><label className="text-[10px] font-bold">Offline after minutes<input name="offline" type="number" min="2" max="1440" defaultValue={server.thresholds.offline_minutes} className="input mt-1"/></label><button className="btn-primary col-span-2">Save thresholds</button></form></section>
