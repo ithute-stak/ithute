@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     HostingDatabase,
-    HostingFailoverAttempt,
     HostingNode,
     HostingNodeAgent,
     HostingProject,
