@@ -25,6 +25,7 @@ from app.models import (
     HostingProject,
     InfrastructureAgentCommand,
     InfrastructureContainerSnapshot,
+    InfrastructureNetworkGrant,
     InfrastructureSecuritySnapshot,
     InfrastructureServer,
     InfrastructureServerAgent,
@@ -1042,6 +1043,7 @@ def infrastructure_agent_cluster_state(
     ).all()
     reachability_engine, reachability = _cluster_reachability(list(rows))
     nodes = [_cluster_node_out(db, row, self_server_id=current_server.id) for row in rows]
+    node_by_id = {str(node["server_id"]): node for node in nodes}
     for node in nodes:
         live = reachability.get(str(node["server_id"]), {"services": {}, "reachable": None, "checked": 0})
         node["reachability"] = {
@@ -1050,6 +1052,33 @@ def infrastructure_agent_cluster_state(
             "checked": live["checked"],
             "services": live["services"],
         }
+        node["communication"] = {"outbound": [], "inbound": []}
+
+    grants = db.scalars(
+        select(InfrastructureNetworkGrant)
+        .where(InfrastructureNetworkGrant.enabled.is_(True))
+        .order_by(InfrastructureNetworkGrant.created_at.asc())
+    ).all()
+    for grant in grants:
+        source_id = str(grant.source_server_id)
+        target_id = str(grant.target_server_id)
+        source_node = node_by_id.get(source_id)
+        target_node = node_by_id.get(target_id)
+        if source_node is None or target_node is None:
+            continue
+        flow = {
+            "peer_server_id": target_id,
+            "peer_name": target_node["name"],
+            "protocol": grant.protocol,
+            "port": grant.port,
+            "service": grant.service,
+        }
+        source_node["communication"]["outbound"].append(flow)
+        target_node["communication"]["inbound"].append({
+            **flow,
+            "peer_server_id": source_id,
+            "peer_name": source_node["name"],
+        })
     generated_at = datetime.now(timezone.utc).isoformat()
     unsigned = {
         "version": 1,
