@@ -265,6 +265,13 @@ def create_hosting_database(tenant_id: UUID, payload: HostingDatabaseCreate, db:
     )
     db.add(row)
     db.flush()
+    if placement["infrastructure_server_id"]:
+        sync_tenant_infrastructure_allocation(
+            db,
+            tenant_id=tenant_id,
+            server_id=UUID(placement["infrastructure_server_id"]),
+            actor_user_id=current.id,
+        )
     _audit(db, current, tenant_id, "hosting.database.create", "hosting_database", row.id, {"engine": row.engine, "database_name": row.database_name, "project_id": str(row.project_id) if row.project_id else None, "node_id": str(node.id), "storage_mb": row.storage_mb, "placement_mode": placement_mode, "placement_score": placement["score"], "placement_server_id": placement["infrastructure_server_id"]})
     db.commit()
     db.refresh(row)
