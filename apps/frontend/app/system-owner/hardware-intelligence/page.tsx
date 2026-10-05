@@ -32,6 +32,10 @@ type FleetItem = {
   io_pressure_avg10?: number | null;
   filesystem_used_percent?: number | null;
   storage_warning_count: number;
+  ecc_corrected_errors?: number;
+  ecc_uncorrected_errors?: number;
+  bmc_critical_count?: number;
+  bmc_warning_count?: number;
   ebpf_block_latency_p50_ms?: number | null;
   ebpf_block_latency_p95_ms?: number | null;
   ebpf_block_latency_p99_ms?: number | null;
@@ -275,6 +279,16 @@ export default function HardwareIntelligencePage() {
                   <div className="rounded-xl border border-[var(--admin-line)] p-3"><Activity size={14}/><p className="mt-2 text-[8px] font-black uppercase text-[var(--admin-muted)]">Memory PSI</p><p className="mt-1 text-sm font-black">{metric(selectedServer.memory_pressure_avg10, "%")}</p></div>
                   <div className="rounded-xl border border-[var(--admin-line)] p-3"><Cpu size={14}/><p className="mt-2 text-[8px] font-black uppercase text-[var(--admin-muted)]">I/O PSI</p><p className="mt-1 text-sm font-black">{metric(selectedServer.io_pressure_avg10, "%")}</p></div>
                   <div className="rounded-xl border border-[var(--admin-line)] p-3"><HardDrive size={14}/><p className="mt-2 text-[8px] font-black uppercase text-[var(--admin-muted)]">Root used</p><p className="mt-1 text-sm font-black">{metric(selectedServer.filesystem_used_percent, "%")}</p></div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-xl border border-[var(--admin-line)] p-3">
+                    <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">ECC memory</p>
+                    <p className="mt-1 text-sm font-black">{selectedServer.ecc_uncorrected_errors ?? 0} UE · {selectedServer.ecc_corrected_errors ?? 0} CE</p>
+                  </div>
+                  <div className="rounded-xl border border-[var(--admin-line)] p-3">
+                    <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">BMC sensors</p>
+                    <p className="mt-1 text-sm font-black">{selectedServer.bmc_critical_count ?? 0} critical · {selectedServer.bmc_warning_count ?? 0} warning</p>
+                  </div>
                 </div>
                 <div className="rounded-xl border border-[var(--admin-line)] p-3">
                   <div className="flex items-center justify-between"><p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Kernel block latency</p><HardDrive size={12}/></div>
