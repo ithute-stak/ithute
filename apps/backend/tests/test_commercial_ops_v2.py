@@ -76,6 +76,7 @@ def test_annual_cycle_applies_plan_and_addon_setup_fee_once_and_renews(db, tenan
     invoice.status = "paid"
     invoice.paid_at = now
     subscription.current_period_end = now - timedelta(minutes=1)
+    invoice.period_end = subscription.current_period_end
     db.commit()
     run_billing_cycle(db, now=now)
     db.refresh(subscription)
