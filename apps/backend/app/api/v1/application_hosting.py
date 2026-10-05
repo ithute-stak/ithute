@@ -32,6 +32,7 @@ from app.models import (
 from app.services.billing import entitlement_decision, get_subscription
 from app.services.hosting_placement import rank_nodes, select_node
 from app.services.hosting_failover import failover_attempt_out, request_project_relocation
+from app.services.maintenance_drain_planner import build_maintenance_drain_plan
 
 router = APIRouter(tags=["application-hosting"])
 
@@ -327,6 +328,18 @@ def update_hosting_node(node_id: UUID, payload: HostingNodeUpdate, db: Session =
     db.commit()
     db.refresh(node)
     return _node_out(db, node)
+
+
+@router.get("/platform/hosting/nodes/{node_id}/drain-plan")
+def maintenance_drain_plan(
+    node_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    try:
+        return build_maintenance_drain_plan(db, node_id=node_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/platform/hosting/placement-preview")
