@@ -626,6 +626,13 @@ def create_hosting_project(
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Project slug or hostname is already in use") from exc
+    if placement["infrastructure_server_id"]:
+        sync_tenant_infrastructure_allocation(
+            db,
+            tenant_id=tenant_id,
+            server_id=UUID(placement["infrastructure_server_id"]),
+            actor_user_id=current.id,
+        )
     _audit(
         db,
         current,
