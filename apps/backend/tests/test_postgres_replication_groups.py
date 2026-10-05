@@ -96,6 +96,7 @@ def test_group_plan_allows_multiple_databases_to_move_as_one_cluster(db, tenant_
     standby_node = _node(db, platform_owner, "standby")
     _server(db, platform_owner, primary, provider="p1", region="r1", datacenter="dc1", physical_host="h1", segment="s1")
     _server(db, platform_owner, standby_node, provider="p2", region="r2", datacenter="dc2", physical_host="h2", segment="s2")
+    _agent(db, platform_owner, primary)
     _agent(db, platform_owner, standby_node)
 
     first = _database(db, tenant, user, primary, "one")
