@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -203,6 +204,74 @@ extern "C" int ithute_cluster_rank_candidates(
         const auto ranked = rank_placement_candidates(std::move(candidates));
         for (std::size_t index = 0; index < ranked.size(); ++index) {
             out_indices[index] = ranked[index];
+        }
+        return 0;
+    } catch (...) {
+        return 2;
+    }
+}
+
+
+extern "C" int ithute_cluster_dependency_order(
+    const char* const* node_ids,
+    std::size_t node_count,
+    const char* const* dependent_ids,
+    const char* const* dependency_ids,
+    std::size_t dependency_count,
+    std::size_t* out_indices,
+    std::size_t out_capacity
+) {
+    if (node_count == 0) {
+        return 0;
+    }
+    if (node_ids == nullptr || out_indices == nullptr || out_capacity < node_count) {
+        return 1;
+    }
+    if (dependency_count > 0 && (dependent_ids == nullptr || dependency_ids == nullptr)) {
+        return 1;
+    }
+
+    try {
+        ClusterGraph graph;
+        std::unordered_map<std::string, std::size_t> index_by_id;
+        index_by_id.reserve(node_count);
+
+        for (std::size_t index = 0; index < node_count; ++index) {
+            const auto id = safe_string(node_ids[index]);
+            if (id.empty() || index_by_id.contains(id)) {
+                return 4;
+            }
+            index_by_id.emplace(id, index);
+            Node node{};
+            node.id = id;
+            node.name = id;
+            graph.upsert_node(std::move(node));
+        }
+
+        for (std::size_t index = 0; index < dependency_count; ++index) {
+            Edge edge{
+                .source = safe_string(dependent_ids[index]),
+                .target = safe_string(dependency_ids[index]),
+                .relation = Relation::DependsOn,
+                .service = "",
+                .protocol = "",
+                .port = 0,
+            };
+            if (!graph.upsert_edge(std::move(edge))) {
+                return 4;
+            }
+        }
+
+        const auto order = graph.dependency_order();
+        if (!order.has_value()) {
+            return 3;
+        }
+        for (std::size_t index = 0; index < order->size(); ++index) {
+            const auto found = index_by_id.find((*order)[index]);
+            if (found == index_by_id.end()) {
+                return 4;
+            }
+            out_indices[index] = found->second;
         }
         return 0;
     } catch (...) {
