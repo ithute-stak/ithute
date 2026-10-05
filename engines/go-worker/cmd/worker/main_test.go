@@ -2,6 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"net"
 	"testing"
 	"time"
@@ -158,5 +162,54 @@ func TestConstantTimeTokenMatch(t *testing.T) {
 	}
 	if constantTimeTokenMatch("", "") {
 		t.Fatal("empty configured token must never authenticate")
+	}
+}
+
+
+func signRealtimeTicket(t *testing.T, secret string, payload realtimeTicket) string {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(raw)
+	return base64.RawURLEncoding.EncodeToString(raw) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func TestVerifyRealtimeTicket(t *testing.T) {
+	secret := "realtime-gateway-secret"
+	raw := signRealtimeTicket(t, secret, realtimeTicket{
+		ApplicationID: "loanhub",
+		Sub: "00000000-0000-0000-0000-000000000001",
+		DeviceKey: "device-installation-123",
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	})
+	ticket, err := verifyRealtimeTicket(raw, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ticket.ApplicationID != "loanhub" || ticket.DeviceKey != "device-installation-123" {
+		t.Fatalf("unexpected ticket: %#v", ticket)
+	}
+	if _, err := verifyRealtimeTicket(raw+"x", secret); err == nil {
+		t.Fatal("tampered ticket should fail")
+	}
+}
+
+func TestRealtimeBrokerPresenceLifecycle(t *testing.T) {
+	broker := newRealtimeBroker()
+	record := broker.register(realtimeTicket{
+		ApplicationID: "loanhub",
+		Sub: "00000000-0000-0000-0000-000000000001",
+		DeviceKey: "device-installation-123",
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	}, nil)
+	if broker.presence(record.appID, record.sub) != 1 {
+		t.Fatal("expected active presence")
+	}
+	broker.unregister(record)
+	if broker.presence(record.appID, record.sub) != 0 {
+		t.Fatal("expected presence to clear")
 	}
 }
