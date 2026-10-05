@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0087_postgres_replica_wal_telemetry"
+LATEST_MIGRATION_HEAD = "0087_pg_wal_telemetry"
 
 
 def test_alembic_has_one_consolidated_head():
