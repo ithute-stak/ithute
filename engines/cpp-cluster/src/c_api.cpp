@@ -1,10 +1,12 @@
 #include "ithute_cluster_c.h"
 #include "cluster_graph.hpp"
+#include "placement_scheduler.hpp"
 
 #include <memory>
 #include <mutex>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -12,8 +14,10 @@ using ithute::cluster::ClusterGraph;
 using ithute::cluster::Edge;
 using ithute::cluster::Node;
 using ithute::cluster::NodeStatus;
+using ithute::cluster::PlacementCandidate;
 using ithute::cluster::Relation;
 using ithute::cluster::ResourceState;
+using ithute::cluster::rank_placement_candidates;
 
 struct Handle {
     std::mutex mutex;
@@ -163,6 +167,43 @@ extern "C" int ithute_cluster_summary_read(
             .storage_total_bytes = summary.storage_total_bytes,
             .storage_used_bytes = summary.storage_used_bytes,
         };
+        return 0;
+    } catch (...) {
+        return 2;
+    }
+}
+
+extern "C" int ithute_cluster_rank_candidates(
+    const char* const* keys,
+    const double* scores,
+    const int* eligible,
+    std::size_t count,
+    std::size_t* out_indices,
+    std::size_t out_capacity
+) {
+    if (count == 0) {
+        return 0;
+    }
+    if (keys == nullptr || scores == nullptr || eligible == nullptr || out_indices == nullptr || out_capacity < count) {
+        return 1;
+    }
+
+    try {
+        std::vector<PlacementCandidate> candidates;
+        candidates.reserve(count);
+        for (std::size_t index = 0; index < count; ++index) {
+            candidates.push_back(PlacementCandidate{
+                .key = safe_string(keys[index]),
+                .score = scores[index],
+                .eligible = eligible[index] != 0,
+                .original_index = index,
+            });
+        }
+
+        const auto ranked = rank_placement_candidates(std::move(candidates));
+        for (std::size_t index = 0; index < ranked.size(); ++index) {
+            out_indices[index] = ranked[index];
+        }
         return 0;
     } catch (...) {
         return 2;

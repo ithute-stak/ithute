@@ -121,7 +121,8 @@ jobs:
           assert status["engines"]["rust"]["available"] is True
           assert status["engines"]["cpp"]["available"] is True
           assert "cluster-graph" in status["engines"]["cpp"]["capabilities"]
-          from app.services.cluster_engine import cluster_graph_analysis
+          assert "placement-priority-queue" in status["engines"]["cpp"]["capabilities"]
+          from app.services.cluster_engine import cluster_graph_analysis, rank_placement_candidates
           cluster = cluster_graph_analysis(
               [
                   {"id": "a", "name": "A", "online": True, "healthy": True, "memory_total_bytes": 8},
@@ -135,6 +136,13 @@ jobs:
           assert cluster["reachable"] is True
           assert cluster["summary"]["nodes"] == 2
           assert cluster["summary"]["edges"] == 1
+          ranked = rank_placement_candidates([
+              {"node_id": "c", "name": "Charlie", "eligible": True, "score": 20.0},
+              {"node_id": "b", "name": "Bravo", "eligible": True, "score": 10.0},
+              {"node_id": "a", "name": "Alpha", "eligible": True, "score": 10.0},
+              {"node_id": "z", "name": "Zulu", "eligible": False, "score": 1.0},
+          ])
+          assert [row["node_id"] for row in ranked] == ["a", "b", "c", "z"]
           from app.services.engine_runtime import hmac_sha256
           result = sample_native_result(b"Subject: engine\\n\\nbody")
           hmac_value, hmac_engine = hmac_sha256(b"key", b"audit")
