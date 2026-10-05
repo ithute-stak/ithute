@@ -4,11 +4,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/statvfs.h>
 #include <time.h>
+#include <unistd.h>
 
 typedef struct {
     unsigned long long user, nice, system, idle, iowait, irq, softirq, steal;
 } cpu_sample_t;
+
+typedef struct {
+    int devices;
+    unsigned long long reads_completed;
+    unsigned long long sectors_read;
+    unsigned long long writes_completed;
+    unsigned long long sectors_written;
+    unsigned long long io_ms;
+    unsigned long long weighted_io_ms;
+} block_summary_t;
 
 static int read_cpu(cpu_sample_t *out) {
     FILE *f = fopen("/proc/stat", "r");
@@ -54,6 +66,21 @@ static int read_load(double *one, double *five, double *fifteen) {
     return n == 3 ? 0 : -1;
 }
 
+static double read_pressure_avg10(const char *resource) {
+    char path[128];
+    if (snprintf(path, sizeof(path), "/proc/pressure/%s", resource) >= (int)sizeof(path)) return -1.0;
+    FILE *f = fopen(path, "r");
+    if (!f) return -1.0;
+    char line[256] = {0};
+    double avg10 = -1.0;
+    if (fgets(line, sizeof(line), f) != NULL) {
+        char *marker = strstr(line, "avg10=");
+        if (marker) (void)sscanf(marker, "avg10=%lf", &avg10);
+    }
+    fclose(f);
+    return avg10;
+}
+
 static void thermal_summary(double *max_c, int *count) {
     const char *base = "/sys/class/thermal";
     DIR *dir = opendir(base);
@@ -84,6 +111,49 @@ static void thermal_summary(double *max_c, int *count) {
     *count = seen;
 }
 
+static int ignored_block_device(const char *name) {
+    return strncmp(name, "loop", 4) == 0 || strncmp(name, "ram", 3) == 0;
+}
+
+static void block_summary(block_summary_t *out) {
+    memset(out, 0, sizeof(*out));
+    DIR *dir = opendir("/sys/block");
+    if (!dir) return;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.' || ignored_block_device(entry->d_name)) continue;
+
+        char path[512];
+        if (snprintf(path, sizeof(path), "/sys/block/%s/stat", entry->d_name) >= (int)sizeof(path)) continue;
+        FILE *f = fopen(path, "r");
+        if (!f) continue;
+
+        unsigned long long reads = 0, reads_merged = 0, sectors_read = 0, read_ms = 0;
+        unsigned long long writes = 0, writes_merged = 0, sectors_written = 0, write_ms = 0;
+        unsigned long long ios_in_progress = 0, io_ms = 0, weighted_io_ms = 0;
+        int n = fscanf(f, "%llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
+            &reads, &reads_merged, &sectors_read, &read_ms,
+            &writes, &writes_merged, &sectors_written, &write_ms,
+            &ios_in_progress, &io_ms, &weighted_io_ms);
+        fclose(f);
+
+        if (n < 11) continue;
+        out->devices++;
+        out->reads_completed += reads;
+        out->sectors_read += sectors_read;
+        out->writes_completed += writes;
+        out->sectors_written += sectors_written;
+        out->io_ms += io_ms;
+        out->weighted_io_ms += weighted_io_ms;
+    }
+    closedir(dir);
+}
+
+static int command_available(const char *a, const char *b) {
+    return (a && access(a, X_OK) == 0) || (b && access(b, X_OK) == 0);
+}
+
 int main(void) {
     cpu_sample_t cpu = {0};
     double load1 = 0, load5 = 0, load15 = 0;
@@ -101,6 +171,27 @@ int main(void) {
     int thermal_zones = 0;
     thermal_summary(&max_temp, &thermal_zones);
 
+    struct statvfs fs = {0};
+    int fs_ok = statvfs("/", &fs) == 0;
+    unsigned long long fs_total = fs_ok ? (unsigned long long)fs.f_blocks * fs.f_frsize : 0;
+    unsigned long long fs_free = fs_ok ? (unsigned long long)fs.f_bavail * fs.f_frsize : 0;
+
+    block_summary_t block = {0};
+    block_summary(&block);
+
+    double cpu_pressure = read_pressure_avg10("cpu");
+    double memory_pressure = read_pressure_avg10("memory");
+    double io_pressure = read_pressure_avg10("io");
+
+    int has_hwmon = access("/sys/class/hwmon", R_OK) == 0;
+    int has_thermal = access("/sys/class/thermal", R_OK) == 0;
+    int has_edac = access("/sys/devices/system/edac", R_OK) == 0;
+    int has_ipmi = access("/dev/ipmi0", R_OK) == 0 || access("/dev/ipmi/0", R_OK) == 0;
+    int has_bpf_fs = access("/sys/fs/bpf", R_OK) == 0;
+    int has_kernel_btf = access("/sys/kernel/btf/vmlinux", R_OK) == 0;
+    int has_smartctl = command_available("/usr/sbin/smartctl", "/usr/bin/smartctl");
+    int has_nvme_cli = command_available("/usr/sbin/nvme", "/usr/bin/nvme");
+
     time_t now = time(NULL);
     printf("{");
     printf("\"schema_version\":1,");
@@ -111,7 +202,19 @@ int main(void) {
         mem_total, mem_available, swap_total, swap_free);
     printf("\"cpu\":{\"user\":%llu,\"nice\":%llu,\"system\":%llu,\"idle\":%llu,\"iowait\":%llu,\"irq\":%llu,\"softirq\":%llu,\"steal\":%llu},",
         cpu.user, cpu.nice, cpu.system, cpu.idle, cpu.iowait, cpu.irq, cpu.softirq, cpu.steal);
-    printf("\"thermal\":{\"zones_seen\":%d,\"max_celsius\":%.2f}", thermal_zones, max_temp);
+    printf("\"thermal\":{\"zones_seen\":%d,\"max_celsius\":%.2f},", thermal_zones, max_temp);
+    printf("\"pressure\":{\"cpu_avg10\":%.3f,\"memory_avg10\":%.3f,\"io_avg10\":%.3f},",
+        cpu_pressure, memory_pressure, io_pressure);
+    printf("\"filesystem\":{\"root_total_bytes\":%llu,\"root_available_bytes\":%llu},", fs_total, fs_free);
+    printf("\"block\":{\"devices\":%d,\"reads_completed\":%llu,\"sectors_read\":%llu,\"writes_completed\":%llu,\"sectors_written\":%llu,\"io_ms\":%llu,\"weighted_io_ms\":%llu},",
+        block.devices, block.reads_completed, block.sectors_read, block.writes_completed, block.sectors_written, block.io_ms, block.weighted_io_ms);
+    printf("\"capabilities\":{");
+    printf("\"hwmon\":%s,\"thermal\":%s,\"edac\":%s,\"ipmi\":%s,",
+        has_hwmon ? "true" : "false", has_thermal ? "true" : "false", has_edac ? "true" : "false", has_ipmi ? "true" : "false");
+    printf("\"bpf_fs\":%s,\"kernel_btf\":%s,\"smartctl\":%s,\"nvme_cli\":%s",
+        has_bpf_fs ? "true" : "false", has_kernel_btf ? "true" : "false",
+        has_smartctl ? "true" : "false", has_nvme_cli ? "true" : "false");
+    printf("}");
     printf("}\n");
     return 0;
 }
