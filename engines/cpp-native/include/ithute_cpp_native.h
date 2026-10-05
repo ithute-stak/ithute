@@ -16,3 +16,9 @@ extern "C" int ithute_cpp_blob_profile_scan(
     std::size_t len,
     ithute_cpp_blob_profile* out
 );
+
+extern "C" std::uint32_t ithute_cpp_route_shard(
+    const std::uint8_t* key,
+    std::size_t len,
+    std::uint32_t shard_count
+);
