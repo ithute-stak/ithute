@@ -32,6 +32,10 @@ type FleetItem = {
   io_pressure_avg10?: number | null;
   filesystem_used_percent?: number | null;
   storage_warning_count: number;
+  predictive_risk_score?: number | null;
+  predictive_state: "learning" | "stable" | "watch" | "elevated" | "high";
+  predictive_confidence?: number | null;
+  predictive_evidence: string[];
   evidence: string[];
   sampled_at?: string | null;
 };
@@ -40,6 +44,7 @@ type Fleet = {
   generated_at: string;
   total: number;
   counts: Record<string, number>;
+  predictive_counts: Record<string, number>;
   items: FleetItem[];
 };
 
@@ -57,6 +62,9 @@ type History = {
     io_pressure_avg10?: number | null;
     filesystem_used_percent?: number | null;
     storage_warning_count: number;
+    predictive_risk_score?: number | null;
+    predictive_state: string;
+    predictive_confidence?: number | null;
   }>;
 };
 
@@ -65,6 +73,14 @@ function statusTone(status: string) {
   if (status === "warning") return "border-amber-200 bg-amber-50 text-amber-800";
   if (status === "offline") return "border-slate-300 bg-slate-100 text-slate-700";
   if (status === "healthy") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  return "border-blue-200 bg-blue-50 text-blue-800";
+}
+
+function predictiveTone(state: string) {
+  if (state === "high") return "border-red-200 bg-red-50 text-red-800";
+  if (state === "elevated") return "border-orange-200 bg-orange-50 text-orange-800";
+  if (state === "watch") return "border-amber-200 bg-amber-50 text-amber-800";
+  if (state === "stable") return "border-emerald-200 bg-emerald-50 text-emerald-800";
   return "border-blue-200 bg-blue-50 text-blue-800";
 }
 
@@ -152,6 +168,7 @@ export default function HardwareIntelligencePage() {
 
   const selectedServer = useMemo(() => fleet?.items.find((item) => item.server_id === selected) || null, [fleet, selected]);
   const trend = history?.items.map((item) => item.health_score) || [];
+  const predictiveTrend = history?.items.map((item) => item.predictive_risk_score).filter((value): value is number => typeof value === "number") || [];
 
   return (
     <ControlShell title="Hardware Intelligence" subtitle="Early-warning hardware and kernel health across every Ithute-managed server">
@@ -187,6 +204,30 @@ export default function HardwareIntelligencePage() {
           ))}
         </section>
 
+        <section className="surface-card p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">Predictive baseline</p>
+              <h2 className="mt-1 text-lg font-black">Early drift detection</h2>
+              <p className="mt-1 max-w-2xl text-[10px] leading-4 text-[var(--admin-muted)]">Each server learns its own normal temperature, pressure and storage-growth behaviour before Ithute raises trend-based risk.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {[
+                ["High", fleet?.predictive_counts.high ?? 0, "high"],
+                ["Elevated", fleet?.predictive_counts.elevated ?? 0, "elevated"],
+                ["Watch", fleet?.predictive_counts.watch ?? 0, "watch"],
+                ["Stable", fleet?.predictive_counts.stable ?? 0, "stable"],
+                ["Learning", fleet?.predictive_counts.learning ?? 0, "learning"],
+              ].map(([label, value, state]) => (
+                <div key={String(label)} className={`rounded-xl border px-3 py-2 ${predictiveTone(String(state))}`}>
+                  <p className="text-[8px] font-black uppercase">{String(label)}</p>
+                  <p className="mt-1 text-lg font-black">{String(value)}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
         <section className="grid gap-4 xl:grid-cols-[1.25fr_.75fr]">
           <div className="surface-card overflow-hidden">
             <div className="border-b border-[var(--admin-line)] p-5">
@@ -199,7 +240,7 @@ export default function HardwareIntelligencePage() {
                   <div>
                     <div className="flex items-center gap-2"><span className={`rounded-full border px-2 py-0.5 text-[8px] font-black uppercase ${statusTone(item.status)}`}>{item.status}</span><p className="text-[11px] font-black">{item.name}</p></div>
                     <p className="mt-1 text-[9px] text-[var(--admin-muted)]">{item.hostname} · {item.provider || "provider not set"} · {item.region}</p>
-                    {item.evidence[0] ? <p className="mt-1 text-[9px] font-bold text-amber-700">{item.evidence[0]}</p> : null}
+                    {item.predictive_state !== "stable" ? <p className="mt-1 text-[9px] font-bold text-blue-700">Prediction: {item.predictive_state} · risk {item.predictive_risk_score ?? 0}/100</p> : null}{item.evidence[0] ? <p className="mt-1 text-[9px] font-bold text-amber-700">{item.evidence[0]}</p> : null}
                   </div>
                   <div><p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Health</p><p className="mt-1 text-lg font-black">{item.health_score ?? "—"}</p></div>
                   <div><p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Temperature</p><p className="mt-1 text-sm font-black">{metric(item.temperature_celsius, "°C")}</p></div>
@@ -219,6 +260,11 @@ export default function HardwareIntelligencePage() {
                   <p className="text-[8px] font-black uppercase">Hardware health</p>
                   <div className="mt-2 flex items-end justify-between"><p className="text-4xl font-black">{selectedServer.health_score ?? "—"}</p><p className="text-[10px] font-black uppercase">{selectedServer.status}</p></div>
                 </div>
+                <div className={`rounded-xl border p-4 ${predictiveTone(selectedServer.predictive_state)}`}>
+                  <p className="text-[8px] font-black uppercase">Predictive risk</p>
+                  <div className="mt-2 flex items-end justify-between"><p className="text-4xl font-black">{selectedServer.predictive_risk_score ?? 0}</p><p className="text-[10px] font-black uppercase">{selectedServer.predictive_state}</p></div>
+                  <p className="mt-2 text-[9px] font-bold">Confidence {metric(selectedServer.predictive_confidence ? selectedServer.predictive_confidence * 100 : 0, "%")}</p>
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="rounded-xl border border-[var(--admin-line)] p-3"><Thermometer size={14}/><p className="mt-2 text-[8px] font-black uppercase text-[var(--admin-muted)]">Temperature</p><p className="mt-1 text-sm font-black">{metric(selectedServer.temperature_celsius, "°C")}</p></div>
                   <div className="rounded-xl border border-[var(--admin-line)] p-3"><Activity size={14}/><p className="mt-2 text-[8px] font-black uppercase text-[var(--admin-muted)]">Memory PSI</p><p className="mt-1 text-sm font-black">{metric(selectedServer.memory_pressure_avg10, "%")}</p></div>
@@ -228,6 +274,8 @@ export default function HardwareIntelligencePage() {
                 <div className="rounded-xl border border-[var(--admin-line)] p-3">
                   <div className="flex items-center justify-between"><p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">24-hour health trend</p>{historyLoading ? <RefreshCw size={12} className="animate-spin"/> : <Gauge size={12}/>}</div>
                   <div className="mt-2 text-[#18524d]"><Sparkline values={trend} /></div>
+                  <div className="mt-3 flex items-center justify-between"><p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Predictive risk trend</p><span className="text-[8px] font-bold text-[var(--admin-muted)]">0–100</span></div>
+                  <div className="mt-2 text-amber-700"><Sparkline values={predictiveTrend} /></div>
                 </div>
               </div>
             ) : null}
@@ -235,14 +283,24 @@ export default function HardwareIntelligencePage() {
         </section>
 
         {selectedServer ? (
-          <section className="surface-card p-5">
-            <p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">Evidence</p>
-            <h2 className="mt-1 text-lg font-black">Why Ithute assigned this status</h2>
-            <div className="mt-4 grid gap-2 md:grid-cols-2">
-              {selectedServer.evidence.map((item, index) => <div key={`${item}-${index}`} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[10px] font-bold text-amber-800">{item}</div>)}
-              {!selectedServer.evidence.length ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-[10px] font-bold text-emerald-700">No active hardware warning evidence for this server.</div> : null}
-            </div>
-          </section>
+          <>
+            <section className="surface-card p-5">
+              <p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">Predictive evidence</p>
+              <h2 className="mt-1 text-lg font-black">What is drifting from this server&apos;s baseline</h2>
+              <div className="mt-4 grid gap-2 md:grid-cols-2">
+                {selectedServer.predictive_evidence.map((item, index) => <div key={`prediction-${item}-${index}`} className={`rounded-xl border p-3 text-[10px] font-bold ${predictiveTone(selectedServer.predictive_state)}`}>{item}</div>)}
+                {!selectedServer.predictive_evidence.length ? <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-[10px] font-bold text-blue-700">Ithute is still learning this server&apos;s normal operating baseline.</div> : null}
+              </div>
+            </section>
+            <section className="surface-card p-5">
+              <p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">Threshold evidence</p>
+              <h2 className="mt-1 text-lg font-black">Why Ithute assigned the current health status</h2>
+              <div className="mt-4 grid gap-2 md:grid-cols-2">
+                {selectedServer.evidence.map((item, index) => <div key={`${item}-${index}`} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[10px] font-bold text-amber-800">{item}</div>)}
+                {!selectedServer.evidence.length ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-[10px] font-bold text-emerald-700">No active threshold-based hardware warning evidence for this server.</div> : null}
+              </div>
+            </section>
+          </>
         ) : null}
       </div>
     </ControlShell>
