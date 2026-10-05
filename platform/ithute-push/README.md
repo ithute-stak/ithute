@@ -6,7 +6,7 @@ The service is designed around one important platform rule:
 
 > Every Ithute product keeps its own business database, while identity is centralized in !thute Auth and device-notification delivery is centralized in !thute Push.
 
-For the current v1 release, Android is the production target. Firebase Cloud Messaging (FCM) is used only as the Android last-mile transport. Firebase does **not** own Ithute identity, user data, product data, notification policy, delivery history or business workflows.
+Android remains the first production target, but Push is now provider-independent. Firebase Cloud Messaging (FCM) remains available as a backward-compatible Android last-mile transport while Ithute introduces its own Go delivery gateway. Firebase does **not** own Ithute identity, user data, product data, notification policy, delivery history or business workflows.
 
 This document is the authoritative implementation/status guide for the current Android-first Push rollout and the Mailbox realtime mail-event integration.
 
@@ -16,7 +16,7 @@ This document is the authoritative implementation/status guide for the current A
 
 ### Overall status
 
-The central Push backend is substantially implemented and ready for an Android-first production rollout once the required Firebase project/credentials, server configuration and Android app integration are supplied.
+The central Push backend is substantially implemented. Existing Android clients can continue to use FCM, while new clients can register an additional `ithute` transport endpoint as the self-hosted delivery path comes online.
 
 The Mailbox realtime event stream is also implemented in the same release branch and provides WebSocket + Server-Sent Events (SSE) delivery to the webmail UI.
 
@@ -27,7 +27,7 @@ The Mailbox realtime event stream is also implemented in the same release branch
 | Central !thute Push API | Implemented | FastAPI service with !thute Auth integration |
 | Push PostgreSQL database | Implemented | Dedicated `ithute_push` database |
 | Device registration | Implemented | Per central user + per product + per installation |
-| FCM Android delivery | Implemented server-side | Requires real Firebase credentials and Android client SDK setup |
+| FCM Android delivery | Implemented fallback | Preserved for Android background delivery where native OS integration remains stronger |
 | Android notification sound/channel support | Implemented server contract | Android app must create matching high-importance channel |
 | FCM token refresh support | Implemented API contract | Android app must call registration when token changes |
 | Push retries/backoff | Implemented | Worker retries transient provider errors |
@@ -149,6 +149,29 @@ Product backend
 ```
 
 ---
+
+
+## Provider independence
+
+A single installation may register more than one transport. The endpoint identity is now:
+
+```text
+central user (sub)
++ product client
++ installation (device_key)
++ provider
+```
+
+For Android this allows the same installation to keep both:
+
+```text
+provider=ithute  -> Ithute-owned Go delivery gateway
+provider=fcm     -> FCM fallback
+```
+
+Existing Android clients that omit `provider` continue to map to FCM for backward compatibility. New clients explicitly register `provider=ithute` when the Ithute transport is available. Removing or disabling one transport does not require removing the other.
+
+The intended routing policy is Ithute-first where reliable, with FCM retained only as a native Android last-mile fallback rather than the platform foundation.
 
 ## 4. Authentication model
 
