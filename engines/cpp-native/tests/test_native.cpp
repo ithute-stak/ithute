@@ -9,6 +9,12 @@ int main() {
     assert(first != 0);
     assert(first == second);
 
+    const auto shard_a = ithute_cpp_route_shard(value, sizeof(value), 32);
+    const auto shard_b = ithute_cpp_route_shard(value, sizeof(value), 32);
+    assert(shard_a < 32);
+    assert(shard_a == shard_b);
+    assert(ithute_cpp_route_shard(value, sizeof(value), 0) == 0);
+
     const std::uint8_t payload[] = {'A', 0x00, 0x01, 0x09, 0x0A, 0x0D, 0x80, 0xFF};
     ithute_cpp_blob_profile profile{};
     assert(ithute_cpp_blob_profile_scan(payload, sizeof(payload), &profile) == 0);
