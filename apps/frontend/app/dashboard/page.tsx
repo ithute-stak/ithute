@@ -4,8 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ControlCentreOverview } from "@/components/control-centre-overview";
 import { ControlCentreExtras, type ControlCentreAudit } from "@/components/control-centre-extras";
-
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
+import { apiFetch, PLATFORM_API_URL } from "@/lib/platform-api";
 
 type User = {
   email: string;
@@ -29,25 +28,7 @@ type Domain = {
 type Health = "good" | "bad" | "warn";
 
 async function api(path: string) {
-  let response = await fetch(`${API}${path}`, {
-    credentials: "include",
-    cache: "no-store",
-  });
-
-  if (response.status === 401) {
-    const refresh = await fetch(`${API}/auth/refresh`, {
-      method: "POST",
-      credentials: "include",
-    });
-    if (refresh.ok) {
-      response = await fetch(`${API}${path}`, {
-        credentials: "include",
-        cache: "no-store",
-      });
-    }
-  }
-
-  return response;
+  return apiFetch(path, { cache: "no-store" });
 }
 
 export default function Dashboard() {
@@ -119,7 +100,7 @@ export default function Dashboard() {
         if (auditResponse?.ok) setAudit(await auditResponse.json());
 
         try {
-          const healthResponse = await fetch(`${API.replace(/\/api\/v1$/, "")}/health/ready`, {
+          const healthResponse = await fetch(`${PLATFORM_API_URL.replace(/\/api\/v1$/, "")}/health/ready`, {
             cache: "no-store",
           });
           setHealth(healthResponse.ok ? "good" : "bad");
