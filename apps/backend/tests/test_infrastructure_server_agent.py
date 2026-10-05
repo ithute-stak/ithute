@@ -141,6 +141,10 @@ def test_cluster_awareness_contract_exists_and_remains_read_only():
     assert "_cluster_reachability" in api
     assert "execute_network(targets" in api
     assert '"reachability_engine"' in api
+    assert '"communication"' in api
+    assert '"outbound"' in api
+    assert '"inbound"' in api
+    assert "InfrastructureNetworkGrant" in api
     assert "execute_hmac_sha256" in api
     assert '"signature_hmac_sha256"' in api
     assert "token_hint" not in api[api.index("def _cluster_node_out"):api.index('@router.post("/servers/{server_id}/agent-token")')]
