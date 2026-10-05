@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BPF_OBJECT="${ITHUTE_EBPF_OBJECT:-/opt/ithute/hardware-intelligence/ithute_observer.bpf.o}"
+PIN_ROOT="${ITHUTE_EBPF_PIN_ROOT:-/sys/fs/bpf/ithute_hardware}"
+RUN_DIR="${ITHUTE_EBPF_RUN_DIR:-/run/ithute-hardware}"
+SNAPSHOT="${ITHUTE_EBPF_SNAPSHOT:-${RUN_DIR}/ebpf.json}"
+
+die() {
+  printf 'ithute-ebpf-loader: %s\n' "$*" >&2
+  exit 2
+}
+
+require_root() {
+  [ "$(id -u)" -eq 0 ] || die "this command must run as root or an equivalently constrained systemd service"
+}
+
+require_bpftool() {
+  command -v bpftool >/dev/null 2>&1 || die "bpftool is required"
+}
+
+ensure_kernel_support() {
+  [ -r /sys/kernel/btf/vmlinux ] || die "kernel BTF is unavailable"
+  [ -d /sys/fs/bpf ] || die "BPF filesystem is unavailable"
+}
+
+start_programs() {
+  require_root
+  require_bpftool
+  ensure_kernel_support
+  [ -r "$BPF_OBJECT" ] || die "BPF object not found: $BPF_OBJECT"
+
+  install -d -m 0755 "$PIN_ROOT" "$PIN_ROOT/programs" "$PIN_ROOT/maps" "$RUN_DIR"
+
+  # Remove only Ithute-owned pins. Never mutate unrelated host BPF state.
+  find "$PIN_ROOT/programs" -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
+  find "$PIN_ROOT/maps" -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
+
+  bpftool prog loadall "$BPF_OBJECT" "$PIN_ROOT/programs" pinmaps "$PIN_ROOT/maps" autoattach
+  snapshot
+}
+
+snapshot() {
+  require_root
+  require_bpftool
+  install -d -m 0755 "$RUN_DIR"
+
+  local map_path="$PIN_ROOT/maps/event_counters"
+  if [ ! -e "$map_path" ]; then
+    printf '%s\n' '{"available":false,"reason":"event_counters map is not pinned"}' > "${SNAPSHOT}.tmp"
+  else
+    local raw
+    raw="$(bpftool -j map dump pinned "$map_path" 2>/dev/null || printf '[]')"
+    python3 - "$raw" > "${SNAPSHOT}.tmp" <<'PY'
+import json
+import sys
+import time
+
+try:
+    rows = json.loads(sys.argv[1])
+except Exception:
+    rows = []
+
+totals = [0, 0, 0, 0]
+for row in rows if isinstance(rows, list) else []:
+    key = row.get("key")
+    values = row.get("values")
+    if not isinstance(key, list) or len(key) < 4 or not isinstance(values, list):
+        continue
+    idx = int.from_bytes(bytes(key[:4]), "little")
+    if not 0 <= idx < len(totals):
+        continue
+    total = 0
+    for item in values:
+        value = item.get("value") if isinstance(item, dict) else None
+        if isinstance(value, list):
+            total += int.from_bytes(bytes(value[:8]), "little")
+    totals[idx] = total
+
+print(json.dumps({
+    "available": True,
+    "sampled_at_unix": int(time.time()),
+    "block_requests_issued": totals[0],
+    "block_requests_completed": totals[1],
+    "process_exits": totals[2],
+    "oom_victims": totals[3],
+}, separators=(",", ":")))
+PY
+  fi
+
+  chown root:root "${SNAPSHOT}.tmp"
+  chmod 0644 "${SNAPSHOT}.tmp"
+  mv -f "${SNAPSHOT}.tmp" "$SNAPSHOT"
+}
+
+status_programs() {
+  require_bpftool
+  printf 'object=%s\npin_root=%s\nsnapshot=%s\n' "$BPF_OBJECT" "$PIN_ROOT" "$SNAPSHOT"
+  if [ -e "$PIN_ROOT/maps/event_counters" ]; then
+    printf 'state=loaded\n'
+    bpftool prog show pinned "$PIN_ROOT/programs/ithute_block_issue" 2>/dev/null || true
+  else
+    printf 'state=not-loaded\n'
+  fi
+}
+
+stop_programs() {
+  require_root
+  # Detaching happens when pinned auto-attached links/programs are removed.
+  # Scope deletion strictly to Ithute's own pin tree.
+  if [ -d "$PIN_ROOT" ]; then
+    find "$PIN_ROOT" -depth -type f -delete 2>/dev/null || true
+    find "$PIN_ROOT" -depth -type d -empty -delete 2>/dev/null || true
+  fi
+  rm -f "$SNAPSHOT"
+}
+
+case "${1:-}" in
+  start) start_programs ;;
+  snapshot) snapshot ;;
+  status) status_programs ;;
+  stop) stop_programs ;;
+  *) die "usage: $0 {start|snapshot|status|stop}" ;;
+esac
