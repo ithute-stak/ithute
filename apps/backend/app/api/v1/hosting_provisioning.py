@@ -294,7 +294,7 @@ def provision_project(
         ))
         if duplicate is not None:
             raise HTTPException(status_code=409, detail="A database with this name and engine already exists")
-        node, _ = select_node(
+        node, database_placement = select_node(
             db,
             workload="database",
             storage_mb=payload.database_storage_mb,
@@ -321,11 +321,11 @@ def provision_project(
         )
         db.add(database)
         db.flush()
-        if placement["infrastructure_server_id"]:
+        if database_placement["infrastructure_server_id"]:
             sync_tenant_infrastructure_allocation(
                 db,
                 tenant_id=tenant_id,
-                server_id=UUID(placement["infrastructure_server_id"]),
+                server_id=UUID(database_placement["infrastructure_server_id"]),
                 actor_user_id=current.id,
             )
         workflow.database_id = database.id
