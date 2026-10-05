@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_platform_owner, require_tenant_permission
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
+from app.services.resource_manager import node_resource_snapshot, release_reservation, reserve_capacity
 from app.models import (
     AuditLog,
     HostingDeployment,
@@ -26,6 +27,7 @@ from app.models import (
     HostingNodeBootstrap,
     HostingNodeHealthState,
     HostingProject,
+    HostingResourceReservation,
     InfrastructureServer,
     InfrastructureServerAgent,
     InfrastructureWireGuardPeer,
@@ -65,6 +67,15 @@ class HostingNodeBootstrapCreate(BaseModel):
 
 class HostingNodeAutomationUpdate(BaseModel):
     enabled: bool
+
+
+class HostingResourceReservationCreate(BaseModel):
+    cpu_millicores: int = Field(default=0, ge=0)
+    memory_mb: int = Field(default=0, ge=0)
+    storage_mb: int = Field(default=0, ge=0)
+    expires_minutes: int = Field(default=15, ge=1, le=1440)
+    purpose: str = Field(default="placement", min_length=1, max_length=80)
+    project_id: UUID | None = None
 
 
 class AgentStatusUpdate(BaseModel):
@@ -261,6 +272,108 @@ def _agent_from_token(db: Session, token: str | None) -> tuple[HostingNodeAgent,
     if node is None or node.status == "offline":
         raise HTTPException(status_code=403, detail="Hosting node is unavailable")
     return agent, node
+
+
+@router.get("/platform/hosting/nodes/{node_id}/resources")
+def hosting_node_resources(
+    node_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    node = db.get(HostingNode, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Hosting node not found")
+    snapshot = node_resource_snapshot(db, node)
+    db.commit()
+    return snapshot
+
+
+@router.post("/platform/hosting/nodes/{node_id}/resource-reservations", status_code=201)
+def create_resource_reservation(
+    node_id: UUID,
+    payload: HostingResourceReservationCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    project = None
+    if payload.project_id is not None:
+        project = db.get(HostingProject, payload.project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Hosted project not found")
+        if project.node_id is not None:
+            raise HTTPException(status_code=409, detail="Project is already assigned and its resources are counted as allocated")
+
+    try:
+        reservation = reserve_capacity(
+            db,
+            node_id=node_id,
+            cpu_millicores=payload.cpu_millicores,
+            memory_mb=payload.memory_mb,
+            storage_mb=payload.storage_mb,
+            expires_at=_now() + timedelta(minutes=payload.expires_minutes),
+            created_by_user_id=current.id,
+            project_id=payload.project_id,
+            purpose=payload.purpose,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message == "hosting node not found":
+            raise HTTPException(status_code=404, detail="Hosting node not found") from exc
+        raise HTTPException(status_code=409, detail=message) from exc
+
+    _audit(
+        db,
+        current,
+        "hosting.resource_reservation.create",
+        "hosting_resource_reservation",
+        str(reservation.id),
+        metadata={
+            "node_id": str(node_id),
+            "project_id": str(payload.project_id) if payload.project_id else None,
+            "cpu_millicores": reservation.cpu_millicores,
+            "memory_mb": reservation.memory_mb,
+            "storage_mb": reservation.storage_mb,
+            "expires_at": reservation.expires_at.isoformat(),
+            "purpose": reservation.purpose,
+        },
+    )
+    db.commit()
+    return {
+        "id": str(reservation.id),
+        "node_id": str(reservation.node_id),
+        "project_id": str(reservation.project_id) if reservation.project_id else None,
+        "purpose": reservation.purpose,
+        "cpu_millicores": reservation.cpu_millicores,
+        "memory_mb": reservation.memory_mb,
+        "storage_mb": reservation.storage_mb,
+        "status": reservation.status,
+        "expires_at": reservation.expires_at.isoformat(),
+    }
+
+
+@router.post("/platform/hosting/resource-reservations/{reservation_id}/release")
+def release_resource_reservation(
+    reservation_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    reservation = release_reservation(db, reservation_id)
+    if reservation is None:
+        raise HTTPException(status_code=404, detail="Resource reservation not found")
+    _audit(
+        db,
+        current,
+        "hosting.resource_reservation.release",
+        "hosting_resource_reservation",
+        str(reservation.id),
+        metadata={"node_id": str(reservation.node_id), "status": reservation.status},
+    )
+    db.commit()
+    return {
+        "id": str(reservation.id),
+        "status": reservation.status,
+        "released_at": reservation.released_at.isoformat() if reservation.released_at else None,
+    }
 
 
 @router.post("/platform/hosting/nodes/{node_id}/bootstrap")
