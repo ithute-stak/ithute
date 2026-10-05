@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from app.config import Settings
 from app.crypto import EndpointCipher, endpoint_hash
 from app.main import clean_idempotency_key, message_fingerprint, provider_for
+from app.policy import python_transport_order
 from app.providers import _ttl_seconds
 from app.schemas import DelegatedMessageRequest, DeliveryAckRequest, MessageRequest
 
@@ -36,6 +37,20 @@ def test_provider_mapping() -> None:
     assert provider_for("ios") == "apns"
     assert provider_for("web") == "webpush"
 
+
+
+
+def test_android_transport_policy_prefers_ithute_before_fcm() -> None:
+    assert python_transport_order("android", {"ithute", "fcm"}) == ["ithute", "fcm"]
+    assert python_transport_order("android", {"fcm"}) == ["fcm"]
+
+
+def test_online_transport_policy_prefers_realtime() -> None:
+    assert python_transport_order("android", {"ithute", "fcm"}, online=True) == [
+        "realtime",
+        "ithute",
+        "fcm",
+    ]
 
 def test_endpoint_encryption_roundtrip() -> None:
     cipher = EndpointCipher(_key())
