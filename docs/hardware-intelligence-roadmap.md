@@ -42,7 +42,7 @@ C hardware probe + eBPF kernel signals -> Rust validation/hardening -> Go long-r
 - [x] Add first trend/anomaly features for temperature, memory pressure, I/O pressure and filesystem growth.
 - [x] Add block-I/O busy/queue-time proxies, SMART/NVMe media-error growth, CPU steal/iowait and network error/TCP retransmission deltas.
 - [x] Feed privilege-separated eBPF block request, process-exit and OOM counters into prediction.
-- [ ] Replace block timing proxies with eBPF request-latency histograms.
+- [x] Add eBPF request issue/completion correlation with block-latency histograms and p50/p95/p99 percentile estimates.
 - [ ] Train and validate failure-risk scoring against historical incidents.
 - [ ] Require confidence plus evidence before presenting a predictive warning.
 - [ ] Track model version, false positives and operator acknowledgement.
