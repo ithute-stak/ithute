@@ -117,14 +117,21 @@ def postgres_physical_replication_capabilities() -> dict[str, Any]:
     }
     if configured:
         try:
-            recovery, replay_lsn, lag_seconds = base.psql(
+            recovery, receive_lsn, replay_lsn, backlog_bytes, replay_age, receiver_status = base.psql(
                 "SELECT pg_is_in_recovery()::text || '|' || "
+                "COALESCE(pg_last_wal_receive_lsn()::text,'') || '|' || "
                 "COALESCE(pg_last_wal_replay_lsn()::text,'') || '|' || "
-                "COALESCE(EXTRACT(EPOCH FROM (clock_timestamp()-pg_last_xact_replay_timestamp()))::text,'')"
-            ).split("|", 2)
+                "COALESCE(pg_wal_lsn_diff(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn())::bigint::text,'') || '|' || "
+                "COALESCE(EXTRACT(EPOCH FROM (clock_timestamp()-pg_last_xact_replay_timestamp()))::text,'') || '|' || "
+                "COALESCE((SELECT status FROM pg_stat_wal_receiver LIMIT 1),'')"
+            ).split("|", 5)
             result["in_recovery"] = recovery == "true"
+            result["receive_lsn"] = receive_lsn or None
             result["replay_lsn"] = replay_lsn or None
-            result["replay_lag_seconds"] = float(lag_seconds) if lag_seconds else None
+            result["replay_backlog_bytes"] = int(backlog_bytes) if backlog_bytes else None
+            result["replay_age_seconds"] = float(replay_age) if replay_age else None
+            result["wal_receiver_status"] = receiver_status or None
+            result["wal_receiver_streaming"] = receiver_status == "streaming"
         except Exception as exc:
             result["status_error"] = str(exc)[:300]
     return result
