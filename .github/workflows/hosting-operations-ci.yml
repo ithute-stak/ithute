@@ -28,6 +28,7 @@ on:
       - "apps/backend/app/services/hosting_operation_scheduler.py"
       - "apps/backend/app/services/hosting_webhooks.py"
       - "apps/backend/app/services/failure_domains.py"
+      - "apps/backend/app/services/smart_failover_ranking.py"
       - "apps/backend/app/services/hosting_failover.py"
       - "apps/backend/app/services/billing.py"
       - "apps/backend/alembic/versions/*hosting*.py"
