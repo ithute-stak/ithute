@@ -17,8 +17,19 @@ on:
       - "apps/backend/tests/test_webmail_message_resilience.py"
       - "apps/backend/tests/test_platform_mail_attachments.py"
       - "apps/backend/tests/test_dmarc_reports.py"
+      - "apps/backend/tests/test_deliverability.py"
+      - "apps/backend/tests/test_domain_mail_health.py"
+      - "apps/backend/tests/test_edge_platform.py"
+      - "apps/backend/tests/test_security_hardening.py"
+      - "apps/backend/tests/test_audit_integrity.py"
       - "apps/backend/tests/test_infrastructure_monitoring.py"
       - "apps/backend/app/services/dmarc_reports.py"
+      - "apps/backend/app/services/deliverability.py"
+      - "apps/backend/app/services/domain_mail_health.py"
+      - "apps/backend/app/services/reputation.py"
+      - "apps/backend/app/services/edge_inspection.py"
+      - "apps/backend/app/services/security_audit.py"
+      - "apps/backend/app/services/audit_integrity.py"
       - "apps/backend/app/api/v1/deliverability.py"
       - "apps/backend/app/services/webmail.py"
       - "apps/backend/app/services/platform_mail_attachments.py"
@@ -106,7 +117,11 @@ jobs:
           assert status["brain"]["authoritative"] is True
           assert status["engines"]["rust"]["available"] is True
           assert status["engines"]["cpp"]["available"] is True
+          from app.services.engine_runtime import hmac_sha256
           result = sample_native_result(b"Subject: engine\\n\\nbody")
+          hmac_value, hmac_engine = hmac_sha256(b"key", b"audit")
+          assert hmac_engine == "rust"
+          assert len(hmac_value) == 64
           assert result["stats_engine"] == "rust"
           assert result["mime_engine"] == "rust"
           assert result["sha256_engine"] == "rust"
@@ -181,4 +196,15 @@ jobs:
           assert body['checked']==1
           assert body['results'][0]['id']=='self'
           assert body['results'][0]['reachable'] is True
+          PY
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            --data '{"queries":[{"id":"localhost","name":"localhost","type":"A","timeout_ms":1000}],"concurrency":2}' \
+            http://127.0.0.1:18080/v1/dns/lookup > /tmp/go-dns.json
+          python3 - <<'PY'
+          import json
+          body=json.load(open('/tmp/go-dns.json'))
+          assert body['engine']=='go'
+          assert body['checked']==1
+          assert body['results'][0]['id']=='localhost'
+          assert body['results'][0]['values']
           PY
