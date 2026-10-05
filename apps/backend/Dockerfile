@@ -5,7 +5,7 @@ COPY engines/rust-core/src ./src
 RUN cargo test --release && cargo build --release
 
 
-FROM gcc:14-bookworm AS cpp-engine-build
+FROM gcc:15-bookworm AS cpp-engine-build
 WORKDIR /src
 COPY engines/cpp-native/include ./include
 COPY engines/cpp-native/src ./src
