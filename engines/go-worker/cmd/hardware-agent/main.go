@@ -33,6 +33,34 @@ type Sample struct {
 		ZonesSeen  int     `json:"zones_seen"`
 		MaxCelsius float64 `json:"max_celsius"`
 	} `json:"thermal"`
+	Pressure struct {
+		CPUAvg10    float64 `json:"cpu_avg10"`
+		MemoryAvg10 float64 `json:"memory_avg10"`
+		IOAvg10     float64 `json:"io_avg10"`
+	} `json:"pressure,omitempty"`
+	Filesystem struct {
+		RootTotalBytes     uint64 `json:"root_total_bytes"`
+		RootAvailableBytes uint64 `json:"root_available_bytes"`
+	} `json:"filesystem,omitempty"`
+	Block struct {
+		Devices           int    `json:"devices"`
+		ReadsCompleted    uint64 `json:"reads_completed"`
+		SectorsRead       uint64 `json:"sectors_read"`
+		WritesCompleted   uint64 `json:"writes_completed"`
+		SectorsWritten    uint64 `json:"sectors_written"`
+		IOMilliseconds    uint64 `json:"io_ms"`
+		WeightedIOMillis  uint64 `json:"weighted_io_ms"`
+	} `json:"block,omitempty"`
+	Capabilities struct {
+		Hwmon     bool `json:"hwmon"`
+		Thermal   bool `json:"thermal"`
+		EDAC      bool `json:"edac"`
+		IPMI      bool `json:"ipmi"`
+		BPFFS     bool `json:"bpf_fs"`
+		KernelBTF bool `json:"kernel_btf"`
+		Smartctl  bool `json:"smartctl"`
+		NVMeCLI   bool `json:"nvme_cli"`
+	} `json:"capabilities,omitempty"`
 }
 
 func runProbe(ctx context.Context, path string) (Sample, error) {
