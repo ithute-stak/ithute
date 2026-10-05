@@ -12,13 +12,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_tenant_permission
+from app.api.deps import get_current_user, require_platform_owner, require_tenant_permission
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.db.session import get_db
-from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingProject, HostingSource, User
+from app.models import AuditLog, HostingDatabase, HostingDatabaseFailoverAttempt, HostingDatabaseReplica, HostingEnvironmentVariable, HostingNode, HostingNodeAgent, HostingPostgresReplicationGroup, HostingPostgresReplicationMember, HostingPostgresReplicationStandby, HostingProject, HostingSource, User
 from app.services.hosting_metering import database_allocation_allowed, source_allocation_allowed
 from app.services.hosting_placement import select_node, sync_tenant_infrastructure_allocation
 from app.services.database_replication import build_database_failover_plan
+from app.services.postgres_replication_groups import build_postgres_replication_group_plan
 from app.services.external_fencing import queue_external_fence_for_database_failover
 
 router = APIRouter(tags=["shared-hosting"])
@@ -40,6 +41,13 @@ _DB_IDENT_RE = re.compile(r"^[a-z][a-z0-9_]{1,47}$")
 _GIT_SCHEMES = ("https://", "ssh://", "git@")
 _BRANCH_RE = re.compile(r"^[^\x00-\x20~^:?*\\]+$")
 _DATABASE_OPERATIONS = {"provision", "rotate", "suspend", "resume", "delete"}
+
+
+class PostgresReplicationGroupCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    primary_node_id: UUID
+    database_ids: list[UUID] = Field(min_length=1, max_length=500)
+    standby_node_ids: list[UUID] = Field(default_factory=list, max_length=16)
 
 
 class HostingDatabaseCreate(BaseModel):
@@ -210,6 +218,92 @@ def runtime_catalog():
         "database_engines": ["postgresql", "mysql"],
         "custom_runtime_policy": "Applications outside managed runtimes can use a reviewed Dockerfile build path.",
     }
+
+
+@router.post("/platform/hosting/postgres-replication-groups", status_code=201)
+def create_postgres_replication_group(
+    payload: PostgresReplicationGroupCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    database_ids = list(dict.fromkeys(payload.database_ids))
+    standby_node_ids = list(dict.fromkeys(payload.standby_node_ids))
+    if payload.primary_node_id in standby_node_ids:
+        raise HTTPException(status_code=422, detail="Primary node cannot also be a standby")
+
+    primary = db.get(HostingNode, payload.primary_node_id)
+    if primary is None:
+        raise HTTPException(status_code=404, detail="Primary hosting node not found")
+
+    databases = db.scalars(
+        select(HostingDatabase).where(HostingDatabase.id.in_(database_ids))
+    ).all()
+    if len(databases) != len(database_ids):
+        raise HTTPException(status_code=404, detail="One or more PostgreSQL databases were not found")
+    if any(row.engine != "postgresql" for row in databases):
+        raise HTTPException(status_code=409, detail="Replication groups may contain PostgreSQL databases only")
+    if any(row.node_id != primary.id for row in databases):
+        raise HTTPException(status_code=409, detail="All replication-group databases must be on the selected primary node")
+
+    existing = db.scalar(
+        select(HostingPostgresReplicationMember.database_id)
+        .where(HostingPostgresReplicationMember.database_id.in_(database_ids))
+    )
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="A selected database already belongs to a PostgreSQL replication group")
+
+    standby_nodes = []
+    for node_id in standby_node_ids:
+        node = db.get(HostingNode, node_id)
+        if node is None:
+            raise HTTPException(status_code=404, detail=f"Standby hosting node {node_id} not found")
+        if node.status != "active":
+            raise HTTPException(status_code=409, detail=f"Standby hosting node {node.name} is not active")
+        standby_nodes.append(node)
+
+    group = HostingPostgresReplicationGroup(
+        name=payload.name.strip(),
+        primary_node_id=primary.id,
+        status="active",
+        created_by_user_id=current.id,
+    )
+    db.add(group)
+    db.flush()
+    for database in databases:
+        db.add(HostingPostgresReplicationMember(group_id=group.id, database_id=database.id))
+    for node in standby_nodes:
+        db.add(HostingPostgresReplicationStandby(
+            group_id=group.id,
+            node_id=node.id,
+            status="planned",
+            healthy=False,
+        ))
+    db.flush()
+    db.add(AuditLog(
+        actor_user_id=current.id,
+        action="hosting.postgres_replication_group.create",
+        resource_type="hosting_postgres_replication_group",
+        resource_id=str(group.id),
+        metadata_json=json.dumps({
+            "primary_node_id": str(primary.id),
+            "database_ids": [str(value) for value in database_ids],
+            "standby_node_ids": [str(value) for value in standby_node_ids],
+        }, sort_keys=True),
+    ))
+    db.commit()
+    return build_postgres_replication_group_plan(db, group=group)
+
+
+@router.get("/platform/hosting/postgres-replication-groups/{group_id}/failover-plan")
+def postgres_replication_group_failover_plan(
+    group_id: UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    group = db.get(HostingPostgresReplicationGroup, group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="PostgreSQL replication group not found")
+    return build_postgres_replication_group_plan(db, group=group)
 
 
 @router.get("/tenants/{tenant_id}/hosting/databases/{database_id}/failover-plan")

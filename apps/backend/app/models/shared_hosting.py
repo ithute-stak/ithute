@@ -85,6 +85,52 @@ class HostingDatabaseFailoverAttempt(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+
+class HostingPostgresReplicationGroup(Base):
+    __tablename__ = "hosting_postgres_replication_groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    primary_node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_nodes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="active", nullable=False)
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class HostingPostgresReplicationMember(Base):
+    __tablename__ = "hosting_postgres_replication_members"
+    __table_args__ = (
+        UniqueConstraint("database_id", name="uq_pg_replication_member_database"),
+    )
+
+    group_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_postgres_replication_groups.id", ondelete="CASCADE"), primary_key=True)
+    database_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_databases.id", ondelete="CASCADE"), primary_key=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class HostingPostgresReplicationStandby(Base):
+    __tablename__ = "hosting_postgres_replication_standbys"
+    __table_args__ = (
+        UniqueConstraint("group_id", "node_id", name="uq_pg_replication_standby_group_node"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    group_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_postgres_replication_groups.id", ondelete="CASCADE"), nullable=False, index=True)
+    node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosting_nodes.id", ondelete="RESTRICT"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="planned", nullable=False)
+    healthy: Mapped[bool] = mapped_column(default=False, nullable=False)
+    receive_lsn: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    replay_lsn: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    replay_backlog_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    replay_age_seconds: Mapped[float | None] = mapped_column(nullable=True)
+    in_recovery: Mapped[bool | None] = mapped_column(nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    telemetry_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class HostingSourceCredential(Base):
     __tablename__ = "hosting_source_credentials"
     __table_args__ = (UniqueConstraint("project_id", "name", name="uq_hosting_source_credential_project_name"),)
