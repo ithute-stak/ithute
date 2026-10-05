@@ -1,0 +1,137 @@
+name: Adversarial Security CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "45 3 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: adversarial-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api-dast:
+    name: Production-mode API DAST
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ithute_app
+          POSTGRES_USER: ithute_app
+          POSTGRES_PASSWORD: adversarial-app-db-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ithute_app -d ithute_app"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      ENVIRONMENT: production
+      PLATFORM_MODE: bootstrap
+      SECRET_KEY: ci-adversarial-secret-key-000000000000000000000000000
+      DKIM_ENCRYPTION_KEY: ci-adversarial-dkim-key-000000000000000000000000000
+      BILLING_WEBHOOK_SECRET: ci-adversarial-billing-secret-000000000000000000000000
+      DATABASE_URL: postgresql+psycopg://ithute_app:adversarial-app-db-password@127.0.0.1:5432/ithute_app
+      REDIS_URL: redis://127.0.0.1:6379/0
+      RSPAMD_REDIS_URL: redis://127.0.0.1:6379/1
+      FRONTEND_URL: https://ithute.co.ls
+      BOOTSTRAP_ADMIN_EMAIL: adversarial-owner@ithute.invalid
+      BOOTSTRAP_ADMIN_PASSWORD: ci-adversarial-owner-password-12345
+      COOKIE_SECURE: "true"
+      TRANSACTIONAL_SMTP_VERIFY_TLS: "true"
+      RECOVERY_OPS_TOKEN: ci-adversarial-recovery-token-000000000000000
+      SECURITY_DUAL_CONTROL_ENABLED: "true"
+      SECURITY_APPROVAL_TTL_MINUTES: "30"
+      BOOTSTRAP_PUBLIC_IP: 204.12.205.224
+      MAIL_PUBLIC_IP: 204.12.205.224
+      POWERDNS_API_KEY: adversarial-powerdns-token-6e4f2398c5a17d20
+      MAIL_OPS_TOKEN: adversarial-mail-ops-token-b6391fd406e72845
+      MAIL_NODE_TOKEN: adversarial-mail-node-token-24a7d1f95c80e362
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/backend/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install --disable-pip-version-check -r apps/backend/requirements.txt
+      - name: Upgrade disposable production schema
+        working-directory: apps/backend
+        run: alembic upgrade head
+      - name: Start production-mode API
+        working-directory: apps/backend
+        run: |
+          set -euo pipefail
+          nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 >/tmp/ithute-adversarial-api.log 2>&1 &
+          echo $! > /tmp/ithute-adversarial-api.pid
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/health/ready >/tmp/ithute-adversarial-ready.json; then
+              cat /tmp/ithute-adversarial-ready.json
+              exit 0
+            fi
+            if ! kill -0 "$(cat /tmp/ithute-adversarial-api.pid)" 2>/dev/null; then
+              cat /tmp/ithute-adversarial-api.log >&2 || true
+              exit 1
+            fi
+            sleep 1
+          done
+          cat /tmp/ithute-adversarial-api.log >&2 || true
+          exit 1
+      - name: Assert hostile HTTP boundary behavior
+        run: python scripts/security-adversarial-probe.py --base-url http://127.0.0.1:8000
+      - name: Run OWASP ZAP OpenAPI scan
+        run: |
+          set -euo pipefail
+          mkdir -p "$PWD/zap-artifacts"
+          docker run --rm --network host \
+            -v "$PWD/zap-artifacts:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-api-scan.py \
+              -t http://127.0.0.1:8000/openapi.json \
+              -f openapi \
+              -I \
+              -J /zap/wrk/report.json \
+              -x /zap/wrk/report.xml \
+              -r /zap/wrk/report.html
+      - name: Upload DAST evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: adversarial-security-${{ github.sha }}
+          path: |
+            zap-artifacts/
+            /tmp/ithute-adversarial-api.log
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Stop API candidate
+        if: always()
+        run: |
+          if test -f /tmp/ithute-adversarial-api.pid; then
+            kill "$(cat /tmp/ithute-adversarial-api.pid)" >/dev/null 2>&1 || true
+          fi
