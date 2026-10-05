@@ -26,6 +26,7 @@ def test_bootstrap_generates_node_private_key_locally():
     assert "/api/v1/hosting/agent/network/enroll" in script
     assert "systemctl enable --now wg-quick@ithute0" in script
     assert "PrivateKey = $WG_PRIVATE_KEY" in script
+    assert "ITHUTE_WIREGUARD_SUBNET=$ALLOWED_IPS" in script
     assert "private.key" not in script.split("NETWORK_JSON=", 1)[-1].split("cat > /etc/wireguard/ithute0.conf", 1)[0]
 
 
@@ -59,6 +60,7 @@ def test_private_network_is_default_full_mesh_and_service_records_are_metadata()
     firewall = (repo / "infrastructure" / "wireguard-edge" / "firewall.sh").read_text(encoding="utf-8")
     bootstrap = (repo / "infrastructure" / "wireguard-edge" / "bootstrap.sh").read_text(encoding="utf-8")
     frontend = (repo / "apps" / "frontend" / "app" / "infrastructure" / "network" / "page.tsx").read_text(encoding="utf-8")
+    node_firewall = (repo / "infrastructure" / "hosting-node" / "apply-egress-firewall.sh").read_text(encoding="utf-8")
 
     assert "class InfrastructureNetworkGrant" in model
     assert "infrastructure_network_grants" in migration
@@ -73,5 +75,8 @@ def test_private_network_is_default_full_mesh_and_service_records_are_metadata()
     assert 'iptables -A "$MESH_CHAIN" -j ACCEPT' in reconcile
     assert '--dport "$port"' not in reconcile
     assert 'net.ipv4.ip_forward=1' in bootstrap
+    assert 'MESH_INPUT_CHAIN="ITHUTE-MESH-INPUT"' in node_firewall
+    assert 'iptables -I INPUT 1 -i ithute0 -j "$MESH_INPUT_CHAIN"' in node_firewall
+    assert 'iptables -A "$MESH_INPUT_CHAIN" -s "$MESH_CIDR" -j ACCEPT' in node_firewall
     assert "Default allow · private mesh" in frontend
     assert "all enrolled nodes can already communicate" in frontend.lower()
