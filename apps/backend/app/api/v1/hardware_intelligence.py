@@ -374,6 +374,7 @@ def hardware_fleet_health(
 
     items: list[dict[str, Any]] = []
     counts = {"healthy": 0, "warning": 0, "critical": 0, "offline": 0, "unknown": 0}
+    predictive_counts = {"learning": 0, "stable": 0, "watch": 0, "elevated": 0, "high": 0}
     now = datetime.now(timezone.utc)
     for server in servers:
         agent = db.get(InfrastructureServerAgent, server.id)
@@ -399,6 +400,8 @@ def hardware_fleet_health(
             status = latest.health_status
             score = latest.health_score
         counts[status] = counts.get(status, 0) + 1
+        predictive_state = (latest.predictive_state or "learning") if latest else "learning"
+        predictive_counts[predictive_state] = predictive_counts.get(predictive_state, 0) + 1
 
         evidence: list[str] = []
         payload: dict[str, Any] = {}
@@ -426,7 +429,7 @@ def hardware_fleet_health(
             "filesystem_used_percent": latest.filesystem_used_percent if latest else None,
             "storage_warning_count": latest.storage_warning_count if latest else 0,
             "predictive_risk_score": latest.predictive_risk_score if latest else None,
-            "predictive_state": (latest.predictive_state or "learning") if latest else "learning",
+            "predictive_state": predictive_state,
             "predictive_confidence": latest.predictive_confidence if latest else None,
             "predictive_evidence": json.loads(latest.predictive_evidence_json or "[]") if latest else [],
             "evidence": evidence,
@@ -436,6 +439,7 @@ def hardware_fleet_health(
     return {
         "generated_at": now.isoformat(),
         "counts": counts,
+        "predictive_counts": predictive_counts,
         "total": len(items),
         "items": items,
     }
