@@ -27,6 +27,7 @@ on:
       - "apps/backend/app/services/hosting_metering.py"
       - "apps/backend/app/services/hosting_operation_scheduler.py"
       - "apps/backend/app/services/operation_resource_locks.py"
+      - "apps/backend/app/services/maintenance_drain_planner.py"
       - "apps/backend/app/services/hosting_webhooks.py"
       - "apps/backend/app/services/failure_domains.py"
       - "apps/backend/app/services/smart_failover_ranking.py"
@@ -41,6 +42,7 @@ on:
       - "apps/backend/tests/test_hosting_database_backup_contract.py"
       - "apps/backend/tests/test_hosting_project_operations_contract.py"
       - "apps/backend/tests/test_operation_resource_locks.py"
+      - "apps/backend/tests/test_maintenance_drain_planner.py"
       - "apps/backend/tests/test_hosting_builds_contract.py"
       - "apps/backend/tests/test_hosting_build_logs_contract.py"
       - "apps/backend/tests/test_hosting_git_webhooks_contract.py"
@@ -119,6 +121,7 @@ jobs:
           tests/test_hosting_database_backup_contract.py
           tests/test_hosting_project_operations_contract.py
           tests/test_operation_resource_locks.py
+          tests/test_maintenance_drain_planner.py
           tests/test_hosting_builds_contract.py
           tests/test_hosting_build_logs_contract.py
           tests/test_hosting_git_webhooks_contract.py
