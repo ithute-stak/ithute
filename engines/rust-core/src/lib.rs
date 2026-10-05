@@ -310,6 +310,54 @@ pub unsafe extern "C" fn ithute_rust_sha256(
     0
 }
 
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PushEnvelopeScan {
+    pub bytes: usize,
+    pub utf8_valid: u8,
+    pub json_object_shape: u8,
+    pub nul_bytes: usize,
+    pub control_bytes: usize,
+}
+
+fn push_envelope_scan(bytes: &[u8]) -> PushEnvelopeScan {
+    let utf8_valid = std::str::from_utf8(bytes).is_ok();
+    let first = bytes.iter().copied().find(|value| !value.is_ascii_whitespace());
+    let last = bytes.iter().copied().rev().find(|value| !value.is_ascii_whitespace());
+    let json_object_shape = matches!((first, last), (Some(b'{'), Some(b'}')));
+    let nul_bytes = bytes.iter().filter(|value| **value == 0).count();
+    let control_bytes = bytes
+        .iter()
+        .filter(|value| **value < 32 && !matches!(**value, b'\t' | b'\n' | b'\r'))
+        .count();
+    PushEnvelopeScan {
+        bytes: bytes.len(),
+        utf8_valid: u8::from(utf8_valid),
+        json_object_shape: u8::from(json_object_shape),
+        nul_bytes,
+        control_bytes,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ithute_rust_push_envelope_scan(
+    data: *const u8,
+    len: usize,
+    out: *mut PushEnvelopeScan,
+) -> i32 {
+    if out.is_null() || (data.is_null() && len != 0) || len > 64 * 1024 {
+        return 1;
+    }
+    let bytes = if len == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(data, len)
+    };
+    *out = push_envelope_scan(bytes);
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,6 +458,31 @@ mod tests {
         };
         assert_eq!(code, 0);
         assert_eq!(out, hmac_sha256(key, data));
+    }
+
+    #[test]
+    fn push_envelope_scan_rejects_binary_shape() {
+        let valid = br#"{"type":"push","title":"hello"}"#;
+        let mut out = PushEnvelopeScan::default();
+        let code = unsafe { ithute_rust_push_envelope_scan(valid.as_ptr(), valid.len(), &mut out) };
+        assert_eq!(code, 0);
+        assert_eq!(out.utf8_valid, 1);
+        assert_eq!(out.json_object_shape, 1);
+        assert_eq!(out.nul_bytes, 0);
+
+        let invalid = b"{\x00}";
+        let code = unsafe { ithute_rust_push_envelope_scan(invalid.as_ptr(), invalid.len(), &mut out) };
+        assert_eq!(code, 0);
+        assert_eq!(out.nul_bytes, 1);
+        assert_eq!(out.control_bytes, 1);
+    }
+
+    #[test]
+    fn push_envelope_scan_bounds_payload() {
+        let oversized = vec![b'a'; 64 * 1024 + 1];
+        let mut out = PushEnvelopeScan::default();
+        let code = unsafe { ithute_rust_push_envelope_scan(oversized.as_ptr(), oversized.len(), &mut out) };
+        assert_eq!(code, 1);
     }
 
     #[test]
