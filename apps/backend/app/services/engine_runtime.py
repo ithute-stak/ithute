@@ -144,6 +144,12 @@ def _load_rust() -> ctypes.CDLL | None:
             ctypes.POINTER(ctypes.c_ubyte),
         ]
         library.ithute_rust_hmac_sha256.restype = ctypes.c_int
+        library.ithute_rust_push_envelope_scan.argtypes = [
+            ctypes.POINTER(ctypes.c_ubyte),
+            ctypes.c_size_t,
+            ctypes.POINTER(_RustPushEnvelopeScan),
+        ]
+        library.ithute_rust_push_envelope_scan.restype = ctypes.c_int
     except (OSError, AttributeError):
         return None
     _rust = library
@@ -166,6 +172,12 @@ def _load_cpp() -> ctypes.CDLL | None:
             ctypes.POINTER(_CppBlobProfile),
         ]
         library.ithute_cpp_blob_profile_scan.restype = ctypes.c_int
+        library.ithute_cpp_route_shard.argtypes = [
+            ctypes.POINTER(ctypes.c_ubyte),
+            ctypes.c_size_t,
+            ctypes.c_uint32,
+        ]
+        library.ithute_cpp_route_shard.restype = ctypes.c_uint32
     except (OSError, AttributeError):
         return None
     _cpp = library
