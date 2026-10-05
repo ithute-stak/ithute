@@ -62,6 +62,7 @@ on:
       - "apps/backend/tests/test_postgres_rpo_policy.py"
       - "apps/backend/tests/test_postgres_rto_slo.py"
       - "apps/backend/tests/test_postgres_stable_endpoints.py"
+      - "apps/backend/tests/test_postgres_stable_endpoint_contract.py"
       - "apps/backend/tests/test_hosting_builds_contract.py"
       - "apps/backend/tests/test_hosting_build_logs_contract.py"
       - "apps/backend/tests/test_hosting_git_webhooks_contract.py"
