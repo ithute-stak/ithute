@@ -41,7 +41,10 @@ def _email_enabled() -> bool:
 
 
 def _push_enabled() -> bool:
-    return _env_bool("HARDWARE_NOTIFICATION_PUSH_ENABLED", False)
+    raw = os.getenv("HARDWARE_NOTIFICATION_PUSH_ENABLED", "auto").strip().lower()
+    if raw == "auto":
+        return bool(_notification_client_secret())
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _notification_client_id() -> str:
