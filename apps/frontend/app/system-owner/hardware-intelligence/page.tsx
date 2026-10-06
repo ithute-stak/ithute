@@ -76,6 +76,18 @@ type FleetItem = {
     note?: string | null;
     acknowledged_at?: string | null;
   };
+  incident?: {
+    id: string;
+    severity: string;
+    status: string;
+    title: string;
+    summary: string;
+    predictive_state: string;
+    predictive_risk_score?: number | null;
+    notification_suppressed: boolean;
+    opened_at?: string | null;
+    last_seen_at?: string | null;
+  } | null;
 };
 
 type Fleet = {
@@ -354,6 +366,18 @@ export default function HardwareIntelligencePage() {
                   <div className="mt-2 flex items-end justify-between"><p className="text-4xl font-black">{selectedServer.predictive_risk_score ?? 0}</p><p className="text-[10px] font-black uppercase">{selectedServer.predictive_state}</p></div>
                   <p className="mt-2 text-[9px] font-bold">Confidence {metric(selectedServer.predictive_confidence ? selectedServer.predictive_confidence * 100 : 0, "%")}</p>
                 </div>
+                {selectedServer.incident ? (
+                  <div className={`rounded-xl border p-4 ${selectedServer.incident.severity === "critical" ? "border-red-200 bg-red-50 text-red-800" : "border-orange-200 bg-orange-50 text-orange-800"}`}>
+                    <p className="text-[8px] font-black uppercase">Active hardware incident</p>
+                    <p className="mt-2 text-[11px] font-black">{selectedServer.incident.title}</p>
+                    <p className="mt-1 text-[9px] leading-4">{selectedServer.incident.summary}</p>
+                    <div className="mt-2 flex flex-wrap gap-2 text-[8px] font-black uppercase">
+                      <span>Severity {selectedServer.incident.severity}</span>
+                      <span>Risk {selectedServer.incident.predictive_risk_score ?? "—"}</span>
+                      {selectedServer.incident.notification_suppressed ? <span>Notifications suppressed by maintenance</span> : null}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="rounded-xl border border-[var(--admin-line)] p-4">
                   <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Operations</p>
                   <div className="mt-3 flex flex-wrap gap-2">
