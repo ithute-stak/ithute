@@ -171,12 +171,15 @@ def test_imail_canary_activation_and_rollback_contract():
     assert '"canary_can_reduce_risk": False' in service
     assert '"activation_requires_state": "canary"' in service
     assert '"lifecycle": ["qualified", "canary", "active", "retired_or_rolled_back"]' in service
+    assert "def serving_source" in service
     assert "def automatic_rollback" in service
 
     assert "def _automatic_rollback_models" in webmail_api
     assert "baseline_floor" in webmail_api
     assert "canary_applied" in webmail_api
     assert "baseline_preserved" in webmail_api
+    assert "active_champion" in webmail_api
+    assert "serving_source" in webmail_api
 
     assert '@router.post("/tenants/{tenant_id}/threat-models/{model_id}/canary/start")' in mail_api
     assert '@router.get("/tenants/{tenant_id}/threat-models/{model_id}/canary-status")' in mail_api
@@ -187,4 +190,5 @@ def test_imail_canary_activation_and_rollback_contract():
 
     assert "canary_started_at" in migration
     assert "baseline cannot be weakened" in ui
+    assert "Active champion remains serving" in ui
     assert 'lifecycle_state || "shadow"' in ui
