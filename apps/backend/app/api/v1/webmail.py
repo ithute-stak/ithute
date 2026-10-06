@@ -10,10 +10,11 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.models import MailNode
+from app.models import MailNode, PhishingFinding
 from app.models.mail import Mailbox, MailboxStatus, MailboxStorageType
 from app.services.mailboxes import normalize_destination
 from app.services.mail_intelligence import analyze_mail_message
+from app.services.mail_intelligence_learning import feature_snapshot, training_readiness
 from app.services.security_audit import record_webmail_security_event
 from app.services.security_controls import SecurityControlUnavailable, clear_webmail_login_failures, record_webmail_login_failure, webmail_login_allowed
 from app.services.webmail import (
@@ -153,6 +154,11 @@ class WebmailBusinessTask(BaseModel):
 class WebmailBusinessChat(BaseModel):
     email: EmailStr
     text: str = Field(min_length=1, max_length=4000)
+
+
+class MailIntelligenceVerdict(BaseModel):
+    label: str = Field(pattern=r"^(legitimate|phishing|bec)$")
+    confidence: float = Field(ge=0.80, le=1.0)
 
 
 def _failure(exc: WebmailError, status: int = 503) -> HTTPException:
@@ -392,6 +398,119 @@ def analyze_message_batch(
         }
     except WebmailError as exc:
         raise _failure(exc) from exc
+
+
+@router.post("/messages/{uid}/intelligence/verdict")
+def save_message_intelligence_verdict(
+    uid: str,
+    payload: MailIntelligenceVerdict,
+    folder: str = Query(default="INBOX", min_length=1, max_length=255),
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+    db: Session = Depends(get_db),
+):
+    address, password = _credentials(token)
+    mailbox = db.scalar(
+        select(Mailbox).where(
+            Mailbox.address == address.lower(),
+            Mailbox.status == MailboxStatus.active,
+        )
+    )
+    if mailbox is None:
+        raise HTTPException(status_code=404, detail="Mailbox was not found")
+
+    try:
+        message_payload = message(address, password, uid=_uid(uid), folder=folder)
+    except WebmailError as exc:
+        raise _failure(exc) from exc
+
+    intelligence = analyze_mail_message(message_payload, mailbox_address=address)
+    message_ref = str(message_payload.get("message_id") or f"{folder}:{uid}")[:512]
+    existing = db.scalar(
+        select(PhishingFinding).where(
+            PhishingFinding.mailbox_id == mailbox.id,
+            PhishingFinding.message_ref == message_ref,
+            PhishingFinding.finding_type == "mail_intelligence_training_label",
+        )
+    )
+    if existing is not None:
+        existing_label = str((existing.metadata_json or {}).get("verified_label") or existing.action_taken or "")
+        if existing_label != payload.label:
+            raise HTTPException(status_code=409, detail="Verified mail intelligence verdict is immutable")
+        return {
+            "saved": True,
+            "finding_id": str(existing.id),
+            "message_ref": message_ref,
+            "label": existing_label,
+            "confidence": float((existing.metadata_json or {}).get("label_confidence") or payload.confidence),
+            "already_verified": True,
+        }
+
+    snapshot = feature_snapshot(message_payload, intelligence)
+    finding = PhishingFinding(
+        tenant_id=mailbox.tenant_id,
+        mailbox_id=mailbox.id,
+        message_ref=message_ref,
+        severity="info",
+        finding_type="mail_intelligence_training_label",
+        sender=str(message_payload.get("from") or "")[:320] or None,
+        subject=str(message_payload.get("subject") or "")[:500] or None,
+        indicators_json=list(snapshot.get("signal_names") or []),
+        action_taken=payload.label,
+        resolved=True,
+        resolved_at=datetime.now(timezone.utc),
+        metadata_json={
+            "verified_label": payload.label,
+            "label_confidence": payload.confidence,
+            "feature_snapshot": snapshot,
+            "verified_by_mailbox": address.lower(),
+            "raw_body_stored": False,
+        },
+    )
+    db.add(finding)
+    db.commit()
+    db.refresh(finding)
+    return {
+        "saved": True,
+        "finding_id": str(finding.id),
+        "message_ref": message_ref,
+        "label": payload.label,
+        "confidence": payload.confidence,
+        "already_verified": False,
+    }
+
+
+@router.get("/intelligence/training-status")
+def mail_intelligence_training_status(
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+    db: Session = Depends(get_db),
+):
+    address, _password = _credentials(token)
+    mailbox = db.scalar(
+        select(Mailbox).where(
+            Mailbox.address == address.lower(),
+            Mailbox.status == MailboxStatus.active,
+        )
+    )
+    if mailbox is None:
+        raise HTTPException(status_code=404, detail="Mailbox was not found")
+
+    findings = db.scalars(
+        select(PhishingFinding)
+        .where(
+            PhishingFinding.tenant_id == mailbox.tenant_id,
+            PhishingFinding.finding_type == "mail_intelligence_training_label",
+            PhishingFinding.resolved.is_(True),
+        )
+        .order_by(PhishingFinding.created_at.asc())
+    ).all()
+    rows = [
+        {
+            "label": str((finding.metadata_json or {}).get("verified_label") or finding.action_taken or ""),
+            "confidence": float((finding.metadata_json or {}).get("label_confidence") or 0.0),
+        }
+        for finding in findings
+    ]
+    return training_readiness(rows)
 
 
 @router.patch("/messages/{uid}/flags")
