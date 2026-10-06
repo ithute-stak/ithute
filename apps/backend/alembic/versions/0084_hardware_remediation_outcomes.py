@@ -1,13 +1,13 @@
 """hardware remediation outcome learning
 
-Revision ID: 0084_hardware_remediation_outcomes
+Revision ID: 0084_hw_remediation_outcomes
 Revises: 0083_hardware_delivery
 """
 
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0084_hardware_remediation_outcomes"
+revision = "0084_hw_remediation_outcomes"
 down_revision = "0083_hardware_delivery"
 branch_labels = None
 depends_on = None
