@@ -85,3 +85,39 @@ class MailAutomationRule(Base):
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+
+class MailThreatModelVersion(Base):
+    __tablename__ = "mail_threat_model_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "name",
+            "version",
+            name="uq_mail_threat_model_tenant_name_version",
+        ),
+        Index("ix_mail_threat_model_tenant", "tenant_id"),
+        Index("ix_mail_threat_model_state", "lifecycle_state"),
+        Index("ix_mail_threat_model_created", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[str] = mapped_column(String(96), nullable=False)
+    algorithm: Mapped[str] = mapped_column(String(96), nullable=False)
+    lifecycle_state: Mapped[str] = mapped_column(String(32), nullable=False, default="candidate")
+    artifact_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    artifact_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    training_metrics_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    shadow_metrics_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    promotion_evidence_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rollback_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
