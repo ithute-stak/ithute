@@ -127,6 +127,11 @@ type FleetItem = {
       remediation_action?: string;
       remediation_outcome?: string;
       outcome_recorded_at?: string | null;
+      measured_outcome?: string;
+      verification_confidence?: number | null;
+      verification_sample_count?: number;
+      verification_evidence?: string[];
+      verification_evaluated_at?: string | null;
       completed_at?: string | null;
     } | null;
     opened_at?: string | null;
@@ -731,7 +736,7 @@ export default function HardwareIntelligencePage() {
           <section className="surface-card p-5">
             <p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">Recovery assurance</p>
             <h2 className="mt-1 text-lg font-black">Remediation evidence and trust boundary</h2>
-            <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            <div className="mt-4 grid gap-3 lg:grid-cols-4">
               <div className="rounded-xl border border-[var(--admin-line)] p-4">
                 <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Operator action</p>
                 <p className="mt-2 text-[11px] font-black">{selectedServer.incident.maintenance_task.remediation_action ? selectedServer.incident.maintenance_task.remediation_action.replaceAll("_", " ") : "Not completed yet"}</p>
@@ -740,7 +745,20 @@ export default function HardwareIntelligencePage() {
               <div className="rounded-xl border border-[var(--admin-line)] p-4">
                 <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Reported outcome</p>
                 <p className="mt-2 text-[11px] font-black">{selectedServer.incident.maintenance_task.remediation_outcome ? selectedServer.incident.maintenance_task.remediation_outcome.replaceAll("_", " ") : "Awaiting operator evidence"}</p>
-                <p className="mt-2 text-[9px] text-[var(--admin-muted)]">The operator-observed result stays distinct from the live measured state.</p>
+                <p className="mt-2 text-[9px] text-[var(--admin-muted)]">This is the operator-observed result and is not treated as proof by itself.</p>
+              </div>
+              <div className="rounded-xl border border-[var(--admin-line)] p-4">
+                <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Telemetry-verified outcome</p>
+                <p className="mt-2 text-[11px] font-black">{selectedServer.incident.maintenance_task.measured_outcome ? selectedServer.incident.maintenance_task.measured_outcome.replaceAll("_", " ") : "Collecting evidence"}</p>
+                <p className="mt-1 text-[9px] font-bold text-[var(--admin-muted)]">
+                  {selectedServer.incident.maintenance_task.verification_sample_count ?? 0} post-action samples
+                  {typeof selectedServer.incident.maintenance_task.verification_confidence === "number" ? ` · ${(selectedServer.incident.maintenance_task.verification_confidence * 100).toFixed(0)}% confidence` : ""}
+                </p>
+                {selectedServer.incident.maintenance_task.verification_evidence?.length ? (
+                  <ul className="mt-2 space-y-1 text-[8px] leading-4 text-[var(--admin-muted)]">
+                    {selectedServer.incident.maintenance_task.verification_evidence.slice(0, 4).map((item, index) => <li key={`${item}-${index}`}>• {item}</li>)}
+                  </ul>
+                ) : <p className="mt-2 text-[8px] text-[var(--admin-muted)]">Ithute needs at least three fresh telemetry samples after completion before it verifies the result.</p>}
               </div>
               <div className="rounded-xl border border-[var(--admin-line)] p-4">
                 <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Current measured state</p>
