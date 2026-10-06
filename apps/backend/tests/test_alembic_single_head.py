@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0084_hw_remediation_outcomes"
+LATEST_MIGRATION_HEAD = "0085_hw_ai_models"
 
 
 def test_alembic_has_one_consolidated_head():
