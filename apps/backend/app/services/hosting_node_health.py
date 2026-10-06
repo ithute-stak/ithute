@@ -13,6 +13,7 @@ from app.models import (
     HostingNodeAgent,
     HostingNodeHealthState,
     HostingProjectOperation,
+    HardwareTelemetrySnapshot,
     InfrastructureServer,
     InfrastructureServerAgent,
     InfrastructureWireGuardPeer,
@@ -115,6 +116,29 @@ def evaluate_node_health(db: Session, node: HostingNode, *, now: datetime | None
     )
     stale_retirements_cleared = stale_retirements == 0
 
+    hardware = None
+    hardware_fresh = False
+    hardware_safe = True
+    hardware_reason = None
+    if server is not None:
+        hardware = db.scalar(
+            select(HardwareTelemetrySnapshot)
+            .where(HardwareTelemetrySnapshot.server_id == server.id)
+            .order_by(HardwareTelemetrySnapshot.created_at.desc())
+            .limit(1)
+        )
+        if hardware is not None:
+            sampled = _utc(hardware.issued_at or hardware.created_at)
+            hardware_fresh = bool(sampled and sampled >= now - timedelta(seconds=HEARTBEAT_GRACE_SECONDS))
+            predictive_state = (hardware.predictive_state or "learning").strip().lower()
+            if hardware_fresh and (hardware.health_status == "critical" or predictive_state == "high"):
+                hardware_safe = False
+                hardware_reason = (
+                    "critical hardware health"
+                    if hardware.health_status == "critical"
+                    else "high predictive hardware failure risk"
+                )
+
     checks = {
         "hosting_agent_online": hosting_agent_online,
         "server_agent_online": server_agent_online,
@@ -125,6 +149,7 @@ def evaluate_node_health(db: Session, node: HostingNode, *, now: datetime | None
         "docker_ready": docker_ready,
         "disk_safe": disk_safe,
         "stale_retirements_cleared": stale_retirements_cleared,
+        "hardware_intelligence_safe": hardware_safe,
     }
     reasons = [name for name, passed in checks.items() if not passed]
     return {
@@ -135,6 +160,15 @@ def evaluate_node_health(db: Session, node: HostingNode, *, now: datetime | None
         "managed_network_ip": peer.assigned_ipv4 if peer else None,
         "last_handshake_at": _utc(peer.last_handshake_at).isoformat() if peer and peer.last_handshake_at else None,
         "disk_percent": disk_percent,
+        "hardware_intelligence": {
+            "available": hardware is not None,
+            "fresh": hardware_fresh,
+            "health_status": hardware.health_status if hardware else "unknown",
+            "health_score": hardware.health_score if hardware else None,
+            "predictive_state": hardware.predictive_state if hardware else "learning",
+            "predictive_risk_score": hardware.predictive_risk_score if hardware else None,
+            "reason": hardware_reason,
+        },
     }
 
 
@@ -175,7 +209,7 @@ def node_health_snapshot(db: Session, node: HostingNode, *, now: datetime | None
             "auto_drain_seconds": AUTO_DRAIN_SECONDS,
             "auto_recover_seconds": AUTO_RECOVER_SECONDS,
         },
-        **{key: health[key] for key in ("server_id", "managed_network_ip", "last_handshake_at", "disk_percent")},
+        **{key: health[key] for key in ("server_id", "managed_network_ip", "last_handshake_at", "disk_percent", "hardware_intelligence")},
     }
 
 
@@ -246,7 +280,7 @@ def reconcile_node_health(db: Session, node: HostingNode, *, now: datetime | Non
             "auto_drain_seconds": AUTO_DRAIN_SECONDS,
             "auto_recover_seconds": AUTO_RECOVER_SECONDS,
         },
-        **{key: health[key] for key in ("server_id", "managed_network_ip", "last_handshake_at", "disk_percent")},
+        **{key: health[key] for key in ("server_id", "managed_network_ip", "last_handshake_at", "disk_percent", "hardware_intelligence")},
     }
 
 
