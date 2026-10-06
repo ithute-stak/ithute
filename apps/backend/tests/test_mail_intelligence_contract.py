@@ -113,3 +113,27 @@ def test_imail_live_shadow_contract():
 
     assert "class MailThreatShadowPrediction" in models
     assert "0090_mail_threat_shadow" in migration
+
+
+
+def test_imail_sender_behaviour_contract():
+    backend = Path(__file__).resolve().parents[1]
+
+    behavior = (backend / "app" / "services" / "mail_sender_behavior.py").read_text(encoding="utf-8")
+    learning = (backend / "app" / "services" / "mail_intelligence_learning.py").read_text(encoding="utf-8")
+    model = (backend / "app" / "services" / "mail_threat_model.py").read_text(encoding="utf-8")
+    api = (backend / "app" / "api" / "v1" / "webmail.py").read_text(encoding="utf-8")
+
+    assert "first_seen_sender" in behavior
+    assert "unusual_sending_hour" in behavior
+    assert "sender_reply_domain_changed" in behavior
+    assert "new_payment_request_pattern" in behavior
+    assert '"raw_body_stored": False' in behavior
+
+    assert '"behavior_score"' in learning
+    assert '"behavior_signal_names"' in learning
+    assert '"behavior_score"' in model
+    assert '"sender_reply_domain_changed"' in model
+
+    assert "observe_sender_behavior" in api
+    assert 'intelligence["behavior"] = behavior' in api
