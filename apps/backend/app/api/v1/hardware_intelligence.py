@@ -17,6 +17,7 @@ from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
 from app.models import HardwareAlertAcknowledgement, HardwareIncident, HardwareMaintenanceWindow, HardwareTelemetrySnapshot, InfrastructureServer, InfrastructureServerAgent, Notification, User
+from app.services.engine_runtime import hardware_workflow_plan
 from app.services.hardware_prediction import MetricPoint, derive_rate_features, predict_hardware_drift
 
 router = APIRouter(prefix="/hardware-intelligence", tags=["hardware-intelligence"])
@@ -133,6 +134,13 @@ def _reconcile_hardware_incident(
 
     severity, title, summary = _hardware_incident_summary(server, health, prediction)
     suppressed = bool(maintenance and maintenance.suppress_notifications)
+    workflow_plan, workflow_engine = hardware_workflow_plan({
+        "severity": severity,
+        "health_status": str(health.get("status") or "unknown"),
+        "predictive_state": predictive_state,
+        "notification_suppressed": suppressed,
+    })
+    workflow_plan = {**workflow_plan, "engine": workflow_engine}
 
     if incident is None:
         incident = HardwareIncident(
@@ -147,6 +155,7 @@ def _reconcile_hardware_incident(
             predictive_risk_score=prediction.get("risk_score"),
             health_status=str(health.get("status") or "unknown"),
             notification_suppressed=suppressed,
+            workflow_plan_json=json.dumps(workflow_plan, sort_keys=True, separators=(",", ":")),
             opened_at=now,
             last_seen_at=now,
         )
@@ -178,6 +187,7 @@ def _reconcile_hardware_incident(
         incident.predictive_risk_score = prediction.get("risk_score")
         incident.health_status = str(health.get("status") or "unknown")
         incident.notification_suppressed = suppressed
+        incident.workflow_plan_json = json.dumps(workflow_plan, sort_keys=True, separators=(",", ":"))
         incident.last_seen_at = now
         incident.resolved_at = None
 
@@ -634,6 +644,7 @@ def list_hardware_incidents(
                 "predictive_risk_score": row.predictive_risk_score,
                 "health_status": row.health_status,
                 "notification_suppressed": row.notification_suppressed,
+                "workflow_plan": json.loads(row.workflow_plan_json or "{}"),
                 "opened_at": row.opened_at.isoformat() if row.opened_at else None,
                 "last_seen_at": row.last_seen_at.isoformat() if row.last_seen_at else None,
                 "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
@@ -768,6 +779,7 @@ def hardware_fleet_health(
                 "predictive_state": incident.predictive_state,
                 "predictive_risk_score": incident.predictive_risk_score,
                 "notification_suppressed": incident.notification_suppressed,
+                "workflow_plan": json.loads(incident.workflow_plan_json or "{}"),
                 "opened_at": incident.opened_at.isoformat() if incident.opened_at else None,
                 "last_seen_at": incident.last_seen_at.isoformat() if incident.last_seen_at else None,
             } if incident else None,
