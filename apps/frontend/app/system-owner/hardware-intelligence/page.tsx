@@ -85,6 +85,25 @@ type FleetItem = {
     predictive_state: string;
     predictive_risk_score?: number | null;
     notification_suppressed: boolean;
+    workflow_plan?: {
+      engine?: string;
+      escalation?: string;
+      actions?: string[];
+    };
+    deliveries?: Array<{
+      channel: string;
+      status: string;
+      attempts: number;
+      delivered_at?: string | null;
+    }>;
+    maintenance_task?: {
+      id: string;
+      priority: string;
+      status: string;
+      assigned_to_user_id?: string | null;
+      completion_note?: string;
+      completed_at?: string | null;
+    } | null;
     opened_at?: string | null;
     last_seen_at?: string | null;
   } | null;
@@ -180,6 +199,7 @@ export default function HardwareIntelligencePage() {
   const [maintenanceReason, setMaintenanceReason] = useState("");
   const [maintenanceHours, setMaintenanceHours] = useState("2");
   const [ackNote, setAckNote] = useState("");
+  const [taskNote, setTaskNote] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
 
   const loadFleet = useCallback(async () => {
@@ -241,6 +261,26 @@ export default function HardwareIntelligencePage() {
       setActionLoading(false);
     }
   }, [selected, ackNote, loadFleet]);
+
+  const updateMaintenanceTask = useCallback(async (status: "in_progress" | "completed" | "cancelled") => {
+    const taskId = selectedServer?.incident?.maintenance_task?.id;
+    if (!taskId) return;
+    setActionLoading(true);
+    setActionError("");
+    try {
+      await apiMutation(`/hardware-intelligence/maintenance-tasks/${taskId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, note: taskNote.trim() }),
+      }, ["/hardware-intelligence/fleet"]);
+      setTaskNote("");
+      await loadFleet();
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Unable to update maintenance task.");
+    } finally {
+      setActionLoading(false);
+    }
+  }, [selectedServer, taskNote, loadFleet]);
 
   const loadHistory = useCallback(async (serverId: string) => {
     if (!serverId) {
@@ -374,8 +414,25 @@ export default function HardwareIntelligencePage() {
                     <div className="mt-2 flex flex-wrap gap-2 text-[8px] font-black uppercase">
                       <span>Severity {selectedServer.incident.severity}</span>
                       <span>Risk {selectedServer.incident.predictive_risk_score ?? "—"}</span>
+                      {selectedServer.incident.workflow_plan?.engine ? <span>Workflow {selectedServer.incident.workflow_plan.engine}</span> : null}
+                      {selectedServer.incident.workflow_plan?.escalation ? <span>Escalation {selectedServer.incident.workflow_plan.escalation}</span> : null}
                       {selectedServer.incident.notification_suppressed ? <span>Notifications suppressed by maintenance</span> : null}
                     </div>
+                    {selectedServer.incident.deliveries?.length ? (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {selectedServer.incident.deliveries.map((delivery) => (
+                          <span key={`${delivery.channel}-${delivery.status}`} className="rounded-full border border-current/20 bg-white/60 px-2 py-1 text-[8px] font-black uppercase">
+                            {delivery.channel}: {delivery.status}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    {selectedServer.incident.maintenance_task ? (
+                      <div className="mt-3 rounded-lg border border-current/20 bg-white/60 p-2 text-[9px]">
+                        <span className="font-black uppercase">Maintenance task</span>
+                        <span className="ml-2 font-bold">{selectedServer.incident.maintenance_task.status} · {selectedServer.incident.maintenance_task.priority}</span>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
                 <div className="rounded-xl border border-[var(--admin-line)] p-4">
@@ -457,9 +514,9 @@ export default function HardwareIntelligencePage() {
         {selectedServer ? (
           <section className="surface-card p-5">
             <p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">Operator controls</p>
-            <h2 className="mt-1 text-lg font-black">Acknowledge or schedule maintenance</h2>
+            <h2 className="mt-1 text-lg font-black">Acknowledge, schedule or execute maintenance</h2>
             {actionError ? <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-[10px] font-bold text-red-700">{actionError}</div> : null}
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div className="mt-4 grid gap-4 lg:grid-cols-3">
               <div className="rounded-xl border border-[var(--admin-line)] p-4">
                 <p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">Maintenance window</p>
                 <p className="mt-1 text-[10px] text-[var(--admin-muted)]">Health continues to be measured, but notification workflows can suppress planned-maintenance noise.</p>
@@ -476,6 +533,19 @@ export default function HardwareIntelligencePage() {
                 <input value={ackNote} onChange={(event) => setAckNote(event.target.value)} placeholder="Optional operator note" className="mt-3 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]" />
                 <button disabled={actionLoading || selectedServer.acknowledgement.acknowledged} onClick={() => void acknowledgeCurrent()} className="mt-2 rounded-xl bg-[#d8c56a] px-4 py-2 text-[9px] font-black text-[#123a38] disabled:opacity-50">{selectedServer.acknowledgement.acknowledged ? "Acknowledged" : "Acknowledge current sample"}</button>
               </div>
+              {selectedServer.incident?.maintenance_task ? (
+                <div className="rounded-xl border border-[var(--admin-line)] p-4">
+                  <p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">Incident maintenance task</p>
+                  <p className="mt-1 text-[10px] text-[var(--admin-muted)]">Track the physical/host remediation separately from automatic health recovery.</p>
+                  <p className="mt-2 text-[10px] font-black uppercase">Status: {selectedServer.incident.maintenance_task.status}</p>
+                  <input value={taskNote} onChange={(event) => setTaskNote(event.target.value)} placeholder="Operator note" className="mt-3 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]" />
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button disabled={actionLoading || selectedServer.incident.maintenance_task.status !== "open"} onClick={() => void updateMaintenanceTask("in_progress")} className="rounded-xl border border-[var(--admin-line)] px-3 py-2 text-[9px] font-black disabled:opacity-50">Start work</button>
+                    <button disabled={actionLoading || ["completed", "cancelled"].includes(selectedServer.incident.maintenance_task.status)} onClick={() => void updateMaintenanceTask("completed")} className="rounded-xl bg-[#18524d] px-3 py-2 text-[9px] font-black text-white disabled:opacity-50">Complete</button>
+                    <button disabled={actionLoading || ["completed", "cancelled"].includes(selectedServer.incident.maintenance_task.status)} onClick={() => void updateMaintenanceTask("cancelled")} className="rounded-xl border border-red-200 px-3 py-2 text-[9px] font-black text-red-700 disabled:opacity-50">Cancel</button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </section>
         ) : null}
