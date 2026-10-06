@@ -189,6 +189,8 @@ compose=(docker compose --env-file "$APP_DIR/.env.production" --env-file "$APP_D
 for service_repo in \
   "ithute-web:ithute-web" \
   "ithute-app-api:ithute-app-api" \
+  "ithute-hosting-health-controller:ithute-app-api" \
+  "ithute-hardware-notification-worker:ithute-app-api" \
   "ithute-go-worker:ithute-go-worker" \
   "ithute-java-worker:ithute-java-worker" \
   "ithute-auth:ithute-auth" \
