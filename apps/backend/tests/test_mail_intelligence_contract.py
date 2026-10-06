@@ -139,3 +139,16 @@ def test_imail_sender_behaviour_contract():
 
     assert "observe_sender_behavior" in api
     assert 'intelligence["behavior"] = behavior' in api
+
+
+
+def test_imail_shadow_and_behavior_ui_contract():
+    repo = Path(__file__).resolve().parents[3]
+    ui = (repo / "apps" / "frontend" / "app" / "webmail" / "hosted-workspace.tsx").read_text(encoding="utf-8")
+
+    assert "Sender behaviour" in ui
+    assert "Supervised threat model · shadow" in ui
+    assert "does not control mail delivery" in ui
+    assert "heuristic fallback remains active" in ui
+    assert "supervised_shadow" in ui
+    assert "behavior?" in ui
