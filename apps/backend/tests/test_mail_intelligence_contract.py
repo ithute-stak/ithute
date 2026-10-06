@@ -169,6 +169,8 @@ def test_imail_canary_activation_and_rollback_contract():
     assert "CANARY_FRACTION = 0.05" in service
     assert "def baseline_floor" in service
     assert '"canary_can_reduce_risk": False' in service
+    assert '"activation_requires_state": "canary"' in service
+    assert '"lifecycle": ["qualified", "canary", "active", "retired_or_rolled_back"]' in service
     assert "def automatic_rollback" in service
 
     assert "def _automatic_rollback_models" in webmail_api
