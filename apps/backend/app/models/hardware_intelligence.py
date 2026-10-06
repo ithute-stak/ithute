@@ -131,3 +131,78 @@ class HardwareIncident(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class HardwareIncidentDelivery(Base):
+    __tablename__ = "hardware_incident_deliveries"
+    __table_args__ = (
+        UniqueConstraint(
+            "incident_id",
+            "recipient_user_id",
+            "channel",
+            name="uq_hardware_incident_delivery_recipient_channel",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    incident_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("hardware_incidents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    recipient_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    channel: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="queued", nullable=False, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class HardwareMaintenanceTask(Base):
+    __tablename__ = "hardware_maintenance_tasks"
+    __table_args__ = (
+        UniqueConstraint("incident_id", name="uq_hardware_maintenance_task_incident"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    incident_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("hardware_incidents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    server_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("infrastructure_servers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    priority: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="open", nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    assigned_to_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    completed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    completion_note: Mapped[str] = mapped_column(String(1000), default="", nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
