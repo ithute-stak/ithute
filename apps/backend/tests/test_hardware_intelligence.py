@@ -296,7 +296,8 @@ def test_hardware_ai_ensemble_persistence_and_ui_contract_exists():
     assert "def change_point_signal" in ai
     assert "def weibull_survival_projection" in ai
     assert "def ensemble_signals" in ai
-    assert "The established robust detector is the safety floor" in ai\n    assert "unless two independent AI detectors agree strongly" in ai
+    assert "The established robust detector is the safety floor" in ai
+    assert "unless two independent AI detectors agree strongly" in ai
     assert "Waiting for sufficient confirmed hardware failure labels" in ai
     assert "predictive_models_json" in models
     assert "predictive_models_json=json.dumps" in api
