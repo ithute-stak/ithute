@@ -1,0 +1,202 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"time"
+)
+
+type Sample struct {
+	SchemaVersion  int     `json:"schema_version"`
+	SampledAtUnix int64   `json:"sampled_at_unix"`
+	UptimeSeconds float64 `json:"uptime_seconds"`
+	Load struct {
+		One     float64 `json:"one"`
+		Five    float64 `json:"five"`
+		Fifteen float64 `json:"fifteen"`
+	} `json:"load"`
+	Memory struct {
+		TotalKB     uint64 `json:"total_kb"`
+		AvailableKB uint64 `json:"available_kb"`
+		SwapTotalKB uint64 `json:"swap_total_kb"`
+		SwapFreeKB  uint64 `json:"swap_free_kb"`
+	} `json:"memory"`
+	CPU map[string]uint64 `json:"cpu"`
+	Thermal struct {
+		ZonesSeen  int     `json:"zones_seen"`
+		MaxCelsius float64 `json:"max_celsius"`
+	} `json:"thermal"`
+	Pressure struct {
+		CPUAvg10    float64 `json:"cpu_avg10"`
+		MemoryAvg10 float64 `json:"memory_avg10"`
+		IOAvg10     float64 `json:"io_avg10"`
+	} `json:"pressure,omitempty"`
+	Filesystem struct {
+		RootTotalBytes     uint64 `json:"root_total_bytes"`
+		RootAvailableBytes uint64 `json:"root_available_bytes"`
+	} `json:"filesystem,omitempty"`
+	Block struct {
+		Devices           int    `json:"devices"`
+		ReadsCompleted    uint64 `json:"reads_completed"`
+		SectorsRead       uint64 `json:"sectors_read"`
+		WritesCompleted   uint64 `json:"writes_completed"`
+		SectorsWritten    uint64 `json:"sectors_written"`
+		IOMilliseconds    uint64 `json:"io_ms"`
+		WeightedIOMillis  uint64 `json:"weighted_io_ms"`
+	} `json:"block,omitempty"`
+	Network struct {
+		RxErrors       uint64 `json:"rx_errors"`
+		TxErrors       uint64 `json:"tx_errors"`
+		RxDropped      uint64 `json:"rx_dropped"`
+		TxDropped      uint64 `json:"tx_dropped"`
+		TCPRetransSegs uint64 `json:"tcp_retrans_segs"`
+	} `json:"network,omitempty"`
+	Capabilities struct {
+		Hwmon     bool `json:"hwmon"`
+		Thermal   bool `json:"thermal"`
+		EDAC      bool `json:"edac"`
+		IPMI      bool `json:"ipmi"`
+		BPFFS     bool `json:"bpf_fs"`
+		KernelBTF bool `json:"kernel_btf"`
+		Smartctl  bool `json:"smartctl"`
+		NVMeCLI   bool `json:"nvme_cli"`
+	} `json:"capabilities,omitempty"`
+	EBPF EBPFSnapshot `json:"ebpf,omitempty"`
+	MemoryReliability MemoryReliability `json:"memory_reliability,omitempty"`
+	BMC BMCSummary `json:"bmc,omitempty"`
+	StorageDevices []StorageHealth `json:"storage_devices,omitempty"`
+}
+
+func runProbe(ctx context.Context, path string) (Sample, error) {
+	var sample Sample
+	cmd := exec.CommandContext(ctx, path)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	if err != nil {
+		if stderr.Len() > 0 {
+			return sample, fmt.Errorf("hardware probe failed: %s: %w", stderr.String(), err)
+		}
+		return sample, fmt.Errorf("hardware probe failed: %w", err)
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(stdout), &sample); err != nil {
+		return sample, fmt.Errorf("invalid probe JSON: %w", err)
+	}
+	if sample.SchemaVersion != 1 {
+		return sample, fmt.Errorf("unsupported schema_version %d", sample.SchemaVersion)
+	}
+	return sample, nil
+}
+
+func main() {
+	probe := flag.String("probe", "./engines/hardware-intelligence/build/ithute-hw-probe", "path to the read-only C hardware probe")
+	validator := flag.String("validator", "", "optional path to the Rust hardware telemetry validator")
+	agentID := flag.String("agent-id", "", "stable Ithute infrastructure agent identifier")
+	signingKeyFile := flag.String("signing-key-file", "", "path to the private infrastructure-agent token/HMAC key file")
+	endpoint := flag.String("endpoint", "", "optional Ithute hardware telemetry ingestion URL")
+	ebpfSnapshot := flag.String("ebpf-snapshot", "/run/ithute-hardware/ebpf.json", "path to the root-exported read-only eBPF snapshot")
+	interval := flag.Duration("interval", 15*time.Second, "sampling interval")
+	once := flag.Bool("once", false, "collect one sample and exit")
+	flag.Parse()
+
+	if *interval < time.Second {
+		fmt.Fprintln(os.Stderr, "hardware-agent: interval must be at least 1s")
+		os.Exit(2)
+	}
+
+	writer := bufio.NewWriter(os.Stdout)
+	defer writer.Flush()
+
+	var signingKey []byte
+	if *agentID != "" || *signingKeyFile != "" {
+		if *agentID == "" || *signingKeyFile == "" {
+			fmt.Fprintln(os.Stderr, "hardware-agent: --agent-id and --signing-key-file must be supplied together")
+			os.Exit(2)
+		}
+		var keyErr error
+		signingKey, keyErr = readSigningKey(*signingKeyFile)
+		if keyErr != nil {
+			fmt.Fprintln(os.Stderr, "hardware-agent:", keyErr)
+			os.Exit(2)
+		}
+	}
+
+	collect := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		sample, err := runProbe(ctx, *probe)
+		if err != nil {
+			return err
+		}
+		if sample.Capabilities.Smartctl {
+			if path, pathErr := smartctlPath(); pathErr == nil {
+				sample.StorageDevices = collectSmartStorage(ctx, path)
+			}
+		}
+		sample.MemoryReliability = collectEDAC()
+		if path := ipmitoolPath(); path != "" {
+			sample.BMC = collectBMC(ctx, path)
+		}
+		if err := validateReliability(sample); err != nil {
+			return err
+		}
+		if snapshot, snapshotErr := readEBPFSnapshot(*ebpfSnapshot, 90*time.Second); snapshotErr == nil {
+			sample.EBPF = snapshot
+		} else if !os.IsNotExist(snapshotErr) {
+			fmt.Fprintln(os.Stderr, "hardware-agent:", snapshotErr)
+		}
+		if err := validateWithRust(ctx, *validator, sample); err != nil {
+			return err
+		}
+
+		var encoded []byte
+		if len(signingKey) > 0 {
+			envelope, signErr := signSample(*agentID, signingKey, sample)
+			if signErr != nil {
+				return signErr
+			}
+			if *endpoint != "" {
+				if postErr := postEnvelope(ctx, *endpoint, signingKey, envelope); postErr != nil {
+					return postErr
+				}
+			}
+			encoded, err = json.Marshal(envelope)
+		} else {
+			if *endpoint != "" {
+				return fmt.Errorf("hardware-agent: endpoint requires --agent-id and --signing-key-file")
+			}
+			encoded, err = json.Marshal(sample)
+		}
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(writer, string(encoded))
+		writer.Flush()
+		return err
+	}
+
+	if *once {
+		if err := collect(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	ticker := time.NewTicker(*interval)
+	defer ticker.Stop()
+	for {
+		if err := collect(); err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		<-ticker.C
+	}
+}

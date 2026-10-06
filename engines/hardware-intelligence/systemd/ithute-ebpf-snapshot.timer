@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh Ithute Hardware Intelligence eBPF snapshot
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=15s
+AccuracySec=2s
+Unit=ithute-ebpf-snapshot.service
+
+[Install]
+WantedBy=timers.target

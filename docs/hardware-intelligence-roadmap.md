@@ -1,0 +1,71 @@
+# Ithute Hardware Intelligence implementation roadmap
+
+Branch foundation: feature/hardware-intelligence-foundation
+
+## Goal
+
+Detect infrastructure degradation early, then progress from deterministic warnings to evidence-based predictive alerts without giving low-level agents authority over Ithute business state.
+
+## Architecture
+
+C hardware probe + eBPF kernel signals -> Rust validation/hardening -> Go long-running monitoring agent -> Python/FastAPI control plane (PostgreSQL history + Redis/realtime) -> Python anomaly/prediction engine -> Java alert/escalation workflows -> Ithute dashboard + iMail/Push notifications.
+
+## Delivery phases
+
+### Phase 1 - Foundation
+- [x] Add C hardware probe.
+- [x] Add initial read-only eBPF counters.
+- [x] Define telemetry v1 JSON contract.
+- [x] Add Go sampling agent command.
+- [ ] Add CI compilation and contract tests.
+- [x] Add capability detection so eBPF is never assumed to be available.
+
+### Phase 2 - Core agent
+- [x] Add filesystem, block-I/O and Linux PSI pressure telemetry for predictive baselining.
+- [x] Add SMART/NVMe collection through bounded helpers.
+- [x] Add EDAC/ECC counters from Linux sysfs and bounded local IPMI/BMC sensor collection when exposed by the host.
+- [x] Add privilege-separated eBPF loader/exporter with bounded Linux capabilities and read-only snapshot handoff.
+- [ ] Add local buffering, jitter, backoff and batch compression.
+- [x] Sign agent identity with per-agent HMAC envelopes.
+- [x] Bind signed agent identities to Ithute infrastructure-server records during backend ingestion.
+- [x] Add Rust telemetry safety validation boundary for core host signals.
+
+### Phase 3 - Backend integration
+- [x] Persist immutable hardware telemetry samples with nonce replay protection and 30-day retention.
+- [x] Add signed agent-ingest endpoint with infrastructure-agent authentication, HMAC verification, clock-skew checks and replay protection.
+- [ ] Publish current health through Ithute Realtime.
+- [x] Add deterministic hardware health scoring and warning/critical evidence.
+- [x] Add System Owner fleet/history hardware-health APIs and responsive Hardware Intelligence dashboard.
+
+### Phase 4 - Predictive analytics
+- [x] Baseline each server independently using robust median/MAD statistics and recent trend slope.
+- [x] Add first trend/anomaly features for temperature, memory pressure, I/O pressure and filesystem growth.
+- [x] Add block-I/O busy/queue-time proxies, SMART/NVMe media-error growth, CPU steal/iowait and network error/TCP retransmission deltas.
+- [x] Feed privilege-separated eBPF block request, process-exit and OOM counters into prediction.
+- [x] Add eBPF request issue/completion correlation with block-latency histograms and p50/p95/p99 percentile estimates.
+- [ ] Train and validate failure-risk scoring against historical incidents.
+- [ ] Require confidence plus evidence before presenting a predictive warning.
+- [ ] Track model version, false positives and operator acknowledgement.
+
+### Phase 5 - Enterprise response
+- [ ] Java policy workflow for escalation, maintenance tasks and notification routing.
+- [ ] Integrate iMail, Ithute Push and approved SMS/WhatsApp channels.
+- [x] Add platform-owner maintenance windows and per-snapshot acknowledgement state.
+- [ ] Wire maintenance suppression into Java/iMail/Push notification delivery.
+- [ ] Multi-tenant and multi-server fleet health views.
+
+### Phase 6 - Production rollout
+- [ ] Pilot on selected Ithute-managed servers.
+- [ ] Tune thresholds and permissions.
+- [ ] Roll out by infrastructure pool.
+- [ ] Measure agent overhead, alert precision and incident lead time.
+- [ ] Document operations, runbooks and recovery procedures.
+
+## Safety rules
+
+1. Monitoring is read-only by default.
+2. eBPF is optional and capability-gated.
+3. No automatic reboot, disk repair, filesystem mutation or service termination in the prediction path.
+4. A hardware alert must state the evidence used to produce it.
+5. Cloud VPS hosts may hide physical sensors; Ithute must label unavailable signals rather than infer them.
+6. Python remains the authority for tenancy, identity, health policy and persistence.

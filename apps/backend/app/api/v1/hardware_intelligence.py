@@ -1,0 +1,803 @@
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+from datetime import datetime, timedelta, timezone
+from uuid import UUID
+from typing import Any
+
+from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.api.deps import require_platform_owner
+from app.core.security import hash_token
+from app.db.session import get_db
+from app.models import HardwareAlertAcknowledgement, HardwareMaintenanceWindow, HardwareTelemetrySnapshot, InfrastructureServer, InfrastructureServerAgent, User
+from app.services.hardware_prediction import MetricPoint, derive_rate_features, predict_hardware_drift
+
+router = APIRouter(prefix="/hardware-intelligence", tags=["hardware-intelligence"])
+
+MAX_CLOCK_SKEW_SECONDS = 300
+RETENTION_DAYS = 30
+
+
+class HardwareEnvelope(BaseModel):
+    envelope_version: int = Field(ge=1, le=1)
+    algorithm: str = Field(pattern=r"^HMAC-SHA256$")
+    agent_id: str = Field(min_length=3, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    issued_at_unix: int = Field(ge=0)
+    nonce: str = Field(min_length=32, max_length=32, pattern=r"^[0-9a-f]{32}$")
+    payload: dict[str, Any]
+    signature: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+
+
+class MaintenanceWindowCreate(BaseModel):
+    starts_at: datetime
+    ends_at: datetime
+    reason: str = Field(min_length=3, max_length=500)
+    suppress_notifications: bool = True
+
+
+class AlertAcknowledgementCreate(BaseModel):
+    note: str = Field(default="", max_length=1000)
+
+
+def _utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _window_active_at(window: HardwareMaintenanceWindow, at: datetime) -> bool:
+    return (
+        window.cancelled_at is None
+        and _utc(window.starts_at) <= at
+        and _utc(window.ends_at) > at
+    )
+
+
+def _active_maintenance(db: Session, server_id, at: datetime | None = None) -> HardwareMaintenanceWindow | None:
+    now = at or datetime.now(timezone.utc)
+    rows = db.scalars(
+        select(HardwareMaintenanceWindow)
+        .where(
+            HardwareMaintenanceWindow.server_id == server_id,
+            HardwareMaintenanceWindow.cancelled_at.is_(None),
+            HardwareMaintenanceWindow.starts_at <= now,
+            HardwareMaintenanceWindow.ends_at > now,
+        )
+        .order_by(HardwareMaintenanceWindow.ends_at.asc())
+    ).all()
+    return rows[0] if rows else None
+
+
+def _ack_for_snapshot(db: Session, snapshot_id) -> HardwareAlertAcknowledgement | None:
+    if snapshot_id is None:
+        return None
+    return db.scalar(
+        select(HardwareAlertAcknowledgement).where(
+            HardwareAlertAcknowledgement.snapshot_id == snapshot_id
+        )
+    )
+
+
+def _agent_from_token(db: Session, token: str | None) -> tuple[str, InfrastructureServerAgent, InfrastructureServer]:
+    raw = (token or "").strip()
+    if not raw or not raw.startswith("ith_srv_"):
+        raise HTTPException(status_code=401, detail="Infrastructure server agent credential required")
+    agent = db.scalar(select(InfrastructureServerAgent).where(InfrastructureServerAgent.token_hash == hash_token(raw)))
+    if agent is None:
+        raise HTTPException(status_code=401, detail="Invalid infrastructure server agent credential")
+    server = db.get(InfrastructureServer, agent.server_id)
+    if server is None or server.status == "disabled":
+        raise HTTPException(status_code=403, detail="Infrastructure server is unavailable")
+    return raw, agent, server
+
+
+def _go_json(value: Any) -> bytes:
+    # Go encoding/json emits UTF-8 while escaping HTML-sensitive code points.
+    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    text = (
+        text.replace("&", r"\u0026")
+        .replace("<", r"\u003c")
+        .replace(">", r"\u003e")
+        .replace(" ", r"\u2028")
+        .replace(" ", r"\u2029")
+    )
+    return text.encode("utf-8")
+
+
+def _unsigned_envelope(payload: HardwareEnvelope) -> dict[str, Any]:
+    return {
+        "envelope_version": payload.envelope_version,
+        "algorithm": payload.algorithm,
+        "agent_id": payload.agent_id,
+        "issued_at_unix": payload.issued_at_unix,
+        "nonce": payload.nonce,
+        "payload": payload.payload,
+    }
+
+
+def _verify_signature(payload: HardwareEnvelope, key: str) -> bool:
+    expected = hmac.new(
+        key.encode("utf-8"),
+        _go_json(_unsigned_envelope(payload)),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, payload.signature)
+
+
+def _number(container: dict[str, Any], key: str) -> float | None:
+    raw = container.get(key)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    value = float(raw)
+    if value != value or value in {float("inf"), float("-inf")}:
+        return None
+    return value
+
+
+def _validate_payload(payload: dict[str, Any]) -> None:
+    if payload.get("schema_version") != 1:
+        raise HTTPException(status_code=422, detail="Unsupported hardware telemetry schema version")
+
+    memory = payload.get("memory") if isinstance(payload.get("memory"), dict) else {}
+    total = _number(memory, "total_kb")
+    available = _number(memory, "available_kb")
+    if total is None or total <= 0 or available is None or available < 0 or available > total:
+        raise HTTPException(status_code=422, detail="Invalid memory telemetry")
+
+    thermal = payload.get("thermal") if isinstance(payload.get("thermal"), dict) else {}
+    zones = _number(thermal, "zones_seen")
+    temp = _number(thermal, "max_celsius")
+    if zones is None or zones < 0 or zones > 4096:
+        raise HTTPException(status_code=422, detail="Invalid thermal telemetry")
+    if zones > 0 and (temp is None or temp < -100 or temp > 250):
+        raise HTTPException(status_code=422, detail="Invalid thermal temperature")
+
+    pressure = payload.get("pressure") if isinstance(payload.get("pressure"), dict) else {}
+    for key in ("cpu_avg10", "memory_avg10", "io_avg10"):
+        value = _number(pressure, key)
+        if value is not None and value != -1 and not 0 <= value <= 100:
+            raise HTTPException(status_code=422, detail=f"Invalid {key}")
+
+    filesystem = payload.get("filesystem") if isinstance(payload.get("filesystem"), dict) else {}
+    fs_total = _number(filesystem, "root_total_bytes")
+    fs_available = _number(filesystem, "root_available_bytes")
+    if fs_total is not None and fs_available is not None:
+        if fs_total < 0 or fs_available < 0 or fs_available > fs_total:
+            raise HTTPException(status_code=422, detail="Invalid filesystem telemetry")
+
+    devices = payload.get("storage_devices")
+    if devices is not None and (not isinstance(devices, list) or len(devices) > 64):
+        raise HTTPException(status_code=422, detail="Invalid storage telemetry")
+
+
+
+def _safe_payload_json(raw: str | None) -> dict[str, Any]:
+    try:
+        value = json.loads(raw or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _prediction_point_from_health(
+    health: dict[str, Any],
+    previous_payload: dict[str, Any] | None = None,
+    current_payload: dict[str, Any] | None = None,
+) -> MetricPoint:
+    rate = derive_rate_features(previous_payload, current_payload)
+    return MetricPoint(
+        temperature_celsius=health.get("temperature_celsius"),
+        memory_pressure_avg10=health.get("memory_pressure_avg10"),
+        io_pressure_avg10=health.get("io_pressure_avg10"),
+        filesystem_used_percent=health.get("filesystem_used_percent"),
+        cpu_iowait_percent=rate.get("cpu_iowait_percent"),
+        cpu_steal_percent=rate.get("cpu_steal_percent"),
+        block_io_ms_per_op=rate.get("block_io_ms_per_op"),
+        block_weighted_ms_per_op=rate.get("block_weighted_ms_per_op"),
+        media_error_delta=rate.get("media_error_delta"),
+        network_error_delta=rate.get("network_error_delta"),
+        tcp_retrans_delta=rate.get("tcp_retrans_delta"),
+        ebpf_inflight_delta=rate.get("ebpf_inflight_delta"),
+        ebpf_oom_delta=rate.get("ebpf_oom_delta"),
+        ebpf_block_p50_ms=rate.get("ebpf_block_p50_ms"),
+        ebpf_block_p95_ms=rate.get("ebpf_block_p95_ms"),
+        ebpf_block_p99_ms=rate.get("ebpf_block_p99_ms"),
+        ecc_corrected_delta=rate.get("ecc_corrected_delta"),
+        ecc_uncorrected_delta=rate.get("ecc_uncorrected_delta"),
+    )
+
+
+def _prediction_for_server(
+    db: Session,
+    server_id,
+    current_health: dict[str, Any],
+    current_payload: dict[str, Any],
+) -> dict[str, Any]:
+    rows = list(
+        db.scalars(
+            select(HardwareTelemetrySnapshot)
+            .where(HardwareTelemetrySnapshot.server_id == server_id)
+            .order_by(HardwareTelemetrySnapshot.created_at.desc())
+            .limit(97)
+        ).all()
+    )
+    rows.reverse()
+
+    history: list[MetricPoint] = []
+    previous_payload: dict[str, Any] | None = None
+    for row in rows:
+        payload = _safe_payload_json(row.payload_json)
+        row_health = {
+            "temperature_celsius": row.temperature_celsius,
+            "memory_pressure_avg10": row.memory_pressure_avg10,
+            "io_pressure_avg10": row.io_pressure_avg10,
+            "filesystem_used_percent": row.filesystem_used_percent,
+        }
+        history.append(_prediction_point_from_health(row_health, previous_payload, payload))
+        previous_payload = payload
+
+    if len(history) > 96:
+        history = history[-96:]
+
+    current_point = _prediction_point_from_health(current_health, previous_payload, current_payload)
+    return predict_hardware_drift(history, current_point)
+
+
+
+def _health(payload: dict[str, Any]) -> dict[str, Any]:
+    score = 100
+    evidence: list[str] = []
+    critical = False
+
+    thermal = payload.get("thermal") if isinstance(payload.get("thermal"), dict) else {}
+    temperature = _number(thermal, "max_celsius")
+    if temperature is not None and (_number(thermal, "zones_seen") or 0) > 0:
+        if temperature >= 85:
+            score -= 35
+            critical = True
+            evidence.append(f"host temperature {temperature:.1f}C")
+        elif temperature >= 75:
+            score -= 20
+            evidence.append(f"host temperature {temperature:.1f}C")
+        elif temperature >= 65:
+            score -= 8
+            evidence.append(f"host temperature {temperature:.1f}C")
+
+    pressure = payload.get("pressure") if isinstance(payload.get("pressure"), dict) else {}
+    memory_pressure = _number(pressure, "memory_avg10")
+    io_pressure = _number(pressure, "io_avg10")
+    for label, value in (("memory pressure", memory_pressure), ("I/O pressure", io_pressure)):
+        if value is None or value < 0:
+            continue
+        if value >= 30:
+            score -= 25
+            evidence.append(f"{label} avg10 {value:.1f}%")
+        elif value >= 15:
+            score -= 12
+            evidence.append(f"{label} avg10 {value:.1f}%")
+        elif value >= 5:
+            score -= 5
+            evidence.append(f"{label} avg10 {value:.1f}%")
+
+    filesystem = payload.get("filesystem") if isinstance(payload.get("filesystem"), dict) else {}
+    fs_total = _number(filesystem, "root_total_bytes")
+    fs_available = _number(filesystem, "root_available_bytes")
+    fs_used_percent = None
+    if fs_total and fs_total > 0 and fs_available is not None:
+        fs_used_percent = max(0.0, min(100.0, ((fs_total - fs_available) / fs_total) * 100))
+        if fs_used_percent >= 97:
+            score -= 30
+            critical = True
+            evidence.append(f"root filesystem {fs_used_percent:.1f}% used")
+        elif fs_used_percent >= 90:
+            score -= 15
+            evidence.append(f"root filesystem {fs_used_percent:.1f}% used")
+        elif fs_used_percent >= 80:
+            score -= 6
+            evidence.append(f"root filesystem {fs_used_percent:.1f}% used")
+
+    reliability = payload.get("memory_reliability") if isinstance(payload.get("memory_reliability"), dict) else {}
+    ecc_corrected = _number(reliability, "corrected_errors") or 0
+    ecc_uncorrected = _number(reliability, "uncorrected_errors") or 0
+    if ecc_uncorrected > 0:
+        score -= 45
+        critical = True
+        evidence.append(f"ECC uncorrected memory errors={int(ecc_uncorrected)}")
+    elif ecc_corrected > 0:
+        score -= min(20, 4 + int(min(ecc_corrected, 16)))
+        evidence.append(f"ECC corrected memory errors={int(ecc_corrected)}")
+
+    bmc = payload.get("bmc") if isinstance(payload.get("bmc"), dict) else {}
+    bmc_critical = int(_number(bmc, "critical_count") or 0)
+    bmc_warning = int(_number(bmc, "warning_count") or 0)
+    if bmc_critical > 0:
+        score -= min(40, 20 + bmc_critical * 5)
+        critical = True
+        evidence.append(f"BMC reports {bmc_critical} critical sensor condition(s)")
+    elif bmc_warning > 0:
+        score -= min(15, bmc_warning * 3)
+        evidence.append(f"BMC reports {bmc_warning} warning sensor condition(s)")
+
+    storage_warnings = 0
+    devices = payload.get("storage_devices") if isinstance(payload.get("storage_devices"), list) else []
+    for item in devices[:64]:
+        if not isinstance(item, dict):
+            continue
+        failed = item.get("health_passed") is False
+        critical_warning = _number(item, "critical_warning") or 0
+        media_errors = _number(item, "media_errors") or 0
+        percentage_used = _number(item, "percentage_used")
+        device_temp = _number(item, "temperature_celsius")
+
+        if failed or critical_warning > 0:
+            storage_warnings += 1
+            score -= 35
+            critical = True
+            evidence.append(f"{item.get('device') or 'storage'} reports critical SMART/NVMe health")
+        elif media_errors > 0:
+            storage_warnings += 1
+            score -= 18
+            evidence.append(f"{item.get('device') or 'storage'} media errors={int(media_errors)}")
+        if percentage_used is not None and percentage_used >= 95:
+            storage_warnings += 1
+            score -= 15
+            evidence.append(f"{item.get('device') or 'storage'} {percentage_used:.0f}% endurance used")
+        if device_temp is not None and device_temp >= 75:
+            storage_warnings += 1
+            score -= 10
+            evidence.append(f"{item.get('device') or 'storage'} temperature {device_temp:.1f}C")
+
+    score = max(0, min(100, score))
+    status = "critical" if critical or score < 50 else "warning" if score < 80 else "healthy"
+    return {
+        "score": score,
+        "status": status,
+        "evidence": evidence[:20],
+        "temperature_celsius": temperature,
+        "memory_pressure_avg10": memory_pressure,
+        "io_pressure_avg10": io_pressure,
+        "filesystem_used_percent": fs_used_percent,
+        "storage_warning_count": storage_warnings,
+        "ecc_corrected_errors": int(ecc_corrected),
+        "ecc_uncorrected_errors": int(ecc_uncorrected),
+        "bmc_critical_count": bmc_critical,
+        "bmc_warning_count": bmc_warning,
+    }
+
+
+@router.post("/telemetry", status_code=202)
+def ingest_hardware_telemetry(
+    payload: HardwareEnvelope,
+    x_ithute_server_agent: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    raw_token, agent, server = _agent_from_token(db, x_ithute_server_agent)
+    if payload.agent_id != str(server.id):
+        raise HTTPException(status_code=403, detail="Hardware agent identity does not match infrastructure server")
+    if not _verify_signature(payload, raw_token):
+        raise HTTPException(status_code=401, detail="Invalid hardware telemetry signature")
+
+    now = datetime.now(timezone.utc)
+    issued_at = datetime.fromtimestamp(payload.issued_at_unix, tz=timezone.utc)
+    if abs((now - issued_at).total_seconds()) > MAX_CLOCK_SKEW_SECONDS:
+        raise HTTPException(status_code=409, detail="Hardware telemetry timestamp is outside the accepted window")
+
+    _validate_payload(payload.payload)
+    health = _health(payload.payload)
+    prediction = _prediction_for_server(db, server.id, health, payload.payload)
+    active_maintenance = _active_maintenance(db, server.id, now)
+
+    row = HardwareTelemetrySnapshot(
+        server_id=server.id,
+        agent_id=payload.agent_id,
+        issued_at=issued_at,
+        nonce=payload.nonce,
+        signature=payload.signature,
+        payload_json=json.dumps(payload.payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        health_score=health["score"],
+        health_status=health["status"],
+        temperature_celsius=health["temperature_celsius"],
+        memory_pressure_avg10=health["memory_pressure_avg10"],
+        io_pressure_avg10=health["io_pressure_avg10"],
+        filesystem_used_percent=health["filesystem_used_percent"],
+        storage_warning_count=health["storage_warning_count"],
+        predictive_risk_score=prediction["risk_score"],
+        predictive_state=prediction["state"],
+        predictive_confidence=prediction["confidence"],
+        predictive_evidence_json=json.dumps(prediction["evidence"], ensure_ascii=False, separators=(",", ":")),
+    )
+    db.add(row)
+    agent.last_seen_at = now
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Hardware telemetry nonce has already been used") from exc
+
+    db.execute(
+        delete(HardwareTelemetrySnapshot).where(
+            HardwareTelemetrySnapshot.server_id == server.id,
+            HardwareTelemetrySnapshot.created_at < now - timedelta(days=RETENTION_DAYS),
+        )
+    )
+    db.commit()
+    return {
+        "accepted": True,
+        "server_id": str(server.id),
+        "health": {
+            "score": health["score"],
+            "status": health["status"],
+            "evidence": health["evidence"],
+        },
+        "prediction": prediction,
+        "maintenance": {
+            "active": active_maintenance is not None,
+            "suppress_notifications": bool(active_maintenance and active_maintenance.suppress_notifications),
+            "ends_at": active_maintenance.ends_at.isoformat() if active_maintenance else None,
+        },
+    }
+
+
+@router.get("/servers/{server_id}/latest")
+def latest_hardware_health(
+    server_id: str,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    try:
+        from uuid import UUID
+        parsed = UUID(server_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid infrastructure server id") from exc
+
+    row = db.scalar(
+        select(HardwareTelemetrySnapshot)
+        .where(HardwareTelemetrySnapshot.server_id == parsed)
+        .order_by(HardwareTelemetrySnapshot.created_at.desc())
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="No hardware telemetry has been received for this server")
+    return {
+        "server_id": str(row.server_id),
+        "agent_id": row.agent_id,
+        "health_score": row.health_score,
+        "health_status": row.health_status,
+        "temperature_celsius": row.temperature_celsius,
+        "memory_pressure_avg10": row.memory_pressure_avg10,
+        "io_pressure_avg10": row.io_pressure_avg10,
+        "filesystem_used_percent": row.filesystem_used_percent,
+        "storage_warning_count": row.storage_warning_count,
+        "prediction": {
+            "risk_score": row.predictive_risk_score,
+            "state": row.predictive_state or "learning",
+            "confidence": row.predictive_confidence,
+            "evidence": json.loads(row.predictive_evidence_json or "[]"),
+        },
+        "sampled_at": row.issued_at.isoformat(),
+        "received_at": row.created_at.isoformat() if row.created_at else None,
+        "payload": json.loads(row.payload_json),
+    }
+
+
+@router.get("/fleet")
+def hardware_fleet_health(
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    servers = db.scalars(
+        select(InfrastructureServer)
+        .where(InfrastructureServer.status != "disabled")
+        .order_by(InfrastructureServer.name.asc())
+    ).all()
+
+    items: list[dict[str, Any]] = []
+    counts = {"healthy": 0, "warning": 0, "critical": 0, "offline": 0, "unknown": 0}
+    predictive_counts = {"learning": 0, "stable": 0, "watch": 0, "elevated": 0, "high": 0}
+    now = datetime.now(timezone.utc)
+    for server in servers:
+        agent = db.get(InfrastructureServerAgent, server.id)
+        latest = db.scalar(
+            select(HardwareTelemetrySnapshot)
+            .where(HardwareTelemetrySnapshot.server_id == server.id)
+            .order_by(HardwareTelemetrySnapshot.created_at.desc())
+        )
+        maintenance = _active_maintenance(db, server.id, now)
+        acknowledgement = _ack_for_snapshot(db, latest.id if latest else None)
+
+        online = bool(
+            agent
+            and agent.last_seen_at
+            and now - (agent.last_seen_at if agent.last_seen_at.tzinfo else agent.last_seen_at.replace(tzinfo=timezone.utc))
+            <= timedelta(minutes=5)
+        )
+        if not online:
+            status = "offline"
+            score = 0
+        elif latest is None:
+            status = "unknown"
+            score = None
+        else:
+            status = latest.health_status
+            score = latest.health_score
+        counts[status] = counts.get(status, 0) + 1
+        predictive_state = (latest.predictive_state or "learning") if latest else "learning"
+        predictive_counts[predictive_state] = predictive_counts.get(predictive_state, 0) + 1
+
+        evidence: list[str] = []
+        payload: dict[str, Any] = {}
+        if latest:
+            try:
+                payload = json.loads(latest.payload_json or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+            evidence = _health(payload)["evidence"]
+        ebpf = payload.get("ebpf") if isinstance(payload.get("ebpf"), dict) else {}
+
+        items.append({
+            "server_id": str(server.id),
+            "name": server.name,
+            "hostname": server.hostname,
+            "provider": server.provider,
+            "region": server.region,
+            "roles": json.loads(server.roles_json or "[]"),
+            "status": status,
+            "health_score": score,
+            "online": online,
+            "last_seen_at": agent.last_seen_at.isoformat() if agent and agent.last_seen_at else None,
+            "temperature_celsius": latest.temperature_celsius if latest else None,
+            "memory_pressure_avg10": latest.memory_pressure_avg10 if latest else None,
+            "io_pressure_avg10": latest.io_pressure_avg10 if latest else None,
+            "filesystem_used_percent": latest.filesystem_used_percent if latest else None,
+            "storage_warning_count": latest.storage_warning_count if latest else 0,
+            "ecc_corrected_errors": int(_number(payload.get("memory_reliability") if isinstance(payload.get("memory_reliability"), dict) else {}, "corrected_errors") or 0),
+            "ecc_uncorrected_errors": int(_number(payload.get("memory_reliability") if isinstance(payload.get("memory_reliability"), dict) else {}, "uncorrected_errors") or 0),
+            "bmc_critical_count": int(_number(payload.get("bmc") if isinstance(payload.get("bmc"), dict) else {}, "critical_count") or 0),
+            "bmc_warning_count": int(_number(payload.get("bmc") if isinstance(payload.get("bmc"), dict) else {}, "warning_count") or 0),
+            "ebpf_block_latency_p50_ms": _number(ebpf, "block_latency_p50_ms"),
+            "ebpf_block_latency_p95_ms": _number(ebpf, "block_latency_p95_ms"),
+            "ebpf_block_latency_p99_ms": _number(ebpf, "block_latency_p99_ms"),
+            "ebpf_block_latency_max_ms": _number(ebpf, "block_latency_max_ms"),
+            "ebpf_latency_percentiles_capped": bool(ebpf.get("block_latency_percentiles_capped")),
+            "predictive_risk_score": latest.predictive_risk_score if latest else None,
+            "predictive_state": predictive_state,
+            "predictive_confidence": latest.predictive_confidence if latest else None,
+            "predictive_evidence": json.loads(latest.predictive_evidence_json or "[]") if latest else [],
+            "evidence": evidence,
+            "sampled_at": latest.issued_at.isoformat() if latest else None,
+            "maintenance": {
+                "active": maintenance is not None,
+                "reason": maintenance.reason if maintenance else None,
+                "ends_at": maintenance.ends_at.isoformat() if maintenance else None,
+                "suppress_notifications": bool(maintenance and maintenance.suppress_notifications),
+            },
+            "acknowledgement": {
+                "acknowledged": acknowledgement is not None,
+                "note": acknowledgement.note if acknowledgement else None,
+                "acknowledged_at": acknowledgement.acknowledged_at.isoformat() if acknowledgement else None,
+            },
+        })
+
+    return {
+        "generated_at": now.isoformat(),
+        "counts": counts,
+        "predictive_counts": predictive_counts,
+        "total": len(items),
+        "items": items,
+    }
+
+
+@router.get("/servers/{server_id}/history")
+def hardware_health_history(
+    server_id: str,
+    hours: int = 24,
+    limit: int = 288,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    try:
+        from uuid import UUID
+        parsed = UUID(server_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid infrastructure server id") from exc
+
+    server = db.get(InfrastructureServer, parsed)
+    if server is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+
+    safe_hours = max(1, min(hours, 24 * 30))
+    safe_limit = max(1, min(limit, 2000))
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=safe_hours)
+    rows = db.scalars(
+        select(HardwareTelemetrySnapshot)
+        .where(
+            HardwareTelemetrySnapshot.server_id == parsed,
+            HardwareTelemetrySnapshot.created_at >= cutoff,
+        )
+        .order_by(HardwareTelemetrySnapshot.created_at.asc())
+        .limit(safe_limit)
+    ).all()
+
+    return {
+        "server_id": str(server.id),
+        "name": server.name,
+        "hostname": server.hostname,
+        "hours": safe_hours,
+        "items": [
+            {
+                "sampled_at": row.issued_at.isoformat(),
+                "received_at": row.created_at.isoformat() if row.created_at else None,
+                "health_score": row.health_score,
+                "health_status": row.health_status,
+                "temperature_celsius": row.temperature_celsius,
+                "memory_pressure_avg10": row.memory_pressure_avg10,
+                "io_pressure_avg10": row.io_pressure_avg10,
+                "filesystem_used_percent": row.filesystem_used_percent,
+                "storage_warning_count": row.storage_warning_count,
+                "predictive_risk_score": row.predictive_risk_score,
+                "predictive_state": row.predictive_state or "learning",
+                "predictive_confidence": row.predictive_confidence,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.get("/servers/{server_id}/maintenance-windows")
+def list_hardware_maintenance_windows(
+    server_id: str,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    try:
+        parsed = UUID(server_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid infrastructure server id") from exc
+    if db.get(InfrastructureServer, parsed) is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+
+    rows = db.scalars(
+        select(HardwareMaintenanceWindow)
+        .where(HardwareMaintenanceWindow.server_id == parsed)
+        .order_by(HardwareMaintenanceWindow.starts_at.desc())
+        .limit(100)
+    ).all()
+    now = datetime.now(timezone.utc)
+    return {
+        "server_id": server_id,
+        "items": [
+            {
+                "id": str(row.id),
+                "starts_at": row.starts_at.isoformat(),
+                "ends_at": row.ends_at.isoformat(),
+                "reason": row.reason,
+                "suppress_notifications": row.suppress_notifications,
+                "active": _window_active_at(row, now),
+                "cancelled_at": row.cancelled_at.isoformat() if row.cancelled_at else None,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.post("/servers/{server_id}/maintenance-windows", status_code=201)
+def create_hardware_maintenance_window(
+    server_id: str,
+    body: MaintenanceWindowCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    try:
+        parsed = UUID(server_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid infrastructure server id") from exc
+    if db.get(InfrastructureServer, parsed) is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+
+    starts_at = _utc(body.starts_at)
+    ends_at = _utc(body.ends_at)
+    if ends_at <= starts_at:
+        raise HTTPException(status_code=422, detail="Maintenance end must be after start")
+    if ends_at - starts_at > timedelta(days=30):
+        raise HTTPException(status_code=422, detail="Maintenance window cannot exceed 30 days")
+    if ends_at <= datetime.now(timezone.utc) - timedelta(minutes=1):
+        raise HTTPException(status_code=422, detail="Maintenance window has already ended")
+
+    row = HardwareMaintenanceWindow(
+        server_id=parsed,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        reason=body.reason.strip(),
+        suppress_notifications=body.suppress_notifications,
+        created_by_user_id=current.id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": str(row.id),
+        "server_id": server_id,
+        "starts_at": row.starts_at.isoformat(),
+        "ends_at": row.ends_at.isoformat(),
+        "reason": row.reason,
+        "suppress_notifications": row.suppress_notifications,
+    }
+
+
+@router.delete("/maintenance-windows/{window_id}", status_code=204)
+def cancel_hardware_maintenance_window(
+    window_id: str,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    try:
+        parsed = UUID(window_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid maintenance window id") from exc
+    row = db.get(HardwareMaintenanceWindow, parsed)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Maintenance window not found")
+    if row.cancelled_at is None:
+        row.cancelled_at = datetime.now(timezone.utc)
+        db.commit()
+    return None
+
+
+@router.post("/servers/{server_id}/acknowledge", status_code=201)
+def acknowledge_hardware_alert(
+    server_id: str,
+    body: AlertAcknowledgementCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    try:
+        parsed = UUID(server_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid infrastructure server id") from exc
+    if db.get(InfrastructureServer, parsed) is None:
+        raise HTTPException(status_code=404, detail="Infrastructure server not found")
+
+    latest = db.scalar(
+        select(HardwareTelemetrySnapshot)
+        .where(HardwareTelemetrySnapshot.server_id == parsed)
+        .order_by(HardwareTelemetrySnapshot.created_at.desc())
+    )
+    if latest is None:
+        raise HTTPException(status_code=404, detail="No hardware telemetry to acknowledge")
+
+    existing = _ack_for_snapshot(db, latest.id)
+    if existing is not None:
+        return {
+            "id": str(existing.id),
+            "snapshot_id": str(existing.snapshot_id),
+            "acknowledged_at": existing.acknowledged_at.isoformat(),
+            "note": existing.note,
+            "already_acknowledged": True,
+        }
+
+    row = HardwareAlertAcknowledgement(
+        server_id=parsed,
+        snapshot_id=latest.id,
+        acknowledged_by_user_id=current.id,
+        note=body.note.strip(),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": str(row.id),
+        "snapshot_id": str(row.snapshot_id),
+        "acknowledged_at": row.acknowledged_at.isoformat(),
+        "note": row.note,
+        "already_acknowledged": False,
+    }

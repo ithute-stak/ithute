@@ -1,0 +1,28 @@
+[Unit]
+Description=Ithute Hardware Intelligence eBPF loader
+Documentation=https://ithute.co.ls
+After=local-fs.target
+ConditionPathExists=/sys/fs/bpf
+ConditionPathExists=/sys/kernel/btf/vmlinux
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/ithute/hardware-intelligence/ithute-ebpf-loader start
+ExecStop=/bin/bash /opt/ithute/hardware-intelligence/ithute-ebpf-loader stop
+RemainAfterExit=yes
+User=root
+Group=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/sys/fs/bpf/ithute_hardware /run/ithute-hardware
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN
+AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,21 @@
+[Unit]
+Description=Export Ithute eBPF counters for the unprivileged hardware agent
+After=ithute-ebpf.service
+Requires=ithute-ebpf.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/ithute/hardware-intelligence/ithute-ebpf-loader snapshot
+User=root
+Group=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/run/ithute-hardware
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN
+AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN

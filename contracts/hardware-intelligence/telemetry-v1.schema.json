@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ithute.co.ls/contracts/hardware-intelligence/telemetry-v1.schema.json",
+  "title": "Ithute Hardware Intelligence Telemetry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "sampled_at_unix", "uptime_seconds", "load", "memory", "cpu", "thermal"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "sampled_at_unix": {"type": "integer", "minimum": 0},
+    "uptime_seconds": {"type": "number", "minimum": -1},
+    "load": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["one", "five", "fifteen"],
+      "properties": {
+        "one": {"type": "number", "minimum": 0},
+        "five": {"type": "number", "minimum": 0},
+        "fifteen": {"type": "number", "minimum": 0}
+      }
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_kb", "available_kb", "swap_total_kb", "swap_free_kb"],
+      "properties": {
+        "total_kb": {"type": "integer", "minimum": 0},
+        "available_kb": {"type": "integer", "minimum": 0},
+        "swap_total_kb": {"type": "integer", "minimum": 0},
+        "swap_free_kb": {"type": "integer", "minimum": 0}
+      }
+    },
+    "cpu": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user", "nice", "system", "idle", "iowait", "irq", "softirq", "steal"],
+      "properties": {
+        "user": {"type": "integer", "minimum": 0},
+        "nice": {"type": "integer", "minimum": 0},
+        "system": {"type": "integer", "minimum": 0},
+        "idle": {"type": "integer", "minimum": 0},
+        "iowait": {"type": "integer", "minimum": 0},
+        "irq": {"type": "integer", "minimum": 0},
+        "softirq": {"type": "integer", "minimum": 0},
+        "steal": {"type": "integer", "minimum": 0}
+      }
+    },
+    "thermal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["zones_seen", "max_celsius"],
+      "properties": {
+        "zones_seen": {"type": "integer", "minimum": 0},
+        "max_celsius": {"type": "number"}
+      }
+    },
+    "pressure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu_avg10", "memory_avg10", "io_avg10"],
+      "properties": {
+        "cpu_avg10": {"type": "number", "minimum": -1},
+        "memory_avg10": {"type": "number", "minimum": -1},
+        "io_avg10": {"type": "number", "minimum": -1}
+      }
+    },
+    "filesystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root_total_bytes", "root_available_bytes"],
+      "properties": {
+        "root_total_bytes": {"type": "integer", "minimum": 0},
+        "root_available_bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["devices", "reads_completed", "sectors_read", "writes_completed", "sectors_written", "io_ms", "weighted_io_ms"],
+      "properties": {
+        "devices": {"type": "integer", "minimum": 0},
+        "reads_completed": {"type": "integer", "minimum": 0},
+        "sectors_read": {"type": "integer", "minimum": 0},
+        "writes_completed": {"type": "integer", "minimum": 0},
+        "sectors_written": {"type": "integer", "minimum": 0},
+        "io_ms": {"type": "integer", "minimum": 0},
+        "weighted_io_ms": {"type": "integer", "minimum": 0}
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rx_errors", "tx_errors", "rx_dropped", "tx_dropped", "tcp_retrans_segs"],
+      "properties": {
+        "rx_errors": {"type": "integer", "minimum": 0},
+        "tx_errors": {"type": "integer", "minimum": 0},
+        "rx_dropped": {"type": "integer", "minimum": 0},
+        "tx_dropped": {"type": "integer", "minimum": 0},
+        "tcp_retrans_segs": {"type": "integer", "minimum": 0}
+      }
+    },
+    "ebpf": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available"],
+      "properties": {
+        "available": {"type": "boolean"},
+        "reason": {"type": "string", "maxLength": 256},
+        "sampled_at_unix": {"type": "integer", "minimum": 0},
+        "block_requests_issued": {"type": "integer", "minimum": 0},
+        "block_requests_completed": {"type": "integer", "minimum": 0},
+        "process_exits": {"type": "integer", "minimum": 0},
+        "oom_victims": {"type": "integer", "minimum": 0},
+        "block_latency_count": {"type": "integer", "minimum": 0},
+        "block_latency_avg_ms": {"type": ["number", "null"], "minimum": 0},
+        "block_latency_max_ms": {"type": ["number", "null"], "minimum": 0},
+        "block_latency_p50_ms": {"type": ["number", "null"], "minimum": 0},
+        "block_latency_p95_ms": {"type": ["number", "null"], "minimum": 0},
+        "block_latency_p99_ms": {"type": ["number", "null"], "minimum": 0},
+        "block_latency_percentiles_capped": {"type": "boolean"},
+        "block_latency_histogram": {
+          "type": "array",
+          "minItems": 16,
+          "maxItems": 16,
+          "items": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "memory_reliability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "corrected_errors", "uncorrected_errors", "controllers"],
+      "properties": {
+        "available": {"type": "boolean"},
+        "corrected_errors": {"type": "integer", "minimum": 0},
+        "uncorrected_errors": {"type": "integer", "minimum": 0},
+        "controllers": {"type": "integer", "minimum": 0}
+      }
+    },
+    "bmc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "sensor_count", "critical_count", "warning_count"],
+      "properties": {
+        "available": {"type": "boolean"},
+        "sensor_count": {"type": "integer", "minimum": 0},
+        "critical_count": {"type": "integer", "minimum": 0},
+        "warning_count": {"type": "integer", "minimum": 0},
+        "max_temp_celsius": {"type": "number", "minimum": -100, "maximum": 250},
+        "min_fan_rpm": {"type": "number", "minimum": 0},
+        "faulty_sensors": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {"type": "string", "maxLength": 128}
+        }
+      }
+    },
+    "storage_devices": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["device"],
+        "properties": {
+          "device": {"type": "string", "pattern": "^/dev/[A-Za-z0-9._-]+$"},
+          "protocol": {"type": "string", "maxLength": 32},
+          "model": {"type": "string", "maxLength": 256},
+          "serial": {"type": "string", "maxLength": 256},
+          "health_passed": {"type": "boolean"},
+          "temperature_celsius": {"type": "number", "minimum": -100, "maximum": 250},
+          "percentage_used": {"type": "integer", "minimum": 0},
+          "media_errors": {"type": "integer", "minimum": 0},
+          "critical_warning": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hwmon", "thermal", "edac", "ipmi", "bpf_fs", "kernel_btf", "smartctl", "nvme_cli"],
+      "properties": {
+        "hwmon": {"type": "boolean"},
+        "thermal": {"type": "boolean"},
+        "edac": {"type": "boolean"},
+        "ipmi": {"type": "boolean"},
+        "bpf_fs": {"type": "boolean"},
+        "kernel_btf": {"type": "boolean"},
+        "smartctl": {"type": "boolean"},
+        "nvme_cli": {"type": "boolean"}
+      }
+    }
+  }
+}
