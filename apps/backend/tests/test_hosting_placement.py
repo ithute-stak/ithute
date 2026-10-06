@@ -1,9 +1,12 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+import uuid
 
 from sqlalchemy import delete
 
 from app.models import HostingNode, HostingProject, InfrastructureCommercialProfile, InfrastructureServer, TenantInfrastructureAllocation
+from app.services import hosting_placement
 from app.services.hosting_placement import _estimated_incremental_cost, _fresh, score_node, sync_tenant_infrastructure_allocation
 from app.services.resource_manager import reserve_capacity
 
@@ -238,3 +241,88 @@ def test_placement_respects_active_resource_reservations(db, platform_owner):
         "storage_mb": 9_500,
     }
     db.rollback()
+
+
+
+def _prediction_aware_score(monkeypatch, state: str, health_status: str = "healthy"):
+    now = datetime.now(timezone.utc)
+    node = SimpleNamespace(
+        id=uuid.uuid4(),
+        name="prediction-node",
+        hostname="prediction-node.test",
+        status="active",
+        accepts_new_projects=True,
+        allocatable_storage_mb=100_000,
+        allocatable_memory_mb=16_000,
+        allocatable_cpu_millicores=8_000,
+    )
+    agent = SimpleNamespace(last_seen_at=now)
+    server = SimpleNamespace(
+        id=uuid.uuid4(),
+        name="Prediction server",
+        hostname="prediction-server.test",
+        provider="test",
+        region="lesotho",
+        roles_json='["application","database"]',
+        status="active",
+        cpu_alert_percent=90,
+        memory_alert_percent=90,
+        disk_alert_percent=90,
+    )
+    server_agent = SimpleNamespace(
+        last_seen_at=now,
+        telemetry_json='{"cpu":{"used_percent":10},"memory":{"used_percent":20},"disks":[{"used_percent":30}],"docker":{"reachable":true}}',
+        capabilities_json='{"postgresql":true,"mysql":true}',
+    )
+    hardware = SimpleNamespace(
+        issued_at=now,
+        created_at=now,
+        health_status=health_status,
+        health_score=88,
+        predictive_state=state,
+        predictive_risk_score=72,
+        predictive_confidence=0.91,
+    )
+
+    class FakeDB:
+        def get(self, model, key):
+            if model is hosting_placement.HostingNodeAgent:
+                return agent
+            return None
+
+    monkeypatch.setattr(hosting_placement, "_allocated", lambda *_args, **_kwargs: {
+        "storage_mb": 0,
+        "memory_mb": 0,
+        "cpu_millicores": 0,
+        "projects": 0,
+        "allocated": {"storage_mb": 0, "memory_mb": 0, "cpu_millicores": 0},
+        "reserved": {"storage_mb": 0, "memory_mb": 0, "cpu_millicores": 0},
+    })
+    monkeypatch.setattr(hosting_placement, "_infrastructure_for_hosting_node", lambda *_args: (server, server_agent))
+    monkeypatch.setattr(hosting_placement, "_latest_hardware", lambda *_args: hardware)
+    monkeypatch.setattr(hosting_placement, "_latest_security", lambda *_args: None)
+    monkeypatch.setattr(hosting_placement, "_commercial_profile", lambda *_args: None)
+
+    return score_node(
+        FakeDB(),
+        node,
+        workload="application",
+        storage_mb=512,
+        memory_mb=256,
+        cpu_millicores=250,
+    )
+
+
+def test_high_predictive_hardware_risk_blocks_new_placement(monkeypatch):
+    scored = _prediction_aware_score(monkeypatch, "high")
+    assert scored["eligible"] is False
+    assert "Hardware Intelligence predicts high failure risk" in scored["reasons"]
+    assert scored["hardware_intelligence"]["predictive_state"] == "high"
+    assert scored["hardware_intelligence"]["fresh"] is True
+
+
+def test_elevated_predictive_hardware_risk_penalizes_without_forced_drain(monkeypatch):
+    scored = _prediction_aware_score(monkeypatch, "elevated")
+    assert scored["eligible"] is True
+    assert scored["hardware_intelligence"]["penalty"] == 20.0
+    assert "Hardware Intelligence predicts elevated failure risk" in scored["reasons"]
