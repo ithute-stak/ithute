@@ -115,3 +115,17 @@ def test_internal_mail_is_not_blindly_trusted():
 
     assert result["security"]["phishing_probability"] > 0.10
     assert any(signal["signal"] == "credential_request" for signal in result["security"]["signals"])
+
+
+
+def test_mail_authentication_failures_raise_risk():
+    result = analyze_mail_message(
+        _message(
+            authentication_results="mx.example; spf=fail smtp.mailfrom=evil.example; dkim=fail; dmarc=fail",
+            received_spf="fail (example)",
+        )
+    )
+
+    signal = next(item for item in result["security"]["signals"] if item["signal"] == "mail_authentication_failure")
+    assert set(signal["evidence"]) == {"spf", "dkim", "dmarc"}
+    assert result["security"]["phishing_probability"] >= 0.4

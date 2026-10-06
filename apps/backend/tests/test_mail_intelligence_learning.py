@@ -75,21 +75,23 @@ def test_low_confidence_labels_do_not_count():
     assert result["ready"] is False
 
 
-def test_balanced_verified_labels_can_enable_training():
+def test_two_classes_are_not_enough_for_three_class_model():
     rows = [{"label": "legitimate", "confidence": 0.95} for _ in range(20)]
     rows += [{"label": "phishing", "confidence": 0.95} for _ in range(20)]
 
     result = training_readiness(rows)
 
-    assert result["ready"] is True
-    assert result["raw_message_content_used"] is False
+    assert result["ready"] is False
+    assert result["gates"]["all_three_classes"] is False
 
 
-def test_bec_can_be_a_training_class():
-    rows = [{"label": "legitimate", "confidence": 0.95} for _ in range(20)]
-    rows += [{"label": "bec", "confidence": 0.95} for _ in range(20)]
+def test_balanced_verified_three_class_labels_enable_training():
+    rows = [{"label": "legitimate", "confidence": 0.95} for _ in range(30)]
+    rows += [{"label": "phishing", "confidence": 0.95} for _ in range(30)]
+    rows += [{"label": "bec", "confidence": 0.95} for _ in range(30)]
 
     result = training_readiness(rows)
 
     assert result["ready"] is True
-    assert result["class_counts"]["bec"] == 20
+    assert result["class_counts"]["bec"] == 30
+    assert result["raw_message_content_used"] is False

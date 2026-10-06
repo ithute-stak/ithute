@@ -5,8 +5,8 @@ from typing import Any
 
 LABELS = {"legitimate", "phishing", "bec"}
 MIN_LABEL_CONFIDENCE = 0.80
-MIN_TRAINING_LABELS = 40
-MIN_PER_CLASS = 10
+MIN_TRAINING_LABELS = 90
+MIN_PER_CLASS = 20
 
 
 def feature_snapshot(message: dict[str, Any], intelligence: dict[str, Any]) -> dict[str, Any]:
@@ -42,6 +42,12 @@ def feature_snapshot(message: dict[str, Any], intelligence: dict[str, Any]) -> d
         "reference_count": len(entities.get("references") or []),
         "deadline_count": len(entities.get("deadline_terms") or []),
         "has_reply_to": bool(str(message.get("reply_to") or "").strip()),
+        "spf_failed": (
+            "spf=fail" in str(message.get("authentication_results") or "").lower()
+            or str(message.get("received_spf") or "").lower().startswith("fail")
+        ),
+        "dkim_failed": "dkim=fail" in str(message.get("authentication_results") or "").lower(),
+        "dmarc_failed": "dmarc=fail" in str(message.get("authentication_results") or "").lower(),
         "body_length_bucket": min(20, len(str(message.get("body_text") or "")) // 500),
         "raw_body_stored": False,
     }
@@ -55,11 +61,11 @@ def training_readiness(rows: list[dict[str, Any]]) -> dict[str, Any]:
     ]
     counts = Counter(str(row["label"]) for row in trusted)
     represented = [label for label in LABELS if counts[label] > 0]
-    class_gate = len(represented) >= 2 and all(counts[label] >= MIN_PER_CLASS for label in represented)
+    class_gate = all(counts[label] >= MIN_PER_CLASS for label in LABELS)
     gates = {
         "total_labels": len(trusted) >= MIN_TRAINING_LABELS,
-        "at_least_two_classes": len(represented) >= 2,
-        "minimum_per_represented_class": class_gate,
+        "all_three_classes": set(represented) == LABELS,
+        "minimum_per_class": class_gate,
     }
     blockers = [name for name, passed in gates.items() if not passed]
     return {

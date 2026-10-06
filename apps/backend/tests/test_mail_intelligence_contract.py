@@ -54,3 +54,32 @@ def test_imail_intelligence_learning_contract():
     assert 'saveIntelligenceVerdict("phishing")' in ui
     assert 'saveIntelligenceVerdict("bec")' in ui
     assert "Raw message content is not stored" in ui
+
+
+
+def test_imail_supervised_threat_model_contract():
+    backend = Path(__file__).resolve().parents[1]
+
+    service = (backend / "app" / "services" / "mail_threat_model.py").read_text(encoding="utf-8")
+    learning = (backend / "app" / "services" / "mail_intelligence_learning.py").read_text(encoding="utf-8")
+    api = (backend / "app" / "api" / "v1" / "mail_intelligence.py").read_text(encoding="utf-8")
+    models = (backend / "app" / "models" / "mail_intelligence.py").read_text(encoding="utf-8")
+    migration = (backend / "alembic" / "versions" / "0089_mail_threat_models.py").read_text(encoding="utf-8")
+
+    assert 'ALGORITHM = "mail_multiclass_logistic_v1"' in service
+    assert "def grouped_split" in service
+    assert "def multiclass_metrics" in service
+    assert "expected_calibration_error" in service
+    assert '"eligible_for_activation": False' in service
+    assert 'MIN_TRAINING_LABELS = 90' in learning
+    assert 'MIN_PER_CLASS = 20' in learning
+    assert '"all_three_classes"' in learning
+
+    assert '@router.post("/tenants/{tenant_id}/threat-models/train"' in api
+    assert '@router.get("/tenants/{tenant_id}/threat-models")' in api
+    assert '"mail.manage"' in api
+    assert 'lifecycle_state = "shadow" if result["promotion"]["eligible_for_shadow"] else "rejected"' in api
+
+    assert "class MailThreatModelVersion" in models
+    assert "tenant_id" in migration
+    assert "uq_mail_threat_model_tenant_name_version" in migration
