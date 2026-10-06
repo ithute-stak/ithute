@@ -163,6 +163,11 @@ public final class Main {
         String health = lower(form.getOrDefault("health_status", ""));
         String prediction = lower(form.getOrDefault("predictive_state", ""));
         boolean suppressed = Boolean.parseBoolean(form.getOrDefault("notification_suppressed", "false"));
+        double temperature = doubleValue(form.getOrDefault("temperature_celsius", ""));
+        double memoryPressure = doubleValue(form.getOrDefault("memory_pressure_avg10", ""));
+        double ioPressure = doubleValue(form.getOrDefault("io_pressure_avg10", ""));
+        double filesystemUsed = doubleValue(form.getOrDefault("filesystem_used_percent", ""));
+        int storageWarnings = intValue(form.getOrDefault("storage_warning_count", ""), 0);
 
         if (!List.of("high", "critical").contains(severity)) {
             throw new IllegalArgumentException("severity must be high or critical");
@@ -191,11 +196,37 @@ public final class Main {
             escalation = "urgent";
         }
 
+        List<String> recommendations = new ArrayList<>();
+        if (temperature >= 85.0) {
+            recommendations.add("inspect_cooling_and_thermal_path");
+        }
+        if (memoryPressure >= 40.0) {
+            recommendations.add("investigate_memory_pressure_and_working_set");
+        }
+        if (ioPressure >= 35.0) {
+            recommendations.add("inspect_storage_latency_and_io_contention");
+        }
+        if (filesystemUsed >= 90.0) {
+            recommendations.add("free_or_expand_filesystem_capacity");
+        }
+        if (storageWarnings > 0) {
+            recommendations.add("inspect_smart_nvme_and_prepare_storage_replacement");
+        }
+        if (recommendations.isEmpty()) {
+            recommendations.add("inspect_recent_kernel_hardware_and_system_logs");
+        }
+        if (!suppressed && ("critical".equals(severity) || "critical".equals(health))) {
+            recommendations.add("prepare_safe_workload_drain_before_host_intervention");
+        } else if (!suppressed) {
+            recommendations.add("review_drain_readiness_and_schedule_maintenance");
+        }
+
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("engine", "java");
-        result.put("plan_version", "1");
+        result.put("plan_version", "2");
         result.put("escalation", escalation);
         result.put("actions", actions);
+        result.put("recommendations", recommendations);
         return result;
     }
 
@@ -385,6 +416,10 @@ public final class Main {
 
     private static long longValue(String value) {
         try { return Long.parseLong(value.trim()); } catch (Exception ignored) { return 0L; }
+    }
+
+    private static double doubleValue(String value) {
+        try { return Double.parseDouble(value.trim()); } catch (Exception ignored) { return Double.NaN; }
     }
 
     private static String lower(String value) {
