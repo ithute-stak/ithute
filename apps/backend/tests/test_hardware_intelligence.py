@@ -212,7 +212,7 @@ def test_hardware_remediation_recommendation_contract_exists():
     ):
         assert signal in api
 
-    assert '"plan_version": "2"' in runtime
+    assert '"plan_version": "3"' in runtime
     assert '"recommendations": recommendations' in runtime
     assert "Recommended remediation" in page
     assert 'recommendations?: string[]' in page
