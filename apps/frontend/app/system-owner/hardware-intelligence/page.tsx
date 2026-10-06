@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Activity,
   AlertTriangle,
@@ -189,6 +190,8 @@ function Sparkline({ values }: { values: number[] }) {
 }
 
 export default function HardwareIntelligencePage() {
+  const searchParams = useSearchParams();
+  const requestedServer = searchParams.get("server") || "";
   const [fleet, setFleet] = useState<Fleet | null>(null);
   const [selected, setSelected] = useState<string>("");
   const [history, setHistory] = useState<History | null>(null);
@@ -208,13 +211,16 @@ export default function HardwareIntelligencePage() {
     try {
       const next = await apiJson<Fleet>("/hardware-intelligence/fleet", { ttlMs: 0, force: true });
       setFleet(next);
-      setSelected((current) => current || next.items[0]?.server_id || "");
+      setSelected((current) => {
+        if (requestedServer && next.items.some((item) => item.server_id === requestedServer)) return requestedServer;
+        return current || next.items[0]?.server_id || "";
+      });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to load Hardware Intelligence.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [requestedServer]);
 
   const createMaintenance = useCallback(async () => {
     if (!selected || !maintenanceReason.trim()) return;
