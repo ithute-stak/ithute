@@ -539,6 +539,7 @@ def hardware_fleet_health(
                 payload = {}
             evidence = _health(payload)["evidence"]
         ebpf = payload.get("ebpf") if isinstance(payload.get("ebpf"), dict) else {}
+        cpu_native = payload.get("cpu_native") if isinstance(payload.get("cpu_native"), dict) else {}
 
         items.append({
             "server_id": str(server.id),
@@ -565,6 +566,18 @@ def hardware_fleet_health(
             "ebpf_block_latency_p99_ms": _number(ebpf, "block_latency_p99_ms"),
             "ebpf_block_latency_max_ms": _number(ebpf, "block_latency_max_ms"),
             "ebpf_latency_percentiles_capped": bool(ebpf.get("block_latency_percentiles_capped")),
+            "cpu_native": {
+                "available": bool(cpu_native.get("available")),
+                "vendor": str(cpu_native.get("vendor") or "")[:12],
+                "family": int(_number(cpu_native, "family") or 0),
+                "model": int(_number(cpu_native, "model") or 0),
+                "stepping": int(_number(cpu_native, "stepping") or 0),
+                "invariant_tsc": bool(cpu_native.get("invariant_tsc")),
+                "rdtscp": bool(cpu_native.get("rdtscp")),
+                "aes_ni": bool(cpu_native.get("aes_ni")),
+                "avx": bool(cpu_native.get("avx")),
+                "avx2": bool(cpu_native.get("avx2")),
+            },
             "predictive_risk_score": latest.predictive_risk_score if latest else None,
             "predictive_state": predictive_state,
             "predictive_confidence": latest.predictive_confidence if latest else None,
