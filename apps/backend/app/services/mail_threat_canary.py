@@ -70,9 +70,15 @@ def canary_validation(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
     validation["verified_canary_samples"] = len(data)
     validation["minimum_verified_canary_samples"] = MIN_CANARY_VERIFIED_SAMPLES
     validation["enough_canary_samples"] = len(data) >= MIN_CANARY_VERIFIED_SAMPLES
+    quality_gates = {
+        name: passed
+        for name, passed in validation["gates"].items()
+        if name != "sample_count"
+    }
+    validation["canary_quality_gates"] = quality_gates
     validation["eligible_for_activation"] = (
         validation["enough_canary_samples"]
-        and validation["eligible_for_canary"]
+        and all(quality_gates.values())
     )
     return validation
 
