@@ -278,3 +278,31 @@ def test_hardware_command_center_ui_contract_exists():
     assert "Recovery assurance" in page
     assert "Current measured state" in page
     assert "Ithute does not silently execute destructive hardware remediation" in page
+
+
+
+def test_hardware_ai_ensemble_persistence_and_ui_contract_exists():
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]
+    api = (backend / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    models = (backend / "app" / "models" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    ai = (backend / "app" / "services" / "hardware_ai.py").read_text(encoding="utf-8")
+    migration = (backend / "alembic" / "versions" / "0085_hardware_ai_models.py").read_text(encoding="utf-8")
+    page = (repo / "apps" / "frontend" / "app" / "system-owner" / "hardware-intelligence" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "def isolation_forest_signal" in ai
+    assert "def change_point_signal" in ai
+    assert "def weibull_survival_projection" in ai
+    assert "def ensemble_signals" in ai
+    assert "A single detector cannot independently create a high-risk incident" in ai
+    assert "Waiting for sufficient confirmed hardware failure labels" in ai
+    assert "predictive_models_json" in models
+    assert "predictive_models_json=json.dumps" in api
+    assert '"predictive_models": json.loads' in api
+    assert "predictive_models_json" in migration
+    assert "Isolation Forest" in page
+    assert "Change point" in page
+    assert "72h survival risk" in page
+    assert "Supervised boost" in page
