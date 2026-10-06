@@ -257,3 +257,24 @@ def test_remediation_outcome_learning_contract_exists():
     assert "samples" in api
     assert "Complete + record outcome" in page
     assert "Outcome learning:" in page
+
+
+
+def test_hardware_command_center_ui_contract_exists():
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[3]
+    page = (repo / "apps" / "frontend" / "app" / "system-owner" / "hardware-intelligence" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "Assembly · C + eBPF · Rust · Go · Python · Java" in page
+    assert "From silicon evidence to operator decision" in page
+    assert "Live signal matrix" in page
+    assert "24-hour hardware behaviour" in page
+    assert "Temperature" in page
+    assert "Memory pressure" in page
+    assert "I/O pressure" in page
+    assert "Filesystem used" in page
+    assert "Risk movement" in page
+    assert "Recovery assurance" in page
+    assert "Current measured state" in page
+    assert "Ithute does not silently execute destructive hardware remediation" in page
