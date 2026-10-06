@@ -15,6 +15,7 @@ from app.db.session import get_db
 from app.services.mail_intelligence_learning import training_readiness
 from app.services.mail_threat_model import ALGORITHM, train_and_evaluate
 from app.services.mail_threat_shadow import shadow_policy, shadow_validation
+from app.services.mail_threat_canary import canary_policy, canary_validation, deterministic_canary_member
 from app.models import DmarcAggregateReport, MailAutomationRule, MailRetentionPolicy, MailThreatModelVersion, MailThreatShadowPrediction, PhishingFinding, User
 
 router = APIRouter(prefix="/mail-intelligence", tags=["mail-intelligence"])
@@ -58,6 +59,35 @@ class AutomationRuleIn(BaseModel):
 
 def _require(tenant_id: uuid.UUID, permission: str, db: Session, current: User) -> None:
     require_tenant_permission(tenant_id, permission, db, current)
+
+
+def _canary_evidence_rows(db: Session, model: MailThreatModelVersion) -> list[dict[str, Any]]:
+    if model.canary_started_at is None:
+        return []
+    predictions = db.scalars(
+        select(MailThreatShadowPrediction)
+        .where(
+            MailThreatShadowPrediction.model_id == model.id,
+            MailThreatShadowPrediction.verified_label.is_not(None),
+            MailThreatShadowPrediction.created_at >= model.canary_started_at,
+        )
+        .order_by(MailThreatShadowPrediction.created_at.asc())
+    ).all()
+    rows = []
+    for row in predictions:
+        if not deterministic_canary_member(
+            model_id=str(model.id),
+            mailbox_id=str(row.mailbox_id),
+            message_ref=row.message_ref,
+        ):
+            continue
+        rows.append({
+            "verified_label": row.verified_label,
+            "candidate_probabilities": row.probabilities_json,
+            "baseline_probabilities": row.baseline_json,
+            "latency_ms": row.latency_ms,
+        })
+    return rows
 
 @router.get("/tenants/{tenant_id}/overview")
 def overview(tenant_id: uuid.UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)) -> dict[str, Any]:
@@ -153,6 +183,7 @@ def threat_models(
             "training_metrics": item.training_metrics_json,
             "shadow_metrics": item.shadow_metrics_json,
             "promotion_evidence": item.promotion_evidence_json,
+            "canary_started_at": item.canary_started_at.isoformat() if item.canary_started_at else None,
             "activated_at": item.activated_at.isoformat() if item.activated_at else None,
             "retired_at": item.retired_at.isoformat() if item.retired_at else None,
             "rollback_reason": item.rollback_reason,
@@ -385,6 +416,127 @@ def qualify_threat_model(
         "lifecycle_state": model.lifecycle_state,
         "eligible_for_canary": True,
         "direct_activation_allowed": False,
+    }
+
+
+@router.post("/tenants/{tenant_id}/threat-models/{model_id}/canary/start")
+def start_threat_model_canary(
+    tenant_id: uuid.UUID,
+    model_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require(tenant_id, "mail.manage", db, current)
+    model = db.get(MailThreatModelVersion, model_id)
+    if model is None or model.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Mail threat model not found")
+    if model.lifecycle_state != "qualified":
+        raise HTTPException(status_code=409, detail="Only qualified models can enter canary")
+
+    shadow_metrics = model.shadow_metrics_json or {}
+    if not bool(shadow_metrics.get("eligible_for_canary")):
+        raise HTTPException(
+            status_code=409,
+            detail="Model must pass live shadow validation before canary",
+        )
+
+    model.lifecycle_state = "canary"
+    model.canary_started_at = datetime.now().astimezone()
+    model.promotion_evidence_json = {
+        **(model.promotion_evidence_json or {}),
+        "canary_policy": canary_policy(),
+        "canary_started_at": model.canary_started_at.isoformat(),
+    }
+    db.commit()
+    return {
+        "id": str(model.id),
+        "version": model.version,
+        "lifecycle_state": model.lifecycle_state,
+        "canary_started_at": model.canary_started_at.isoformat(),
+        "policy": canary_policy(),
+    }
+
+
+@router.get("/tenants/{tenant_id}/threat-models/{model_id}/canary-status")
+def threat_model_canary_status(
+    tenant_id: uuid.UUID,
+    model_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require(tenant_id, "mail.read", db, current)
+    model = db.get(MailThreatModelVersion, model_id)
+    if model is None or model.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Mail threat model not found")
+    rows = _canary_evidence_rows(db, model)
+    validation = canary_validation(rows)
+    return {
+        "id": str(model.id),
+        "version": model.version,
+        "lifecycle_state": model.lifecycle_state,
+        "canary_started_at": model.canary_started_at.isoformat() if model.canary_started_at else None,
+        "validation": validation,
+        "policy": canary_policy(),
+    }
+
+
+@router.post("/tenants/{tenant_id}/threat-models/{model_id}/activate")
+def activate_threat_model(
+    tenant_id: uuid.UUID,
+    model_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require(tenant_id, "mail.manage", db, current)
+    model = db.get(MailThreatModelVersion, model_id)
+    if model is None or model.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Mail threat model not found")
+    if model.lifecycle_state != "canary":
+        raise HTTPException(status_code=409, detail="Only canary models can be activated")
+
+    rows = _canary_evidence_rows(db, model)
+    validation = canary_validation(rows)
+    model.shadow_metrics_json = validation
+    model.promotion_evidence_json = {
+        **(model.promotion_evidence_json or {}),
+        "canary_validation": validation,
+    }
+    if not validation["eligible_for_activation"]:
+        db.commit()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Canary validation gates are not satisfied",
+                "validation": validation,
+            },
+        )
+
+    now = datetime.now().astimezone()
+    previous_active = db.scalars(
+        select(MailThreatModelVersion).where(
+            MailThreatModelVersion.tenant_id == tenant_id,
+            MailThreatModelVersion.name == model.name,
+            MailThreatModelVersion.lifecycle_state == "active",
+            MailThreatModelVersion.id != model.id,
+        )
+    ).all()
+    for previous in previous_active:
+        previous.lifecycle_state = "retired"
+        previous.retired_at = now
+        previous.rollback_reason = f"Replaced by active model {model.version}"
+
+    model.lifecycle_state = "active"
+    model.activated_at = now
+    model.retired_at = None
+    model.rollback_reason = None
+    db.commit()
+    return {
+        "id": str(model.id),
+        "version": model.version,
+        "lifecycle_state": model.lifecycle_state,
+        "activated_at": model.activated_at.isoformat(),
+        "retired_previous_active_models": len(previous_active),
+        "validation": validation,
     }
 
 
