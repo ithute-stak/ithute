@@ -56,6 +56,7 @@ func validateWithRust(parent context.Context, validatorPath string, sample Sampl
 		fmt.Sprintf("%d", sample.Filesystem.RootAvailableBytes),
 		fmt.Sprintf("%d", sample.Block.Devices),
 	}
+	// #nosec G204 -- validatorPath is an operator-configured local Ithute binary; arguments are numeric telemetry values.
 	cmd := exec.CommandContext(ctx, validatorPath, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -81,6 +82,7 @@ func readSigningKey(path string) ([]byte, error) {
 	if info.Mode().Perm()&0o077 != 0 {
 		return nil, fmt.Errorf("signing key file permissions must not allow group/world access")
 	}
+	// #nosec G304 -- path has been stat-checked above and must be owner-only before reading.
 	key, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read signing key: %w", err)
