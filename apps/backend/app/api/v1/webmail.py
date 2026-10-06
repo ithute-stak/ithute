@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.models import MailNode, MailThreatModelVersion, MailThreatShadowPrediction, PhishingFinding
+from app.models import MailNode, MailRelationship, MailThreatModelVersion, MailThreatShadowPrediction, PhishingFinding
 from app.models.mail import Mailbox, MailboxStatus, MailboxStorageType
 from app.services.mailboxes import normalize_destination\nfrom app.services.mail_first_contact import (\n    decorate_first_contact_html,\n    decorate_first_contact_text,\n    prepare_first_contact,\n    record_successful_send,\n)
 from app.services.mail_intelligence import analyze_mail_message
@@ -1139,6 +1139,38 @@ def create_business_chat(
         return send_internal_chat(address, str(payload.email), payload.text)
     except WebmailError as exc:
         raise _failure(exc, 422) from exc
+
+
+@router.get("/relationships")
+def mail_relationships(
+    limit: int = Query(default=100, ge=1, le=500),
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+    db: Session = Depends(get_db),
+):
+    address, _ = _credentials(token)
+    mailbox = db.scalar(select(Mailbox).where(Mailbox.address == address.lower()))
+    if mailbox is None:
+        raise HTTPException(status_code=404, detail="Mailbox not found")
+    rows = db.scalars(
+        select(MailRelationship)
+        .where(MailRelationship.mailbox_id == mailbox.id)
+        .order_by(MailRelationship.last_sent_at.desc().nullslast(), MailRelationship.created_at.desc())
+        .limit(limit)
+    ).all()
+    return {
+        "items": [
+            {
+                "peer_address": row.peer_address,
+                "state": row.state,
+                "messages_sent": row.messages_sent,
+                "replies_received": row.replies_received,
+                "first_contact_at": row.first_contact_at.isoformat() if row.first_contact_at else None,
+                "last_sent_at": row.last_sent_at.isoformat() if row.last_sent_at else None,
+                "last_reply_at": row.last_reply_at.isoformat() if row.last_reply_at else None,
+            }
+            for row in rows
+        ]
+    }
 
 
 @router.post("/contacts", status_code=201)
