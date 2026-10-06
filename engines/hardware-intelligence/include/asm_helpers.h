@@ -14,6 +14,11 @@ typedef struct {
     int aes_ni;
     int avx;
     int avx2;
+    int vmx;
+    int svm;
+    int hypervisor_present;
+    char hypervisor_vendor[13];
+    unsigned int logical_processors;
     unsigned long long cycle_counter;
 } ithute_cpu_native_t;
 
