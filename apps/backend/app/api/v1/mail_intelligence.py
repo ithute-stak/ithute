@@ -14,7 +14,8 @@ from app.api.deps import get_current_user, require_tenant_permission
 from app.db.session import get_db
 from app.services.mail_intelligence_learning import training_readiness
 from app.services.mail_threat_model import ALGORITHM, train_and_evaluate
-from app.models import DmarcAggregateReport, MailAutomationRule, MailRetentionPolicy, MailThreatModelVersion, PhishingFinding, User
+from app.services.mail_threat_shadow import shadow_policy, shadow_validation
+from app.models import DmarcAggregateReport, MailAutomationRule, MailRetentionPolicy, MailThreatModelVersion, MailThreatShadowPrediction, PhishingFinding, User
 
 router = APIRouter(prefix="/mail-intelligence", tags=["mail-intelligence"])
 
@@ -288,6 +289,102 @@ def train_threat_model(
         "metrics": model.training_metrics_json,
         "promotion": result["promotion"],
         "already_registered": False,
+    }
+
+
+@router.get("/tenants/{tenant_id}/threat-models/{model_id}/shadow-status")
+def threat_model_shadow_status(
+    tenant_id: uuid.UUID,
+    model_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require(tenant_id, "mail.read", db, current)
+    model = db.get(MailThreatModelVersion, model_id)
+    if model is None or model.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Mail threat model not found")
+
+    predictions = db.scalars(
+        select(MailThreatShadowPrediction)
+        .where(MailThreatShadowPrediction.model_id == model.id)
+        .order_by(MailThreatShadowPrediction.created_at.asc())
+    ).all()
+    rows = [
+        {
+            "verified_label": row.verified_label,
+            "candidate_probabilities": row.probabilities_json,
+            "baseline_probabilities": row.baseline_json,
+            "latency_ms": row.latency_ms,
+        }
+        for row in predictions
+        if row.verified_label is not None
+    ]
+    validation = shadow_validation(rows)
+    return {
+        "model_id": str(model.id),
+        "version": model.version,
+        "lifecycle_state": model.lifecycle_state,
+        "resolved_shadow_samples": len(rows),
+        "total_shadow_predictions": len(predictions),
+        "validation": validation,
+        "policy": shadow_policy(),
+    }
+
+
+@router.post("/tenants/{tenant_id}/threat-models/{model_id}/qualify")
+def qualify_threat_model(
+    tenant_id: uuid.UUID,
+    model_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require(tenant_id, "mail.manage", db, current)
+    model = db.get(MailThreatModelVersion, model_id)
+    if model is None or model.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Mail threat model not found")
+    if model.lifecycle_state != "shadow":
+        raise HTTPException(status_code=409, detail="Only shadow models can be qualified")
+
+    predictions = db.scalars(
+        select(MailThreatShadowPrediction)
+        .where(
+            MailThreatShadowPrediction.model_id == model.id,
+            MailThreatShadowPrediction.verified_label.is_not(None),
+        )
+        .order_by(MailThreatShadowPrediction.created_at.asc())
+    ).all()
+    validation = shadow_validation([
+        {
+            "verified_label": row.verified_label,
+            "candidate_probabilities": row.probabilities_json,
+            "baseline_probabilities": row.baseline_json,
+            "latency_ms": row.latency_ms,
+        }
+        for row in predictions
+    ])
+    model.shadow_metrics_json = validation
+    model.promotion_evidence_json = {
+        **(model.promotion_evidence_json or {}),
+        "shadow_validation": validation,
+    }
+    if not validation["eligible_for_canary"]:
+        db.commit()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Live shadow validation gates are not satisfied",
+                "validation": validation,
+            },
+        )
+
+    model.lifecycle_state = "qualified"
+    db.commit()
+    return {
+        "id": str(model.id),
+        "version": model.version,
+        "lifecycle_state": model.lifecycle_state,
+        "eligible_for_canary": True,
+        "direct_activation_allowed": False,
     }
 
 
