@@ -119,3 +119,20 @@ def evaluate_candidate(rows: Iterable[dict[str, Any]], *, threshold: float = DEF
         "baseline": baseline,
         "promotion": promotion_decision(candidate, baseline),
     }
+
+
+
+def promotion_policy() -> dict[str, Any]:
+    return {
+        "eligible_for_activation": False,
+        "activation_rule": "Candidate must pass held-out evaluation and then complete live shadow validation before activation",
+        "thresholds": {
+            "minimum_evaluation_samples": MIN_EVALUATION_SAMPLES,
+            "minimum_precision": MIN_PRECISION,
+            "minimum_recall": MIN_RECALL,
+            "maximum_false_positive_rate": MAX_FALSE_POSITIVE_RATE,
+            "maximum_brier_score": MAX_BRIER_SCORE,
+            "maximum_f1_regression": MAX_F1_REGRESSION,
+            "maximum_brier_regression": MAX_BRIER_REGRESSION,
+        },
+    }
