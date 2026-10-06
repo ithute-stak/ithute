@@ -731,6 +731,7 @@ def ingest_hardware_telemetry(
         predictive_state=prediction["state"],
         predictive_confidence=prediction["confidence"],
         predictive_evidence_json=json.dumps(prediction["evidence"], ensure_ascii=False, separators=(",", ":")),
+        predictive_models_json=json.dumps(prediction.get("models") or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
     )
     db.add(row)
     agent.last_seen_at = now
@@ -815,6 +816,7 @@ def latest_hardware_health(
             "state": row.predictive_state or "learning",
             "confidence": row.predictive_confidence,
             "evidence": json.loads(row.predictive_evidence_json or "[]"),
+            "models": json.loads(row.predictive_models_json or "{}"),
         },
         "sampled_at": row.issued_at.isoformat(),
         "received_at": row.created_at.isoformat() if row.created_at else None,
@@ -1149,6 +1151,7 @@ def hardware_fleet_health(
             "predictive_state": predictive_state,
             "predictive_confidence": latest.predictive_confidence if latest else None,
             "predictive_evidence": json.loads(latest.predictive_evidence_json or "[]") if latest else [],
+            "predictive_models": json.loads(latest.predictive_models_json or "{}") if latest else {},
             "evidence": evidence,
             "sampled_at": latest.issued_at.isoformat() if latest else None,
             "maintenance": {
