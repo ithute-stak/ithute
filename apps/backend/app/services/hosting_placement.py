@@ -13,6 +13,7 @@ from app.models import (
     HostingNode,
     HostingNodeAgent,
     HostingProject,
+    HardwareTelemetrySnapshot,
     BillingPlan,
     InfrastructureCommercialProfile,
     InfrastructureSecuritySnapshot,
@@ -90,6 +91,24 @@ def _commercial_profile(db: Session, server_id: UUID | None) -> InfrastructureCo
     return db.scalar(
         select(InfrastructureCommercialProfile).where(InfrastructureCommercialProfile.server_id == server_id)
     )
+
+
+def _latest_hardware(db: Session, server_id: UUID | None) -> HardwareTelemetrySnapshot | None:
+    if server_id is None:
+        return None
+    return db.scalar(
+        select(HardwareTelemetrySnapshot)
+        .where(HardwareTelemetrySnapshot.server_id == server_id)
+        .order_by(HardwareTelemetrySnapshot.created_at.desc())
+        .limit(1)
+    )
+
+
+def _hardware_fresh(row: HardwareTelemetrySnapshot | None) -> bool:
+    if row is None:
+        return False
+    sampled = row.issued_at or row.created_at
+    return _fresh(sampled)
 
 
 def _latest_security(db: Session, server_id: UUID | None) -> InfrastructureSecuritySnapshot | None:
@@ -346,6 +365,24 @@ def score_node(
 
     profile = _commercial_profile(db, server.id if server else None)
     security = _latest_security(db, server.id if server else None)
+    hardware = _latest_hardware(db, server.id if server else None)
+    hardware_penalty = 0.0
+    if server is not None and _hardware_fresh(hardware):
+        hardware_state = (hardware.predictive_state or "learning").strip().lower()
+        if hardware.health_status == "critical":
+            eligible = False
+            reasons.append("Hardware Intelligence reports critical health")
+        elif hardware.health_status == "warning":
+            hardware_penalty += 12.0
+        if hardware_state == "high":
+            eligible = False
+            reasons.append("Hardware Intelligence predicts high failure risk")
+        elif hardware_state == "elevated":
+            hardware_penalty += 20.0
+            reasons.append("Hardware Intelligence predicts elevated failure risk")
+        elif hardware_state == "watch":
+            hardware_penalty += 8.0
+
     commercial_penalty = 0.0
     estimated_incremental_cost_minor = 0
     estimated_margin_bps = None
@@ -420,6 +457,7 @@ def score_node(
         + telemetry_penalty
         + region_penalty
         + commercial_penalty
+        + hardware_penalty
     )
 
     return {
@@ -453,6 +491,16 @@ def score_node(
         "security": {
             "score": security.score if security else None,
             "posture": security.posture if security else "unknown",
+        },
+        "hardware_intelligence": {
+            "available": hardware is not None,
+            "fresh": _hardware_fresh(hardware),
+            "health_status": hardware.health_status if hardware else "unknown",
+            "health_score": hardware.health_score if hardware else None,
+            "predictive_state": hardware.predictive_state if hardware else "learning",
+            "predictive_risk_score": hardware.predictive_risk_score if hardware else None,
+            "predictive_confidence": hardware.predictive_confidence if hardware else None,
+            "penalty": round(hardware_penalty, 2),
         },
         "commercial": {
             "profile_configured": profile is not None,
