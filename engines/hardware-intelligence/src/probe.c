@@ -61,7 +61,10 @@ static double read_uptime(void) {
     FILE *f = fopen("/proc/uptime", "r");
     if (!f) return -1.0;
     double uptime = -1.0;
-    (void)fscanf(f, "%lf", &uptime);
+    if (fscanf(f, "%lf", &uptime) != 1) {
+        fclose(f);
+        return -1.0;
+    }
     fclose(f);
     return uptime;
 }
