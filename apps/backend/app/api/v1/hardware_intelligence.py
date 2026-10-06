@@ -603,6 +603,46 @@ def latest_hardware_health(
     }
 
 
+@router.get("/incidents")
+def list_hardware_incidents(
+    status_filter: str = "open",
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    query = select(HardwareIncident)
+    if status_filter != "all":
+        if status_filter not in {"open", "resolved"}:
+            raise HTTPException(status_code=422, detail="status must be open, resolved or all")
+        query = query.where(HardwareIncident.status == status_filter)
+    rows = db.scalars(
+        query.order_by(HardwareIncident.last_seen_at.desc()).limit(max(1, min(limit, 500)))
+    ).all()
+    return {
+        "items": [
+            {
+                "id": str(row.id),
+                "server_id": str(row.server_id),
+                "latest_snapshot_id": str(row.latest_snapshot_id) if row.latest_snapshot_id else None,
+                "kind": row.kind,
+                "severity": row.severity,
+                "status": row.status,
+                "title": row.title,
+                "summary": row.summary,
+                "predictive_state": row.predictive_state,
+                "predictive_risk_score": row.predictive_risk_score,
+                "health_status": row.health_status,
+                "notification_suppressed": row.notification_suppressed,
+                "opened_at": row.opened_at.isoformat() if row.opened_at else None,
+                "last_seen_at": row.last_seen_at.isoformat() if row.last_seen_at else None,
+                "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
+            }
+            for row in rows
+        ]
+    }
+
+
 @router.get("/fleet")
 def hardware_fleet_health(
     db: Session = Depends(get_db),
@@ -628,6 +668,7 @@ def hardware_fleet_health(
         )
         maintenance = _active_maintenance(db, server.id, now)
         acknowledgement = _ack_for_snapshot(db, latest.id if latest else None)
+        incident = _active_hardware_incident(db, server.id)
 
         online = bool(
             agent
@@ -718,6 +759,18 @@ def hardware_fleet_health(
                 "note": acknowledgement.note if acknowledgement else None,
                 "acknowledged_at": acknowledgement.acknowledged_at.isoformat() if acknowledgement else None,
             },
+            "incident": {
+                "id": str(incident.id),
+                "severity": incident.severity,
+                "status": incident.status,
+                "title": incident.title,
+                "summary": incident.summary,
+                "predictive_state": incident.predictive_state,
+                "predictive_risk_score": incident.predictive_risk_score,
+                "notification_suppressed": incident.notification_suppressed,
+                "opened_at": incident.opened_at.isoformat() if incident.opened_at else None,
+                "last_seen_at": incident.last_seen_at.isoformat() if incident.last_seen_at else None,
+            } if incident else None,
         })
 
     return {
