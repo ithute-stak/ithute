@@ -29,6 +29,7 @@ def upgrade() -> None:
         sa.Column("predictive_risk_score", sa.Integer(), nullable=True),
         sa.Column("health_status", sa.String(length=24), nullable=False),
         sa.Column("notification_suppressed", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.Column("workflow_plan_json", sa.Text(), nullable=False, server_default="{}"),
         sa.Column("opened_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("last_seen_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
