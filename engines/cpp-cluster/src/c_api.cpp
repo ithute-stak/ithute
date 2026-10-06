@@ -1,6 +1,7 @@
 #include "ithute_cluster_c.h"
 #include "cluster_graph.hpp"
 #include "placement_scheduler.hpp"
+#include "weighted_network.hpp"
 
 #include <memory>
 #include <mutex>
@@ -273,6 +274,50 @@ extern "C" int ithute_cluster_dependency_order(
             }
             out_indices[index] = found->second;
         }
+        return 0;
+    } catch (...) {
+        return 2;
+    }
+}
+
+
+extern "C" int ithute_cluster_shortest_path(
+    std::size_t node_count,
+    const std::size_t* edge_sources,
+    const std::size_t* edge_targets,
+    const double* edge_weights,
+    std::size_t edge_count,
+    std::size_t source_index,
+    std::size_t target_index,
+    std::size_t* out_indices,
+    std::size_t out_capacity,
+    std::size_t* out_count,
+    double* out_total_weight
+) {
+    if (node_count == 0 || out_indices == nullptr || out_count == nullptr || out_total_weight == nullptr) {
+        return 1;
+    }
+    if (edge_count > 0 && (edge_sources == nullptr || edge_targets == nullptr || edge_weights == nullptr)) {
+        return 1;
+    }
+    try {
+        std::vector<ithute::cluster::WeightedEdge> edges;
+        edges.reserve(edge_count);
+        for (std::size_t i = 0; i < edge_count; ++i) {
+            edges.push_back({edge_sources[i], edge_targets[i], edge_weights[i]});
+        }
+        const auto result = ithute::cluster::shortest_weighted_path(node_count, edges, source_index, target_index);
+        if (!result.has_value()) {
+            return 3;
+        }
+        if (result->node_indices.size() > out_capacity) {
+            return 4;
+        }
+        for (std::size_t i = 0; i < result->node_indices.size(); ++i) {
+            out_indices[i] = result->node_indices[i];
+        }
+        *out_count = result->node_indices.size();
+        *out_total_weight = result->total_weight;
         return 0;
     } catch (...) {
         return 2;

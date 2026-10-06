@@ -97,6 +97,20 @@ def _load_cluster() -> ctypes.CDLL | None:
             ctypes.c_size_t,
         ]
         library.ithute_cluster_dependency_order.restype = ctypes.c_int
+        library.ithute_cluster_shortest_path.argtypes = [
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.POINTER(ctypes.c_double),
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.POINTER(ctypes.c_double),
+        ]
+        library.ithute_cluster_shortest_path.restype = ctypes.c_int
     except (OSError, AttributeError):
         return None
     _cluster = library
@@ -109,7 +123,7 @@ def cluster_engine_status() -> dict:
         "available": available,
         "mode": "native",
         "library": str(CLUSTER_LIBRARY),
-        "capabilities": ["cluster-graph", "graph-reachability", "cluster-summary", "placement-priority-queue", "dependency-dag", "topological-order"] if available else [],
+        "capabilities": ["cluster-graph", "graph-reachability", "cluster-summary", "placement-priority-queue", "dependency-dag", "topological-order", "weighted-shortest-path"] if available else [],
         "fallback": "python",
     }
 
@@ -336,6 +350,106 @@ def dependency_order(nodes: list[dict], edges: list[dict]) -> dict:
         if sorted(ranked_indices) != list(range(count)):
             raise RuntimeError("native dependency ordering returned invalid indices")
         return {"engine": "cpp", "acyclic": True, "order": [ids[index] for index in ranked_indices]}
+    except (OSError, RuntimeError, ValueError, ctypes.ArgumentError):
+        return fallback
+
+
+def _python_shortest_weighted_path(node_ids: list[str], edges: list[dict], source: str, target: str) -> dict:
+    if source not in node_ids or target not in node_ids or len(set(node_ids)) != len(node_ids):
+        return {"engine": "python-fallback", "reachable": False, "path": [], "total_weight": None}
+    index = {node_id: i for i, node_id in enumerate(node_ids)}
+    adjacency: dict[str, list[tuple[str, float]]] = {node_id: [] for node_id in node_ids}
+    for edge in edges:
+        left = str(edge.get("source") or "")
+        right = str(edge.get("target") or "")
+        try:
+            weight = float(edge.get("weight"))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if left not in index or right not in index or not math.isfinite(weight) or weight < 0:
+            continue
+        adjacency[left].append((right, weight))
+
+    distances = {node_id: math.inf for node_id in node_ids}
+    previous: dict[str, str] = {}
+    distances[source] = 0.0
+    pending: list[tuple[float, str]] = [(0.0, source)]
+    while pending:
+        distance, current = heapq.heappop(pending)
+        if distance != distances[current]:
+            continue
+        if current == target:
+            break
+        for neighbor, weight in sorted(adjacency[current], key=lambda item: item[0]):
+            candidate = distance + weight
+            if candidate < distances[neighbor]:
+                distances[neighbor] = candidate
+                previous[neighbor] = current
+                heapq.heappush(pending, (candidate, neighbor))
+
+    if not math.isfinite(distances[target]):
+        return {"engine": "python-fallback", "reachable": False, "path": [], "total_weight": None}
+
+    path = [target]
+    while path[-1] != source:
+        parent = previous.get(path[-1])
+        if parent is None:
+            return {"engine": "python-fallback", "reachable": False, "path": [], "total_weight": None}
+        path.append(parent)
+    path.reverse()
+    return {"engine": "python-fallback", "reachable": True, "path": path, "total_weight": distances[target]}
+
+
+def shortest_weighted_path(node_ids: list[str], edges: list[dict], *, source: str, target: str) -> dict:
+    fallback = _python_shortest_weighted_path(node_ids, edges, source, target)
+    if not node_ids:
+        return fallback
+    library = _load_cluster()
+    if library is None:
+        return fallback
+    if source not in node_ids or target not in node_ids or len(set(node_ids)) != len(node_ids):
+        return fallback
+
+    index = {node_id: i for i, node_id in enumerate(node_ids)}
+    valid_edges: list[tuple[int, int, float]] = []
+    for edge in edges:
+        left = str(edge.get("source") or "")
+        right = str(edge.get("target") or "")
+        try:
+            weight = float(edge.get("weight"))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if left not in index or right not in index or not math.isfinite(weight) or weight < 0:
+            continue
+        valid_edges.append((index[left], index[right], weight))
+
+    count = len(valid_edges)
+    sources = (ctypes.c_size_t * count)(*[row[0] for row in valid_edges]) if count else None
+    targets = (ctypes.c_size_t * count)(*[row[1] for row in valid_edges]) if count else None
+    weights = (ctypes.c_double * count)(*[row[2] for row in valid_edges]) if count else None
+    out = (ctypes.c_size_t * len(node_ids))()
+    out_count = ctypes.c_size_t()
+    out_weight = ctypes.c_double()
+
+    try:
+        code = library.ithute_cluster_shortest_path(
+            len(node_ids), sources, targets, weights, count,
+            index[source], index[target], out, len(node_ids),
+            ctypes.byref(out_count), ctypes.byref(out_weight),
+        )
+        if code == 3:
+            return {"engine": "cpp", "reachable": False, "path": [], "total_weight": None}
+        if code != 0:
+            raise RuntimeError("native weighted shortest path failed")
+        path_indices = [int(out[i]) for i in range(int(out_count.value))]
+        if any(i < 0 or i >= len(node_ids) for i in path_indices):
+            raise RuntimeError("native weighted shortest path returned invalid indices")
+        return {
+            "engine": "cpp",
+            "reachable": True,
+            "path": [node_ids[i] for i in path_indices],
+            "total_weight": float(out_weight.value),
+        }
     except (OSError, RuntimeError, ValueError, ctypes.ArgumentError):
         return fallback
 

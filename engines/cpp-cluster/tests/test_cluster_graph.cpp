@@ -1,6 +1,7 @@
 #include "cluster_graph.hpp"
 #include "ithute_cluster_c.h"
 #include "placement_scheduler.hpp"
+#include "weighted_network.hpp"
 
 #include <cassert>
 #include <cstdint>
@@ -190,6 +191,22 @@ int main() {
             3
         ) == 3
     );
+
+    const std::size_t edge_sources[] = {0, 0, 1, 2};
+    const std::size_t edge_targets[] = {1, 2, 3, 3};
+    const double edge_weights[] = {2.0, 10.0, 2.0, 1.0};
+    std::size_t shortest_order[4] = {};
+    std::size_t shortest_count = 0;
+    double shortest_weight = 0.0;
+    assert(ithute_cluster_shortest_path(
+        4, edge_sources, edge_targets, edge_weights, 4, 0, 3,
+        shortest_order, 4, &shortest_count, &shortest_weight
+    ) == 0);
+    assert(shortest_count == 3);
+    assert(shortest_order[0] == 0);
+    assert(shortest_order[1] == 1);
+    assert(shortest_order[2] == 3);
+    assert(shortest_weight == 4.0);
 
     return 0;
 }
