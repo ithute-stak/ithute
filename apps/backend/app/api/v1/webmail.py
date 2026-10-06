@@ -13,6 +13,7 @@ from app.db.session import get_db
 from app.models import MailNode
 from app.models.mail import Mailbox, MailboxStatus, MailboxStorageType
 from app.services.mailboxes import normalize_destination
+from app.services.mail_intelligence import analyze_mail_message
 from app.services.security_audit import record_webmail_security_event
 from app.services.security_controls import SecurityControlUnavailable, clear_webmail_login_failures, record_webmail_login_failure, webmail_login_allowed
 from app.services.webmail import (
@@ -25,6 +26,7 @@ from app.services.webmail import (
     folders,
     message,
     messages,
+    messages_with_bodies,
     move_message,
     save_display_name,
     save_draft,
@@ -327,7 +329,67 @@ def list_messages(folder: str = Query(default="INBOX", min_length=1, max_length=
 def get_message(uid: str, folder: str = Query(default="INBOX", min_length=1, max_length=255), token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None):
     address, password = _credentials(token)
     try:
-        return message(address, password, uid=_uid(uid), folder=folder)
+        payload = message(address, password, uid=_uid(uid), folder=folder)
+        payload["intelligence"] = analyze_mail_message(payload, mailbox_address=address)
+        return payload
+    except WebmailError as exc:
+        raise _failure(exc) from exc
+
+
+@router.get("/messages/{uid}/intelligence")
+def get_message_intelligence(
+    uid: str,
+    folder: str = Query(default="INBOX", min_length=1, max_length=255),
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+):
+    address, password = _credentials(token)
+    try:
+        payload = message(address, password, uid=_uid(uid), folder=folder)
+        return analyze_mail_message(payload, mailbox_address=address)
+    except WebmailError as exc:
+        raise _failure(exc) from exc
+
+
+@router.get("/intelligence")
+def analyze_message_batch(
+    folder: str = Query(default="INBOX", min_length=1, max_length=255),
+    limit: int = Query(default=20, ge=1, le=25),
+    offset: int = Query(default=0, ge=0, le=100000),
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+):
+    address, password = _credentials(token)
+    try:
+        listing = messages_with_bodies(
+            address,
+            password,
+            folder=folder,
+            limit=limit,
+            offset=offset,
+            query="",
+        )
+        source_items = listing.get("items", []) if isinstance(listing, dict) else []
+        analyzed = [
+            {
+                "uid": str(item.get("uid") or ""),
+                "subject": item.get("subject"),
+                "from": item.get("from"),
+                "date": item.get("date"),
+                "intelligence": analyze_mail_message(item, mailbox_address=address),
+            }
+            for item in source_items
+        ]
+        return {
+            "folder": folder,
+            "items": analyzed,
+            "failures": [],
+            "count": len(analyzed),
+            "requested": len(source_items),
+            "total": int(listing.get("total") or 0),
+            "offset": offset,
+            "limit": limit,
+            "skipped": int(listing.get("skipped") or 0),
+            "automatic_blocking": False,
+        }
     except WebmailError as exc:
         raise _failure(exc) from exc
 
