@@ -5,8 +5,8 @@ from typing import Any
 
 LABELS = {"legitimate", "phishing", "bec"}
 MIN_LABEL_CONFIDENCE = 0.80
-MIN_TRAINING_LABELS = 40
-MIN_PER_CLASS = 10
+MIN_TRAINING_LABELS = 90
+MIN_PER_CLASS = 20
 
 
 def feature_snapshot(message: dict[str, Any], intelligence: dict[str, Any]) -> dict[str, Any]:
