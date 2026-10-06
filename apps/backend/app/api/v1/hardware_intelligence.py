@@ -1153,6 +1153,7 @@ def hardware_operations_summary(
         "supervised_learning": _supervised_training_readiness(db),
         "training_dataset": _supervised_training_dataset_summary(db),
         "candidate_promotion_policy": promotion_policy(),
+        "shadow_validation_policy": shadow_policy(),
     }
 
 
