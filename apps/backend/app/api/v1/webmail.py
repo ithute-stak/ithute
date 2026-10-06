@@ -19,6 +19,7 @@ from app.services.mail_intelligence_learning import feature_snapshot, training_r
 from app.services.mail_sender_behavior import observe_sender_behavior
 from app.services.mail_threat_model import predict
 from app.services.mail_threat_shadow import baseline_probabilities
+from app.services.mail_threat_canary import automatic_rollback, baseline_floor, deterministic_canary_member
 from app.services.security_audit import record_webmail_security_event
 from app.services.security_controls import SecurityControlUnavailable, clear_webmail_login_failures, record_webmail_login_failure, webmail_login_allowed
 from app.services.webmail import (
@@ -231,6 +232,54 @@ def _resolve_shadow_predictions(
         row.resolved_at = now
 
 
+def _automatic_rollback_models(db: Session, *, tenant_id) -> None:
+    models = db.scalars(
+        select(MailThreatModelVersion).where(
+            MailThreatModelVersion.tenant_id == tenant_id,
+            MailThreatModelVersion.lifecycle_state.in_(["canary", "active"]),
+        )
+    ).all()
+    now = datetime.now(timezone.utc)
+    for model in models:
+        start_at = model.canary_started_at if model.lifecycle_state == "canary" else model.activated_at
+        if start_at is None:
+            continue
+        predictions = db.scalars(
+            select(MailThreatShadowPrediction)
+            .where(
+                MailThreatShadowPrediction.model_id == model.id,
+                MailThreatShadowPrediction.verified_label.is_not(None),
+                MailThreatShadowPrediction.created_at >= start_at,
+            )
+            .order_by(MailThreatShadowPrediction.created_at.asc())
+        ).all()
+        rows = []
+        for row in predictions:
+            if model.lifecycle_state == "canary" and not deterministic_canary_member(
+                model_id=str(model.id),
+                mailbox_id=str(row.mailbox_id),
+                message_ref=row.message_ref,
+            ):
+                continue
+            rows.append({
+                "verified_label": row.verified_label,
+                "candidate_probabilities": row.probabilities_json,
+                "baseline_probabilities": row.baseline_json,
+                "latency_ms": row.latency_ms,
+            })
+        decision = automatic_rollback(rows)
+        if not decision["rollback"]:
+            continue
+        model.lifecycle_state = "retired_or_rolled_back"
+        model.retired_at = now
+        model.rollback_reason = "Automatic rollback: " + ", ".join(decision["reasons"])
+        model.shadow_metrics_json = decision.get("validation") or model.shadow_metrics_json
+        model.promotion_evidence_json = {
+            **(model.promotion_evidence_json or {}),
+            "automatic_rollback": decision,
+        }
+
+
 def _shadow_score_message(
     db: Session,
     *,
@@ -262,6 +311,24 @@ def _shadow_score_message(
         )
     )
     if existing is not None:
+        canary_applied = model.lifecycle_state == "active" or (
+            model.lifecycle_state == "canary"
+            and deterministic_canary_member(
+                model_id=str(model.id),
+                mailbox_id=str(mailbox.id),
+                message_ref=message_ref,
+            )
+        )
+        effective_security = None
+        if canary_applied:
+            security = intelligence.get("security") if isinstance(intelligence.get("security"), dict) else {}
+            effective_security = baseline_floor(security, existing.probabilities_json or {})
+            intelligence["security"] = {
+                **security,
+                "phishing_probability": effective_security["phishing_probability"],
+                "bec_probability": effective_security["bec_probability"],
+                "recommended_action": effective_security["recommended_action"],
+            }
         return {
             "model_id": str(model.id),
             "version": model.version,
@@ -269,7 +336,10 @@ def _shadow_score_message(
             "probabilities": existing.probabilities_json,
             "baseline": existing.baseline_json,
             "latency_ms": existing.latency_ms,
-            "shadow_only": model.lifecycle_state == "shadow",
+            "shadow_only": model.lifecycle_state in {"shadow", "qualified"},
+            "canary_applied": canary_applied,
+            "effective_security": effective_security,
+            "baseline_preserved": True,
         }
 
     features = feature_snapshot(message_payload, intelligence)
@@ -294,6 +364,24 @@ def _shadow_score_message(
     )
     db.add(row)
     db.commit()
+    canary_applied = model.lifecycle_state == "active" or (
+        model.lifecycle_state == "canary"
+        and deterministic_canary_member(
+            model_id=str(model.id),
+            mailbox_id=str(mailbox.id),
+            message_ref=message_ref,
+        )
+    )
+    effective_security = None
+    if canary_applied:
+        security = intelligence.get("security") if isinstance(intelligence.get("security"), dict) else {}
+        effective_security = baseline_floor(security, probabilities)
+        intelligence["security"] = {
+            **security,
+            "phishing_probability": effective_security["phishing_probability"],
+            "bec_probability": effective_security["bec_probability"],
+            "recommended_action": effective_security["recommended_action"],
+        }
     return {
         "model_id": str(model.id),
         "version": model.version,
@@ -301,7 +389,10 @@ def _shadow_score_message(
         "probabilities": probabilities,
         "baseline": baseline,
         "latency_ms": round(latency_ms, 3),
-        "shadow_only": model.lifecycle_state == "shadow",
+        "shadow_only": model.lifecycle_state in {"shadow", "qualified"},
+        "canary_applied": canary_applied,
+        "effective_security": effective_security,
+        "baseline_preserved": True,
     }
 
 
@@ -572,6 +663,7 @@ def save_message_intelligence_verdict(
             message_ref=message_ref,
             label=existing_label,
         )
+        _automatic_rollback_models(db, tenant_id=mailbox.tenant_id)
         db.commit()
         return {
             "saved": True,
@@ -610,6 +702,7 @@ def save_message_intelligence_verdict(
         message_ref=message_ref,
         label=payload.label,
     )
+    _automatic_rollback_models(db, tenant_id=mailbox.tenant_id)
     db.commit()
     db.refresh(finding)
     return {
