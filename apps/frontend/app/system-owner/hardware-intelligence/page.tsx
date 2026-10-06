@@ -91,6 +91,16 @@ type FleetItem = {
       escalation?: string;
       actions?: string[];
       recommendations?: string[];
+      ranked_recommendations?: Array<{
+        action: string;
+        priority_score: number;
+        urgency: string;
+        confidence_percent: number;
+        evidence: string[];
+        expected_impact: string;
+        drain_recommended: boolean;
+        operator_approval_required: boolean;
+      }>;
     };
     deliveries?: Array<{
       channel: string;
@@ -473,7 +483,29 @@ export default function HardwareIntelligencePage() {
                         Retry failed notifications
                       </button>
                     ) : null}
-                    {selectedServer.incident.workflow_plan?.recommendations?.length ? (
+                    {selectedServer.incident.workflow_plan?.ranked_recommendations?.length ? (
+                      <div className="mt-3 rounded-lg border border-current/20 bg-white/60 p-3">
+                        <p className="text-[8px] font-black uppercase">Ranked remediation</p>
+                        <div className="mt-2 space-y-2">
+                          {selectedServer.incident.workflow_plan.ranked_recommendations.map((item, index) => (
+                            <div key={`${item.action}-${index}`} className="rounded-lg border border-current/15 bg-white/70 p-2">
+                              <div className="flex flex-wrap items-center gap-2 text-[8px] font-black uppercase">
+                                <span>#{index + 1}</span>
+                                <span>Priority {item.priority_score}/100</span>
+                                <span>{item.urgency}</span>
+                                <span>Confidence {item.confidence_percent}%</span>
+                                {item.drain_recommended ? <span>Drain recommended</span> : null}
+                              </div>
+                              <p className="mt-1 text-[10px] font-black">{item.action.replaceAll("_", " ")}</p>
+                              <p className="mt-1 text-[9px] leading-4">{item.expected_impact}</p>
+                              {item.evidence?.length ? (
+                                <p className="mt-1 text-[8px] font-bold opacity-80">Evidence: {item.evidence.join(" · ")}</p>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : selectedServer.incident.workflow_plan?.recommendations?.length ? (
                       <div className="mt-3 rounded-lg border border-current/20 bg-white/60 p-3">
                         <p className="text-[8px] font-black uppercase">Recommended remediation</p>
                         <ul className="mt-2 space-y-1 text-[9px]">
