@@ -79,6 +79,17 @@ type FleetItem = {
     ends_at?: string | null;
     suppress_notifications: boolean;
   };
+  latest_remediation?: {
+    id: string;
+    remediation_action?: string;
+    reported_outcome?: string;
+    measured_outcome?: string;
+    verification_confidence?: number | null;
+    verification_sample_count?: number;
+    verification_evidence?: string[];
+    verification_evaluated_at?: string | null;
+    completed_at?: string | null;
+  } | null;
   acknowledgement: {
     acknowledged: boolean;
     note?: string | null;
@@ -127,6 +138,11 @@ type FleetItem = {
       remediation_action?: string;
       remediation_outcome?: string;
       outcome_recorded_at?: string | null;
+      measured_outcome?: string;
+      verification_confidence?: number | null;
+      verification_sample_count?: number;
+      verification_evidence?: string[];
+      verification_evaluated_at?: string | null;
       completed_at?: string | null;
     } | null;
     opened_at?: string | null;
@@ -727,30 +743,55 @@ export default function HardwareIntelligencePage() {
           </section>
         ) : null}
 
-        {selectedServer?.incident?.maintenance_task ? (
+        {(selectedServer?.incident?.maintenance_task || selectedServer?.latest_remediation) ? (
           <section className="surface-card p-5">
             <p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">Recovery assurance</p>
             <h2 className="mt-1 text-lg font-black">Remediation evidence and trust boundary</h2>
-            <div className="mt-4 grid gap-3 lg:grid-cols-3">
-              <div className="rounded-xl border border-[var(--admin-line)] p-4">
-                <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Operator action</p>
-                <p className="mt-2 text-[11px] font-black">{selectedServer.incident.maintenance_task.remediation_action ? selectedServer.incident.maintenance_task.remediation_action.replaceAll("_", " ") : "Not completed yet"}</p>
-                <p className="mt-2 text-[9px] text-[var(--admin-muted)]">Human action remains explicit and auditable. Ithute does not silently execute destructive hardware remediation.</p>
-              </div>
-              <div className="rounded-xl border border-[var(--admin-line)] p-4">
-                <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Reported outcome</p>
-                <p className="mt-2 text-[11px] font-black">{selectedServer.incident.maintenance_task.remediation_outcome ? selectedServer.incident.maintenance_task.remediation_outcome.replaceAll("_", " ") : "Awaiting operator evidence"}</p>
-                <p className="mt-2 text-[9px] text-[var(--admin-muted)]">The operator-observed result stays distinct from the live measured state.</p>
-              </div>
-              <div className="rounded-xl border border-[var(--admin-line)] p-4">
-                <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Current measured state</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <span className={`rounded-full border px-2 py-1 text-[8px] font-black uppercase ${statusTone(selectedServer.status)}`}>{selectedServer.status}</span>
-                  <span className={`rounded-full border px-2 py-1 text-[8px] font-black uppercase ${predictiveTone(selectedServer.predictive_state)}`}>{selectedServer.predictive_state} risk</span>
+            {(() => {
+              const task = selectedServer.incident?.maintenance_task;
+              const latest = selectedServer.latest_remediation;
+              const action = task?.remediation_action || latest?.remediation_action || "";
+              const reported = task?.remediation_outcome || latest?.reported_outcome || "";
+              const measured = task?.measured_outcome || latest?.measured_outcome || "";
+              const samples = task?.verification_sample_count ?? latest?.verification_sample_count ?? 0;
+              const confidence = task?.verification_confidence ?? latest?.verification_confidence;
+              const evidence = task?.verification_evidence || latest?.verification_evidence || [];
+              return (
+                <div className="mt-4 grid gap-3 lg:grid-cols-4">
+                  <div className="rounded-xl border border-[var(--admin-line)] p-4">
+                    <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Operator action</p>
+                    <p className="mt-2 text-[11px] font-black">{action ? action.replaceAll("_", " ") : "Not completed yet"}</p>
+                    <p className="mt-2 text-[9px] text-[var(--admin-muted)]">Human action remains explicit and auditable. Ithute does not silently execute destructive hardware remediation.</p>
+                  </div>
+                  <div className="rounded-xl border border-[var(--admin-line)] p-4">
+                    <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Reported outcome</p>
+                    <p className="mt-2 text-[11px] font-black">{reported ? reported.replaceAll("_", " ") : "Awaiting operator evidence"}</p>
+                    <p className="mt-2 text-[9px] text-[var(--admin-muted)]">This is the operator-observed result and is not treated as proof by itself.</p>
+                  </div>
+                  <div className="rounded-xl border border-[var(--admin-line)] p-4">
+                    <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Telemetry-verified outcome</p>
+                    <p className="mt-2 text-[11px] font-black">{measured ? measured.replaceAll("_", " ") : "Collecting evidence"}</p>
+                    <p className="mt-1 text-[9px] font-bold text-[var(--admin-muted)]">
+                      {samples} post-action samples
+                      {typeof confidence === "number" ? ` · ${(confidence * 100).toFixed(0)}% confidence` : ""}
+                    </p>
+                    {evidence.length ? (
+                      <ul className="mt-2 space-y-1 text-[8px] leading-4 text-[var(--admin-muted)]">
+                        {evidence.slice(0, 4).map((item, index) => <li key={`${item}-${index}`}>• {item}</li>)}
+                      </ul>
+                    ) : <p className="mt-2 text-[8px] text-[var(--admin-muted)]">Ithute needs at least three fresh telemetry samples after completion before it verifies the result.</p>}
+                  </div>
+                  <div className="rounded-xl border border-[var(--admin-line)] p-4">
+                    <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Current measured state</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <span className={`rounded-full border px-2 py-1 text-[8px] font-black uppercase ${statusTone(selectedServer.status)}`}>{selectedServer.status}</span>
+                      <span className={`rounded-full border px-2 py-1 text-[8px] font-black uppercase ${predictiveTone(selectedServer.predictive_state)}`}>{selectedServer.predictive_state} risk</span>
+                    </div>
+                    <p className="mt-2 text-[9px] text-[var(--admin-muted)]">Health {selectedServer.health_score ?? "—"}/100 · risk {selectedServer.predictive_risk_score ?? "—"}/100 · last seen {relativeTime(selectedServer.last_seen_at)}.</p>
+                  </div>
                 </div>
-                <p className="mt-2 text-[9px] text-[var(--admin-muted)]">Health {selectedServer.health_score ?? "—"}/100 · risk {selectedServer.predictive_risk_score ?? "—"}/100 · last seen {relativeTime(selectedServer.last_seen_at)}.</p>
-              </div>
-            </div>
+              );
+            })()}
           </section>
         ) : null}
 

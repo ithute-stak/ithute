@@ -207,6 +207,23 @@ class HardwareMaintenanceTask(Base):
     remediation_action: Mapped[str] = mapped_column(String(128), default="", nullable=False, index=True)
     remediation_outcome: Mapped[str] = mapped_column(String(24), default="", nullable=False, index=True)
     outcome_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    remediation_baseline_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("hardware_telemetry_snapshots.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    remediation_verified_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("hardware_telemetry_snapshots.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    measured_outcome: Mapped[str] = mapped_column(String(24), default="", nullable=False, index=True)
+    verification_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    verification_sample_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    verification_evidence_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    verification_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

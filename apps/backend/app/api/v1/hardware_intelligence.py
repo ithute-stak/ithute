@@ -19,6 +19,7 @@ from app.db.session import get_db
 from app.models import HardwareAlertAcknowledgement, HardwareIncident, HardwareIncidentDelivery, HardwareMaintenanceTask, HardwareMaintenanceWindow, HardwareTelemetrySnapshot, InfrastructureServer, InfrastructureServerAgent, Notification, User
 from app.services.engine_runtime import hardware_workflow_plan
 from app.services.hardware_prediction import MetricPoint, derive_rate_features, predict_hardware_drift
+from app.services.hardware_remediation_verification import verify_remediation
 
 router = APIRouter(prefix="/hardware-intelligence", tags=["hardware-intelligence"])
 
@@ -219,6 +220,8 @@ def _ensure_hardware_maintenance_task(
         existing.priority = severity
         existing.title = title
         existing.description = task_description
+        if existing.remediation_baseline_snapshot_id is None:
+            existing.remediation_baseline_snapshot_id = incident.latest_snapshot_id
         return existing
 
     task = HardwareMaintenanceTask(
@@ -228,6 +231,7 @@ def _ensure_hardware_maintenance_task(
         status="open",
         title=title,
         description=task_description,
+        remediation_baseline_snapshot_id=incident.latest_snapshot_id,
     )
     db.add(task)
     return task
@@ -235,33 +239,41 @@ def _ensure_hardware_maintenance_task(
 
 def _remediation_outcome_stats(db: Session) -> dict[str, dict[str, float | int]]:
     rows = db.execute(
-        select(HardwareMaintenanceTask.remediation_action, HardwareMaintenanceTask.remediation_outcome)
+        select(
+            HardwareMaintenanceTask.remediation_action,
+            HardwareMaintenanceTask.measured_outcome,
+            HardwareMaintenanceTask.verification_confidence,
+        )
         .where(
             HardwareMaintenanceTask.status == "completed",
             HardwareMaintenanceTask.remediation_action != "",
-            HardwareMaintenanceTask.remediation_outcome.in_(["resolved", "improved", "no_change", "worsened"]),
+            HardwareMaintenanceTask.measured_outcome.in_(["resolved", "improved", "no_change", "worsened"]),
+            HardwareMaintenanceTask.verification_confidence >= 0.5,
         )
     ).all()
     totals: dict[str, dict[str, float | int]] = {}
     impact = {"resolved": 1.0, "improved": 0.5, "no_change": 0.0, "worsened": -1.0}
     positive = {"resolved": 1.0, "improved": 0.5, "no_change": 0.0, "worsened": 0.0}
-    for action, outcome in rows:
+    for action, measured_outcome, verification_confidence in rows:
         key = str(action or "").strip()
-        if not key:
+        outcome = str(measured_outcome or "").strip()
+        if not key or outcome not in impact:
             continue
-        bucket = totals.setdefault(key, {"samples": 0, "impact_sum": 0.0, "positive_sum": 0.0})
+        weight = max(0.25, min(1.0, float(verification_confidence or 0.0)))
+        bucket = totals.setdefault(key, {"samples": 0, "weight_sum": 0.0, "impact_sum": 0.0, "positive_sum": 0.0})
         bucket["samples"] = int(bucket["samples"]) + 1
-        bucket["impact_sum"] = float(bucket["impact_sum"]) + impact[str(outcome)]
-        bucket["positive_sum"] = float(bucket["positive_sum"]) + positive[str(outcome)]
+        bucket["weight_sum"] = float(bucket["weight_sum"]) + weight
+        bucket["impact_sum"] = float(bucket["impact_sum"]) + impact[outcome] * weight
+        bucket["positive_sum"] = float(bucket["positive_sum"]) + positive[outcome] * weight
     return {
         action: {
             "samples": int(values["samples"]),
-            "mean_impact": round(float(values["impact_sum"]) / max(1, int(values["samples"])), 3),
-            "success_rate": round(float(values["positive_sum"]) / max(1, int(values["samples"])), 3),
+            "verified_samples": int(values["samples"]),
+            "mean_impact": round(float(values["impact_sum"]) / max(0.25, float(values["weight_sum"])), 3),
+            "success_rate": round(float(values["positive_sum"]) / max(0.25, float(values["weight_sum"])), 3),
         }
         for action, values in totals.items()
     }
-
 
 def _apply_remediation_learning(workflow_plan: dict[str, Any], stats: dict[str, dict[str, float | int]]) -> dict[str, Any]:
     ranked = workflow_plan.get("ranked_recommendations")
@@ -287,6 +299,76 @@ def _apply_remediation_learning(workflow_plan: dict[str, Any], stats: dict[str, 
         adjusted.append(item)
     adjusted.sort(key=lambda item: int(item.get("priority_score") or 0), reverse=True)
     return {**workflow_plan, "ranked_recommendations": adjusted, "outcome_learning": {"eligible_actions": sum(1 for value in stats.values() if int(value.get("samples") or 0) >= 3)}}
+
+
+def _snapshot_verification_payload(row: HardwareTelemetrySnapshot) -> dict[str, Any]:
+    return {
+        "health_score": row.health_score,
+        "predictive_risk_score": row.predictive_risk_score,
+        "temperature_celsius": row.temperature_celsius,
+        "memory_pressure_avg10": row.memory_pressure_avg10,
+        "io_pressure_avg10": row.io_pressure_avg10,
+        "filesystem_used_percent": row.filesystem_used_percent,
+        "storage_warning_count": row.storage_warning_count,
+    }
+
+
+def _verify_completed_remediation(
+    db: Session,
+    server_id,
+    current_snapshot: HardwareTelemetrySnapshot,
+    now: datetime,
+) -> dict[str, Any] | None:
+    task = db.scalar(
+        select(HardwareMaintenanceTask)
+        .where(
+            HardwareMaintenanceTask.server_id == server_id,
+            HardwareMaintenanceTask.status == "completed",
+            HardwareMaintenanceTask.completed_at.is_not(None),
+            HardwareMaintenanceTask.remediation_baseline_snapshot_id.is_not(None),
+            HardwareMaintenanceTask.remediation_action != "",
+            HardwareMaintenanceTask.verification_sample_count < 6,
+        )
+        .order_by(HardwareMaintenanceTask.completed_at.desc())
+        .limit(1)
+    )
+    if task is None or task.completed_at is None:
+        return None
+
+    baseline = db.get(HardwareTelemetrySnapshot, task.remediation_baseline_snapshot_id)
+    if baseline is None:
+        return None
+
+    completed_at = _utc(task.completed_at)
+    post_rows = list(
+        db.scalars(
+            select(HardwareTelemetrySnapshot)
+            .where(
+                HardwareTelemetrySnapshot.server_id == server_id,
+                HardwareTelemetrySnapshot.issued_at >= completed_at,
+            )
+            .order_by(HardwareTelemetrySnapshot.issued_at.desc())
+            .limit(6)
+        ).all()
+    )
+    post_rows.reverse()
+    if current_snapshot.issued_at >= completed_at and all(row.id != current_snapshot.id for row in post_rows):
+        post_rows.append(current_snapshot)
+        post_rows = post_rows[-6:]
+
+    result = verify_remediation(
+        _snapshot_verification_payload(baseline),
+        [_snapshot_verification_payload(row) for row in post_rows],
+        task.remediation_action,
+    )
+    task.verification_sample_count = int(result.get("sample_count") or 0)
+    task.verification_confidence = float(result.get("confidence") or 0.0)
+    task.verification_evidence_json = json.dumps(result.get("evidence") or [], ensure_ascii=False, separators=(",", ":"))
+    if result.get("ready"):
+        task.measured_outcome = str(result.get("outcome") or "")
+        task.remediation_verified_snapshot_id = current_snapshot.id
+        task.verification_evaluated_at = now
+    return result
 
 
 def _reconcile_hardware_incident(
@@ -750,6 +832,7 @@ def ingest_hardware_telemetry(
         active_maintenance,
         now,
     )
+    remediation_verification = _verify_completed_remediation(db, server.id, row, now)
 
     db.execute(
         delete(HardwareTelemetrySnapshot).where(
@@ -773,6 +856,7 @@ def ingest_hardware_telemetry(
             "severity": incident.severity,
             "notification_suppressed": incident.notification_suppressed,
         } if incident is not None else None,
+        "remediation_verification": remediation_verification,
         "maintenance": {
             "active": active_maintenance is not None,
             "suppress_notifications": bool(active_maintenance and active_maintenance.suppress_notifications),
@@ -979,6 +1063,11 @@ def list_hardware_maintenance_tasks(
                 "remediation_action": row.remediation_action,
                 "remediation_outcome": row.remediation_outcome,
                 "outcome_recorded_at": row.outcome_recorded_at.isoformat() if row.outcome_recorded_at else None,
+                "measured_outcome": row.measured_outcome,
+                "verification_confidence": row.verification_confidence,
+                "verification_sample_count": row.verification_sample_count,
+                "verification_evidence": json.loads(row.verification_evidence_json or "[]"),
+                "verification_evaluated_at": row.verification_evaluated_at.isoformat() if row.verification_evaluated_at else None,
                 "completed_at": row.completed_at.isoformat() if row.completed_at else None,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
                 "updated_at": row.updated_at.isoformat() if row.updated_at else None,
@@ -1008,6 +1097,9 @@ def update_hardware_maintenance_task(
 
     now = datetime.now(timezone.utc)
     row.status = payload.status
+    incident = db.get(HardwareIncident, row.incident_id)
+    if payload.status in {"in_progress", "completed"} and row.remediation_baseline_snapshot_id is None and incident is not None:
+        row.remediation_baseline_snapshot_id = incident.latest_snapshot_id
     if row.assigned_to_user_id is None:
         row.assigned_to_user_id = current.id
     if payload.status in {"completed", "cancelled"}:
@@ -1036,6 +1128,11 @@ def update_hardware_maintenance_task(
         "remediation_action": row.remediation_action,
         "remediation_outcome": row.remediation_outcome,
         "outcome_recorded_at": row.outcome_recorded_at.isoformat() if row.outcome_recorded_at else None,
+        "measured_outcome": row.measured_outcome,
+        "verification_confidence": row.verification_confidence,
+        "verification_sample_count": row.verification_sample_count,
+        "verification_evidence": json.loads(row.verification_evidence_json or "[]"),
+        "verification_evaluated_at": row.verification_evaluated_at.isoformat() if row.verification_evaluated_at else None,
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
     }
 
@@ -1069,6 +1166,16 @@ def hardware_fleet_health(
         maintenance_task = db.scalar(
             select(HardwareMaintenanceTask).where(HardwareMaintenanceTask.incident_id == incident.id)
         ) if incident else None
+        latest_remediation_task = db.scalar(
+            select(HardwareMaintenanceTask)
+            .where(
+                HardwareMaintenanceTask.server_id == server.id,
+                HardwareMaintenanceTask.status == "completed",
+                HardwareMaintenanceTask.remediation_action != "",
+            )
+            .order_by(HardwareMaintenanceTask.completed_at.desc())
+            .limit(1)
+        )
         incident_deliveries = list(
             db.scalars(
                 select(HardwareIncidentDelivery).where(HardwareIncidentDelivery.incident_id == incident.id)
@@ -1160,6 +1267,17 @@ def hardware_fleet_health(
                 "ends_at": maintenance.ends_at.isoformat() if maintenance else None,
                 "suppress_notifications": bool(maintenance and maintenance.suppress_notifications),
             },
+            "latest_remediation": {
+                "id": str(latest_remediation_task.id),
+                "remediation_action": latest_remediation_task.remediation_action,
+                "reported_outcome": latest_remediation_task.remediation_outcome,
+                "measured_outcome": latest_remediation_task.measured_outcome,
+                "verification_confidence": latest_remediation_task.verification_confidence,
+                "verification_sample_count": latest_remediation_task.verification_sample_count,
+                "verification_evidence": json.loads(latest_remediation_task.verification_evidence_json or "[]"),
+                "verification_evaluated_at": latest_remediation_task.verification_evaluated_at.isoformat() if latest_remediation_task.verification_evaluated_at else None,
+                "completed_at": latest_remediation_task.completed_at.isoformat() if latest_remediation_task.completed_at else None,
+            } if latest_remediation_task else None,
             "acknowledgement": {
                 "acknowledged": acknowledgement is not None,
                 "note": acknowledgement.note if acknowledgement else None,
@@ -1193,6 +1311,11 @@ def hardware_fleet_health(
                     "remediation_action": maintenance_task.remediation_action,
                     "remediation_outcome": maintenance_task.remediation_outcome,
                     "outcome_recorded_at": maintenance_task.outcome_recorded_at.isoformat() if maintenance_task.outcome_recorded_at else None,
+                    "measured_outcome": maintenance_task.measured_outcome,
+                    "verification_confidence": maintenance_task.verification_confidence,
+                    "verification_sample_count": maintenance_task.verification_sample_count,
+                    "verification_evidence": json.loads(maintenance_task.verification_evidence_json or "[]"),
+                    "verification_evaluated_at": maintenance_task.verification_evaluated_at.isoformat() if maintenance_task.verification_evaluated_at else None,
                     "completed_at": maintenance_task.completed_at.isoformat() if maintenance_task.completed_at else None,
                 } if maintenance_task else None,
                 "opened_at": incident.opened_at.isoformat() if incident.opened_at else None,
