@@ -25,7 +25,8 @@ from app.services.hardware_model_evaluation import promotion_policy
 from app.services.hardware_training_dataset import build_training_example, dataset_summary
 from app.services.hardware_shadow_validation import shadow_policy
 from app.services.hardware_model_registry import registry_summary, validate_transition
-from app.services.hardware_retraining_controller import retraining_policy
+from app.services.hardware_retraining_controller import compare_candidate_to_champion, retraining_policy, retraining_readiness
+from app.services.hardware_training_executor import train_candidate
 
 router = APIRouter(prefix="/hardware-intelligence", tags=["hardware-intelligence"])
 
@@ -1023,6 +1024,192 @@ def _supervised_training_dataset_summary(db: Session) -> dict[str, Any]:
         if (example := build_training_example(label, snapshot)) is not None
     ]
     return dataset_summary(examples)
+
+
+@router.post("/model-training/train")
+def train_hardware_candidate(
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    now = datetime.now(timezone.utc)
+    rows = db.execute(
+        select(HardwareFailureLabel, HardwareTelemetrySnapshot)
+        .join(
+            HardwareTelemetrySnapshot,
+            HardwareFailureLabel.snapshot_id == HardwareTelemetrySnapshot.id,
+        )
+        .where(
+            HardwareFailureLabel.confidence >= 0.8,
+            HardwareFailureLabel.label.in_(["confirmed_failure", "false_positive"]),
+        )
+        .order_by(HardwareFailureLabel.confirmed_at.asc())
+    ).all()
+
+    examples = [
+        example
+        for label, snapshot in rows
+        if (example := build_training_example(label, snapshot)) is not None
+    ]
+    latest_model = db.scalar(
+        select(HardwareModelVersion)
+        .order_by(HardwareModelVersion.created_at.desc())
+        .limit(1)
+    )
+    latest_created_at = _utc(latest_model.created_at) if latest_model and latest_model.created_at else None
+
+    new_examples = []
+    for (label, snapshot), example in zip(rows, [
+        build_training_example(label, snapshot) for label, snapshot in rows
+    ]):
+        if example is None:
+            continue
+        if latest_created_at is None or _utc(label.confirmed_at) > latest_created_at:
+            new_examples.append(example)
+
+    hours_since_last_training = (
+        (now - latest_created_at).total_seconds() / 3600.0
+        if latest_created_at is not None
+        else None
+    )
+    readiness = retraining_readiness(
+        new_examples,
+        hours_since_last_training=hours_since_last_training,
+    )
+    if not readiness["ready"]:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Automated retraining evidence gates are not satisfied",
+                "readiness": readiness,
+            },
+        )
+
+    try:
+        candidate = train_candidate(examples)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    champion = db.scalar(
+        select(HardwareModelVersion)
+        .where(HardwareModelVersion.lifecycle_state == "active")
+        .order_by(HardwareModelVersion.activated_at.desc())
+        .limit(1)
+    )
+    champion_metrics: dict[str, Any] | None = None
+    if champion is not None:
+        try:
+            champion_metrics = json.loads(champion.shadow_metrics_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            champion_metrics = None
+
+    comparison = compare_candidate_to_champion(
+        candidate["evaluation_rows"],
+        champion_metrics=champion_metrics,
+    )
+    existing = db.scalar(
+        select(HardwareModelVersion).where(
+            HardwareModelVersion.name == candidate["name"],
+            HardwareModelVersion.version == candidate["version"],
+        )
+    )
+    if existing is not None:
+        return {
+            "id": str(existing.id),
+            "name": existing.name,
+            "version": existing.version,
+            "lifecycle_state": existing.lifecycle_state,
+            "artifact_sha256": candidate["artifact_sha256"],
+            "dataset_sha256": candidate["dataset_sha256"],
+            "already_registered": True,
+        }
+
+    final_state = comparison["next_state"]
+    model = HardwareModelVersion(
+        name=candidate["name"],
+        version=candidate["version"],
+        algorithm=candidate["algorithm"],
+        lifecycle_state=final_state,
+        artifact_uri=f"sha256:{candidate['artifact_sha256']}",
+        artifact_json=json.dumps(candidate["artifact"], sort_keys=True, separators=(",", ":")),
+        feature_schema_json=json.dumps(
+            {
+                "version": candidate["feature_schema_version"],
+                "features": candidate["artifact"]["features"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        training_metrics_json=json.dumps(
+            {
+                "candidate_metrics": comparison["candidate_metrics"],
+                "champion_metrics": comparison["champion_metrics"],
+                "candidate_quality_score": comparison["candidate_quality_score"],
+                "champion_quality_score": comparison["champion_quality_score"],
+                "quality_score_delta": comparison["quality_score_delta"],
+                "training_rows": candidate["training_rows"],
+                "validation_rows": candidate["validation_rows"],
+                "dataset_sha256": candidate["dataset_sha256"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        promotion_evidence_json=json.dumps(
+            {
+                "readiness": readiness,
+                "offline_evaluation": comparison["offline_evaluation"],
+                "blockers": comparison["blockers"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        retired_at=now if final_state == "retired_or_rolled_back" else None,
+        rollback_reason=(
+            "Candidate failed automated offline training gates"
+            if final_state == "retired_or_rolled_back"
+            else None
+        ),
+    )
+    db.add(model)
+    db.flush()
+    db.add(
+        HardwareModelEvent(
+            model_id=model.id,
+            event_type="trained",
+            from_state="candidate",
+            to_state=final_state,
+            reason=(
+                "Passed offline evaluation and champion comparison; entering shadow"
+                if final_state == "shadow"
+                else "Rejected by automated offline evaluation or champion comparison"
+            ),
+            evidence_json=json.dumps(
+                {
+                    "artifact_sha256": candidate["artifact_sha256"],
+                    "dataset_sha256": candidate["dataset_sha256"],
+                    "quality_score_delta": comparison["quality_score_delta"],
+                    "blockers": comparison["blockers"],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            created_by_user_id=current.id,
+        )
+    )
+    db.commit()
+    db.refresh(model)
+    return {
+        "id": str(model.id),
+        "name": model.name,
+        "version": model.version,
+        "algorithm": model.algorithm,
+        "lifecycle_state": model.lifecycle_state,
+        "artifact_sha256": candidate["artifact_sha256"],
+        "dataset_sha256": candidate["dataset_sha256"],
+        "training_rows": candidate["training_rows"],
+        "validation_rows": candidate["validation_rows"],
+        "comparison": comparison,
+        "already_registered": False,
+    }
 
 
 @router.get("/model-training/status")
