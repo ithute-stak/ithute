@@ -90,6 +90,9 @@ On x86_64 hosts the probe links a deliberately small handwritten Assembly layer.
 - invariant-TSC capability
 - RDTSCP capability
 - AES-NI, AVX and AVX2 hardware capability bits
+- Intel VMX and AMD SVM virtualization capability bits
+- CPUID hypervisor-present detection and hypervisor vendor identification when exposed by the VPS platform
+- logical processor count reported by CPUID
 - a serialized RDTSC cycle-counter sample for low-level timing diagnostics
 
 The Assembly ABI is wrapped by `src/asm_helpers.c`; the rest of Ithute never calls handwritten Assembly directly. On non-x86_64 hosts the same wrapper returns `available=false`, so Hardware Intelligence remains portable instead of failing deployment.
