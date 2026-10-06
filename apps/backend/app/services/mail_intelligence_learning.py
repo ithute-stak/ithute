@@ -55,11 +55,11 @@ def training_readiness(rows: list[dict[str, Any]]) -> dict[str, Any]:
     ]
     counts = Counter(str(row["label"]) for row in trusted)
     represented = [label for label in LABELS if counts[label] > 0]
-    class_gate = len(represented) >= 2 and all(counts[label] >= MIN_PER_CLASS for label in represented)
+    class_gate = all(counts[label] >= MIN_PER_CLASS for label in LABELS)
     gates = {
         "total_labels": len(trusted) >= MIN_TRAINING_LABELS,
-        "at_least_two_classes": len(represented) >= 2,
-        "minimum_per_represented_class": class_gate,
+        "all_three_classes": set(represented) == LABELS,
+        "minimum_per_class": class_gate,
     }
     blockers = [name for name, passed in gates.items() if not passed]
     return {
