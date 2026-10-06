@@ -235,3 +235,25 @@ def test_ranked_remediation_contract_uses_predictive_context():
     assert "priority_score" in page
     assert "confidence_percent" in page
     assert "Ranked remediation" in page
+
+
+
+def test_remediation_outcome_learning_contract_exists():
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]
+    api = (backend / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    models = (backend / "app" / "models" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    migration = (backend / "alembic" / "versions" / "0084_hardware_remediation_outcomes.py").read_text(encoding="utf-8")
+    page = (repo / "apps" / "frontend" / "app" / "system-owner" / "hardware-intelligence" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "remediation_action" in models
+    assert "remediation_outcome" in models
+    assert "outcome_recorded_at" in migration
+    assert "def _remediation_outcome_stats" in api
+    assert "def _apply_remediation_learning" in api
+    assert "learned_success_rate" in api
+    assert "samples" in api
+    assert "Complete + record outcome" in page
+    assert "Outcome learning:" in page
