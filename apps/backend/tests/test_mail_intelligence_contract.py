@@ -129,6 +129,8 @@ def test_imail_sender_behaviour_contract():
     assert "sender_reply_domain_changed" in behavior
     assert "new_payment_request_pattern" in behavior
     assert '"raw_body_stored": False' in behavior
+    assert "hashlib.sha256(identity)" in behavior
+    assert "message_ref_hash" in behavior
 
     assert '"behavior_score"' in learning
     assert '"behavior_signal_names"' in learning
