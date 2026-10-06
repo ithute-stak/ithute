@@ -44,22 +44,26 @@ SIGNAL_FEATURES = (
 )
 
 
-def _stable_bucket(row: dict[str, Any]) -> int:
-    key = f"{row.get('mailbox_id','')}:{row.get('message_ref','')}"
+def _stable_bucket(row: dict[str, Any], *, mailbox_grouped: bool) -> int:
+    mailbox_id = str(row.get("mailbox_id") or "")
+    message_ref = str(row.get("message_ref") or "")
+    key = mailbox_id if mailbox_grouped and mailbox_id else f"{mailbox_id}:{message_ref}"
     return int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:8], 16) % 100
 
 
-def grouped_split(rows: Iterable[dict[str, Any]], *, train_percent: int = 80) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def grouped_split(rows: Iterable[dict[str, Any]], *, train_percent: int = 75) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     data = list(rows)
     cutoff = max(1, min(99, int(train_percent)))
-    train = [row for row in data if _stable_bucket(row) < cutoff]
-    validation = [row for row in data if _stable_bucket(row) >= cutoff]
+    mailbox_count = len({str(row.get("mailbox_id") or "") for row in data if row.get("mailbox_id")})
+    mailbox_grouped = mailbox_count >= 3
+    train = [row for row in data if _stable_bucket(row, mailbox_grouped=mailbox_grouped) < cutoff]
+    validation = [row for row in data if _stable_bucket(row, mailbox_grouped=mailbox_grouped) >= cutoff]
     if len(data) >= 2 and not validation:
-        ordered = sorted(data, key=_stable_bucket)
+        ordered = sorted(data, key=lambda row: _stable_bucket(row, mailbox_grouped=False))
         validation = [ordered[-1]]
         train = ordered[:-1]
     if len(data) >= 2 and not train:
-        ordered = sorted(data, key=_stable_bucket)
+        ordered = sorted(data, key=lambda row: _stable_bucket(row, mailbox_grouped=False))
         train = [ordered[0]]
         validation = ordered[1:]
     return train, validation
