@@ -12,7 +12,9 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_tenant_permission
 from app.db.session import get_db
-from app.models import DmarcAggregateReport, MailAutomationRule, MailRetentionPolicy, PhishingFinding, User
+from app.services.mail_intelligence_learning import training_readiness
+from app.services.mail_threat_model import ALGORITHM, train_and_evaluate
+from app.models import DmarcAggregateReport, MailAutomationRule, MailRetentionPolicy, MailThreatModelVersion, PhishingFinding, User
 
 router = APIRouter(prefix="/mail-intelligence", tags=["mail-intelligence"])
 
@@ -126,6 +128,168 @@ def resolve_phishing(tenant_id: uuid.UUID, finding_id: uuid.UUID, db: Session = 
     item = db.get(PhishingFinding, finding_id)
     if item is None or item.tenant_id != tenant_id: raise HTTPException(status_code=404, detail="Finding not found")
     item.resolved = True; item.resolved_at = datetime.now().astimezone(); db.commit(); return {"id": str(item.id), "resolved": True}
+
+@router.get("/tenants/{tenant_id}/threat-models")
+def threat_models(
+    tenant_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    _require(tenant_id, "mail.read", db, current)
+    rows = db.scalars(
+        select(MailThreatModelVersion)
+        .where(MailThreatModelVersion.tenant_id == tenant_id)
+        .order_by(MailThreatModelVersion.created_at.desc())
+    ).all()
+    return [
+        {
+            "id": str(item.id),
+            "name": item.name,
+            "version": item.version,
+            "algorithm": item.algorithm,
+            "lifecycle_state": item.lifecycle_state,
+            "artifact_sha256": item.artifact_sha256,
+            "training_metrics": item.training_metrics_json,
+            "shadow_metrics": item.shadow_metrics_json,
+            "promotion_evidence": item.promotion_evidence_json,
+            "activated_at": item.activated_at.isoformat() if item.activated_at else None,
+            "retired_at": item.retired_at.isoformat() if item.retired_at else None,
+            "rollback_reason": item.rollback_reason,
+            "created_at": item.created_at.isoformat(),
+        }
+        for item in rows
+    ]
+
+
+@router.get("/tenants/{tenant_id}/threat-model-training-status")
+def threat_model_training_status(
+    tenant_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require(tenant_id, "mail.read", db, current)
+    findings = db.scalars(
+        select(PhishingFinding)
+        .where(
+            PhishingFinding.tenant_id == tenant_id,
+            PhishingFinding.finding_type == "mail_intelligence_training_label",
+            PhishingFinding.resolved.is_(True),
+        )
+        .order_by(PhishingFinding.created_at.asc())
+    ).all()
+    rows = [
+        {
+            "label": str((finding.metadata_json or {}).get("verified_label") or finding.action_taken or ""),
+            "confidence": float((finding.metadata_json or {}).get("label_confidence") or 0.0),
+        }
+        for finding in findings
+    ]
+    return training_readiness(rows)
+
+
+@router.post("/tenants/{tenant_id}/threat-models/train", status_code=201)
+def train_threat_model(
+    tenant_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require(tenant_id, "mail.manage", db, current)
+    findings = db.scalars(
+        select(PhishingFinding)
+        .where(
+            PhishingFinding.tenant_id == tenant_id,
+            PhishingFinding.finding_type == "mail_intelligence_training_label",
+            PhishingFinding.resolved.is_(True),
+        )
+        .order_by(PhishingFinding.created_at.asc())
+    ).all()
+
+    readiness_rows = []
+    training_rows = []
+    for finding in findings:
+        metadata = finding.metadata_json or {}
+        label = str(metadata.get("verified_label") or finding.action_taken or "")
+        confidence = float(metadata.get("label_confidence") or 0.0)
+        readiness_rows.append({"label": label, "confidence": confidence})
+        features = metadata.get("feature_snapshot")
+        if (
+            label in {"legitimate", "phishing", "bec"}
+            and confidence >= 0.80
+            and isinstance(features, dict)
+        ):
+            training_rows.append({
+                "mailbox_id": str(finding.mailbox_id or ""),
+                "message_ref": finding.message_ref,
+                "label": label,
+                "features": features,
+            })
+
+    readiness = training_readiness(readiness_rows)
+    if not readiness["ready"]:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Mail threat model training gates are not satisfied",
+                "readiness": readiness,
+            },
+        )
+
+    try:
+        result = train_and_evaluate(training_rows)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    existing = db.scalar(
+        select(MailThreatModelVersion).where(
+            MailThreatModelVersion.tenant_id == tenant_id,
+            MailThreatModelVersion.name == "mail-threat-classifier",
+            MailThreatModelVersion.version == result["version"],
+        )
+    )
+    if existing is not None:
+        return {
+            "id": str(existing.id),
+            "version": existing.version,
+            "lifecycle_state": existing.lifecycle_state,
+            "artifact_sha256": existing.artifact_sha256,
+            "already_registered": True,
+        }
+
+    lifecycle_state = "shadow" if result["promotion"]["eligible_for_shadow"] else "rejected"
+    model = MailThreatModelVersion(
+        tenant_id=tenant_id,
+        name="mail-threat-classifier",
+        version=result["version"],
+        algorithm=ALGORITHM,
+        lifecycle_state=lifecycle_state,
+        artifact_sha256=result["artifact_sha256"],
+        artifact_json=result["artifact"],
+        training_metrics_json=result["metrics"],
+        shadow_metrics_json={},
+        promotion_evidence_json={
+            "readiness": readiness,
+            "offline_promotion": result["promotion"],
+            "training_rows": result["training_rows"],
+            "validation_rows": result["validation_rows"],
+            "raw_message_content_used": False,
+        },
+        retired_at=datetime.now().astimezone() if lifecycle_state == "rejected" else None,
+        rollback_reason="Offline safety gates failed" if lifecycle_state == "rejected" else None,
+    )
+    db.add(model)
+    db.commit()
+    db.refresh(model)
+    return {
+        "id": str(model.id),
+        "version": model.version,
+        "algorithm": model.algorithm,
+        "lifecycle_state": model.lifecycle_state,
+        "artifact_sha256": model.artifact_sha256,
+        "metrics": model.training_metrics_json,
+        "promotion": result["promotion"],
+        "already_registered": False,
+    }
+
 
 @router.get("/tenants/{tenant_id}/automations")
 def automations(tenant_id: uuid.UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)) -> list[dict[str, Any]]:
