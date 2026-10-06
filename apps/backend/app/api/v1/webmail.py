@@ -26,6 +26,7 @@ from app.services.webmail import (
     folders,
     message,
     messages,
+    messages_with_bodies,
     move_message,
     save_display_name,
     save_draft,
@@ -358,31 +359,35 @@ def analyze_message_batch(
 ):
     address, password = _credentials(token)
     try:
-        listing = messages(address, password, folder=folder, limit=limit, offset=offset, query="")
+        listing = messages_with_bodies(
+            address,
+            password,
+            folder=folder,
+            limit=limit,
+            offset=offset,
+            query="",
+        )
         source_items = listing.get("items", []) if isinstance(listing, dict) else []
-        analyzed = []
-        failures = []
-        for item in source_items:
-            uid = str(item.get("uid") or "")
-            if not UID_RE.fullmatch(uid):
-                continue
-            try:
-                payload = message(address, password, uid=uid, folder=folder)
-                analyzed.append({
-                    "uid": uid,
-                    "subject": payload.get("subject"),
-                    "from": payload.get("from"),
-                    "date": payload.get("date"),
-                    "intelligence": analyze_mail_message(payload, mailbox_address=address),
-                })
-            except WebmailError as exc:
-                failures.append({"uid": uid, "error": str(exc)})
+        analyzed = [
+            {
+                "uid": str(item.get("uid") or ""),
+                "subject": item.get("subject"),
+                "from": item.get("from"),
+                "date": item.get("date"),
+                "intelligence": analyze_mail_message(item, mailbox_address=address),
+            }
+            for item in source_items
+        ]
         return {
             "folder": folder,
             "items": analyzed,
-            "failures": failures,
+            "failures": [],
             "count": len(analyzed),
             "requested": len(source_items),
+            "total": int(listing.get("total") or 0),
+            "offset": offset,
+            "limit": limit,
+            "skipped": int(listing.get("skipped") or 0),
             "automatic_blocking": False,
         }
     except WebmailError as exc:
