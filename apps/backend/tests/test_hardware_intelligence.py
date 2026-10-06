@@ -338,6 +338,10 @@ def test_remediation_verification_contract_exists():
     assert "Telemetry-verified outcome" in page
     assert "verification_sample_count" in page
     assert "verification_confidence" in page
+    assert "HardwareMaintenanceTask.verification_confidence >= 0.5" in api
+    assert "HardwareMaintenanceTask.verification_sample_count < 6" in api
+    assert "ix_hw_task_remediation_baseline_snapshot_id" in migration
+    assert "ix_hw_task_remediation_verified_snapshot_id" in migration
     assert "HardwareMaintenanceTask.measured_outcome.in_" in api
     assert "latest_remediation_task = db.scalar" in api
     assert '"latest_remediation": {' in api
