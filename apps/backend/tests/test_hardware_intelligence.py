@@ -191,3 +191,28 @@ def test_hardware_operations_observability_contract_exists():
     assert '"/hardware-intelligence/operations-summary"' in page
     assert "Retry failed notifications" in page
     assert "Delivery failures" in page
+
+
+
+def test_hardware_remediation_recommendation_contract_exists():
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]
+    api = (backend / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    runtime = (backend / "app" / "services" / "engine_runtime.py").read_text(encoding="utf-8")
+    page = (repo / "apps" / "frontend" / "app" / "system-owner" / "hardware-intelligence" / "page.tsx").read_text(encoding="utf-8")
+
+    for signal in (
+        '"temperature_celsius": snapshot.temperature_celsius',
+        '"memory_pressure_avg10": snapshot.memory_pressure_avg10',
+        '"io_pressure_avg10": snapshot.io_pressure_avg10',
+        '"filesystem_used_percent": snapshot.filesystem_used_percent',
+        '"storage_warning_count": snapshot.storage_warning_count',
+    ):
+        assert signal in api
+
+    assert '"plan_version": "2"' in runtime
+    assert '"recommendations": recommendations' in runtime
+    assert "Recommended remediation" in page
+    assert 'recommendations?: string[]' in page
