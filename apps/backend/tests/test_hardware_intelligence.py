@@ -379,3 +379,35 @@ def test_hardware_supervised_learning_readiness_contract_exists():
     assert "Ground-truth failure label" in page
     assert "Save confirmed label" in page
     assert "saveFailureLabel" in page
+
+
+
+def test_hardware_model_training_pipeline_contract_exists():
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]
+    api = (backend / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    evaluation = (backend / "app" / "services" / "hardware_model_evaluation.py").read_text(encoding="utf-8")
+    dataset = (backend / "app" / "services" / "hardware_training_dataset.py").read_text(encoding="utf-8")
+    page = (repo / "apps" / "frontend" / "app" / "system-owner" / "hardware-intelligence" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "def classification_metrics" in evaluation
+    assert "def promotion_decision" in evaluation
+    assert "def evaluate_candidate" in evaluation
+    assert "def promotion_policy" in evaluation
+    assert "MIN_EVALUATION_SAMPLES = 20" in evaluation
+    assert "MIN_PRECISION = 0.80" in evaluation
+    assert "MIN_RECALL = 0.70" in evaluation
+    assert "MAX_FALSE_POSITIVE_RATE = 0.15" in evaluation
+    assert "MAX_BRIER_SCORE = 0.20" in evaluation
+    assert '"eligible_for_activation": False' in evaluation
+    assert "def build_training_example" in dataset
+    assert "TRAINING_FEATURES" in dataset
+    assert "predictive_risk_score" not in dataset.split("TRAINING_FEATURES = (", 1)[1].split(")", 1)[0]
+    assert '"/model-training/status"' in api
+    assert '"training_dataset": _supervised_training_dataset_summary(db)' in api
+    assert '"candidate_promotion_policy": promotion_policy()' in api
+    assert "Usable training dataset" in page
+    assert "Candidate promotion gate" in page
+    assert "Shadow first. Activation never direct." in page
