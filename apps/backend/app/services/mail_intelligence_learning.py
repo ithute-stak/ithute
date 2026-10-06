@@ -12,6 +12,7 @@ MIN_PER_CLASS = 20
 def feature_snapshot(message: dict[str, Any], intelligence: dict[str, Any]) -> dict[str, Any]:
     security = intelligence.get("security") if isinstance(intelligence.get("security"), dict) else {}
     business = intelligence.get("business") if isinstance(intelligence.get("business"), dict) else {}
+    behavior = intelligence.get("behavior") if isinstance(intelligence.get("behavior"), dict) else {}
     entities = business.get("entities") if isinstance(business.get("entities"), dict) else {}
     signals = security.get("signals") if isinstance(security.get("signals"), list) else []
 
@@ -34,6 +35,13 @@ def feature_snapshot(message: dict[str, Any], intelligence: dict[str, Any]) -> d
         "intent_confidence": float((business.get("intent") or {}).get("confidence") or 0.0),
         "priority": str(business.get("priority") or "normal"),
         "priority_score": int(business.get("priority_score") or 0),
+        "behavior_score": int(behavior.get("score") or 0),
+        "behavior_state": str(behavior.get("state") or "unknown"),
+        "behavior_signal_names": [
+            str(item.get("signal") or "")
+            for item in (behavior.get("signals") or [])
+            if isinstance(item, dict) and item.get("signal")
+        ],
         "reply_needed": bool(business.get("reply_needed")),
         "attachment_count": len(message.get("attachments") or []),
         "url_count": len(entities.get("urls") or []),
