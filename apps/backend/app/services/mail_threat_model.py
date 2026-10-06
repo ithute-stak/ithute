@@ -23,6 +23,7 @@ NUMERIC_FEATURES = (
     "bec_probability",
     "intent_confidence",
     "priority_score",
+    "behavior_score",
     "attachment_count",
     "url_count",
     "money_count",
@@ -41,6 +42,11 @@ SIGNAL_FEATURES = (
     "external_link_domain",
     "risky_attachment_type",
     "mail_authentication_failure",
+    "first_seen_sender",
+    "unusual_sending_hour",
+    "sender_reply_domain_changed",
+    "unexpected_attachment_pattern",
+    "new_payment_request_pattern",
 )
 
 
@@ -72,7 +78,7 @@ def grouped_split(rows: Iterable[dict[str, Any]], *, train_percent: int = 75) ->
 def vectorize(snapshot: dict[str, Any]) -> list[float]:
     values = [float(snapshot.get(name) or 0.0) for name in NUMERIC_FEATURES]
     values.extend(1.0 if snapshot.get(name) else 0.0 for name in BOOLEAN_FEATURES)
-    signal_names = set(snapshot.get("signal_names") or [])
+    signal_names = set(snapshot.get("signal_names") or []) | set(snapshot.get("behavior_signal_names") or [])
     values.extend(1.0 if name in signal_names else 0.0 for name in SIGNAL_FEATURES)
     return values
 
