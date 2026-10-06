@@ -42,6 +42,12 @@ def feature_snapshot(message: dict[str, Any], intelligence: dict[str, Any]) -> d
         "reference_count": len(entities.get("references") or []),
         "deadline_count": len(entities.get("deadline_terms") or []),
         "has_reply_to": bool(str(message.get("reply_to") or "").strip()),
+        "spf_failed": (
+            "spf=fail" in str(message.get("authentication_results") or "").lower()
+            or str(message.get("received_spf") or "").lower().startswith("fail")
+        ),
+        "dkim_failed": "dkim=fail" in str(message.get("authentication_results") or "").lower(),
+        "dmarc_failed": "dmarc=fail" in str(message.get("authentication_results") or "").lower(),
         "body_length_bucket": min(20, len(str(message.get("body_text") or "")) // 500),
         "raw_body_stored": False,
     }
