@@ -210,6 +210,26 @@ def _security_event(db: Session, request: Request, address: str, action: str, ou
         raise HTTPException(status_code=503, detail="Security audit service is unavailable") from exc
 
 
+def _resolve_shadow_predictions(
+    db: Session,
+    *,
+    mailbox_id,
+    message_ref: str,
+    label: str,
+) -> None:
+    rows = db.scalars(
+        select(MailThreatShadowPrediction).where(
+            MailThreatShadowPrediction.mailbox_id == mailbox_id,
+            MailThreatShadowPrediction.message_ref == message_ref,
+            MailThreatShadowPrediction.verified_label.is_(None),
+        )
+    ).all()
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        row.verified_label = label
+        row.resolved_at = now
+
+
 def _shadow_score_message(
     db: Session,
     *,
@@ -542,6 +562,13 @@ def save_message_intelligence_verdict(
         existing_label = str((existing.metadata_json or {}).get("verified_label") or existing.action_taken or "")
         if existing_label != payload.label:
             raise HTTPException(status_code=409, detail="Verified mail intelligence verdict is immutable")
+        _resolve_shadow_predictions(
+            db,
+            mailbox_id=mailbox.id,
+            message_ref=message_ref,
+            label=existing_label,
+        )
+        db.commit()
         return {
             "saved": True,
             "finding_id": str(existing.id),
@@ -573,6 +600,12 @@ def save_message_intelligence_verdict(
         },
     )
     db.add(finding)
+    _resolve_shadow_predictions(
+        db,
+        mailbox_id=mailbox.id,
+        message_ref=message_ref,
+        label=payload.label,
+    )
     db.commit()
     db.refresh(finding)
     return {
