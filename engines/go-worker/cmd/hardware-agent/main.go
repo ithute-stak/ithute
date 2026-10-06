@@ -58,6 +58,19 @@ type Sample struct {
 		TxDropped      uint64 `json:"tx_dropped"`
 		TCPRetransSegs uint64 `json:"tcp_retrans_segs"`
 	} `json:"network,omitempty"`
+	CPUNative struct {
+		Available     bool   `json:"available"`
+		Vendor        string `json:"vendor"`
+		Family        uint32 `json:"family"`
+		Model         uint32 `json:"model"`
+		Stepping      uint32 `json:"stepping"`
+		InvariantTSC  bool   `json:"invariant_tsc"`
+		RDTSCP        bool   `json:"rdtscp"`
+		AESNI         bool   `json:"aes_ni"`
+		AVX           bool   `json:"avx"`
+		AVX2          bool   `json:"avx2"`
+		CycleCounter  uint64 `json:"cycle_counter"`
+	} `json:"cpu_native,omitempty"`
 	Capabilities struct {
 		Hwmon     bool `json:"hwmon"`
 		Thermal   bool `json:"thermal"`
