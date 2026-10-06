@@ -526,6 +526,42 @@ export default function HardwareIntelligencePage() {
         </section>
 
         <section className="surface-card p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">Supervised learning readiness</p>
+              <h2 className="mt-1 text-lg font-black">Ground truth before XGBoost</h2>
+              <p className="mt-1 max-w-3xl text-[10px] leading-4 text-[var(--admin-muted)]">Ithute will not activate supervised hardware-failure boosting until operators have supplied enough balanced, high-confidence ground-truth labels from multiple servers.</p>
+            </div>
+            <span className={`rounded-full border px-3 py-1 text-[8px] font-black uppercase ${operations?.supervised_learning?.ready ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+              {operations?.supervised_learning?.ready ? "Training eligible" : "Training guarded"}
+            </span>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            {[
+              ["Binary labels", operations?.supervised_learning?.binary_labels ?? 0, operations?.supervised_learning?.thresholds.minimum_binary_labels ?? 40],
+              ["Confirmed failures", operations?.supervised_learning?.confirmed_failures ?? 0, operations?.supervised_learning?.thresholds.minimum_per_class ?? 12],
+              ["False positives", operations?.supervised_learning?.false_positives ?? 0, operations?.supervised_learning?.thresholds.minimum_per_class ?? 12],
+              ["Distinct servers", operations?.supervised_learning?.distinct_servers ?? 0, operations?.supervised_learning?.thresholds.minimum_distinct_servers ?? 3],
+              ["Min confidence", Math.round((operations?.supervised_learning?.minimum_confidence ?? 0.8) * 100), 80],
+            ].map(([label, value, target]) => (
+              <div key={String(label)} className="rounded-xl border border-[var(--admin-line)] bg-[#f7faf8] p-3">
+                <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">{String(label)}</p>
+                <p className="mt-2 text-xl font-black">{String(value)}{String(label) === "Min confidence" ? "%" : ""}</p>
+                <p className="mt-1 text-[8px] text-[var(--admin-muted)]">Target {String(target)}{String(label) === "Min confidence" ? "%" : ""}</p>
+              </div>
+            ))}
+          </div>
+          {operations?.supervised_learning?.blockers?.length ? (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <p className="text-[8px] font-black uppercase text-amber-800">Current blockers</p>
+              <ul className="mt-2 space-y-1 text-[9px] font-bold text-amber-800">
+                {operations.supervised_learning.blockers.map((item, index) => <li key={`${item}-${index}`}>• {item}</li>)}
+              </ul>
+            </div>
+          ) : null}
+        </section>
+
+        <section className="surface-card p-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">Predictive baseline</p>
