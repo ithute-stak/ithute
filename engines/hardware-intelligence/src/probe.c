@@ -8,6 +8,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "asm_helpers.h"
+
 typedef struct {
     unsigned long long user, nice, system, idle, iowait, irq, softirq, steal;
 } cpu_sample_t;
@@ -277,6 +279,9 @@ int main(void) {
     int has_smartctl = command_available("/usr/sbin/smartctl", "/usr/bin/smartctl");
     int has_nvme_cli = command_available("/usr/sbin/nvme", "/usr/bin/nvme");
 
+    ithute_cpu_native_t cpu_native = {0};
+    ithute_cpu_native_summary(&cpu_native);
+
     time_t now = time(NULL);
     printf("{");
     printf("\"schema_version\":1,");
@@ -295,6 +300,18 @@ int main(void) {
         block.devices, block.reads_completed, block.sectors_read, block.writes_completed, block.sectors_written, block.io_ms, block.weighted_io_ms);
     printf("\"network\":{\"rx_errors\":%llu,\"tx_errors\":%llu,\"rx_dropped\":%llu,\"tx_dropped\":%llu,\"tcp_retrans_segs\":%llu},",
         network.rx_errors, network.tx_errors, network.rx_dropped, network.tx_dropped, network.tcp_retrans_segs);
+    printf("\"cpu_native\":{\"available\":%s,\"vendor\":\"%s\",\"family\":%u,\"model\":%u,\"stepping\":%u,\"invariant_tsc\":%s,\"rdtscp\":%s,\"aes_ni\":%s,\"avx\":%s,\"avx2\":%s,\"cycle_counter\":%llu},",
+        cpu_native.available ? "true" : "false",
+        cpu_native.vendor,
+        cpu_native.family,
+        cpu_native.model,
+        cpu_native.stepping,
+        cpu_native.invariant_tsc ? "true" : "false",
+        cpu_native.rdtscp ? "true" : "false",
+        cpu_native.aes_ni ? "true" : "false",
+        cpu_native.avx ? "true" : "false",
+        cpu_native.avx2 ? "true" : "false",
+        cpu_native.cycle_counter);
     printf("\"capabilities\":{");
     printf("\"hwmon\":%s,\"thermal\":%s,\"edac\":%s,\"ipmi\":%s,",
         has_hwmon ? "true" : "false", has_thermal ? "true" : "false", has_edac ? "true" : "false", has_ipmi ? "true" : "false");
