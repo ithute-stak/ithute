@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
-from app.models import HardwareAlertAcknowledgement, HardwareFailureLabel, HardwareIncident, HardwareIncidentDelivery, HardwareMaintenanceTask, HardwareMaintenanceWindow, HardwareTelemetrySnapshot, HardwareModelVersion, HardwareModelEvent, InfrastructureServer, InfrastructureServerAgent, Notification, User
+from app.models import HardwareAlertAcknowledgement, HardwareFailureLabel, HardwareIncident, HardwareIncidentDelivery, HardwareMaintenanceTask, HardwareMaintenanceWindow, HardwareTelemetrySnapshot, HardwareModelVersion, HardwareModelEvent, HardwareShadowPrediction, InfrastructureServer, InfrastructureServerAgent, Notification, User
 from app.services.engine_runtime import hardware_workflow_plan
 from app.services.hardware_prediction import MetricPoint, derive_rate_features, predict_hardware_drift
 from app.services.hardware_remediation_verification import verify_remediation
@@ -64,6 +64,20 @@ class ModelTransitionRequest(BaseModel):
     target_state: str = Field(pattern=r"^(shadow|qualified|canary|active|retired_or_rolled_back)$")
     reason: str = Field(min_length=3, max_length=1000)
     evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class ShadowPredictionCreate(BaseModel):
+    server_id: UUID
+    snapshot_id: UUID
+    candidate_probability: float = Field(ge=0.0, le=1.0)
+    baseline_probability: float = Field(ge=0.0, le=1.0)
+    latency_ms: float | None = Field(default=None, ge=0.0, le=60000.0)
+    feature_vector: dict[str, float] = Field(default_factory=dict)
+
+
+class ShadowOutcomeResolve(BaseModel):
+    target: int = Field(ge=0, le=1)
+    outcome_source: str = Field(pattern=r"^(failure_label|verified_incident|operator_review)$")
 
 
 class FailureLabelUpsert(BaseModel):
@@ -1052,6 +1066,90 @@ def hardware_model_registry(
             "created_at": row.created_at.isoformat() if row.created_at else None,
         })
     return registry_summary(models)
+
+
+@router.post("/model-registry/{model_id}/shadow-predictions", status_code=201)
+def record_hardware_shadow_prediction(
+    model_id: str,
+    payload: ShadowPredictionCreate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    try:
+        parsed = UUID(model_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid hardware model id") from exc
+    model = db.get(HardwareModelVersion, parsed)
+    if model is None:
+        raise HTTPException(status_code=404, detail="Hardware model not found")
+    if model.lifecycle_state not in {"shadow", "qualified", "canary", "active"}:
+        raise HTTPException(status_code=409, detail="Model is not eligible to emit live evidence")
+    snapshot = db.get(HardwareTelemetrySnapshot, payload.snapshot_id)
+    if snapshot is None or snapshot.server_id != payload.server_id:
+        raise HTTPException(status_code=404, detail="Telemetry snapshot does not match server")
+
+    existing = db.scalar(
+        select(HardwareShadowPrediction).where(
+            HardwareShadowPrediction.model_id == model.id,
+            HardwareShadowPrediction.snapshot_id == payload.snapshot_id,
+        )
+    )
+    if existing is not None:
+        return {
+            "id": str(existing.id),
+            "already_recorded": True,
+            "model_id": str(model.id),
+            "snapshot_id": str(existing.snapshot_id),
+        }
+
+    row = HardwareShadowPrediction(
+        model_id=model.id,
+        server_id=payload.server_id,
+        snapshot_id=payload.snapshot_id,
+        candidate_probability=payload.candidate_probability,
+        baseline_probability=payload.baseline_probability,
+        latency_ms=payload.latency_ms,
+        feature_vector_json=json.dumps(payload.feature_vector or {}, sort_keys=True, separators=(",", ":")),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": str(row.id),
+        "already_recorded": False,
+        "model_id": str(model.id),
+        "snapshot_id": str(row.snapshot_id),
+    }
+
+
+@router.post("/shadow-predictions/{prediction_id}/outcome")
+def resolve_hardware_shadow_outcome(
+    prediction_id: str,
+    payload: ShadowOutcomeResolve,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    try:
+        parsed = UUID(prediction_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid shadow prediction id") from exc
+    row = db.get(HardwareShadowPrediction, parsed)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Shadow prediction not found")
+    if row.target is not None and row.target != payload.target:
+        raise HTTPException(status_code=409, detail="Resolved shadow outcome is immutable")
+    row.target = payload.target
+    row.outcome_source = payload.outcome_source
+    row.resolved_at = row.resolved_at or datetime.now(timezone.utc)
+    db.commit()
+    return {
+        "id": str(row.id),
+        "target": row.target,
+        "outcome_source": row.outcome_source,
+        "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
+    }
 
 
 @router.post("/model-registry/{model_id}/transition")
