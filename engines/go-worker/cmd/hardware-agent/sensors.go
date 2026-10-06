@@ -30,6 +30,7 @@ type BMCSummary struct {
 }
 
 func readUintFile(path string) (uint64, bool) {
+	// #nosec G304 -- callers pass only fixed EDAC sysfs paths rooted under /sys/devices/system/edac.
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return 0, false
