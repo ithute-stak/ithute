@@ -179,8 +179,13 @@ func main() {
 			return err
 		}
 		_, err = fmt.Fprintln(writer, string(encoded))
-		writer.Flush()
-		return err
+		if err != nil {
+			return err
+		}
+		if flushErr := writer.Flush(); flushErr != nil {
+			return flushErr
+		}
+		return nil
 	}
 
 	if *once {
