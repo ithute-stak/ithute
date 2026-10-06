@@ -480,3 +480,27 @@ def test_hardware_automated_retraining_contract_exists():
     assert '"retraining_policy": retraining_policy()' in api
     assert "Automated retraining controller" in page
     assert "direct activation remains disabled" in page
+
+
+
+def test_hardware_training_executor_contract_exists():
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    api = (backend / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    executor = (backend / "app" / "services" / "hardware_training_executor.py").read_text(encoding="utf-8")
+    models = (backend / "app" / "models" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    migration = (backend / "alembic" / "versions" / "0089_hardware_model_artifact.py").read_text(encoding="utf-8")
+
+    assert "def deterministic_split" in executor
+    assert "def train_logistic" in executor
+    assert "def train_candidate" in executor
+    assert "def artifact_fingerprint" in executor
+    assert "def dataset_fingerprint" in executor
+    assert 'ALGORITHM = "regularized_logistic_v1"' in executor
+    assert '@router.post("/model-training/train")' in api
+    assert "compare_candidate_to_champion" in api
+    assert "artifact_json" in models
+    assert "0089_hardware_model_artifact" in migration
+    assert 'lifecycle_state=final_state' in api
+    assert 'final_state == "retired_or_rolled_back"' in api
