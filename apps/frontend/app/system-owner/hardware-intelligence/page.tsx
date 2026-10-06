@@ -263,7 +263,7 @@ export default function HardwareIntelligencePage() {
   }, [selected, ackNote, loadFleet]);
 
   const updateMaintenanceTask = useCallback(async (status: "in_progress" | "completed" | "cancelled") => {
-    const taskId = selectedServer?.incident?.maintenance_task?.id;
+    const taskId = fleet?.items.find((item) => item.server_id === selected)?.incident?.maintenance_task?.id;
     if (!taskId) return;
     setActionLoading(true);
     setActionError("");
@@ -280,7 +280,7 @@ export default function HardwareIntelligencePage() {
     } finally {
       setActionLoading(false);
     }
-  }, [selectedServer, taskNote, loadFleet]);
+  }, [fleet, selected, taskNote, loadFleet]);
 
   const loadHistory = useCallback(async (serverId: string) => {
     if (!serverId) {
