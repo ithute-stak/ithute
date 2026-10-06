@@ -156,3 +156,14 @@ def test_train_and_evaluate_is_privacy_safe_and_versioned():
     assert result["version"].startswith("mail_multiclass_logistic_v1-")
     assert result["training_rows"] > 0
     assert result["validation_rows"] >= 20
+
+
+
+def test_grouped_split_does_not_cross_mailboxes_when_possible():
+    rows = _dataset()
+    train, validation = grouped_split(rows)
+
+    train_mailboxes = {row["mailbox_id"] for row in train}
+    validation_mailboxes = {row["mailbox_id"] for row in validation}
+
+    assert train_mailboxes.isdisjoint(validation_mailboxes)
