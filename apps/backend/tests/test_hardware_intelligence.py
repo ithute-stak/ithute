@@ -133,7 +133,7 @@ def test_hardware_incident_summary_uses_critical_health_over_prediction():
 
 
 def test_hardware_incident_reconciliation_contract_exists():
-    root = __import__("pathlib").Path(__file__).parents[2]
+    root = __import__("pathlib").Path(__file__).parents[1]
     api = (root / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
     model = (root / "app" / "models" / "hardware_intelligence.py").read_text(encoding="utf-8")
 
