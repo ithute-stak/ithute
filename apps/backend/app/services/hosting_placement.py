@@ -448,6 +448,9 @@ def score_node(
             "hostname": server.hostname if server else node.hostname,
             "provider": server.provider if server else None,
             "region": server.region if server else None,
+            "datacenter": server.datacenter if server else None,
+            "physical_host": server.physical_host if server else None,
+            "network_segment": server.network_segment if server else None,
         },
         "infrastructure_server_id": str(server.id) if server else None,
         "security": {
