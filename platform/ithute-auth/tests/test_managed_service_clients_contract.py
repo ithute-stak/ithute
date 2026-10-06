@@ -12,7 +12,10 @@ SERVICE_CLIENTS = ROOT / "app" / "service_clients.py"
 MIGRATION = ROOT / "alembic" / "versions" / "0006_managed_service_clients.py"
 BDA_GRANTS_MIGRATION = ROOT / "alembic" / "versions" / "0008_bda_service_grants.py"
 BDA_FORWARD_GRANT_MIGRATION = ROOT / "alembic" / "versions" / "0009_bda_mail_forward_grant.py"
+NOTIFICATION_CLIENT_MIGRATION = ROOT / "alembic" / "versions" / "0011_notification_gateway_client.py"
 SERVER = ROOT / "app" / "server.py"
+MAIN = ROOT / "app" / "main.py"
+CONFIG = ROOT / "app" / "config.py"
 
 
 def test_managed_service_token_accepts_rsl_platform_scopes() -> None:
@@ -129,3 +132,19 @@ def test_managed_tokens_take_precedence_over_legacy_runtime_secret_fallback() ->
     assert 'getattr(route, "path", None) == "/v1/auth/service-token"' in server_source
     assert "app.include_router(service_token_router)" in server_source
     assert "app.include_router(service_client_admin_router)" in server_source
+
+
+
+def test_notification_gateway_managed_identity_bootstraps_from_hashed_secret() -> None:
+    migration = NOTIFICATION_CLIENT_MIGRATION.read_text(encoding="utf-8")
+    main = MAIN.read_text(encoding="utf-8")
+    config = CONFIG.read_text(encoding="utf-8")
+
+    assert '"ithute-notification"' in migration
+    assert '"push.send.delegated"' in migration
+    assert "notification_gateway_secret" in config
+    assert "AUTH_NOTIFICATION_GATEWAY_SECRET" in main
+    assert "hash_service_secret(notification_secret)" in main
+    assert "ManagedServiceCredential" in main
+    assert "other.revoked_at = now" in main
+    assert "secret_hash=digest" in main
