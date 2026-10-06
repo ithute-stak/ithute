@@ -98,3 +98,35 @@ class HardwareAlertAcknowledgement(Base):
     acknowledged_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )
+
+
+class HardwareIncident(Base):
+    __tablename__ = "hardware_incidents"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    server_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("infrastructure_servers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    latest_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("hardware_telemetry_snapshots.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    kind: Mapped[str] = mapped_column(String(64), default="hardware_risk", nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="open", nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    predictive_state: Mapped[str] = mapped_column(String(24), default="learning", nullable=False)
+    predictive_risk_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    health_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    notification_suppressed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
