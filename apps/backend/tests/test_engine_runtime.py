@@ -220,3 +220,52 @@ def test_go_origin_probe_returns_fallback_marker(monkeypatch):
     })
     assert body is None
     assert engine == "python-fallback"
+
+
+
+def test_python_hardware_workflow_plan_critical():
+    plan = engine_runtime.python_hardware_workflow_plan({
+        "severity": "critical",
+        "health_status": "critical",
+        "predictive_state": "high",
+        "notification_suppressed": False,
+    })
+    assert plan["engine"] == "python-fallback"
+    assert plan["escalation"] == "immediate"
+    assert "block_new_placement" in plan["actions"]
+    assert "drain_after_safety_window" in plan["actions"]
+    assert "notify_platform_owner" in plan["actions"]
+
+
+def test_python_hardware_workflow_plan_respects_maintenance_suppression():
+    plan = engine_runtime.python_hardware_workflow_plan({
+        "severity": "high",
+        "health_status": "warning",
+        "predictive_state": "high",
+        "notification_suppressed": True,
+    })
+    assert plan["escalation"] == "maintenance_suppressed"
+    assert plan["actions"] == ["record_incident", "suppress_notifications"]
+
+
+def test_hardware_workflow_plan_falls_back_when_java_is_offline(monkeypatch):
+    class BrokenClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def post(self, *args, **kwargs):
+            raise engine_runtime.httpx.ConnectError("offline")
+
+    monkeypatch.setattr(engine_runtime.httpx, "Client", BrokenClient)
+    body, engine = engine_runtime.hardware_workflow_plan({
+        "severity": "high",
+        "health_status": "warning",
+        "predictive_state": "high",
+        "notification_suppressed": False,
+    })
+    assert engine == "python-fallback"
+    assert body["escalation"] == "urgent"
+    assert "prepare_drain" in body["actions"]
