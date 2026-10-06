@@ -411,3 +411,27 @@ def test_hardware_model_training_pipeline_contract_exists():
     assert "Usable training dataset" in page
     assert "Candidate promotion gate" in page
     assert "Shadow first. Activation never direct." in page
+
+
+
+def test_hardware_live_shadow_validation_contract_exists():
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]
+    api = (backend / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    shadow = (backend / "app" / "services" / "hardware_shadow_validation.py").read_text(encoding="utf-8")
+    page = (repo / "apps" / "frontend" / "app" / "system-owner" / "hardware-intelligence" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "def expected_calibration_error" in shadow
+    assert "def population_stability_index" in shadow
+    assert "def page_hinkley_change" in shadow
+    assert "def shadow_validation" in shadow
+    assert "def rollback_decision" in shadow
+    assert "MIN_SHADOW_SAMPLES = 50" in shadow
+    assert "CANARY_FRACTION = 0.05" in shadow
+    assert '"fallback": "robust_ensemble_baseline"' in shadow
+    assert "shadow_validation_policy" in api
+    assert "Live AI shadow validation" in page
+    assert "Candidate → Shadow → Qualified → Canary → Active → Rollback/Retire" in page
+    assert "PSI ≤" in page
