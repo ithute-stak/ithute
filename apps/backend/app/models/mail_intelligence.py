@@ -121,3 +121,32 @@ class MailThreatModelVersion(Base):
     rollback_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+
+class MailThreatShadowPrediction(Base):
+    __tablename__ = "mail_threat_shadow_predictions"
+    __table_args__ = (
+        UniqueConstraint(
+            "model_id",
+            "mailbox_id",
+            "message_ref",
+            name="uq_mail_threat_shadow_model_mailbox_message",
+        ),
+        Index("ix_mail_threat_shadow_tenant", "tenant_id"),
+        Index("ix_mail_threat_shadow_model", "model_id"),
+        Index("ix_mail_threat_shadow_created", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    mailbox_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("mailboxes.id", ondelete="CASCADE"), nullable=False)
+    model_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("mail_threat_model_versions.id", ondelete="CASCADE"), nullable=False)
+    message_ref: Mapped[str] = mapped_column(String(512), nullable=False)
+    probabilities_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    baseline_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    feature_snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    latency_ms: Mapped[float | None] = mapped_column(nullable=True)
+    verified_label: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
