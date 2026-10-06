@@ -414,6 +414,32 @@ export default function HardwareIntelligencePage() {
     }
   }, [fleet, selected, loadFleet]);
 
+  const saveFailureLabel = useCallback(async () => {
+    const incidentId = fleet?.items.find((item) => item.server_id === selected)?.incident?.id;
+    if (!incidentId || !failureLabel || !failureEvidence.trim()) return;
+    const confidence = Math.max(0.5, Math.min(1, Number(failureConfidence) || 0.9));
+    setActionLoading(true);
+    setActionError("");
+    try {
+      await apiMutation(`/hardware-intelligence/incidents/${incidentId}/failure-label`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: failureLabel,
+          component: failureComponent,
+          confidence,
+          evidence: failureEvidence.trim(),
+        }),
+      }, ["/hardware-intelligence/fleet", "/hardware-intelligence/operations-summary"]);
+      setFailureEvidence("");
+      await loadFleet();
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Unable to record hardware failure label.");
+    } finally {
+      setActionLoading(false);
+    }
+  }, [fleet, selected, failureLabel, failureComponent, failureConfidence, failureEvidence, loadFleet]);
+
   const loadHistory = useCallback(async (serverId: string) => {
     if (!serverId) {
       setHistory(null);
