@@ -7,6 +7,7 @@ def test_imail_intelligence_v1_contract():
 
     service = (backend / "app" / "services" / "mail_intelligence.py").read_text(encoding="utf-8")
     api = (backend / "app" / "api" / "v1" / "webmail.py").read_text(encoding="utf-8")
+    webmail_service = (backend / "app" / "services" / "webmail.py").read_text(encoding="utf-8")
     ui = (repo / "apps" / "frontend" / "app" / "webmail" / "hosted-workspace.tsx").read_text(encoding="utf-8")
 
     assert "def analyze_mail_message" in service
@@ -20,6 +21,10 @@ def test_imail_intelligence_v1_contract():
     assert '@router.get("/intelligence")' in api
     assert 'limit: int = Query(default=20, ge=1, le=25)' in api
     assert 'payload["intelligence"] = analyze_mail_message' in api
+    assert "messages_with_bodies" in api
+    assert "def messages_with_bodies" in webmail_service
+    assert 'mark_seen=False' in webmail_service
+    assert 'readonly=True' in webmail_service
 
     assert "Ithute Mail Intelligence" in ui
     assert "phishing_probability" in ui
