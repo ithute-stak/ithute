@@ -220,6 +220,8 @@ def _ensure_hardware_maintenance_task(
         existing.priority = severity
         existing.title = title
         existing.description = task_description
+        if existing.remediation_baseline_snapshot_id is None:
+            existing.remediation_baseline_snapshot_id = incident.latest_snapshot_id
         return existing
 
     task = HardwareMaintenanceTask(
@@ -229,6 +231,7 @@ def _ensure_hardware_maintenance_task(
         status="open",
         title=title,
         description=task_description,
+        remediation_baseline_snapshot_id=incident.latest_snapshot_id,
     )
     db.add(task)
     return task
