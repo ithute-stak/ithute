@@ -338,3 +338,8 @@ def test_remediation_verification_contract_exists():
     assert "Telemetry-verified outcome" in page
     assert "verification_sample_count" in page
     assert "verification_confidence" in page
+    assert "HardwareMaintenanceTask.measured_outcome.in_" in api
+    assert "latest_remediation_task = db.scalar" in api
+    assert '"latest_remediation": {' in api
+    assert "latest_remediation?:" in page
+    assert "selectedServer.latest_remediation" in page
