@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
-from app.models import HardwareAlertAcknowledgement, HardwareIncident, HardwareMaintenanceWindow, HardwareTelemetrySnapshot, InfrastructureServer, InfrastructureServerAgent, Notification, User
+from app.models import HardwareAlertAcknowledgement, HardwareIncident, HardwareIncidentDelivery, HardwareMaintenanceTask, HardwareMaintenanceWindow, HardwareTelemetrySnapshot, InfrastructureServer, InfrastructureServerAgent, Notification, User
 from app.services.engine_runtime import hardware_workflow_plan
 from app.services.hardware_prediction import MetricPoint, derive_rate_features, predict_hardware_drift
 
@@ -44,6 +44,10 @@ class MaintenanceWindowCreate(BaseModel):
 
 
 class AlertAcknowledgementCreate(BaseModel):
+    note: str = Field(default="", max_length=1000)
+
+
+class MaintenanceTaskComplete(BaseModel):
     note: str = Field(default="", max_length=1000)
 
 
@@ -111,6 +115,102 @@ def _hardware_incident_summary(server: InfrastructureServer, health: dict[str, A
     return severity, title, f"{title}.{risk_text}{evidence_text}"
 
 
+def _queue_hardware_incident_delivery(
+    db: Session,
+    *,
+    incident: HardwareIncident,
+    owner: User,
+    channel: str,
+) -> None:
+    existing = db.scalar(
+        select(HardwareIncidentDelivery).where(
+            HardwareIncidentDelivery.incident_id == incident.id,
+            HardwareIncidentDelivery.recipient_user_id == owner.id,
+            HardwareIncidentDelivery.channel == channel,
+        )
+    )
+    if existing is None:
+        db.add(
+            HardwareIncidentDelivery(
+                incident_id=incident.id,
+                recipient_user_id=owner.id,
+                channel=channel,
+                status="queued",
+            )
+        )
+
+
+def _queue_hardware_incident_notifications(
+    db: Session,
+    *,
+    incident: HardwareIncident,
+    server: InfrastructureServer,
+    severity: str,
+    title: str,
+    summary: str,
+) -> None:
+    owners = db.scalars(
+        select(User).where(User.is_platform_owner.is_(True), User.is_active.is_(True))
+    ).all()
+    for owner in owners:
+        existing_notice = db.scalar(
+            select(Notification).where(
+                Notification.user_id == owner.id,
+                Notification.category == "hardware_intelligence",
+                Notification.action_url == f"/system-owner/hardware-intelligence?server={server.id}",
+                Notification.title == title,
+            )
+        )
+        if existing_notice is None:
+            db.add(
+                Notification(
+                    tenant_id=None,
+                    user_id=owner.id,
+                    category="hardware_intelligence",
+                    severity=severity,
+                    title=title,
+                    message=summary,
+                    action_url=f"/system-owner/hardware-intelligence?server={server.id}",
+                )
+            )
+        _queue_hardware_incident_delivery(db, incident=incident, owner=owner, channel="email")
+        _queue_hardware_incident_delivery(db, incident=incident, owner=owner, channel="push")
+
+
+def _ensure_hardware_maintenance_task(
+    db: Session,
+    *,
+    incident: HardwareIncident,
+    server: InfrastructureServer,
+    workflow_plan: dict[str, Any],
+    title: str,
+    summary: str,
+    severity: str,
+) -> HardwareMaintenanceTask | None:
+    actions = workflow_plan.get("actions") if isinstance(workflow_plan.get("actions"), list) else []
+    if "create_maintenance_task" not in actions:
+        return None
+    existing = db.scalar(
+        select(HardwareMaintenanceTask).where(HardwareMaintenanceTask.incident_id == incident.id)
+    )
+    if existing is not None:
+        existing.priority = severity
+        existing.title = title
+        existing.description = summary
+        return existing
+
+    task = HardwareMaintenanceTask(
+        incident_id=incident.id,
+        server_id=server.id,
+        priority=severity,
+        status="open",
+        title=title,
+        description=summary,
+    )
+    db.add(task)
+    return task
+
+
 def _reconcile_hardware_incident(
     db: Session,
     server: InfrastructureServer,
@@ -142,6 +242,8 @@ def _reconcile_hardware_incident(
     })
     workflow_plan = {**workflow_plan, "engine": workflow_engine}
 
+    was_suppressed = bool(incident and incident.notification_suppressed)
+
     if incident is None:
         incident = HardwareIncident(
             server_id=server.id,
@@ -163,21 +265,23 @@ def _reconcile_hardware_incident(
         db.flush()
 
         if not suppressed:
-            owners = db.scalars(
-                select(User).where(User.is_platform_owner.is_(True), User.is_active.is_(True))
-            ).all()
-            for owner in owners:
-                db.add(
-                    Notification(
-                        tenant_id=None,
-                        user_id=owner.id,
-                        category="hardware_intelligence",
-                        severity=severity,
-                        title=title,
-                        message=summary,
-                        action_url=f"/system-owner/hardware-intelligence?server={server.id}",
-                    )
-                )
+            _queue_hardware_incident_notifications(
+                db,
+                incident=incident,
+                server=server,
+                severity=severity,
+                title=title,
+                summary=summary,
+            )
+        _ensure_hardware_maintenance_task(
+            db,
+            incident=incident,
+            server=server,
+            workflow_plan=workflow_plan,
+            title=title,
+            summary=summary,
+            severity=severity,
+        )
     else:
         incident.latest_snapshot_id = snapshot.id
         incident.severity = severity
@@ -190,6 +294,25 @@ def _reconcile_hardware_incident(
         incident.workflow_plan_json = json.dumps(workflow_plan, sort_keys=True, separators=(",", ":"))
         incident.last_seen_at = now
         incident.resolved_at = None
+
+        if was_suppressed and not suppressed:
+            _queue_hardware_incident_notifications(
+                db,
+                incident=incident,
+                server=server,
+                severity=severity,
+                title=title,
+                summary=summary,
+            )
+        _ensure_hardware_maintenance_task(
+            db,
+            incident=incident,
+            server=server,
+            workflow_plan=workflow_plan,
+            title=title,
+            summary=summary,
+            severity=severity,
+        )
 
     return incident
 
