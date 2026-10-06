@@ -280,29 +280,15 @@ def _automatic_rollback_models(db: Session, *, tenant_id) -> None:
         }
 
 
-def _shadow_score_message(
+def _prediction_for_model(
     db: Session,
     *,
+    model: MailThreatModelVersion,
     mailbox: Mailbox,
-    message_payload: dict,
-    intelligence: dict,
-) -> dict | None:
-    model = db.scalar(
-        select(MailThreatModelVersion)
-        .where(
-            MailThreatModelVersion.tenant_id == mailbox.tenant_id,
-            MailThreatModelVersion.lifecycle_state.in_(["shadow", "qualified", "canary", "active"]),
-        )
-        .order_by(MailThreatModelVersion.created_at.desc())
-        .limit(1)
-    )
-    if model is None:
-        return None
-
-    message_ref = str(
-        message_payload.get("message_id")
-        or f"uid:{message_payload.get('uid') or ''}"
-    )[:512]
+    message_ref: str,
+    features: dict,
+    baseline: dict,
+) -> dict:
     existing = db.scalar(
         select(MailThreatShadowPrediction).where(
             MailThreatShadowPrediction.model_id == model.id,
@@ -311,24 +297,6 @@ def _shadow_score_message(
         )
     )
     if existing is not None:
-        canary_applied = model.lifecycle_state == "active" or (
-            model.lifecycle_state == "canary"
-            and deterministic_canary_member(
-                model_id=str(model.id),
-                mailbox_id=str(mailbox.id),
-                message_ref=message_ref,
-            )
-        )
-        effective_security = None
-        if canary_applied:
-            security = intelligence.get("security") if isinstance(intelligence.get("security"), dict) else {}
-            effective_security = baseline_floor(security, existing.probabilities_json or {})
-            intelligence["security"] = {
-                **security,
-                "phishing_probability": effective_security["phishing_probability"],
-                "bec_probability": effective_security["bec_probability"],
-                "recommended_action": effective_security["recommended_action"],
-            }
         return {
             "model_id": str(model.id),
             "version": model.version,
@@ -336,65 +304,147 @@ def _shadow_score_message(
             "probabilities": existing.probabilities_json,
             "baseline": existing.baseline_json,
             "latency_ms": existing.latency_ms,
-            "shadow_only": model.lifecycle_state in {"shadow", "qualified"},
-            "canary_applied": canary_applied,
-            "effective_security": effective_security,
-            "baseline_preserved": True,
         }
 
-    features = feature_snapshot(message_payload, intelligence)
     started = perf_counter()
     probabilities = predict(model.artifact_json or {}, features)
-    latency_ms = (perf_counter() - started) * 1000.0
-    security = intelligence.get("security") if isinstance(intelligence.get("security"), dict) else {}
-    baseline = baseline_probabilities(
-        float(security.get("phishing_probability") or 0.0),
-        float(security.get("bec_probability") or 0.0),
-    )
-
-    row = MailThreatShadowPrediction(
-        tenant_id=mailbox.tenant_id,
-        mailbox_id=mailbox.id,
-        model_id=model.id,
-        message_ref=message_ref,
-        probabilities_json=probabilities,
-        baseline_json=baseline,
-        feature_snapshot_json=features,
-        latency_ms=round(latency_ms, 3),
-    )
-    db.add(row)
-    db.commit()
-    canary_applied = model.lifecycle_state == "active" or (
-        model.lifecycle_state == "canary"
-        and deterministic_canary_member(
-            model_id=str(model.id),
-            mailbox_id=str(mailbox.id),
+    latency_ms = round((perf_counter() - started) * 1000.0, 3)
+    db.add(
+        MailThreatShadowPrediction(
+            tenant_id=mailbox.tenant_id,
+            mailbox_id=mailbox.id,
+            model_id=model.id,
             message_ref=message_ref,
+            probabilities_json=probabilities,
+            baseline_json=baseline,
+            feature_snapshot_json=features,
+            latency_ms=latency_ms,
         )
     )
-    effective_security = None
-    if canary_applied:
-        security = intelligence.get("security") if isinstance(intelligence.get("security"), dict) else {}
-        effective_security = baseline_floor(security, probabilities)
-        intelligence["security"] = {
-            **security,
-            "phishing_probability": effective_security["phishing_probability"],
-            "bec_probability": effective_security["bec_probability"],
-            "recommended_action": effective_security["recommended_action"],
-        }
     return {
         "model_id": str(model.id),
         "version": model.version,
         "lifecycle_state": model.lifecycle_state,
         "probabilities": probabilities,
         "baseline": baseline,
-        "latency_ms": round(latency_ms, 3),
-        "shadow_only": model.lifecycle_state in {"shadow", "qualified"},
+        "latency_ms": latency_ms,
+    }
+
+
+def _shadow_score_message(
+    db: Session,
+    *,
+    mailbox: Mailbox,
+    message_payload: dict,
+    intelligence: dict,
+) -> dict | None:
+    challenger = db.scalar(
+        select(MailThreatModelVersion)
+        .where(
+            MailThreatModelVersion.tenant_id == mailbox.tenant_id,
+            MailThreatModelVersion.lifecycle_state.in_(["shadow", "qualified", "canary"]),
+        )
+        .order_by(MailThreatModelVersion.created_at.desc())
+        .limit(1)
+    )
+    active = db.scalar(
+        select(MailThreatModelVersion)
+        .where(
+            MailThreatModelVersion.tenant_id == mailbox.tenant_id,
+            MailThreatModelVersion.lifecycle_state == "active",
+        )
+        .order_by(MailThreatModelVersion.activated_at.desc(), MailThreatModelVersion.created_at.desc())
+        .limit(1)
+    )
+    if challenger is None and active is None:
+        return None
+
+    message_ref = str(
+        message_payload.get("message_id")
+        or f"uid:{message_payload.get('uid') or ''}"
+    )[:512]
+    features = feature_snapshot(message_payload, intelligence)
+    security = intelligence.get("security") if isinstance(intelligence.get("security"), dict) else {}
+    baseline = baseline_probabilities(
+        float(security.get("phishing_probability") or 0.0),
+        float(security.get("bec_probability") or 0.0),
+    )
+
+    challenger_result = (
+        _prediction_for_model(
+            db,
+            model=challenger,
+            mailbox=mailbox,
+            message_ref=message_ref,
+            features=features,
+            baseline=baseline,
+        )
+        if challenger is not None
+        else None
+    )
+    active_result = (
+        _prediction_for_model(
+            db,
+            model=active,
+            mailbox=mailbox,
+            message_ref=message_ref,
+            features=features,
+            baseline=baseline,
+        )
+        if active is not None and (challenger is None or active.id != challenger.id)
+        else None
+    )
+    db.commit()
+
+    canary_applied = False
+    serving_result = active_result
+    if challenger is not None and challenger.lifecycle_state == "canary":
+        canary_applied = deterministic_canary_member(
+            model_id=str(challenger.id),
+            mailbox_id=str(mailbox.id),
+            message_ref=message_ref,
+        )
+        if canary_applied:
+            serving_result = challenger_result
+
+    effective_security = None
+    if serving_result is not None:
+        effective_security = baseline_floor(
+            security,
+            serving_result.get("probabilities") or {},
+        )
+        intelligence["security"] = {
+            **security,
+            "phishing_probability": effective_security["phishing_probability"],
+            "bec_probability": effective_security["bec_probability"],
+            "recommended_action": effective_security["recommended_action"],
+        }
+
+    primary = challenger_result or active_result
+    if primary is None:
+        return None
+    primary_state = str(primary.get("lifecycle_state") or "")
+    return {
+        **primary,
+        "shadow_only": (
+            primary_state in {"shadow", "qualified"}
+            or (primary_state == "canary" and not canary_applied)
+        ),
         "canary_applied": canary_applied,
         "effective_security": effective_security,
         "baseline_preserved": True,
+        "serving_model_id": serving_result.get("model_id") if serving_result else None,
+        "active_champion": (
+            {
+                "model_id": active_result["model_id"],
+                "version": active_result["version"],
+                "probabilities": active_result["probabilities"],
+                "latency_ms": active_result["latency_ms"],
+            }
+            if active_result is not None and primary.get("model_id") != active_result.get("model_id")
+            else None
+        ),
     }
-
 
 def _safe_attachment_name(filename: str) -> str:
     value = CONTROL_CHARS_RE.sub(" ", filename or "").replace("/", "_").replace("\\", "_").strip(" .")
