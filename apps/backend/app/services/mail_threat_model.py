@@ -31,7 +31,7 @@ NUMERIC_FEATURES = (
     "deadline_count",
     "body_length_bucket",
 )
-BOOLEAN_FEATURES = ("reply_needed", "has_reply_to")
+BOOLEAN_FEATURES = ("reply_needed", "has_reply_to", "spf_failed", "dkim_failed", "dmarc_failed")
 SIGNAL_FEATURES = (
     "urgency_language",
     "credential_request",
@@ -40,6 +40,7 @@ SIGNAL_FEATURES = (
     "reply_to_domain_mismatch",
     "external_link_domain",
     "risky_attachment_type",
+    "mail_authentication_failure",
 )
 
 
