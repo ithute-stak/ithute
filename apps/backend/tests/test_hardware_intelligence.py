@@ -307,3 +307,39 @@ def test_hardware_ai_ensemble_persistence_and_ui_contract_exists():
     assert "Change point" in page
     assert "72h survival risk" in page
     assert "Supervised boost" in page
+
+
+
+def test_remediation_verification_contract_exists():
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]
+    api = (backend / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    models = (backend / "app" / "models" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    verifier = (backend / "app" / "services" / "hardware_remediation_verification.py").read_text(encoding="utf-8")
+    migration = (backend / "alembic" / "versions" / "0086_hardware_remediation_verification.py").read_text(encoding="utf-8")
+    page = (repo / "apps" / "frontend" / "app" / "system-owner" / "hardware-intelligence" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "remediation_baseline_snapshot_id" in models
+    assert "remediation_verified_snapshot_id" in models
+    assert "measured_outcome" in models
+    assert "verification_confidence" in models
+    assert "verification_sample_count" in models
+    assert "verification_evidence_json" in models
+    assert "def verify_remediation" in verifier
+    assert "MIN_VERIFICATION_SAMPLES = 3" in verifier
+    assert "TARGET_VERIFICATION_SAMPLES = 6" in verifier
+    assert "def _verify_completed_remediation" in api
+    assert "remediation_verification = _verify_completed_remediation" in api
+    assert "HardwareMaintenanceTask.measured_outcome" in api
+    assert "predictive_risk_score" in verifier
+    assert "remediation_baseline_snapshot_id" in migration
+    assert "Telemetry-verified outcome" in page
+    assert "verification_sample_count" in page
+    assert "verification_confidence" in page
+    assert "HardwareMaintenanceTask.measured_outcome.in_" in api
+    assert "latest_remediation_task = db.scalar" in api
+    assert '"latest_remediation": {' in api
+    assert "latest_remediation?:" in page
+    assert "selectedServer.latest_remediation" in page
