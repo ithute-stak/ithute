@@ -115,6 +115,8 @@ def canary_policy() -> dict[str, Any]:
         "deterministic": True,
         "baseline_is_safety_floor": True,
         "canary_can_reduce_risk": False,
+        "lifecycle": ["qualified", "canary", "active", "retired_or_rolled_back"],
+        "activation_requires_state": "canary",
         "direct_activation_allowed": False,
         "automatic_rollback_enabled": True,
         "fallback": "ithute-mail-intelligence-v1",
