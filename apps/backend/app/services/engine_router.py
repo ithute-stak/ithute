@@ -38,6 +38,7 @@ PREFERRED_ENGINES: dict[str, str] = {
     "network.dns": "go",
     "network.origin": "go",
     "enterprise.xml": "java",
+    "hardware.incident_workflow": "java",
 }
 
 
