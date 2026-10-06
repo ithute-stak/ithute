@@ -912,6 +912,32 @@ export default function HardwareIntelligencePage() {
                 <input value={ackNote} onChange={(event) => setAckNote(event.target.value)} placeholder="Optional operator note" className="mt-3 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]" />
                 <button disabled={actionLoading || selectedServer.acknowledgement.acknowledged} onClick={() => void acknowledgeCurrent()} className="mt-2 rounded-xl bg-[#d8c56a] px-4 py-2 text-[9px] font-black text-[#123a38] disabled:opacity-50">{selectedServer.acknowledgement.acknowledged ? "Acknowledged" : "Acknowledge current sample"}</button>
               </div>
+              {selectedServer.incident ? (
+                <div className="rounded-xl border border-[var(--admin-line)] p-4">
+                  <p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">Ground-truth failure label</p>
+                  <p className="mt-1 text-[10px] text-[var(--admin-muted)]">Confirm what actually happened. Only high-confidence confirmed failures and false positives count toward the first supervised model.</p>
+                  {selectedServer.incident.failure_label ? (
+                    <div className="mt-2 rounded-lg bg-[#f7faf8] p-2 text-[9px] font-bold">
+                      Current: {selectedServer.incident.failure_label.label.replaceAll("_", " ")} · {selectedServer.incident.failure_label.component} · {(selectedServer.incident.failure_label.confidence * 100).toFixed(0)}%
+                    </div>
+                  ) : null}
+                  <select value={failureLabel} onChange={(event) => setFailureLabel(event.target.value)} className="mt-3 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]">
+                    <option value="">Select ground-truth label</option>
+                    <option value="confirmed_failure">Confirmed hardware failure</option>
+                    <option value="confirmed_degradation">Confirmed degradation, no failure</option>
+                    <option value="false_positive">False positive</option>
+                    <option value="inconclusive">Inconclusive</option>
+                  </select>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <select value={failureComponent} onChange={(event) => setFailureComponent(event.target.value)} className="rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]">
+                      {["unknown", "cpu", "memory", "storage", "thermal", "network", "power", "motherboard", "other"].map((item) => <option key={item} value={item}>{item}</option>)}
+                    </select>
+                    <input value={failureConfidence} onChange={(event) => setFailureConfidence(event.target.value)} type="number" min="0.5" max="1" step="0.05" className="rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]" aria-label="Failure label confidence" />
+                  </div>
+                  <textarea value={failureEvidence} onChange={(event) => setFailureEvidence(event.target.value)} placeholder="Evidence: diagnostics, replaced component, vendor test, postmortem finding…" className="mt-2 min-h-20 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]" />
+                  <button disabled={actionLoading || !failureLabel || !failureEvidence.trim()} onClick={() => void saveFailureLabel()} className="mt-2 rounded-xl bg-[#18524d] px-4 py-2 text-[9px] font-black text-white disabled:opacity-50">Save confirmed label</button>
+                </div>
+              ) : null}
               {selectedServer.incident?.maintenance_task ? (
                 <div className="rounded-xl border border-[var(--admin-line)] p-4">
                   <p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">Incident maintenance task</p>
