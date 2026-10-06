@@ -1,7 +1,7 @@
 """hardware model registry and shadow evidence
 
 Revision ID: 0088_hardware_model_registry
-Revises: 0087_hardware_failure_labels
+Revises: 0087_hw_failure_labels
 Create Date: 2026-10-06
 """
 from alembic import op
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "0088_hardware_model_registry"
-down_revision = "0087_hardware_failure_labels"
+down_revision = "0087_hw_failure_labels"
 branch_labels = None
 depends_on = None
 
