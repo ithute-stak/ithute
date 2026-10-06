@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -146,7 +146,7 @@ class MailThreatShadowPrediction(Base):
     probabilities_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     baseline_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     feature_snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    latency_ms: Mapped[float | None] = mapped_column(nullable=True)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     verified_label: Mapped[str | None] = mapped_column(String(32), nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
