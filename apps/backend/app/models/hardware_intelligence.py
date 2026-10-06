@@ -125,6 +125,7 @@ class HardwareIncident(Base):
     predictive_risk_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     health_status: Mapped[str] = mapped_column(String(24), nullable=False)
     notification_suppressed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    workflow_plan_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
