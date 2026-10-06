@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0087_hw_failure_labels"
+LATEST_MIGRATION_HEAD = "0088_hardware_model_registry"
 
 
 def test_alembic_has_one_consolidated_head():

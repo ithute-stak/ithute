@@ -273,3 +273,85 @@ class HardwareFailureLabel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+
+class HardwareModelVersion(Base):
+    __tablename__ = "hardware_model_versions"
+    __table_args__ = (
+        UniqueConstraint("name", "version", name="uq_hardware_model_name_version"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    algorithm: Mapped[str] = mapped_column(String(64), nullable=False)
+    lifecycle_state: Mapped[str] = mapped_column(String(32), default="candidate", nullable=False, index=True)
+    artifact_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    feature_schema_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    training_metrics_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    shadow_metrics_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    promotion_evidence_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rollback_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class HardwareShadowPrediction(Base):
+    __tablename__ = "hardware_shadow_predictions"
+    __table_args__ = (
+        UniqueConstraint("model_id", "snapshot_id", name="uq_hardware_shadow_model_snapshot"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    model_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("hardware_model_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    server_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("infrastructure_servers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    snapshot_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("hardware_telemetry_snapshots.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    candidate_probability: Mapped[float] = mapped_column(Float, nullable=False)
+    baseline_probability: Mapped[float] = mapped_column(Float, nullable=False)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    feature_vector_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    target: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outcome_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+
+class HardwareModelEvent(Base):
+    __tablename__ = "hardware_model_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    model_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("hardware_model_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    from_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    to_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    evidence_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
