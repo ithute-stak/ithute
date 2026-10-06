@@ -100,6 +100,9 @@ type FleetItem = {
         expected_impact: string;
         drain_recommended: boolean;
         operator_approval_required: boolean;
+        learned_samples?: number;
+        learned_success_rate?: number;
+        learning_adjustment?: number;
       }>;
     };
     deliveries?: Array<{
@@ -114,6 +117,9 @@ type FleetItem = {
       status: string;
       assigned_to_user_id?: string | null;
       completion_note?: string;
+      remediation_action?: string;
+      remediation_outcome?: string;
+      outcome_recorded_at?: string | null;
       completed_at?: string | null;
     } | null;
     opened_at?: string | null;
@@ -222,6 +228,8 @@ export default function HardwareIntelligencePage() {
   const [maintenanceHours, setMaintenanceHours] = useState("2");
   const [ackNote, setAckNote] = useState("");
   const [taskNote, setTaskNote] = useState("");
+  const [taskAction, setTaskAction] = useState("");
+  const [taskOutcome, setTaskOutcome] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
 
   const loadFleet = useCallback(async () => {
@@ -300,16 +308,25 @@ export default function HardwareIntelligencePage() {
       await apiMutation(`/hardware-intelligence/maintenance-tasks/${taskId}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, note: taskNote.trim() }),
+        body: JSON.stringify({
+          status,
+          note: taskNote.trim(),
+          remediation_action: status === "completed" ? taskAction : "",
+          outcome: status === "completed" ? taskOutcome : "",
+        }),
       }, ["/hardware-intelligence/fleet"]);
       setTaskNote("");
+      if (status === "completed") {
+        setTaskAction("");
+        setTaskOutcome("");
+      }
       await loadFleet();
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : "Unable to update maintenance task.");
     } finally {
       setActionLoading(false);
     }
-  }, [fleet, selected, taskNote, loadFleet]);
+  }, [fleet, selected, taskNote, taskAction, taskOutcome, loadFleet]);
 
   const retryIncidentNotifications = useCallback(async () => {
     const incident = fleet?.items.find((item) => item.server_id === selected)?.incident;
@@ -501,6 +518,9 @@ export default function HardwareIntelligencePage() {
                               {item.evidence?.length ? (
                                 <p className="mt-1 text-[8px] font-bold opacity-80">Evidence: {item.evidence.join(" · ")}</p>
                               ) : null}
+                              {typeof item.learned_samples === "number" ? (
+                                <p className="mt-1 text-[8px] font-bold opacity-80">Outcome learning: {item.learned_samples} confirmed cases · {item.learned_success_rate ?? 0}% weighted success · ranking {Number(item.learning_adjustment || 0) >= 0 ? "+" : ""}{item.learning_adjustment || 0}</p>
+                              ) : null}
                             </div>
                           ))}
                         </div>
@@ -635,10 +655,27 @@ export default function HardwareIntelligencePage() {
                   <p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">Incident maintenance task</p>
                   <p className="mt-1 text-[10px] text-[var(--admin-muted)]">Track the physical/host remediation separately from automatic health recovery.</p>
                   <p className="mt-2 text-[10px] font-black uppercase">Status: {selectedServer.incident.maintenance_task.status}</p>
-                  <input value={taskNote} onChange={(event) => setTaskNote(event.target.value)} placeholder="Operator note" className="mt-3 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]" />
+                  {selectedServer.incident.maintenance_task.remediation_action ? <p className="mt-1 text-[9px] font-bold">Action: {selectedServer.incident.maintenance_task.remediation_action.replaceAll("_", " ")}</p> : null}
+                  {selectedServer.incident.maintenance_task.remediation_outcome ? <p className="mt-1 text-[9px] font-bold">Outcome: {selectedServer.incident.maintenance_task.remediation_outcome.replaceAll("_", " ")}</p> : null}
+                  {!["completed", "cancelled"].includes(selectedServer.incident.maintenance_task.status) ? (
+                    <>
+                      <select value={taskAction} onChange={(event) => setTaskAction(event.target.value)} className="mt-3 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]">
+                        <option value="">Remediation actually performed</option>
+                        {(selectedServer.incident.workflow_plan?.ranked_recommendations || []).map((item) => <option key={item.action} value={item.action}>{item.action.replaceAll("_", " ")}</option>)}
+                      </select>
+                      <select value={taskOutcome} onChange={(event) => setTaskOutcome(event.target.value)} className="mt-2 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]">
+                        <option value="">Observed outcome</option>
+                        <option value="resolved">Resolved the incident</option>
+                        <option value="improved">Improved the condition</option>
+                        <option value="no_change">No measurable change</option>
+                        <option value="worsened">Condition worsened</option>
+                      </select>
+                    </>
+                  ) : null}
+                  <input value={taskNote} onChange={(event) => setTaskNote(event.target.value)} placeholder="Operator note / evidence" className="mt-3 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]" />
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button disabled={actionLoading || selectedServer.incident.maintenance_task.status !== "open"} onClick={() => void updateMaintenanceTask("in_progress")} className="rounded-xl border border-[var(--admin-line)] px-3 py-2 text-[9px] font-black disabled:opacity-50">Start work</button>
-                    <button disabled={actionLoading || ["completed", "cancelled"].includes(selectedServer.incident.maintenance_task.status)} onClick={() => void updateMaintenanceTask("completed")} className="rounded-xl bg-[#18524d] px-3 py-2 text-[9px] font-black text-white disabled:opacity-50">Complete</button>
+                    <button disabled={actionLoading || ["completed", "cancelled"].includes(selectedServer.incident.maintenance_task.status) || !taskAction || !taskOutcome} onClick={() => void updateMaintenanceTask("completed")} className="rounded-xl bg-[#18524d] px-3 py-2 text-[9px] font-black text-white disabled:opacity-50">Complete + record outcome</button>
                     <button disabled={actionLoading || ["completed", "cancelled"].includes(selectedServer.incident.maintenance_task.status)} onClick={() => void updateMaintenanceTask("cancelled")} className="rounded-xl border border-red-200 px-3 py-2 text-[9px] font-black text-red-700 disabled:opacity-50">Cancel</button>
                   </div>
                 </div>
