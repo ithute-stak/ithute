@@ -47,7 +47,7 @@ from app.models.finance_governance import FinanceApprovalRequest, FinanceGoverna
 from app.models.finance_completion import FinanceDeliveryEvent, FinancePortalAccess, FinanceRoleGrant
 from app.models.hosting import HOSTING_RULES_VERSION, HostingNode, HostingProject, HostingResourceReservation
 from app.models.infrastructure import InfrastructureAgentCommand, InfrastructureContainerSnapshot, InfrastructureNetworkGrant, InfrastructureNetworkObservation, InfrastructureSecuritySnapshot, InfrastructureServer, InfrastructureServerAgent, InfrastructureTelemetrySnapshot, InfrastructureWireGuardPeer
-from app.models.hardware_intelligence import HardwareAlertAcknowledgement, HardwareIncident, HardwareMaintenanceWindow, HardwareTelemetrySnapshot
+from app.models.hardware_intelligence import HardwareAlertAcknowledgement, HardwareIncident, HardwareIncidentDelivery, HardwareMaintenanceTask, HardwareMaintenanceWindow, HardwareTelemetrySnapshot
 from app.models.hosting_operations import (
     HOSTING_RUNTIME_MANIFEST_VERSION,
     HostingDeployment,
@@ -135,7 +135,7 @@ __all__ = [
     "BillingPaymentEvent", "SubscriptionStatus", "InvoiceStatus", "BillingAddon", "TenantAddon", "EdgeRouteDeployment",
     "BillingContract", "UptimeMonitor", "UptimeCheck", "InfrastructureCommercialProfile", "TenantInfrastructureAllocation",
     "FinanceClient", "FinanceInvoice", "FinanceInvoiceItem", "FinanceInvoiceSchedule", "FinancePayment", "FinanceCreditNote", "FinanceDocument", "FinanceDocumentItem", "FinanceSenderConfiguration", "FinanceExpense", "FinanceBankTransaction", "FinanceServiceBillingLink", "FinanceAccountingPeriod", "FinanceRefund", "FinanceTaxRate", "FinanceApprovalRequest", "FinanceGovernanceSetting", "FinanceRoleGrant", "FinancePortalAccess", "FinanceDeliveryEvent", "HOSTING_RULES_VERSION", "HostingNode", "HostingProject", "HostingResourceReservation", "InfrastructureServer", "InfrastructureServerAgent", "InfrastructureTelemetrySnapshot", "InfrastructureWireGuardPeer", "InfrastructureAgentCommand", "InfrastructureContainerSnapshot", "InfrastructureNetworkGrant", "InfrastructureNetworkObservation", "InfrastructureSecuritySnapshot",
-    "HardwareTelemetrySnapshot", "HardwareMaintenanceWindow", "HardwareAlertAcknowledgement", "HardwareIncident",
+    "HardwareTelemetrySnapshot", "HardwareMaintenanceWindow", "HardwareAlertAcknowledgement", "HardwareIncident", "HardwareIncidentDelivery", "HardwareMaintenanceTask",
     "HOSTING_RUNTIME_MANIFEST_VERSION", "HostingDeployment", "HostingEnvironmentVariable", "HostingNodeAgent", "HostingNodeBootstrap", "HostingNodeHealthState", "HostingFailoverAttempt", "HostingProjectOperation", "HostingProvisioningWorkflow",
     "HostingBuild", "HostingBuilderAgent", "HostingBuildLog", "HostingDatabaseBackup", "HostingSourceWebhook", "HostingWebhookDelivery", "HostingDatabase", "HostingSource", "HostingSourceCredential",
     "CustomerProfile", "Notification", "ServiceIncident", "ServiceIncidentImpact", "ServiceIncidentStatus",
