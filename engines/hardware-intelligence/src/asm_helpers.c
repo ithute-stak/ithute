@@ -28,8 +28,11 @@ void ithute_cpu_native_summary(ithute_cpu_native_t *out) {
             ? (ext_model << 4) | base_model
             : base_model;
         out->stepping = eax & 0x0fU;
+        out->vmx = (ecx & (1U << 5)) != 0;
         out->aes_ni = (ecx & (1U << 25)) != 0;
         out->avx = (ecx & (1U << 28)) != 0;
+        out->hypervisor_present = (ecx & (1U << 31)) != 0;
+        out->logical_processors = (ebx >> 16) & 0xffU;
     }
 
     if (max_basic >= 7) {
@@ -40,11 +43,23 @@ void ithute_cpu_native_summary(ithute_cpu_native_t *out) {
     ithute_asm_cpuid(0x80000000U, 0, &max_extended, &ebx, &ecx, &edx);
     if (max_extended >= 0x80000001U) {
         ithute_asm_cpuid(0x80000001U, 0, &eax, &ebx, &ecx, &edx);
+        out->svm = (ecx & (1U << 2)) != 0;
         out->rdtscp = (edx & (1U << 27)) != 0;
     }
     if (max_extended >= 0x80000007U) {
         ithute_asm_cpuid(0x80000007U, 0, &eax, &ebx, &ecx, &edx);
         out->invariant_tsc = (edx & (1U << 8)) != 0;
+    }
+
+    if (out->hypervisor_present) {
+        unsigned int hypervisor_max = 0;
+        ithute_asm_cpuid(0x40000000U, 0, &hypervisor_max, &ebx, &ecx, &edx);
+        if (hypervisor_max >= 0x40000000U) {
+            memcpy(out->hypervisor_vendor + 0, &ebx, 4);
+            memcpy(out->hypervisor_vendor + 4, &ecx, 4);
+            memcpy(out->hypervisor_vendor + 8, &edx, 4);
+            out->hypervisor_vendor[12] = '\0';
+        }
     }
 
     out->cycle_counter = (unsigned long long)ithute_asm_rdtsc();
