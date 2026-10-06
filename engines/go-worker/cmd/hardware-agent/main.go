@@ -68,8 +68,13 @@ type Sample struct {
 		RDTSCP        bool   `json:"rdtscp"`
 		AESNI         bool   `json:"aes_ni"`
 		AVX           bool   `json:"avx"`
-		AVX2          bool   `json:"avx2"`
-		CycleCounter  uint64 `json:"cycle_counter"`
+		AVX2               bool   `json:"avx2"`
+		VMX                bool   `json:"vmx"`
+		SVM                bool   `json:"svm"`
+		HypervisorPresent  bool   `json:"hypervisor_present"`
+		HypervisorVendor   string `json:"hypervisor_vendor"`
+		LogicalProcessors  uint32 `json:"logical_processors"`
+		CycleCounter       uint64 `json:"cycle_counter"`
 	} `json:"cpu_native,omitempty"`
 	Capabilities struct {
 		Hwmon     bool `json:"hwmon"`
