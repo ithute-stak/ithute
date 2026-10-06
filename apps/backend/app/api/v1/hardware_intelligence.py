@@ -248,6 +248,7 @@ def _remediation_outcome_stats(db: Session) -> dict[str, dict[str, float | int]]
             HardwareMaintenanceTask.status == "completed",
             HardwareMaintenanceTask.remediation_action != "",
             HardwareMaintenanceTask.measured_outcome.in_(["resolved", "improved", "no_change", "worsened"]),
+            HardwareMaintenanceTask.verification_confidence >= 0.5,
         )
     ).all()
     totals: dict[str, dict[str, float | int]] = {}
@@ -326,6 +327,7 @@ def _verify_completed_remediation(
             HardwareMaintenanceTask.completed_at.is_not(None),
             HardwareMaintenanceTask.remediation_baseline_snapshot_id.is_not(None),
             HardwareMaintenanceTask.remediation_action != "",
+            HardwareMaintenanceTask.verification_sample_count < 6,
         )
         .order_by(HardwareMaintenanceTask.completed_at.desc())
         .limit(1)
