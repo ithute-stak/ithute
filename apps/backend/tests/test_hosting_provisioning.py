@@ -30,3 +30,13 @@ def test_provisioning_does_not_fake_edge_success():
     assert "pending_origin" in api
     assert "route.status == \"active\"" in api
     assert "edge_pending" in api
+
+
+def test_suspended_database_does_not_count_as_provisioning_ready():
+    root = Path(__file__).parents[2]
+    api = (root / "app" / "api" / "v1" / "hosting_provisioning.py").read_text(encoding="utf-8")
+
+    assert 'database.status == "ready"' in api
+    assert 'database_suspended = database is not None and database.status == "suspended"' in api
+    assert 'status = "database_suspended"' in api
+    assert 'database.status in {"ready", "suspended"}' not in api
