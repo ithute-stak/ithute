@@ -132,12 +132,14 @@ def test_primary_switch_bumps_generation_and_waits_for_gateway_ack(db, tenant_ad
     assert switched.applied_generation == 0
     assert switched.status == "pending"
 
-    acknowledged = acknowledge_route_generation(
+    gateway.last_seen_at = datetime.now(timezone.utc)
+    acknowledged, ready_gateways = acknowledge_route_generation(
         db,
         endpoint_id=switched.id,
         gateway_id=gateway.id,
         generation=2,
     )
+    assert ready_gateways == 1
     assert acknowledged.applied_generation == 2
     assert acknowledged.status == "ready"
     db.rollback()

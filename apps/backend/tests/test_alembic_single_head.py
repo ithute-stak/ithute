@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0093_pg_stable_endpoints"
+LATEST_MIGRATION_HEAD = "0094_pg_gateway_ha"
 
 
 def test_alembic_has_one_consolidated_head():
