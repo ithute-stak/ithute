@@ -16,6 +16,7 @@ from app.models.mail import Mailbox, MailboxStatus, MailboxStorageType
 from app.services.mailboxes import normalize_destination
 from app.services.mail_intelligence import analyze_mail_message
 from app.services.mail_intelligence_learning import feature_snapshot, training_readiness
+from app.services.mail_sender_behavior import observe_sender_behavior
 from app.services.mail_threat_model import predict
 from app.services.mail_threat_shadow import baseline_probabilities
 from app.services.security_audit import record_webmail_security_event
@@ -439,6 +440,9 @@ def get_message(
     try:
         payload = message(address, password, uid=_uid(uid), folder=folder)
         intelligence = analyze_mail_message(payload, mailbox_address=address)
+        behavior = observe_sender_behavior(address, payload)
+        if behavior is not None:
+            intelligence["behavior"] = behavior
         payload["intelligence"] = intelligence
         mailbox = db.scalar(
             select(Mailbox).where(
