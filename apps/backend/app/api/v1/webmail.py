@@ -19,7 +19,7 @@ from app.services.mail_intelligence_learning import feature_snapshot, training_r
 from app.services.mail_sender_behavior import observe_sender_behavior
 from app.services.mail_threat_model import predict
 from app.services.mail_threat_shadow import baseline_probabilities
-from app.services.mail_threat_canary import automatic_rollback, baseline_floor, deterministic_canary_member
+from app.services.mail_threat_canary import automatic_rollback, baseline_floor, deterministic_canary_member, serving_source
 from app.services.security_audit import record_webmail_security_event
 from app.services.security_controls import SecurityControlUnavailable, clear_webmail_login_failures, record_webmail_login_failure, webmail_login_allowed
 from app.services.webmail import (
@@ -396,16 +396,27 @@ def _shadow_score_message(
     )
     db.commit()
 
-    canary_applied = False
-    serving_result = active_result
-    if challenger is not None and challenger.lifecycle_state == "canary":
-        canary_applied = deterministic_canary_member(
+    canary_applied = (
+        challenger is not None
+        and challenger.lifecycle_state == "canary"
+        and deterministic_canary_member(
             model_id=str(challenger.id),
             mailbox_id=str(mailbox.id),
             message_ref=message_ref,
         )
-        if canary_applied:
-            serving_result = challenger_result
+    )
+    route = serving_source(
+        challenger_state=challenger.lifecycle_state if challenger is not None else None,
+        canary_member=canary_applied,
+        active_present=active_result is not None,
+    )
+    serving_result = (
+        challenger_result
+        if route == "challenger"
+        else active_result
+        if route == "active"
+        else None
+    )
 
     effective_security = None
     if serving_result is not None:
