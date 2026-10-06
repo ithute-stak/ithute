@@ -435,3 +435,25 @@ def test_hardware_live_shadow_validation_contract_exists():
     assert "Live AI shadow validation" in page
     assert "Candidate → Shadow → Qualified → Canary → Active → Rollback/Retire" in page
     assert "PSI ≤" in page
+
+
+
+def test_hardware_model_registry_persistence_contract_exists():
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    models = (backend / "app" / "models" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    api = (backend / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    migration = (backend / "alembic" / "versions" / "0088_hardware_model_registry.py").read_text(encoding="utf-8")
+
+    assert "class HardwareModelVersion" in models
+    assert "class HardwareShadowPrediction" in models
+    assert "class HardwareModelEvent" in models
+    assert "hardware_model_versions" in migration
+    assert "hardware_shadow_predictions" in migration
+    assert "hardware_model_events" in migration
+    assert '@router.get("/model-registry")' in api
+    assert 'record_hardware_shadow_prediction' in api
+    assert 'resolve_hardware_shadow_outcome' in api
+    assert "Resolved shadow outcome is immutable" in api
+    assert 'validate_transition(model.lifecycle_state, payload.target_state)' in api
