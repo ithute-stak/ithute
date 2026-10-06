@@ -174,6 +174,7 @@ export function HostedMailWorkspace() {
   const [checking, setChecking] = useState(true);
   const [loading, setLoading] = useState(false);
   const [messageLoading, setMessageLoading] = useState(false);
+  const [verdictSaving, setVerdictSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [mobileFolders, setMobileFolders] = useState(false);
@@ -312,6 +313,26 @@ export function HostedMailWorkspace() {
   async function openMessage(row: MessageRow) {
     const targetFolder = (row as ConversationMessage).folder || folder;
     await openMessageByUid(row.uid, targetFolder, true, row);
+  }
+
+  async function saveIntelligenceVerdict(label: "legitimate" | "phishing" | "bec") {
+    if (!selected) return;
+    setVerdictSaving(true);
+    setError("");
+    try {
+      const targetFolder = (selected as ConversationMessage).folder || folder;
+      const response = await webmail(`/messages/${selected.uid}/intelligence/verdict?folder=${encodeURIComponent(targetFolder)}`, {
+        method: "POST",
+        body: JSON.stringify({ label, confidence: 0.95 }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(String(payload.detail || "Unable to save intelligence verdict"));
+      setNotice(`Mail Intelligence verdict saved: ${label}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to save intelligence verdict");
+    } finally {
+      setVerdictSaving(false);
+    }
   }
 
   async function openBusinessContact(contact: BusinessContact) {
@@ -847,6 +868,16 @@ export function HostedMailWorkspace() {
                     </div>
                   </details>
                 ) : null}
+
+                <div className="mt-3 border-t border-current/10 pt-3">
+                  <p className="text-[9px] font-black uppercase tracking-[.08em]">Verified verdict</p>
+                  <p className="mt-1 text-[10px] opacity-75">Your verdict becomes privacy-minimized training evidence. Raw message content is not stored in the learning snapshot.</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button disabled={verdictSaving} type="button" onClick={() => void saveIntelligenceVerdict("legitimate")} className="rounded-lg bg-white/70 px-3 py-1.5 text-[10px] font-black disabled:opacity-50 dark:bg-white/10">Legitimate</button>
+                    <button disabled={verdictSaving} type="button" onClick={() => void saveIntelligenceVerdict("phishing")} className="rounded-lg bg-white/70 px-3 py-1.5 text-[10px] font-black disabled:opacity-50 dark:bg-white/10">Phishing</button>
+                    <button disabled={verdictSaving} type="button" onClick={() => void saveIntelligenceVerdict("bec")} className="rounded-lg bg-white/70 px-3 py-1.5 text-[10px] font-black disabled:opacity-50 dark:bg-white/10">BEC</button>
+                  </div>
+                </div>
               </section>
             ) : null}
             <div className="mt-6 min-h-[220px]">
