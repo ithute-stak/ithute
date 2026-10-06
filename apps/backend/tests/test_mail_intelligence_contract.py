@@ -152,3 +152,37 @@ def test_imail_shadow_and_behavior_ui_contract():
     assert "heuristic fallback remains active" in ui
     assert "supervised_shadow" in ui
     assert "behavior?" in ui
+
+
+
+def test_imail_canary_activation_and_rollback_contract():
+    backend = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]
+
+    service = (backend / "app" / "services" / "mail_threat_canary.py").read_text(encoding="utf-8")
+    webmail_api = (backend / "app" / "api" / "v1" / "webmail.py").read_text(encoding="utf-8")
+    mail_api = (backend / "app" / "api" / "v1" / "mail_intelligence.py").read_text(encoding="utf-8")
+    ui = (repo / "apps" / "frontend" / "app" / "webmail" / "hosted-workspace.tsx").read_text(encoding="utf-8")
+    migration = (backend / "alembic" / "versions" / "0091_mail_threat_canary.py").read_text(encoding="utf-8")
+
+    assert "def deterministic_canary_member" in service
+    assert "CANARY_FRACTION = 0.05" in service
+    assert "def baseline_floor" in service
+    assert '"canary_can_reduce_risk": False' in service
+    assert "def automatic_rollback" in service
+
+    assert "def _automatic_rollback_models" in webmail_api
+    assert "baseline_floor" in webmail_api
+    assert "canary_applied" in webmail_api
+    assert "baseline_preserved" in webmail_api
+
+    assert '@router.post("/tenants/{tenant_id}/threat-models/{model_id}/canary/start")' in mail_api
+    assert '@router.get("/tenants/{tenant_id}/threat-models/{model_id}/canary-status")' in mail_api
+    assert '@router.post("/tenants/{tenant_id}/threat-models/{model_id}/activate")' in mail_api
+    assert "Only qualified models can enter canary" in mail_api
+    assert "Only canary models can be activated" in mail_api
+    assert 'previous.lifecycle_state = "retired"' in mail_api
+
+    assert "canary_started_at" in migration
+    assert "baseline cannot be weakened" in ui
+    assert 'lifecycle_state || "shadow"' in ui
