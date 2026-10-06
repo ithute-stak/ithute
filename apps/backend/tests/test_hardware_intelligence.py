@@ -172,3 +172,22 @@ def test_hardware_notification_and_maintenance_workflow_contract_exists():
     assert "ithute-notification" in compose
     assert 'searchParams.get("server")' in page
     assert "Incident maintenance task" in page
+
+
+
+def test_hardware_operations_observability_contract_exists():
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]
+    api = (backend / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    page = (repo / "apps" / "frontend" / "app" / "system-owner" / "hardware-intelligence" / "page.tsx").read_text(encoding="utf-8")
+
+    assert '@router.get("/operations-summary")' in api
+    assert '@router.post("/incidents/{incident_id}/retry-notifications")' in api
+    assert 'HardwareIncidentDelivery.status.in_(["failed", "retry"])' in api
+    assert 'incident.status != "open"' in api
+    assert "incident.notification_suppressed" in api
+    assert '"/hardware-intelligence/operations-summary"' in page
+    assert "Retry failed notifications" in page
+    assert "Delivery failures" in page
