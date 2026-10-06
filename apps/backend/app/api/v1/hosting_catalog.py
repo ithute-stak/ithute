@@ -235,7 +235,7 @@ def _rebuild_subscribers(db: Session, plan_id: UUID) -> None:
         rebuild_effective_plan(db, tenant_id)
 
 
-@router.get("/public/pricing")
+# Compatibility implementation retained for internal reuse; canonical_pricing owns GET /public/pricing.
 def public_pricing(db: Session = Depends(get_db)):
     plans = db.scalars(select(BillingPlan).where(
         BillingPlan.is_active.is_(True), BillingPlan.customer_visible.is_(True)
@@ -251,13 +251,13 @@ def public_addons(db: Session = Depends(get_db)):
     return {"currency": "LSL", "items": [_addon_out(row) for row in rows]}
 
 
-@router.get("/platform/billing/plans")
+# Compatibility implementation retained for internal reuse; plan_admin owns GET /platform/billing/plans.
 def owner_plans(db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     rows = db.scalars(select(BillingPlan).where(~BillingPlan.code.like("effective-%")).order_by(BillingPlan.sort_order, BillingPlan.name)).all()
     return {"items": [_plan_out(row) for row in rows]}
 
 
-@router.post("/platform/billing/plans", status_code=status.HTTP_201_CREATED)
+# Compatibility implementation retained for internal reuse; plan_admin owns POST /platform/billing/plans.
 def owner_create_plan(payload: PlanPayload, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     if db.scalar(select(BillingPlan).where(BillingPlan.code == payload.code)):
         raise HTTPException(409, "A package with this code already exists")
@@ -269,7 +269,7 @@ def owner_create_plan(payload: PlanPayload, db: Session = Depends(get_db), curre
     return _plan_out(plan)
 
 
-@router.patch("/platform/billing/plans/{plan_id}")
+# Compatibility implementation retained for internal reuse; plan_admin owns PATCH /platform/billing/plans/{plan_id}.
 def owner_update_plan(plan_id: UUID, payload: PlanPatch, db: Session = Depends(get_db), current: User = Depends(require_platform_owner)):
     plan = db.get(BillingPlan, plan_id)
     if plan is None or plan.code.startswith("effective-"):
