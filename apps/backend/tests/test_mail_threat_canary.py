@@ -3,6 +3,7 @@ from app.services.mail_threat_canary import (
     baseline_floor,
     canary_validation,
     deterministic_canary_member,
+    serving_source,
 )
 
 
@@ -138,3 +139,36 @@ def test_automatic_rollback_triggers_for_bad_live_model():
     assert result["rollback"] is True
     assert "recall" in result["reasons"]
     assert "latency" in result["reasons"]
+
+
+
+def test_serving_route_keeps_active_champion_for_shadow_challenger():
+    assert serving_source(
+        challenger_state="shadow",
+        canary_member=False,
+        active_present=True,
+    ) == "active"
+
+
+def test_serving_route_keeps_active_for_non_canary_traffic():
+    assert serving_source(
+        challenger_state="canary",
+        canary_member=False,
+        active_present=True,
+    ) == "active"
+
+
+def test_serving_route_uses_challenger_only_for_canary_member():
+    assert serving_source(
+        challenger_state="canary",
+        canary_member=True,
+        active_present=True,
+    ) == "challenger"
+
+
+def test_serving_route_falls_back_to_baseline_without_active_champion():
+    assert serving_source(
+        challenger_state="qualified",
+        canary_member=False,
+        active_present=False,
+    ) == "baseline"
