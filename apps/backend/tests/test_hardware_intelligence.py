@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from app.api.v1.hardware_intelligence import HardwareEnvelope, _go_json, _health, _verify_signature, _window_active_at
+from app.api.v1.hardware_intelligence import HardwareEnvelope, _go_json, _hardware_incident_summary, _health, _verify_signature, _window_active_at
 from app.models import HardwareMaintenanceWindow
 import hashlib
 import hmac
@@ -116,3 +116,32 @@ def test_maintenance_window_active_boundaries():
 
     active.cancelled_at = now
     assert _window_active_at(active, now) is False
+
+
+
+def test_hardware_incident_summary_uses_critical_health_over_prediction():
+    server = type("Server", (), {"name": "Core VPS 1"})()
+    severity, title, summary = _hardware_incident_summary(
+        server,
+        {"status": "critical", "evidence": ["NVMe media errors increasing"]},
+        {"state": "high", "risk_score": 94, "evidence": ["storage drift"]},
+    )
+    assert severity == "critical"
+    assert title == "Critical hardware health on Core VPS 1"
+    assert "94/100" in summary
+    assert "NVMe media errors increasing" in summary
+
+
+def test_hardware_incident_reconciliation_contract_exists():
+    root = __import__("pathlib").Path(__file__).parents[2]
+    api = (root / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    model = (root / "app" / "models" / "hardware_intelligence.py").read_text(encoding="utf-8")
+
+    assert "class HardwareIncident" in model
+    assert "def _active_hardware_incident" in api
+    assert "def _reconcile_hardware_incident" in api
+    assert 'HardwareIncident.status == "open"' in api
+    assert 'incident.status = "resolved"' in api
+    assert "notification_suppressed=suppressed" in api
+    assert 'category="hardware_intelligence"' in api
+    assert '@router.get("/incidents")' in api
