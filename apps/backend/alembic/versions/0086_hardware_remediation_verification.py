@@ -40,6 +40,8 @@ def upgrade() -> None:
         ["id"],
         ondelete="SET NULL",
     )
+    op.create_index("ix_hw_task_remediation_baseline_snapshot_id", "hardware_maintenance_tasks", ["remediation_baseline_snapshot_id"])
+    op.create_index("ix_hw_task_remediation_verified_snapshot_id", "hardware_maintenance_tasks", ["remediation_verified_snapshot_id"])
     op.create_index("ix_hw_task_measured_outcome", "hardware_maintenance_tasks", ["measured_outcome"])
     op.create_index("ix_hw_task_verification_evaluated_at", "hardware_maintenance_tasks", ["verification_evaluated_at"])
 
@@ -47,6 +49,8 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_hw_task_verification_evaluated_at", table_name="hardware_maintenance_tasks")
     op.drop_index("ix_hw_task_measured_outcome", table_name="hardware_maintenance_tasks")
+    op.drop_index("ix_hw_task_remediation_verified_snapshot_id", table_name="hardware_maintenance_tasks")
+    op.drop_index("ix_hw_task_remediation_baseline_snapshot_id", table_name="hardware_maintenance_tasks")
     op.drop_constraint("fk_hw_task_remediation_verified_snapshot", "hardware_maintenance_tasks", type_="foreignkey")
     op.drop_constraint("fk_hw_task_remediation_baseline_snapshot", "hardware_maintenance_tasks", type_="foreignkey")
     op.drop_column("hardware_maintenance_tasks", "verification_evaluated_at")
