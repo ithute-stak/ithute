@@ -119,6 +119,19 @@ type MailIntelligence = {
     baseline?: { legitimate?: number; phishing?: number; bec?: number };
     latency_ms?: number | null;
     shadow_only?: boolean;
+    canary_applied?: boolean;
+    baseline_preserved?: boolean;
+    effective_security?: {
+      phishing_probability: number;
+      bec_probability: number;
+      recommended_action: string;
+    } | null;
+    active_champion?: {
+      model_id: string;
+      version: string;
+      probabilities: { legitimate?: number; phishing?: number; bec?: number };
+      latency_ms?: number | null;
+    } | null;
     fallback?: string;
   };
   governance: {
@@ -900,9 +913,9 @@ export function HostedMailWorkspace() {
                   <div className="mt-3 rounded-xl bg-white/60 p-3 dark:bg-white/10">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <p className="text-[9px] font-black uppercase tracking-[.08em]">Supervised threat model · shadow</p>
+                        <p className="text-[9px] font-black uppercase tracking-[.08em]">Supervised threat model · {selectedIntelligence.supervised_shadow.lifecycle_state || "shadow"}</p>
                         <p className="mt-1 text-[10px] opacity-75">
-                          {selectedIntelligence.supervised_shadow.version || "candidate"} · does not control mail delivery
+                          {selectedIntelligence.supervised_shadow.version || "candidate"} · {selectedIntelligence.supervised_shadow.canary_applied ? "canary may raise warnings; baseline cannot be weakened" : "does not control mail delivery"}
                         </p>
                       </div>
                       <span className="rounded-full bg-white/70 px-2.5 py-1 text-[9px] font-black uppercase dark:bg-white/10">
@@ -926,6 +939,11 @@ export function HostedMailWorkspace() {
                     <p className="mt-2 text-[9px] opacity-65">
                       Inference latency {typeof selectedIntelligence.supervised_shadow.latency_ms === "number" ? `${selectedIntelligence.supervised_shadow.latency_ms.toFixed(2)} ms` : "n/a"} · heuristic fallback remains active.
                     </p>
+                    {selectedIntelligence.supervised_shadow.active_champion ? (
+                      <p className="mt-1 text-[9px] font-bold opacity-75">
+                        Active champion remains serving: {selectedIntelligence.supervised_shadow.active_champion.version}
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
 

@@ -116,6 +116,7 @@ class MailThreatModelVersion(Base):
     training_metrics_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     shadow_metrics_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     promotion_evidence_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    canary_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rollback_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
