@@ -1,3 +1,4 @@
+from app.services.hardware_ai import change_point_signal, ensemble_signals, isolation_forest_signal, weibull_survival_projection
 from app.services.hardware_prediction import MetricPoint, derive_rate_features, predict_hardware_drift
 
 
@@ -300,3 +301,56 @@ def test_prediction_detects_ecc_growth():
     assert result["state"] in {"elevated", "high"}
     assert result["risk_score"] >= 50
     assert any("ECC" in item for item in result["evidence"])
+
+
+
+def test_isolation_forest_is_deterministic_and_flags_large_multisignal_anomaly():
+    history = [
+        _point(temp=44 + (i % 3) * 0.2, memory=1 + (i % 2) * 0.1, io=1.2, disk=50 + i * 0.01)
+        for i in range(96)
+    ]
+    current = _point(temp=88, memory=35, io=40, disk=96)
+    first = isolation_forest_signal(history, current)
+    second = isolation_forest_signal(history, current)
+    assert first == second
+    assert first["ready"] is True
+    assert first["trees"] == 48
+    assert first["risk_score"] >= 35
+
+
+def test_change_point_detects_sustained_regime_shift():
+    history = [_point(temp=45, memory=1, io=1, disk=50) for _ in range(72)]
+    history += [_point(temp=64, memory=1, io=1, disk=50) for _ in range(24)]
+    result = change_point_signal(history, _point(temp=66, memory=1, io=1, disk=50))
+    assert result["ready"] is True
+    assert result["metric"] == "temperature_celsius"
+    assert result["risk_score"] >= 50
+
+
+def test_survival_projection_is_guarded_and_prior_only():
+    low = weibull_survival_projection(30, 1.0)
+    assert low["ready"] is False
+
+    elevated = weibull_survival_projection(80, 1.0)
+    assert elevated["ready"] is True
+    assert elevated["calibration"] == "prior_only"
+    assert 0 < elevated["failure_probability_72h"] <= 100
+    assert elevated["median_risk_horizon_hours"] > 0
+
+
+def test_ai_ensemble_requires_consensus_for_high_risk():
+    history = [_point(temp=45, memory=1, io=1, disk=50) for _ in range(96)]
+    current = _point(temp=45, memory=1, io=1, disk=50)
+    result = ensemble_signals(history, current, baseline_risk=100, confidence=1.0)
+    assert result["ensemble_risk_score"] <= 74
+    assert result["supervised_boosting"]["ready"] is False
+
+
+def test_prediction_exposes_independent_model_votes():
+    history = [_point(temp=45, memory=1, io=1, disk=50) for _ in range(96)]
+    result = predict_hardware_drift(history, _point(temp=80, memory=25, io=30, disk=90))
+    assert "models" in result
+    assert result["models"]["robust_baseline"]["ready"] is True
+    assert result["models"]["isolation_forest"]["ready"] is True
+    assert result["models"]["change_point"]["ready"] is True
+    assert result["models"]["supervised_boosting"]["engine"] == "xgboost-compatible"
