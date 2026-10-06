@@ -172,6 +172,8 @@ def analyze_mail_message(message: dict[str, Any], *, mailbox_address: str = "") 
     sender_domain = _domain(sender)
     reply_addresses = _addresses(message.get("reply_to"))
     reply_domain = _domain(reply_addresses[0]) if reply_addresses else sender_domain
+    authentication_results = _lower(message.get("authentication_results"))
+    received_spf = _lower(message.get("received_spf"))
 
     risk_score = 0
     bec_score = 0
@@ -193,6 +195,23 @@ def analyze_mail_message(message: dict[str, Any], *, mailbox_address: str = "") 
         risk_signals.append({"signal": "payment_language", "weight": payment_score, "evidence": payment_hits})
     if threat_hits:
         risk_signals.append({"signal": "threat_or_pressure", "weight": threat_score, "evidence": threat_hits})
+
+    auth_failures = []
+    if "spf=fail" in authentication_results or received_spf.startswith("fail"):
+        auth_failures.append("spf")
+    if "dkim=fail" in authentication_results:
+        auth_failures.append("dkim")
+    if "dmarc=fail" in authentication_results:
+        auth_failures.append("dmarc")
+    if auth_failures:
+        auth_weight = min(36, 14 * len(auth_failures))
+        risk_score += auth_weight
+        bec_score += min(24, 8 * len(auth_failures))
+        risk_signals.append({
+            "signal": "mail_authentication_failure",
+            "weight": auth_weight,
+            "evidence": auth_failures,
+        })
 
     if reply_domain and sender_domain and _registrable_hint(reply_domain) != _registrable_hint(sender_domain):
         risk_score += 22
