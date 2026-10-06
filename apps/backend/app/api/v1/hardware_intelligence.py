@@ -47,7 +47,8 @@ class AlertAcknowledgementCreate(BaseModel):
     note: str = Field(default="", max_length=1000)
 
 
-class MaintenanceTaskComplete(BaseModel):
+class MaintenanceTaskUpdate(BaseModel):
+    status: str = Field(pattern=r"^(in_progress|completed|cancelled)$")
     note: str = Field(default="", max_length=1000)
 
 
@@ -774,6 +775,89 @@ def list_hardware_incidents(
             }
             for row in rows
         ]
+    }
+
+
+@router.get("/maintenance-tasks")
+def list_hardware_maintenance_tasks(
+    status_filter: str = "open",
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    query = select(HardwareMaintenanceTask)
+    if status_filter != "all":
+        if status_filter not in {"open", "in_progress", "completed", "cancelled"}:
+            raise HTTPException(status_code=422, detail="invalid maintenance task status")
+        query = query.where(HardwareMaintenanceTask.status == status_filter)
+    rows = db.scalars(
+        query.order_by(HardwareMaintenanceTask.created_at.desc()).limit(max(1, min(limit, 500)))
+    ).all()
+    return {
+        "items": [
+            {
+                "id": str(row.id),
+                "incident_id": str(row.incident_id),
+                "server_id": str(row.server_id),
+                "priority": row.priority,
+                "status": row.status,
+                "title": row.title,
+                "description": row.description,
+                "assigned_to_user_id": str(row.assigned_to_user_id) if row.assigned_to_user_id else None,
+                "completed_by_user_id": str(row.completed_by_user_id) if row.completed_by_user_id else None,
+                "completion_note": row.completion_note,
+                "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            }
+            for row in rows
+        ]
+    }
+
+
+@router.post("/maintenance-tasks/{task_id}/status")
+def update_hardware_maintenance_task(
+    task_id: str,
+    payload: MaintenanceTaskUpdate,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    try:
+        parsed = UUID(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid hardware maintenance task id") from exc
+
+    row = db.get(HardwareMaintenanceTask, parsed)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Hardware maintenance task not found")
+    if row.status in {"completed", "cancelled"}:
+        raise HTTPException(status_code=409, detail="Hardware maintenance task is already closed")
+
+    now = datetime.now(timezone.utc)
+    row.status = payload.status
+    if row.assigned_to_user_id is None:
+        row.assigned_to_user_id = current.id
+    if payload.status in {"completed", "cancelled"}:
+        row.completed_at = now
+        row.completed_by_user_id = current.id
+        row.completion_note = payload.note.strip()
+    elif payload.status == "in_progress":
+        row.completed_at = None
+        row.completed_by_user_id = None
+        row.completion_note = payload.note.strip()
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": str(row.id),
+        "incident_id": str(row.incident_id),
+        "server_id": str(row.server_id),
+        "priority": row.priority,
+        "status": row.status,
+        "assigned_to_user_id": str(row.assigned_to_user_id) if row.assigned_to_user_id else None,
+        "completed_by_user_id": str(row.completed_by_user_id) if row.completed_by_user_id else None,
+        "completion_note": row.completion_note,
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
     }
 
 
