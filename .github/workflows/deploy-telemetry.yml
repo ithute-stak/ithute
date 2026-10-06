@@ -1,10 +1,12 @@
 name: Deploy Ithute Telemetry
 
 on:
-  workflow_run:
-    workflows: ["Ithute Standalone CI"]
-    types: [completed]
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_sha:
+        description: Exact 40-character release SHA already deployed to production
+        required: true
+        type: string
 
 concurrency:
   group: ithute-vps-telemetry
@@ -16,12 +18,11 @@ permissions:
 
 jobs:
   deploy:
-    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production
     env:
-      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+      DEPLOY_SHA: ${{ inputs.deploy_sha }}
       VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_USER: ${{ secrets.VPS_USER }}
       VPS_APP_DIR: /home/administrator/ithute-platform
@@ -30,6 +31,28 @@ jobs:
       EXPECTED_IPV4: 204.12.205.224
 
     steps:
+      - name: Validate requested production release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "deploy_sha must be an exact 40-character lowercase commit SHA." >&2
+            exit 1
+          }
+          run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/release-images.yml/runs?branch=main&per_page=100")"
+          row="$(printf '%s' "$run_json" | jq -r --arg sha "$DEPLOY_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] | if . == null then "" else [.status, (.conclusion // ""), (.html_url // "")] | @tsv end')"
+          test -n "$row" || {
+            echo "No Ithute Release Images run exists for $DEPLOY_SHA." >&2
+            exit 1
+          }
+          IFS=$'\t' read -r status conclusion url <<< "$row"
+          echo "Release Images: status=$status conclusion=${conclusion:-pending} $url"
+          test "$status" = "completed" && test "$conclusion" = "success" || {
+            echo "Release Images is not green for $DEPLOY_SHA." >&2
+            exit 1
+          }
+
       - name: Checkout validated commit
         uses: actions/checkout@v5
         with:
@@ -47,41 +70,7 @@ jobs:
           test -f infrastructure/prometheus/prometheus.yml
           ! grep -Eq '^[[:space:]]+ports:' compose.telemetry.yml
 
-      - name: Wait for validated production deployment
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          echo "Waiting for Deploy Ithute Production to finish for ${DEPLOY_SHA}."
-          ready=0
-          for attempt in $(seq 1 150); do
-            runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-production.yml/runs?branch=main&per_page=30")"
-            row="$(printf '%s' "$runs" | jq -r --arg sha "$DEPLOY_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] | if . == null then "" else [.status, (.conclusion // ""), (.html_url // "")] | @tsv end')"
-            if [ -z "$row" ]; then
-              echo "Production run has not been created yet (${attempt}/150)."
-              sleep 8
-              continue
-            fi
-            IFS=$'\t' read -r status conclusion url <<< "$row"
-            echo "Production: status=${status} conclusion=${conclusion:-pending} ${url}"
-            if [ "$status" = "completed" ]; then
-              if [ "$conclusion" = "success" ]; then
-                ready=1
-              else
-                echo "Production did not deploy successfully; telemetry will remain unchanged."
-              fi
-              break
-            fi
-            if [ "$attempt" -ge 150 ]; then
-              echo "Timed out waiting for production deployment; telemetry will remain unchanged."
-              break
-            fi
-            sleep 8
-          done
-          printf 'PRODUCTION_READY=%s\n' "$ready" >> "$GITHUB_ENV"
-
       - name: Configure SSH
-        if: env.PRODUCTION_READY == '1'
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.ssh"
@@ -105,8 +94,19 @@ jobs:
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
+      - name: Verify exact SHA is live in production
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          test -f "$APP_DIR/.ithute-bootstrapped"
+          test -f "$APP_DIR/.env.production"
+          test -f "$APP_DIR/.image.env"
+          grep -Fxq "ITHUTE_IMAGE_TAG=$DEPLOY_SHA" "$APP_DIR/.image.env"
+          REMOTE
+
       - name: Install telemetry runtime configuration
-        if: env.PRODUCTION_READY == '1'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
@@ -125,7 +125,6 @@ jobs:
           REMOTE
 
       - name: Start private telemetry collectors
-        if: env.PRODUCTION_READY == '1'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
@@ -138,7 +137,6 @@ jobs:
           REMOTE
 
       - name: Verify complete live host and container metrics
-        if: env.PRODUCTION_READY == '1'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
