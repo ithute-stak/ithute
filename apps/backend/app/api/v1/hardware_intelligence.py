@@ -50,6 +50,8 @@ class AlertAcknowledgementCreate(BaseModel):
 class MaintenanceTaskUpdate(BaseModel):
     status: str = Field(pattern=r"^(in_progress|completed|cancelled)$")
     note: str = Field(default="", max_length=1000)
+    remediation_action: str = Field(default="", max_length=128)
+    outcome: str = Field(default="", pattern=r"^(|resolved|improved|no_change|worsened)$")
 
 
 def _utc(value: datetime) -> datetime:
@@ -231,6 +233,62 @@ def _ensure_hardware_maintenance_task(
     return task
 
 
+def _remediation_outcome_stats(db: Session) -> dict[str, dict[str, float | int]]:
+    rows = db.execute(
+        select(HardwareMaintenanceTask.remediation_action, HardwareMaintenanceTask.remediation_outcome)
+        .where(
+            HardwareMaintenanceTask.status == "completed",
+            HardwareMaintenanceTask.remediation_action != "",
+            HardwareMaintenanceTask.remediation_outcome.in_(["resolved", "improved", "no_change", "worsened"]),
+        )
+    ).all()
+    totals: dict[str, dict[str, float | int]] = {}
+    impact = {"resolved": 1.0, "improved": 0.5, "no_change": 0.0, "worsened": -1.0}
+    positive = {"resolved": 1.0, "improved": 0.5, "no_change": 0.0, "worsened": 0.0}
+    for action, outcome in rows:
+        key = str(action or "").strip()
+        if not key:
+            continue
+        bucket = totals.setdefault(key, {"samples": 0, "impact_sum": 0.0, "positive_sum": 0.0})
+        bucket["samples"] = int(bucket["samples"]) + 1
+        bucket["impact_sum"] = float(bucket["impact_sum"]) + impact[str(outcome)]
+        bucket["positive_sum"] = float(bucket["positive_sum"]) + positive[str(outcome)]
+    return {
+        action: {
+            "samples": int(values["samples"]),
+            "mean_impact": round(float(values["impact_sum"]) / max(1, int(values["samples"])), 3),
+            "success_rate": round(float(values["positive_sum"]) / max(1, int(values["samples"])), 3),
+        }
+        for action, values in totals.items()
+    }
+
+
+def _apply_remediation_learning(workflow_plan: dict[str, Any], stats: dict[str, dict[str, float | int]]) -> dict[str, Any]:
+    ranked = workflow_plan.get("ranked_recommendations")
+    if not isinstance(ranked, list) or not ranked:
+        return workflow_plan
+    adjusted: list[dict[str, Any]] = []
+    for raw in ranked:
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        action = str(item.get("action") or "").strip()
+        learned = stats.get(action)
+        if learned and int(learned.get("samples") or 0) >= 3:
+            mean_impact = max(-1.0, min(1.0, float(learned.get("mean_impact") or 0.0)))
+            samples = int(learned.get("samples") or 0)
+            priority = int(item.get("priority_score") or 0)
+            confidence = int(item.get("confidence_percent") or 0)
+            item["priority_score"] = max(0, min(100, priority + round(mean_impact * 8)))
+            item["confidence_percent"] = max(0, min(100, confidence + round(mean_impact * 10)))
+            item["learned_samples"] = samples
+            item["learned_success_rate"] = round(float(learned.get("success_rate") or 0.0) * 100, 1)
+            item["learning_adjustment"] = round(mean_impact * 8)
+        adjusted.append(item)
+    adjusted.sort(key=lambda item: int(item.get("priority_score") or 0), reverse=True)
+    return {**workflow_plan, "ranked_recommendations": adjusted, "outcome_learning": {"eligible_actions": sum(1 for value in stats.values() if int(value.get("samples") or 0) >= 3)}}
+
+
 def _reconcile_hardware_incident(
     db: Session,
     server: InfrastructureServer,
@@ -268,6 +326,7 @@ def _reconcile_hardware_incident(
         "predictive_confidence": snapshot.predictive_confidence,
     })
     workflow_plan = {**workflow_plan, "engine": workflow_engine}
+    workflow_plan = _apply_remediation_learning(workflow_plan, _remediation_outcome_stats(db))
 
     was_suppressed = bool(incident and incident.notification_suppressed)
 
@@ -915,6 +974,9 @@ def list_hardware_maintenance_tasks(
                 "assigned_to_user_id": str(row.assigned_to_user_id) if row.assigned_to_user_id else None,
                 "completed_by_user_id": str(row.completed_by_user_id) if row.completed_by_user_id else None,
                 "completion_note": row.completion_note,
+                "remediation_action": row.remediation_action,
+                "remediation_outcome": row.remediation_outcome,
+                "outcome_recorded_at": row.outcome_recorded_at.isoformat() if row.outcome_recorded_at else None,
                 "completed_at": row.completed_at.isoformat() if row.completed_at else None,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
                 "updated_at": row.updated_at.isoformat() if row.updated_at else None,
@@ -950,6 +1012,10 @@ def update_hardware_maintenance_task(
         row.completed_at = now
         row.completed_by_user_id = current.id
         row.completion_note = payload.note.strip()
+        if payload.status == "completed":
+            row.remediation_action = payload.remediation_action.strip()
+            row.remediation_outcome = payload.outcome.strip()
+            row.outcome_recorded_at = now if row.remediation_action and row.remediation_outcome else None
     elif payload.status == "in_progress":
         row.completed_at = None
         row.completed_by_user_id = None
@@ -965,6 +1031,9 @@ def update_hardware_maintenance_task(
         "assigned_to_user_id": str(row.assigned_to_user_id) if row.assigned_to_user_id else None,
         "completed_by_user_id": str(row.completed_by_user_id) if row.completed_by_user_id else None,
         "completion_note": row.completion_note,
+        "remediation_action": row.remediation_action,
+        "remediation_outcome": row.remediation_outcome,
+        "outcome_recorded_at": row.outcome_recorded_at.isoformat() if row.outcome_recorded_at else None,
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
     }
 
@@ -1118,6 +1187,9 @@ def hardware_fleet_health(
                     "status": maintenance_task.status,
                     "assigned_to_user_id": str(maintenance_task.assigned_to_user_id) if maintenance_task.assigned_to_user_id else None,
                     "completion_note": maintenance_task.completion_note,
+                    "remediation_action": maintenance_task.remediation_action,
+                    "remediation_outcome": maintenance_task.remediation_outcome,
+                    "outcome_recorded_at": maintenance_task.outcome_recorded_at.isoformat() if maintenance_task.outcome_recorded_at else None,
                     "completed_at": maintenance_task.completed_at.isoformat() if maintenance_task.completed_at else None,
                 } if maintenance_task else None,
                 "opened_at": incident.opened_at.isoformat() if incident.opened_at else None,

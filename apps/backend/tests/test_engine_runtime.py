@@ -263,7 +263,7 @@ def test_python_hardware_workflow_plan_respects_maintenance_suppression():
     })
     assert plan["escalation"] == "maintenance_suppressed"
     assert plan["actions"] == ["record_incident", "suppress_notifications"]
-    assert plan["plan_version"] == "2"
+    assert plan["plan_version"] == "3"
     assert "inspect_recent_kernel_hardware_and_system_logs" in plan["recommendations"]
     assert plan["ranked_recommendations"]
 

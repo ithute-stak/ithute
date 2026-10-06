@@ -203,6 +203,9 @@ class HardwareMaintenanceTask(Base):
         index=True,
     )
     completion_note: Mapped[str] = mapped_column(String(1000), default="", nullable=False)
+    remediation_action: Mapped[str] = mapped_column(String(128), default="", nullable=False, index=True)
+    remediation_outcome: Mapped[str] = mapped_column(String(24), default="", nullable=False, index=True)
+    outcome_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

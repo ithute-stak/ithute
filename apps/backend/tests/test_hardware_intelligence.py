@@ -212,7 +212,7 @@ def test_hardware_remediation_recommendation_contract_exists():
     ):
         assert signal in api
 
-    assert '"plan_version": "2"' in runtime
+    assert '"plan_version": "3"' in runtime
     assert '"recommendations": recommendations' in runtime
     assert "Recommended remediation" in page
     assert 'recommendations?: string[]' in page
@@ -235,3 +235,46 @@ def test_ranked_remediation_contract_uses_predictive_context():
     assert "priority_score" in page
     assert "confidence_percent" in page
     assert "Ranked remediation" in page
+
+
+
+def test_remediation_outcome_learning_contract_exists():
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]
+    api = (backend / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    models = (backend / "app" / "models" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    migration = (backend / "alembic" / "versions" / "0084_hardware_remediation_outcomes.py").read_text(encoding="utf-8")
+    page = (repo / "apps" / "frontend" / "app" / "system-owner" / "hardware-intelligence" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "remediation_action" in models
+    assert "remediation_outcome" in models
+    assert "outcome_recorded_at" in migration
+    assert "def _remediation_outcome_stats" in api
+    assert "def _apply_remediation_learning" in api
+    assert "learned_success_rate" in api
+    assert "samples" in api
+    assert "Complete + record outcome" in page
+    assert "Outcome learning:" in page
+
+
+
+def test_hardware_command_center_ui_contract_exists():
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[3]
+    page = (repo / "apps" / "frontend" / "app" / "system-owner" / "hardware-intelligence" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "Assembly · C + eBPF · Rust · Go · Python · Java" in page
+    assert "From silicon evidence to operator decision" in page
+    assert "Live signal matrix" in page
+    assert "24-hour hardware behaviour" in page
+    assert "Temperature" in page
+    assert "Memory pressure" in page
+    assert "I/O pressure" in page
+    assert "Filesystem used" in page
+    assert "Risk movement" in page
+    assert "Recovery assurance" in page
+    assert "Current measured state" in page
+    assert "Ithute does not silently execute destructive hardware remediation" in page

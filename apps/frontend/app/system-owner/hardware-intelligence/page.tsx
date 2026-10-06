@@ -100,6 +100,9 @@ type FleetItem = {
         expected_impact: string;
         drain_recommended: boolean;
         operator_approval_required: boolean;
+        learned_samples?: number;
+        learned_success_rate?: number;
+        learning_adjustment?: number;
       }>;
     };
     deliveries?: Array<{
@@ -114,6 +117,9 @@ type FleetItem = {
       status: string;
       assigned_to_user_id?: string | null;
       completion_note?: string;
+      remediation_action?: string;
+      remediation_outcome?: string;
+      outcome_recorded_at?: string | null;
       completed_at?: string | null;
     } | null;
     opened_at?: string | null;
@@ -186,8 +192,8 @@ function relativeTime(value?: string | null) {
   return `${(ms / 86_400_000).toFixed(1)} d ago`;
 }
 
-function Sparkline({ values }: { values: number[] }) {
-  if (values.length < 2) return <div className="h-16 rounded-xl bg-[#f7faf8]" />;
+function Sparkline({ values, label = "Hardware metric trend" }: { values: number[]; label?: string }) {
+  if (values.length < 2) return <div className="h-16 rounded-xl bg-[#f7faf8]" aria-label={label} />;
   const width = 520;
   const height = 90;
   const min = Math.min(...values);
@@ -201,9 +207,22 @@ function Sparkline({ values }: { values: number[] }) {
     })
     .join(" ");
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-20 w-full rounded-xl bg-[#f7faf8] p-2" role="img" aria-label="Hardware health trend">
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-20 w-full rounded-xl bg-[#f7faf8] p-2" role="img" aria-label={label}>
       <polyline points={points} fill="none" stroke="currentColor" strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
+  );
+}
+
+function TrendCard({ label, value, suffix, values, note }: { label: string; value?: number | null; suffix?: string; values: number[]; note: string }) {
+  return (
+    <article className="rounded-xl border border-[var(--admin-line)] bg-white p-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[8px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">{label}</p>
+        <p className="text-sm font-black">{metric(value, suffix || "")}</p>
+      </div>
+      <div className="mt-2 text-[#18524d]"><Sparkline values={values} label={`${label} 24-hour trend`} /></div>
+      <p className="mt-2 text-[8px] leading-4 text-[var(--admin-muted)]">{note}</p>
+    </article>
   );
 }
 
@@ -222,6 +241,8 @@ export default function HardwareIntelligencePage() {
   const [maintenanceHours, setMaintenanceHours] = useState("2");
   const [ackNote, setAckNote] = useState("");
   const [taskNote, setTaskNote] = useState("");
+  const [taskAction, setTaskAction] = useState("");
+  const [taskOutcome, setTaskOutcome] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
 
   const loadFleet = useCallback(async () => {
@@ -300,16 +321,25 @@ export default function HardwareIntelligencePage() {
       await apiMutation(`/hardware-intelligence/maintenance-tasks/${taskId}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, note: taskNote.trim() }),
+        body: JSON.stringify({
+          status,
+          note: taskNote.trim(),
+          remediation_action: status === "completed" ? taskAction : "",
+          outcome: status === "completed" ? taskOutcome : "",
+        }),
       }, ["/hardware-intelligence/fleet"]);
       setTaskNote("");
+      if (status === "completed") {
+        setTaskAction("");
+        setTaskOutcome("");
+      }
       await loadFleet();
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : "Unable to update maintenance task.");
     } finally {
       setActionLoading(false);
     }
-  }, [fleet, selected, taskNote, loadFleet]);
+  }, [fleet, selected, taskNote, taskAction, taskOutcome, loadFleet]);
 
   const retryIncidentNotifications = useCallback(async () => {
     const incident = fleet?.items.find((item) => item.server_id === selected)?.incident;
@@ -356,6 +386,14 @@ export default function HardwareIntelligencePage() {
   const selectedServer = useMemo(() => fleet?.items.find((item) => item.server_id === selected) || null, [fleet, selected]);
   const trend = history?.items.map((item) => item.health_score) || [];
   const predictiveTrend = history?.items.map((item) => item.predictive_risk_score).filter((value): value is number => typeof value === "number") || [];
+  const temperatureTrend = history?.items.map((item) => item.temperature_celsius).filter((value): value is number => typeof value === "number") || [];
+  const memoryTrend = history?.items.map((item) => item.memory_pressure_avg10).filter((value): value is number => typeof value === "number") || [];
+  const ioTrend = history?.items.map((item) => item.io_pressure_avg10).filter((value): value is number => typeof value === "number") || [];
+  const storageTrend = history?.items.map((item) => item.filesystem_used_percent).filter((value): value is number => typeof value === "number") || [];
+  const firstRisk = predictiveTrend[0];
+  const latestRisk = predictiveTrend[predictiveTrend.length - 1];
+  const riskDelta = typeof firstRisk === "number" && typeof latestRisk === "number" ? latestRisk - firstRisk : null;
+  const sampledPoints = history?.items.length || 0;
 
   return (
     <ControlShell title="Hardware Intelligence" subtitle="Early-warning hardware and kernel health across every Ithute-managed server">
@@ -364,7 +402,7 @@ export default function HardwareIntelligencePage() {
           <div className="bg-[linear-gradient(120deg,#123a38,#18524d)] p-6 text-white">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-[9px] font-black uppercase tracking-[.16em] text-[#d8c56a]">Assembly · C + eBPF · Rust · Go · Python</p>
+                <p className="text-[9px] font-black uppercase tracking-[.16em] text-[#d8c56a]">Assembly · C + eBPF · Rust · Go · Python · Java</p>
                 <h1 className="mt-2 text-3xl font-black">Hardware Intelligence</h1>
                 <p className="mt-2 max-w-3xl text-[11px] leading-5 text-[#c8d8d2]">See which servers are healthy, degrading, critical or offline. Every warning is backed by measurable evidence rather than an unexplained score.</p>
               </div>
@@ -426,6 +464,35 @@ export default function HardwareIntelligencePage() {
                 </div>
               ))}
             </div>
+          </div>
+        </section>
+
+        <section className="surface-card p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">Intelligence pipeline</p>
+              <h2 className="mt-1 text-lg font-black">From silicon evidence to operator decision</h2>
+              <p className="mt-1 max-w-3xl text-[10px] leading-4 text-[var(--admin-muted)]">Every stage stays visible: low-level signals, validation, transport, prediction, workflow policy and human approval.</p>
+            </div>
+            <div className="rounded-xl border border-[var(--admin-line)] bg-[#f7faf8] px-4 py-3 text-right">
+              <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">24-hour samples · selected server</p>
+              <p className="mt-1 text-xl font-black">{sampledPoints}</p>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+            {[
+              ["C + eBPF", "Hardware + kernel signals"],
+              ["Rust", "Validation + hardening"],
+              ["Go", "Collection + transport"],
+              ["Python", "Prediction + drift"],
+              ["Java", "Rules + remediation"],
+              ["Operator", "Approval + evidence"],
+            ].map(([engine, role], index) => (
+              <div key={engine} className="rounded-xl border border-[var(--admin-line)] bg-white p-3">
+                <p className="text-[8px] font-black uppercase text-[#18524d]">{index + 1}. {engine}</p>
+                <p className="mt-1 text-[9px] font-bold">{role}</p>
+              </div>
+            ))}
           </div>
         </section>
 
@@ -500,6 +567,9 @@ export default function HardwareIntelligencePage() {
                               <p className="mt-1 text-[9px] leading-4">{item.expected_impact}</p>
                               {item.evidence?.length ? (
                                 <p className="mt-1 text-[8px] font-bold opacity-80">Evidence: {item.evidence.join(" · ")}</p>
+                              ) : null}
+                              {typeof item.learned_samples === "number" ? (
+                                <p className="mt-1 text-[8px] font-bold opacity-80">Outcome learning: {item.learned_samples} confirmed cases · {item.learned_success_rate ?? 0}% weighted success · ranking {Number(item.learning_adjustment || 0) >= 0 ? "+" : ""}{item.learning_adjustment || 0}</p>
                               ) : null}
                             </div>
                           ))}
@@ -610,6 +680,57 @@ export default function HardwareIntelligencePage() {
 
         {selectedServer ? (
           <section className="surface-card p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">Live signal matrix</p>
+                <h2 className="mt-1 text-lg font-black">24-hour hardware behaviour</h2>
+                <p className="mt-1 text-[10px] text-[var(--admin-muted)]">The model stays explainable: operators can inspect the raw operating trends behind each prediction.</p>
+              </div>
+              <div className="rounded-xl border border-[var(--admin-line)] px-3 py-2 text-right">
+                <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Risk movement</p>
+                <p className={`mt-1 text-sm font-black ${typeof riskDelta === "number" && riskDelta > 0 ? "text-red-700" : "text-emerald-700"}`}>
+                  {typeof riskDelta === "number" ? `${riskDelta > 0 ? "+" : ""}${riskDelta.toFixed(1)} points` : "Learning"}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <TrendCard label="Temperature" value={selectedServer.temperature_celsius} suffix="°C" values={temperatureTrend} note="Thermal drift can precede throttling, fan or cooling failures." />
+              <TrendCard label="Memory pressure" value={selectedServer.memory_pressure_avg10} suffix="%" values={memoryTrend} note="PSI pressure exposes contention before application memory starvation." />
+              <TrendCard label="I/O pressure" value={selectedServer.io_pressure_avg10} suffix="%" values={ioTrend} note="Sustained I/O stalls can reveal saturation or storage degradation." />
+              <TrendCard label="Filesystem used" value={selectedServer.filesystem_used_percent} suffix="%" values={storageTrend} note="Capacity growth is tracked before a disk-full event becomes an outage." />
+            </div>
+          </section>
+        ) : null}
+
+        {selectedServer?.incident?.maintenance_task ? (
+          <section className="surface-card p-5">
+            <p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">Recovery assurance</p>
+            <h2 className="mt-1 text-lg font-black">Remediation evidence and trust boundary</h2>
+            <div className="mt-4 grid gap-3 lg:grid-cols-3">
+              <div className="rounded-xl border border-[var(--admin-line)] p-4">
+                <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Operator action</p>
+                <p className="mt-2 text-[11px] font-black">{selectedServer.incident.maintenance_task.remediation_action ? selectedServer.incident.maintenance_task.remediation_action.replaceAll("_", " ") : "Not completed yet"}</p>
+                <p className="mt-2 text-[9px] text-[var(--admin-muted)]">Human action remains explicit and auditable. Ithute does not silently execute destructive hardware remediation.</p>
+              </div>
+              <div className="rounded-xl border border-[var(--admin-line)] p-4">
+                <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Reported outcome</p>
+                <p className="mt-2 text-[11px] font-black">{selectedServer.incident.maintenance_task.remediation_outcome ? selectedServer.incident.maintenance_task.remediation_outcome.replaceAll("_", " ") : "Awaiting operator evidence"}</p>
+                <p className="mt-2 text-[9px] text-[var(--admin-muted)]">The operator-observed result stays distinct from the live measured state.</p>
+              </div>
+              <div className="rounded-xl border border-[var(--admin-line)] p-4">
+                <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Current measured state</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <span className={`rounded-full border px-2 py-1 text-[8px] font-black uppercase ${statusTone(selectedServer.status)}`}>{selectedServer.status}</span>
+                  <span className={`rounded-full border px-2 py-1 text-[8px] font-black uppercase ${predictiveTone(selectedServer.predictive_state)}`}>{selectedServer.predictive_state} risk</span>
+                </div>
+                <p className="mt-2 text-[9px] text-[var(--admin-muted)]">Health {selectedServer.health_score ?? "—"}/100 · risk {selectedServer.predictive_risk_score ?? "—"}/100 · last seen {relativeTime(selectedServer.last_seen_at)}.</p>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        {selectedServer ? (
+          <section className="surface-card p-5">
             <p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">Operator controls</p>
             <h2 className="mt-1 text-lg font-black">Acknowledge, schedule or execute maintenance</h2>
             {actionError ? <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-[10px] font-bold text-red-700">{actionError}</div> : null}
@@ -635,10 +756,27 @@ export default function HardwareIntelligencePage() {
                   <p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">Incident maintenance task</p>
                   <p className="mt-1 text-[10px] text-[var(--admin-muted)]">Track the physical/host remediation separately from automatic health recovery.</p>
                   <p className="mt-2 text-[10px] font-black uppercase">Status: {selectedServer.incident.maintenance_task.status}</p>
-                  <input value={taskNote} onChange={(event) => setTaskNote(event.target.value)} placeholder="Operator note" className="mt-3 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]" />
+                  {selectedServer.incident.maintenance_task.remediation_action ? <p className="mt-1 text-[9px] font-bold">Action: {selectedServer.incident.maintenance_task.remediation_action.replaceAll("_", " ")}</p> : null}
+                  {selectedServer.incident.maintenance_task.remediation_outcome ? <p className="mt-1 text-[9px] font-bold">Outcome: {selectedServer.incident.maintenance_task.remediation_outcome.replaceAll("_", " ")}</p> : null}
+                  {!["completed", "cancelled"].includes(selectedServer.incident.maintenance_task.status) ? (
+                    <>
+                      <select value={taskAction} onChange={(event) => setTaskAction(event.target.value)} className="mt-3 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]">
+                        <option value="">Remediation actually performed</option>
+                        {(selectedServer.incident.workflow_plan?.ranked_recommendations || []).map((item) => <option key={item.action} value={item.action}>{item.action.replaceAll("_", " ")}</option>)}
+                      </select>
+                      <select value={taskOutcome} onChange={(event) => setTaskOutcome(event.target.value)} className="mt-2 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]">
+                        <option value="">Observed outcome</option>
+                        <option value="resolved">Resolved the incident</option>
+                        <option value="improved">Improved the condition</option>
+                        <option value="no_change">No measurable change</option>
+                        <option value="worsened">Condition worsened</option>
+                      </select>
+                    </>
+                  ) : null}
+                  <input value={taskNote} onChange={(event) => setTaskNote(event.target.value)} placeholder="Operator note / evidence" className="mt-3 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]" />
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button disabled={actionLoading || selectedServer.incident.maintenance_task.status !== "open"} onClick={() => void updateMaintenanceTask("in_progress")} className="rounded-xl border border-[var(--admin-line)] px-3 py-2 text-[9px] font-black disabled:opacity-50">Start work</button>
-                    <button disabled={actionLoading || ["completed", "cancelled"].includes(selectedServer.incident.maintenance_task.status)} onClick={() => void updateMaintenanceTask("completed")} className="rounded-xl bg-[#18524d] px-3 py-2 text-[9px] font-black text-white disabled:opacity-50">Complete</button>
+                    <button disabled={actionLoading || ["completed", "cancelled"].includes(selectedServer.incident.maintenance_task.status) || !taskAction || !taskOutcome} onClick={() => void updateMaintenanceTask("completed")} className="rounded-xl bg-[#18524d] px-3 py-2 text-[9px] font-black text-white disabled:opacity-50">Complete + record outcome</button>
                     <button disabled={actionLoading || ["completed", "cancelled"].includes(selectedServer.incident.maintenance_task.status)} onClick={() => void updateMaintenanceTask("cancelled")} className="rounded-xl border border-red-200 px-3 py-2 text-[9px] font-black text-red-700 disabled:opacity-50">Cancel</button>
                   </div>
                 </div>
