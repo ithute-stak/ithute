@@ -652,11 +652,36 @@ def python_hardware_workflow_plan(payload: dict) -> dict:
             "create_maintenance_task",
         ])
         escalation = "urgent"
+    recommendations = []
+    temperature = payload.get("temperature_celsius")
+    memory_pressure = payload.get("memory_pressure_avg10")
+    io_pressure = payload.get("io_pressure_avg10")
+    filesystem_used = payload.get("filesystem_used_percent")
+    storage_warnings = int(payload.get("storage_warning_count") or 0)
+
+    if isinstance(temperature, (int, float)) and temperature >= 85.0:
+        recommendations.append("inspect_cooling_and_thermal_path")
+    if isinstance(memory_pressure, (int, float)) and memory_pressure >= 40.0:
+        recommendations.append("investigate_memory_pressure_and_working_set")
+    if isinstance(io_pressure, (int, float)) and io_pressure >= 35.0:
+        recommendations.append("inspect_storage_latency_and_io_contention")
+    if isinstance(filesystem_used, (int, float)) and filesystem_used >= 90.0:
+        recommendations.append("free_or_expand_filesystem_capacity")
+    if storage_warnings > 0:
+        recommendations.append("inspect_smart_nvme_and_prepare_storage_replacement")
+    if not recommendations:
+        recommendations.append("inspect_recent_kernel_hardware_and_system_logs")
+    if not suppressed and (severity == "critical" or health == "critical"):
+        recommendations.append("prepare_safe_workload_drain_before_host_intervention")
+    elif not suppressed:
+        recommendations.append("review_drain_readiness_and_schedule_maintenance")
+
     return {
         "engine": "python-fallback",
-        "plan_version": "1",
+        "plan_version": "2",
         "escalation": escalation,
         "actions": actions,
+        "recommendations": recommendations,
     }
 
 
@@ -668,6 +693,11 @@ def hardware_workflow_plan(payload: dict) -> tuple[dict, str]:
         "health_status": str(payload.get("health_status") or ""),
         "predictive_state": str(payload.get("predictive_state") or ""),
         "notification_suppressed": "true" if payload.get("notification_suppressed") else "false",
+        "temperature_celsius": "" if payload.get("temperature_celsius") is None else str(payload.get("temperature_celsius")),
+        "memory_pressure_avg10": "" if payload.get("memory_pressure_avg10") is None else str(payload.get("memory_pressure_avg10")),
+        "io_pressure_avg10": "" if payload.get("io_pressure_avg10") is None else str(payload.get("io_pressure_avg10")),
+        "filesystem_used_percent": "" if payload.get("filesystem_used_percent") is None else str(payload.get("filesystem_used_percent")),
+        "storage_warning_count": str(int(payload.get("storage_warning_count") or 0)),
     }
     try:
         with httpx.Client(timeout=max(ENGINE_HTTP_TIMEOUT_SECONDS, 4.0), trust_env=False) as client:
@@ -680,13 +710,16 @@ def hardware_workflow_plan(payload: dict) -> tuple[dict, str]:
             body = response.json()
         if not isinstance(body, dict) or body.get("engine") != "java":
             raise ValueError("invalid Java hardware workflow response")
-        if body.get("plan_version") != "1" or body.get("escalation") not in {
+        if body.get("plan_version") != "2" or body.get("escalation") not in {
             "maintenance_suppressed", "immediate", "urgent"
         }:
             raise ValueError("invalid Java hardware workflow plan")
         actions = body.get("actions")
+        recommendations = body.get("recommendations")
         if not isinstance(actions, list) or any(not isinstance(item, str) for item in actions):
             raise ValueError("invalid Java hardware workflow actions")
+        if not isinstance(recommendations, list) or any(not isinstance(item, str) for item in recommendations):
+            raise ValueError("invalid Java hardware workflow recommendations")
         return body, "java"
     except (httpx.HTTPError, ValueError, TypeError):
         return fallback, "python-fallback"
