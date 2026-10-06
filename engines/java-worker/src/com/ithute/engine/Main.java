@@ -8,6 +8,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -38,7 +39,7 @@ public final class Main {
                 "service", "ithute-java-worker",
                 "engine", "java",
                 "version", "0.2.0",
-                "capabilities", List.of("health", "dmarc-aggregate-xml", "enterprise-xml-inspect")
+                "capabilities", List.of("health", "dmarc-aggregate-xml", "enterprise-xml-inspect", "hardware-incident-workflow")
             )));
         });
         server.createContext("/v1/capabilities", exchange -> {
@@ -50,7 +51,7 @@ public final class Main {
                 "service", "ithute-java-worker",
                 "engine", "java",
                 "version", "0.2.0",
-                "capabilities", List.of("dmarc-aggregate-xml", "enterprise-xml-inspect")
+                "capabilities", List.of("dmarc-aggregate-xml", "enterprise-xml-inspect", "hardware-incident-workflow")
             )));
         });
         server.createContext("/v1/dmarc/parse", exchange -> {
@@ -67,6 +68,26 @@ public final class Main {
             } catch (Exception exc) {
                 write(exchange, 422, json(Map.of(
                     "error", "invalid_dmarc_report",
+                    "detail", exc.getClass().getSimpleName()
+                )));
+            }
+        });
+
+        server.createContext("/v1/hardware/workflow", exchange -> {
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                write(exchange, 405, json(Map.of("error", "method_not_allowed")));
+                return;
+            }
+            try {
+                byte[] payload = readBounded(exchange.getRequestBody(), 4096);
+                Map<String, String> form = parseForm(payload);
+                Map<String, Object> result = planHardwareIncident(form);
+                write(exchange, 200, json(result));
+            } catch (PayloadTooLargeException exc) {
+                write(exchange, 413, json(Map.of("error", "payload_too_large")));
+            } catch (Exception exc) {
+                write(exchange, 422, json(Map.of(
+                    "error", "invalid_hardware_incident",
                     "detail", exc.getClass().getSimpleName()
                 )));
             }
@@ -121,6 +142,61 @@ public final class Main {
         factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
         factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
         return factory;
+    }
+
+
+    private static Map<String, String> parseForm(byte[] payload) {
+        String body = new String(payload, StandardCharsets.UTF_8);
+        Map<String, String> values = new LinkedHashMap<>();
+        if (body.isBlank()) return values;
+        for (String pair : body.split("&")) {
+            String[] parts = pair.split("=", 2);
+            String key = URLDecoder.decode(parts[0], StandardCharsets.UTF_8);
+            String value = parts.length > 1 ? URLDecoder.decode(parts[1], StandardCharsets.UTF_8) : "";
+            values.put(key, value);
+        }
+        return values;
+    }
+
+    private static Map<String, Object> planHardwareIncident(Map<String, String> form) {
+        String severity = lower(form.getOrDefault("severity", ""));
+        String health = lower(form.getOrDefault("health_status", ""));
+        String prediction = lower(form.getOrDefault("predictive_state", ""));
+        boolean suppressed = Boolean.parseBoolean(form.getOrDefault("notification_suppressed", "false"));
+
+        if (!List.of("high", "critical").contains(severity)) {
+            throw new IllegalArgumentException("severity must be high or critical");
+        }
+        if (health.isBlank() || prediction.isBlank()) {
+            throw new IllegalArgumentException("health_status and predictive_state are required");
+        }
+
+        List<String> actions = new ArrayList<>();
+        actions.add("record_incident");
+        String escalation;
+        if (suppressed) {
+            actions.add("suppress_notifications");
+            escalation = "maintenance_suppressed";
+        } else if ("critical".equals(severity) || "critical".equals(health)) {
+            actions.add("block_new_placement");
+            actions.add("drain_after_safety_window");
+            actions.add("notify_platform_owner");
+            actions.add("create_maintenance_task");
+            escalation = "immediate";
+        } else {
+            actions.add("block_new_placement");
+            actions.add("prepare_drain");
+            actions.add("notify_platform_owner");
+            actions.add("create_maintenance_task");
+            escalation = "urgent";
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("engine", "java");
+        result.put("plan_version", "1");
+        result.put("escalation", escalation);
+        result.put("actions", actions);
+        return result;
     }
 
 
