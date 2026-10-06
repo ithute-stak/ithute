@@ -53,6 +53,11 @@ type FleetItem = {
     aes_ni: boolean;
     avx: boolean;
     avx2: boolean;
+    vmx: boolean;
+    svm: boolean;
+    hypervisor_present: boolean;
+    hypervisor_vendor: string;
+    logical_processors: number;
   };
   predictive_risk_score?: number | null;
   predictive_state: "learning" | "stable" | "watch" | "elevated" | "high";
@@ -390,10 +395,17 @@ export default function HardwareIntelligencePage() {
                           ["AES-NI", selectedServer.cpu_native.aes_ni],
                           ["AVX", selectedServer.cpu_native.avx],
                           ["AVX2", selectedServer.cpu_native.avx2],
+                          ["VMX", selectedServer.cpu_native.vmx],
+                          ["SVM", selectedServer.cpu_native.svm],
                         ].map(([label, enabled]) => (
                           <span key={String(label)} className={`rounded-full border px-2 py-1 text-[8px] font-black ${enabled ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>{String(label)}</span>
                         ))}
                       </div>
+                      <p className="mt-2 text-[9px] font-bold text-[var(--admin-muted)]">
+                        {selectedServer.cpu_native.hypervisor_present
+                          ? `Virtualized · ${selectedServer.cpu_native.hypervisor_vendor || "hypervisor vendor not exposed"} · ${selectedServer.cpu_native.logical_processors} logical CPU(s)`
+                          : `Bare-metal or hypervisor bit not exposed · ${selectedServer.cpu_native.logical_processors} logical CPU(s)`}
+                      </p>
                     </>
                   ) : <p className="mt-2 text-[9px] text-[var(--admin-muted)]">Assembly CPU telemetry is unavailable on this host architecture.</p>}
                 </div>
