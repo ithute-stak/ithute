@@ -40,6 +40,7 @@ func readEBPFSnapshot(path string, maxAge time.Duration) (EBPFSnapshot, error) {
 	if info.Mode().Perm()&0o022 != 0 {
 		return snapshot, fmt.Errorf("eBPF snapshot must not be group/world writable")
 	}
+	// #nosec G304 -- path is stat-checked above and rejected when group/world writable.
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return snapshot, fmt.Errorf("read eBPF snapshot: %w", err)
