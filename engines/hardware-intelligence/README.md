@@ -4,7 +4,8 @@ This engine is the low-level Linux observation layer for Ithute Hardware Intelli
 
 ## Responsibility boundary
 
-- C reads physical/OS telemetry exposed by Linux: /proc, /sys, hwmon, thermal, block-device and memory signals.
+- Assembly is restricted to tiny architecture-specific CPU primitives such as CPUID and serialized cycle-counter reads. It never owns business logic or remediation.
+- C reads physical/OS telemetry exposed by Linux: /proc, /sys, hwmon, thermal, block-device and memory signals, and wraps the Assembly primitives behind a portable API.
 - eBPF observes kernel events that are difficult to infer from polling alone.
 - Rust will validate and normalise untrusted native telemetry before it reaches the control plane.
 - Go owns the long-running agent, batching, backoff and secure transport.
@@ -79,3 +80,18 @@ Hardware Intelligence keeps measurement separate from operational suppression:
 - Health and predictive risk continue to be calculated and stored during maintenance.
 - The active window is returned to the control plane so notification workflows can suppress planned-maintenance noise.
 - Acknowledgement is tied to one immutable telemetry snapshot. A new sample is therefore unacknowledged by default, preventing an old acknowledgement from hiding a new failure.
+
+
+## Assembly CPU precision layer
+
+On x86_64 hosts the probe links a deliberately small handwritten Assembly layer. It currently exposes:
+
+- CPUID-backed CPU vendor, family, model and stepping
+- invariant-TSC capability
+- RDTSCP capability
+- AES-NI, AVX and AVX2 hardware capability bits
+- a serialized RDTSC cycle-counter sample for low-level timing diagnostics
+
+The Assembly ABI is wrapped by `src/asm_helpers.c`; the rest of Ithute never calls handwritten Assembly directly. On non-x86_64 hosts the same wrapper returns `available=false`, so Hardware Intelligence remains portable instead of failing deployment.
+
+The absolute cycle-counter value is diagnostic metadata only. It must not be treated as wall-clock time or compared across host reboots, CPU migrations or unrelated servers.
