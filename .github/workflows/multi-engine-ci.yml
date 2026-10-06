@@ -218,17 +218,23 @@ jobs:
           code="$(curl -sS -o /tmp/xml-xxe.json -w '%{http_code}' -X POST -H 'Content-Type: application/xml' --data-binary @/tmp/xxe.xml http://127.0.0.1:18081/v1/xml/inspect)"
           test "$code" = "422"
           curl -fsS -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
-            --data 'severity=critical&health_status=critical&predictive_state=high&notification_suppressed=false' \
+            --data 'severity=critical&health_status=critical&predictive_state=high&notification_suppressed=false&temperature_celsius=91&memory_pressure_avg10=45&io_pressure_avg10=40&filesystem_used_percent=94&storage_warning_count=2' \
             http://127.0.0.1:18081/v1/hardware/workflow > /tmp/hardware-workflow-java.json
           python3 - <<'PY'
           import json
           body=json.load(open('/tmp/hardware-workflow-java.json'))
           assert body['engine']=='java'
-          assert body['plan_version']=='1'
+          assert body['plan_version']=='2'
           assert body['escalation']=='immediate'
           assert 'block_new_placement' in body['actions']
           assert 'drain_after_safety_window' in body['actions']
           assert 'notify_platform_owner' in body['actions']
+          assert 'inspect_cooling_and_thermal_path' in body['recommendations']
+          assert 'investigate_memory_pressure_and_working_set' in body['recommendations']
+          assert 'inspect_storage_latency_and_io_contention' in body['recommendations']
+          assert 'free_or_expand_filesystem_capacity' in body['recommendations']
+          assert 'inspect_smart_nvme_and_prepare_storage_replacement' in body['recommendations']
+          assert 'prepare_safe_workload_drain_before_host_intervention' in body['recommendations']
           PY
 
       - name: Build Go worker image
