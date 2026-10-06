@@ -129,6 +129,46 @@ def seed_first_party_clients() -> None:
                 db.add(Application(client_id=client_id, name=name, is_active=True))
             elif existing.name != name:
                 existing.name = name
+
+        notification_secret = settings.notification_gateway_secret.strip()
+        if notification_secret:
+            if len(notification_secret) < 32:
+                raise RuntimeError("AUTH_NOTIFICATION_GATEWAY_SECRET must be at least 32 characters")
+            from .managed_service_models import ManagedServiceClient, ManagedServiceCredential
+            from .models import utcnow
+            from .service_clients import hash_service_secret
+
+            client = db.scalar(
+                select(ManagedServiceClient).where(
+                    ManagedServiceClient.client_id == "ithute-notification"
+                )
+            )
+            if client is None:
+                raise RuntimeError("ithute-notification managed service client migration is missing")
+            digest = hash_service_secret(notification_secret)
+            credential = db.scalar(
+                select(ManagedServiceCredential).where(
+                    ManagedServiceCredential.service_client_id == client.id,
+                    ManagedServiceCredential.secret_hash == digest,
+                )
+            )
+            if credential is None:
+                credential = ManagedServiceCredential(
+                    service_client_id=client.id,
+                    secret_hash=digest,
+                    secret_prefix=notification_secret[:18],
+                )
+                db.add(credential)
+            credential.revoked_at = None
+            now = utcnow()
+            for other in db.scalars(
+                select(ManagedServiceCredential).where(
+                    ManagedServiceCredential.service_client_id == client.id,
+                    ManagedServiceCredential.secret_hash != digest,
+                    ManagedServiceCredential.revoked_at.is_(None),
+                )
+            ).all():
+                other.revoked_at = now
         db.commit()
 
 
