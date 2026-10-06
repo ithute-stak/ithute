@@ -240,12 +240,18 @@ def test_python_hardware_workflow_plan_critical():
     assert "block_new_placement" in plan["actions"]
     assert "drain_after_safety_window" in plan["actions"]
     assert "notify_platform_owner" in plan["actions"]
-    assert plan["plan_version"] == "2"
+    assert plan["plan_version"] == "3"
     assert "inspect_cooling_and_thermal_path" in plan["recommendations"]
     assert "inspect_storage_latency_and_io_contention" in plan["recommendations"]
     assert "free_or_expand_filesystem_capacity" in plan["recommendations"]
     assert "inspect_smart_nvme_and_prepare_storage_replacement" in plan["recommendations"]
     assert "prepare_safe_workload_drain_before_host_intervention" in plan["recommendations"]
+    ranked = plan["ranked_recommendations"]
+    assert ranked == sorted(ranked, key=lambda item: item["priority_score"], reverse=True)
+    assert all(0 <= item["priority_score"] <= 100 for item in ranked)
+    assert all(0 <= item["confidence_percent"] <= 100 for item in ranked)
+    assert all(item["operator_approval_required"] is True for item in ranked)
+    assert any(item["drain_recommended"] for item in ranked)
 
 
 def test_python_hardware_workflow_plan_respects_maintenance_suppression():
@@ -259,6 +265,7 @@ def test_python_hardware_workflow_plan_respects_maintenance_suppression():
     assert plan["actions"] == ["record_incident", "suppress_notifications"]
     assert plan["plan_version"] == "2"
     assert "inspect_recent_kernel_hardware_and_system_logs" in plan["recommendations"]
+    assert plan["ranked_recommendations"]
 
 
 def test_hardware_workflow_plan_falls_back_when_java_is_offline(monkeypatch):
@@ -282,5 +289,10 @@ def test_hardware_workflow_plan_falls_back_when_java_is_offline(monkeypatch):
     assert engine == "python-fallback"
     assert body["escalation"] == "urgent"
     assert "prepare_drain" in body["actions"]
-    assert body["plan_version"] == "2"
+    assert body["plan_version"] == "3"
     assert "review_drain_readiness_and_schedule_maintenance" in body["recommendations"]
+    assert body["ranked_recommendations"] == sorted(
+        body["ranked_recommendations"],
+        key=lambda item: item["priority_score"],
+        reverse=True,
+    )
