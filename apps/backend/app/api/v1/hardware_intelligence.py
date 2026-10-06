@@ -238,41 +238,38 @@ def _remediation_outcome_stats(db: Session) -> dict[str, dict[str, float | int]]
     rows = db.execute(
         select(
             HardwareMaintenanceTask.remediation_action,
-            HardwareMaintenanceTask.remediation_outcome,
             HardwareMaintenanceTask.measured_outcome,
+            HardwareMaintenanceTask.verification_confidence,
         )
         .where(
             HardwareMaintenanceTask.status == "completed",
             HardwareMaintenanceTask.remediation_action != "",
+            HardwareMaintenanceTask.measured_outcome.in_(["resolved", "improved", "no_change", "worsened"]),
         )
     ).all()
-    allowed = {"resolved", "improved", "no_change", "worsened"}
     totals: dict[str, dict[str, float | int]] = {}
     impact = {"resolved": 1.0, "improved": 0.5, "no_change": 0.0, "worsened": -1.0}
     positive = {"resolved": 1.0, "improved": 0.5, "no_change": 0.0, "worsened": 0.0}
-    for action, operator_outcome, measured_outcome in rows:
+    for action, measured_outcome, verification_confidence in rows:
         key = str(action or "").strip()
         outcome = str(measured_outcome or "").strip()
-        verified = outcome in allowed
-        if not verified:
-            outcome = str(operator_outcome or "").strip()
-        if not key or outcome not in allowed:
+        if not key or outcome not in impact:
             continue
-        bucket = totals.setdefault(key, {"samples": 0, "verified_samples": 0, "impact_sum": 0.0, "positive_sum": 0.0})
+        weight = max(0.25, min(1.0, float(verification_confidence or 0.0)))
+        bucket = totals.setdefault(key, {"samples": 0, "weight_sum": 0.0, "impact_sum": 0.0, "positive_sum": 0.0})
         bucket["samples"] = int(bucket["samples"]) + 1
-        bucket["verified_samples"] = int(bucket["verified_samples"]) + (1 if verified else 0)
-        bucket["impact_sum"] = float(bucket["impact_sum"]) + impact[outcome]
-        bucket["positive_sum"] = float(bucket["positive_sum"]) + positive[outcome]
+        bucket["weight_sum"] = float(bucket["weight_sum"]) + weight
+        bucket["impact_sum"] = float(bucket["impact_sum"]) + impact[outcome] * weight
+        bucket["positive_sum"] = float(bucket["positive_sum"]) + positive[outcome] * weight
     return {
         action: {
             "samples": int(values["samples"]),
-            "verified_samples": int(values["verified_samples"]),
-            "mean_impact": round(float(values["impact_sum"]) / max(1, int(values["samples"])), 3),
-            "success_rate": round(float(values["positive_sum"]) / max(1, int(values["samples"])), 3),
+            "verified_samples": int(values["samples"]),
+            "mean_impact": round(float(values["impact_sum"]) / max(0.25, float(values["weight_sum"])), 3),
+            "success_rate": round(float(values["positive_sum"]) / max(0.25, float(values["weight_sum"])), 3),
         }
         for action, values in totals.items()
     }
-
 
 def _apply_remediation_learning(workflow_plan: dict[str, Any], stats: dict[str, dict[str, float | int]]) -> dict[str, Any]:
     ranked = workflow_plan.get("ranked_recommendations")
@@ -1164,6 +1161,16 @@ def hardware_fleet_health(
         maintenance_task = db.scalar(
             select(HardwareMaintenanceTask).where(HardwareMaintenanceTask.incident_id == incident.id)
         ) if incident else None
+        latest_remediation_task = db.scalar(
+            select(HardwareMaintenanceTask)
+            .where(
+                HardwareMaintenanceTask.server_id == server.id,
+                HardwareMaintenanceTask.status == "completed",
+                HardwareMaintenanceTask.remediation_action != "",
+            )
+            .order_by(HardwareMaintenanceTask.completed_at.desc())
+            .limit(1)
+        )
         incident_deliveries = list(
             db.scalars(
                 select(HardwareIncidentDelivery).where(HardwareIncidentDelivery.incident_id == incident.id)
@@ -1255,6 +1262,17 @@ def hardware_fleet_health(
                 "ends_at": maintenance.ends_at.isoformat() if maintenance else None,
                 "suppress_notifications": bool(maintenance and maintenance.suppress_notifications),
             },
+            "latest_remediation": {
+                "id": str(latest_remediation_task.id),
+                "remediation_action": latest_remediation_task.remediation_action,
+                "reported_outcome": latest_remediation_task.remediation_outcome,
+                "measured_outcome": latest_remediation_task.measured_outcome,
+                "verification_confidence": latest_remediation_task.verification_confidence,
+                "verification_sample_count": latest_remediation_task.verification_sample_count,
+                "verification_evidence": json.loads(latest_remediation_task.verification_evidence_json or "[]"),
+                "verification_evaluated_at": latest_remediation_task.verification_evaluated_at.isoformat() if latest_remediation_task.verification_evaluated_at else None,
+                "completed_at": latest_remediation_task.completed_at.isoformat() if latest_remediation_task.completed_at else None,
+            } if latest_remediation_task else None,
             "acknowledgement": {
                 "acknowledged": acknowledgement is not None,
                 "note": acknowledgement.note if acknowledgement else None,
