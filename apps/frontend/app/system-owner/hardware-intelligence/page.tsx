@@ -110,6 +110,13 @@ type FleetItem = {
   } | null;
 };
 
+type OperationsSummary = {
+  open_incidents: number;
+  incidents_by_severity: Record<string, number>;
+  tasks: Record<string, number>;
+  deliveries: Record<string, number>;
+};
+
 type Fleet = {
   generated_at: string;
   total: number;
@@ -193,6 +200,7 @@ export default function HardwareIntelligencePage() {
   const searchParams = useSearchParams();
   const requestedServer = searchParams.get("server") || "";
   const [fleet, setFleet] = useState<Fleet | null>(null);
+  const [operations, setOperations] = useState<OperationsSummary | null>(null);
   const [selected, setSelected] = useState<string>("");
   const [history, setHistory] = useState<History | null>(null);
   const [loading, setLoading] = useState(true);
@@ -209,8 +217,12 @@ export default function HardwareIntelligencePage() {
     setLoading(true);
     setError("");
     try {
-      const next = await apiJson<Fleet>("/hardware-intelligence/fleet", { ttlMs: 0, force: true });
+      const [next, ops] = await Promise.all([
+        apiJson<Fleet>("/hardware-intelligence/fleet", { ttlMs: 0, force: true }),
+        apiJson<OperationsSummary>("/hardware-intelligence/operations-summary", { ttlMs: 0, force: true }),
+      ]);
       setFleet(next);
+      setOperations(ops);
       setSelected((current) => {
         if (requestedServer && next.items.some((item) => item.server_id === requestedServer)) return requestedServer;
         return current || next.items[0]?.server_id || "";
@@ -288,6 +300,23 @@ export default function HardwareIntelligencePage() {
     }
   }, [fleet, selected, taskNote, loadFleet]);
 
+  const retryIncidentNotifications = useCallback(async () => {
+    const incident = fleet?.items.find((item) => item.server_id === selected)?.incident;
+    if (!incident) return;
+    setActionLoading(true);
+    setActionError("");
+    try {
+      await apiMutation(`/hardware-intelligence/incidents/${incident.id}/retry-notifications`, {
+        method: "POST",
+      }, ["/hardware-intelligence/fleet", "/hardware-intelligence/operations-summary"]);
+      await loadFleet();
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Unable to retry hardware incident notifications.");
+    } finally {
+      setActionLoading(false);
+    }
+  }, [fleet, selected, loadFleet]);
+
   const loadHistory = useCallback(async (serverId: string) => {
     if (!serverId) {
       setHistory(null);
@@ -347,6 +376,20 @@ export default function HardwareIntelligencePage() {
             <article key={String(label)} className="surface-card p-4">
               <div className="flex items-center justify-between"><p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">{String(label)}</p><Icon size={15} /></div>
               <p className="mt-3 text-3xl font-black">{String(value)}</p>
+            </article>
+          ))}
+        </section>
+
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            ["Open incidents", operations?.open_incidents ?? 0],
+            ["Maintenance work", (operations?.tasks.open ?? 0) + (operations?.tasks.in_progress ?? 0)],
+            ["Delivery retries", operations?.deliveries.retry ?? 0],
+            ["Delivery failures", operations?.deliveries.failed ?? 0],
+          ].map(([label, value]) => (
+            <article key={String(label)} className="surface-card p-4">
+              <p className="text-[8px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">{String(label)}</p>
+              <p className="mt-2 text-2xl font-black">{String(value)}</p>
             </article>
           ))}
         </section>
@@ -424,6 +467,11 @@ export default function HardwareIntelligencePage() {
                       {selectedServer.incident.workflow_plan?.escalation ? <span>Escalation {selectedServer.incident.workflow_plan.escalation}</span> : null}
                       {selectedServer.incident.notification_suppressed ? <span>Notifications suppressed by maintenance</span> : null}
                     </div>
+                    {(selectedServer.incident.deliveries || []).some((delivery) => ["failed", "retry"].includes(delivery.status)) && !selectedServer.incident.notification_suppressed ? (
+                      <button disabled={actionLoading} onClick={() => void retryIncidentNotifications()} className="mt-3 rounded-lg border border-current/30 bg-white/70 px-3 py-2 text-[8px] font-black uppercase disabled:opacity-50">
+                        Retry failed notifications
+                      </button>
+                    ) : null}
                     {selectedServer.incident.deliveries?.length ? (
                       <div className="mt-3 flex flex-wrap gap-1.5">
                         {selectedServer.incident.deliveries.map((delivery) => (
