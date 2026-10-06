@@ -229,12 +229,23 @@ def test_python_hardware_workflow_plan_critical():
         "health_status": "critical",
         "predictive_state": "high",
         "notification_suppressed": False,
+        "temperature_celsius": 91.0,
+        "memory_pressure_avg10": 12.0,
+        "io_pressure_avg10": 44.0,
+        "filesystem_used_percent": 93.0,
+        "storage_warning_count": 2,
     })
     assert plan["engine"] == "python-fallback"
     assert plan["escalation"] == "immediate"
     assert "block_new_placement" in plan["actions"]
     assert "drain_after_safety_window" in plan["actions"]
     assert "notify_platform_owner" in plan["actions"]
+    assert plan["plan_version"] == "2"
+    assert "inspect_cooling_and_thermal_path" in plan["recommendations"]
+    assert "inspect_storage_latency_and_io_contention" in plan["recommendations"]
+    assert "free_or_expand_filesystem_capacity" in plan["recommendations"]
+    assert "inspect_smart_nvme_and_prepare_storage_replacement" in plan["recommendations"]
+    assert "prepare_safe_workload_drain_before_host_intervention" in plan["recommendations"]
 
 
 def test_python_hardware_workflow_plan_respects_maintenance_suppression():
@@ -246,6 +257,8 @@ def test_python_hardware_workflow_plan_respects_maintenance_suppression():
     })
     assert plan["escalation"] == "maintenance_suppressed"
     assert plan["actions"] == ["record_incident", "suppress_notifications"]
+    assert plan["plan_version"] == "2"
+    assert "inspect_recent_kernel_hardware_and_system_logs" in plan["recommendations"]
 
 
 def test_hardware_workflow_plan_falls_back_when_java_is_offline(monkeypatch):
@@ -269,3 +282,5 @@ def test_hardware_workflow_plan_falls_back_when_java_is_offline(monkeypatch):
     assert engine == "python-fallback"
     assert body["escalation"] == "urgent"
     assert "prepare_drain" in body["actions"]
+    assert body["plan_version"] == "2"
+    assert "review_drain_readiness_and_schedule_maintenance" in body["recommendations"]
