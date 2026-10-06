@@ -18,6 +18,7 @@ def upgrade() -> None:
     op.create_table(
         "mail_threat_model_versions",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
         sa.Column("name", sa.String(128), nullable=False),
         sa.Column("version", sa.String(96), nullable=False),
         sa.Column("algorithm", sa.String(96), nullable=False),
@@ -32,13 +33,15 @@ def upgrade() -> None:
         sa.Column("rollback_reason", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.UniqueConstraint("name", "version", name="uq_mail_threat_model_name_version"),
+        sa.UniqueConstraint("tenant_id", "name", "version", name="uq_mail_threat_model_tenant_name_version"),
     )
+    op.create_index("ix_mail_threat_model_tenant", "mail_threat_model_versions", ["tenant_id"])
     op.create_index("ix_mail_threat_model_state", "mail_threat_model_versions", ["lifecycle_state"])
     op.create_index("ix_mail_threat_model_created", "mail_threat_model_versions", ["created_at"])
 
 
 def downgrade() -> None:
     op.drop_index("ix_mail_threat_model_created", table_name="mail_threat_model_versions")
+    op.drop_index("ix_mail_threat_model_tenant", table_name="mail_threat_model_versions")
     op.drop_index("ix_mail_threat_model_state", table_name="mail_threat_model_versions")
     op.drop_table("mail_threat_model_versions")
