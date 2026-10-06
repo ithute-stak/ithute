@@ -39,6 +39,7 @@ class HardwareTelemetrySnapshot(Base):
     predictive_state: Mapped[str | None] = mapped_column(String(24), nullable=True, index=True)
     predictive_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     predictive_evidence_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    predictive_models_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )
