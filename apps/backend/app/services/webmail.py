@@ -438,6 +438,61 @@ def messages(address: str, password: str, folder: str = "INBOX", limit: int = 50
         _close_imap(client)
 
 
+
+def messages_with_bodies(
+    address: str,
+    password: str,
+    folder: str = "INBOX",
+    limit: int = 20,
+    offset: int = 0,
+    query: str = "",
+) -> dict:
+    """Fetch a bounded page of full messages over one IMAP session.
+
+    This is intended for intelligence/scanning workloads. It uses BODY.PEEK so
+    analysis never marks a message as read merely because a model inspected it.
+    """
+    client = _imap(address, password)
+    try:
+        _select(client, folder, readonly=True)
+        if query.strip():
+            safe = query.strip().replace("\\", "\\\\").replace('"', '\\"')[:255]
+            status, data = client.uid("search", None, "TEXT", f'"{safe}"')
+        else:
+            status, data = client.uid("search", None, "ALL")
+        if status != "OK":
+            raise WebmailError("Unable to search mailbox")
+
+        uids = data[0].decode(errors="replace").split() if data and data[0] else []
+        uids.reverse()
+        selected = uids[offset : offset + limit]
+        rows = []
+        skipped = 0
+        for uid in selected:
+            try:
+                raw, meta = _fetch_raw(client, uid, mark_seen=False)
+                rows.append(_message_json(uid, raw, meta, include_body=True))
+            except Exception as exc:
+                skipped += 1
+                logger.warning(
+                    "Skipping unreadable intelligence message folder=%s uid=%s: %s",
+                    folder,
+                    uid,
+                    exc,
+                )
+        return {
+            "items": rows,
+            "total": len(uids),
+            "folder": folder,
+            "limit": limit,
+            "offset": offset,
+            "query": query.strip(),
+            "skipped": skipped,
+        }
+    finally:
+        _close_imap(client)
+
+
 def message(address: str, password: str, uid: str, folder: str = "INBOX") -> dict:
     client = _imap(address, password)
     try:
