@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0089_mail_threat_models"
+LATEST_MIGRATION_HEAD = "0090_mail_threat_shadow"
 
 
 def test_alembic_has_one_consolidated_head():
