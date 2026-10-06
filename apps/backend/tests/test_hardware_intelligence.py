@@ -145,3 +145,30 @@ def test_hardware_incident_reconciliation_contract_exists():
     assert "notification_suppressed=suppressed" in api
     assert 'category="hardware_intelligence"' in api
     assert '@router.get("/incidents")' in api
+
+
+
+def test_hardware_notification_and_maintenance_workflow_contract_exists():
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]
+    api = (backend / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    models = (backend / "app" / "models" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    worker = (backend / "app" / "services" / "hardware_notifications.py").read_text(encoding="utf-8")
+    compose = (repo / "compose.production.yml").read_text(encoding="utf-8")
+    page = (repo / "apps" / "frontend" / "app" / "system-owner" / "hardware-intelligence" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "class HardwareIncidentDelivery" in models
+    assert "class HardwareMaintenanceTask" in models
+    assert "_queue_hardware_incident_notifications" in api
+    assert "_ensure_hardware_maintenance_task" in api
+    assert '@router.get("/maintenance-tasks")' in api
+    assert '@router.post("/maintenance-tasks/{task_id}/status")' in api
+    assert "dispatch_hardware_incident_deliveries" in worker
+    assert "incident.status != \"open\"" in worker
+    assert "incident.notification_suppressed" in worker
+    assert "ithute-hardware-notification-worker:" in compose
+    assert "ithute-notification" in compose
+    assert 'searchParams.get("server")' in page
+    assert "Incident maintenance task" in page
