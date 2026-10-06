@@ -189,15 +189,20 @@ def _ensure_hardware_maintenance_task(
     severity: str,
 ) -> HardwareMaintenanceTask | None:
     actions = workflow_plan.get("actions") if isinstance(workflow_plan.get("actions"), list) else []
+    recommendations = workflow_plan.get("recommendations") if isinstance(workflow_plan.get("recommendations"), list) else []
     if "create_maintenance_task" not in actions:
         return None
+    recommendation_text = "\n".join(
+        f"- {str(item).replace('_', ' ')}" for item in recommendations[:10]
+    )
+    task_description = summary if not recommendation_text else f"{summary}\n\nRecommended remediation:\n{recommendation_text}"
     existing = db.scalar(
         select(HardwareMaintenanceTask).where(HardwareMaintenanceTask.incident_id == incident.id)
     )
     if existing is not None:
         existing.priority = severity
         existing.title = title
-        existing.description = summary
+        existing.description = task_description
         return existing
 
     task = HardwareMaintenanceTask(
@@ -206,7 +211,7 @@ def _ensure_hardware_maintenance_task(
         priority=severity,
         status="open",
         title=title,
-        description=summary,
+        description=task_description,
     )
     db.add(task)
     return task
@@ -240,6 +245,11 @@ def _reconcile_hardware_incident(
         "health_status": str(health.get("status") or "unknown"),
         "predictive_state": predictive_state,
         "notification_suppressed": suppressed,
+        "temperature_celsius": snapshot.temperature_celsius,
+        "memory_pressure_avg10": snapshot.memory_pressure_avg10,
+        "io_pressure_avg10": snapshot.io_pressure_avg10,
+        "filesystem_used_percent": snapshot.filesystem_used_percent,
+        "storage_warning_count": snapshot.storage_warning_count,
     })
     workflow_plan = {**workflow_plan, "engine": workflow_engine}
 
