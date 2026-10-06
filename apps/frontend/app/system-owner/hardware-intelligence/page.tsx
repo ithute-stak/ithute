@@ -227,6 +227,17 @@ type OperationsSummary = {
       fallback: string;
     };
   };
+  retraining_policy?: {
+    minimum_new_verified_labels: number;
+    minimum_positive_labels: number;
+    minimum_negative_labels: number;
+    minimum_distinct_servers: number;
+    minimum_retrain_interval_hours: number;
+    minimum_quality_score_delta: number;
+    candidate_failure_action: string;
+    candidate_success_action: string;
+    direct_activation_allowed: boolean;
+  };
 };
 
 type Fleet = {
@@ -648,6 +659,19 @@ export default function HardwareIntelligencePage() {
             </div>
             <p className="mt-3 text-[8px] leading-4 text-[var(--admin-muted)]">
               AI gates: {(operations?.shadow_validation_policy?.algorithms || ["classification metrics", "calibration", "PSI drift", "Page-Hinkley"]).join(" · ")}
+            </p>
+          </div>
+          <div className="mt-3 rounded-xl border border-[var(--admin-line)] p-4">
+            <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Automated retraining controller</p>
+            <p className="mt-1 text-[10px] font-black">Verified evidence → Train → Compare champion → Shadow or reject</p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4 text-[8px]">
+              <div className="rounded-lg bg-[#f7faf8] p-2">New labels ≥ {operations?.retraining_policy?.minimum_new_verified_labels ?? 24}</div>
+              <div className="rounded-lg bg-[#f7faf8] p-2">Per class ≥ {operations?.retraining_policy?.minimum_positive_labels ?? 8}</div>
+              <div className="rounded-lg bg-[#f7faf8] p-2">Servers ≥ {operations?.retraining_policy?.minimum_distinct_servers ?? 3}</div>
+              <div className="rounded-lg bg-[#f7faf8] p-2">Retrain interval ≥ {operations?.retraining_policy?.minimum_retrain_interval_hours ?? 24}h</div>
+            </div>
+            <p className="mt-3 text-[8px] leading-4 text-[var(--admin-muted)]">
+              Candidate must improve champion quality score by at least {(operations?.retraining_policy?.minimum_quality_score_delta ?? 0.5).toFixed(2)} points. Passing candidates enter shadow only; direct activation remains disabled.
             </p>
           </div>
         </section>
