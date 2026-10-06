@@ -143,7 +143,7 @@ def test_notification_gateway_managed_identity_bootstraps_from_hashed_secret() -
     assert '"ithute-notification"' in migration
     assert '"push.send.delegated"' in migration
     assert "notification_gateway_secret" in config
-    assert "AUTH_NOTIFICATION_GATEWAY_SECRET" in main
+    assert "settings.notification_gateway_secret" in main
     assert "hash_service_secret(notification_secret)" in main
     assert "ManagedServiceCredential" in main
     assert "other.revoked_at = now" in main
