@@ -652,36 +652,138 @@ def python_hardware_workflow_plan(payload: dict) -> dict:
             "create_maintenance_task",
         ])
         escalation = "urgent"
-    recommendations = []
     temperature = payload.get("temperature_celsius")
     memory_pressure = payload.get("memory_pressure_avg10")
     io_pressure = payload.get("io_pressure_avg10")
     filesystem_used = payload.get("filesystem_used_percent")
     storage_warnings = int(payload.get("storage_warning_count") or 0)
+    predictive_risk = max(0, min(100, int(payload.get("predictive_risk_score") or 0)))
+    predictive_confidence = payload.get("predictive_confidence")
+    predictive_confidence = (
+        max(0.0, min(1.0, float(predictive_confidence)))
+        if isinstance(predictive_confidence, (int, float))
+        else 0.0
+    )
+
+    def priority_score(signal: float) -> int:
+        severity_weight = 35.0 if severity == "critical" else 25.0
+        score = (
+            severity_weight
+            + max(0.0, min(1.0, signal)) * 30.0
+            + predictive_confidence * 20.0
+            + predictive_risk * 0.15
+        )
+        return max(0, min(100, round(score)))
+
+    def urgency(signal: float) -> str:
+        if severity == "critical" or signal >= 0.85:
+            return "critical"
+        if signal >= 0.55:
+            return "high"
+        return "medium"
+
+    def confidence(signal: float) -> int:
+        blended = predictive_confidence * 0.65 + max(0.0, min(1.0, signal)) * 0.35
+        return max(0, min(100, round(blended * 100)))
+
+    ranked_recommendations: list[dict] = []
+
+    def add(
+        action: str,
+        signal: float,
+        evidence: list[str],
+        expected_impact: str,
+        drain_recommended: bool = False,
+        forced_urgency: str | None = None,
+    ) -> None:
+        ranked_recommendations.append({
+            "action": action,
+            "priority_score": priority_score(signal),
+            "urgency": forced_urgency or urgency(signal),
+            "confidence_percent": confidence(signal),
+            "evidence": evidence,
+            "expected_impact": expected_impact,
+            "drain_recommended": drain_recommended,
+            "operator_approval_required": True,
+        })
 
     if isinstance(temperature, (int, float)) and temperature >= 85.0:
-        recommendations.append("inspect_cooling_and_thermal_path")
+        signal = min(1.0, max(0.0, (float(temperature) - 80.0) / 20.0))
+        add(
+            "inspect_cooling_and_thermal_path",
+            signal,
+            [f"temperature_celsius={float(temperature):.1f}"],
+            "Reduce thermal throttling and prevent heat-related component degradation.",
+        )
     if isinstance(memory_pressure, (int, float)) and memory_pressure >= 40.0:
-        recommendations.append("investigate_memory_pressure_and_working_set")
+        signal = min(1.0, float(memory_pressure) / 100.0)
+        add(
+            "investigate_memory_pressure_and_working_set",
+            signal,
+            [f"memory_pressure_avg10={float(memory_pressure):.1f}"],
+            "Reduce OOM risk, paging pressure, and application instability.",
+        )
     if isinstance(io_pressure, (int, float)) and io_pressure >= 35.0:
-        recommendations.append("inspect_storage_latency_and_io_contention")
+        signal = min(1.0, float(io_pressure) / 100.0)
+        add(
+            "inspect_storage_latency_and_io_contention",
+            signal,
+            [f"io_pressure_avg10={float(io_pressure):.1f}"],
+            "Identify storage contention before latency causes workload failure.",
+        )
     if isinstance(filesystem_used, (int, float)) and filesystem_used >= 90.0:
-        recommendations.append("free_or_expand_filesystem_capacity")
+        signal = min(1.0, max(0.0, (float(filesystem_used) - 85.0) / 15.0))
+        add(
+            "free_or_expand_filesystem_capacity",
+            signal,
+            [f"filesystem_used_percent={float(filesystem_used):.1f}"],
+            "Prevent write failures, database corruption risk, and service interruption from disk exhaustion.",
+        )
     if storage_warnings > 0:
-        recommendations.append("inspect_smart_nvme_and_prepare_storage_replacement")
-    if not recommendations:
-        recommendations.append("inspect_recent_kernel_hardware_and_system_logs")
+        signal = min(1.0, 0.55 + storage_warnings * 0.12)
+        add(
+            "inspect_smart_nvme_and_prepare_storage_replacement",
+            signal,
+            [f"storage_warning_count={storage_warnings}"],
+            "Reduce the chance of data loss or sudden device failure.",
+            drain_recommended=True,
+        )
+    if not ranked_recommendations:
+        add(
+            "inspect_recent_kernel_hardware_and_system_logs",
+            0.35,
+            ["no single threshold explains the current risk"],
+            "Correlate machine-check, driver, kernel, and hardware events with the predictive alert.",
+            forced_urgency="high" if severity == "high" else "critical",
+        )
     if not suppressed and (severity == "critical" or health == "critical"):
-        recommendations.append("prepare_safe_workload_drain_before_host_intervention")
+        add(
+            "prepare_safe_workload_drain_before_host_intervention",
+            0.95,
+            ["critical hardware health or escalation"],
+            "Protect running workloads before physical or host-level intervention.",
+            drain_recommended=True,
+            forced_urgency="critical",
+        )
     elif not suppressed:
-        recommendations.append("review_drain_readiness_and_schedule_maintenance")
+        add(
+            "review_drain_readiness_and_schedule_maintenance",
+            0.55,
+            ["high predictive hardware risk"],
+            "Prepare a controlled maintenance path before risk becomes service-impacting.",
+            forced_urgency="high",
+        )
+
+    ranked_recommendations.sort(key=lambda item: item["priority_score"], reverse=True)
+    recommendations = [str(item["action"]) for item in ranked_recommendations]
 
     return {
         "engine": "python-fallback",
-        "plan_version": "2",
+        "plan_version": "3",
         "escalation": escalation,
         "actions": actions,
         "recommendations": recommendations,
+        "ranked_recommendations": ranked_recommendations,
     }
 
 
@@ -698,6 +800,8 @@ def hardware_workflow_plan(payload: dict) -> tuple[dict, str]:
         "io_pressure_avg10": "" if payload.get("io_pressure_avg10") is None else str(payload.get("io_pressure_avg10")),
         "filesystem_used_percent": "" if payload.get("filesystem_used_percent") is None else str(payload.get("filesystem_used_percent")),
         "storage_warning_count": str(int(payload.get("storage_warning_count") or 0)),
+        "predictive_risk_score": str(int(payload.get("predictive_risk_score") or 0)),
+        "predictive_confidence": "" if payload.get("predictive_confidence") is None else str(payload.get("predictive_confidence")),
     }
     try:
         with httpx.Client(timeout=max(ENGINE_HTTP_TIMEOUT_SECONDS, 4.0), trust_env=False) as client:
@@ -710,16 +814,29 @@ def hardware_workflow_plan(payload: dict) -> tuple[dict, str]:
             body = response.json()
         if not isinstance(body, dict) or body.get("engine") != "java":
             raise ValueError("invalid Java hardware workflow response")
-        if body.get("plan_version") != "2" or body.get("escalation") not in {
+        if body.get("plan_version") != "3" or body.get("escalation") not in {
             "maintenance_suppressed", "immediate", "urgent"
         }:
             raise ValueError("invalid Java hardware workflow plan")
         actions = body.get("actions")
         recommendations = body.get("recommendations")
+        ranked = body.get("ranked_recommendations")
         if not isinstance(actions, list) or any(not isinstance(item, str) for item in actions):
             raise ValueError("invalid Java hardware workflow actions")
         if not isinstance(recommendations, list) or any(not isinstance(item, str) for item in recommendations):
             raise ValueError("invalid Java hardware workflow recommendations")
+        if not isinstance(ranked, list) or any(not isinstance(item, dict) for item in ranked):
+            raise ValueError("invalid Java ranked hardware remediation recommendations")
+        for item in ranked:
+            if (
+                not isinstance(item.get("action"), str)
+                or not isinstance(item.get("priority_score"), int)
+                or not isinstance(item.get("confidence_percent"), int)
+                or not isinstance(item.get("urgency"), str)
+                or not isinstance(item.get("evidence"), list)
+                or not isinstance(item.get("expected_impact"), str)
+            ):
+                raise ValueError("invalid Java ranked hardware remediation shape")
         return body, "java"
     except (httpx.HTTPError, ValueError, TypeError):
         return fallback, "python-fallback"
