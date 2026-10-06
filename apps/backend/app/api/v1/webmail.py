@@ -1,4 +1,5 @@
 import re
+from time import perf_counter
 from datetime import datetime, timezone
 from typing import Annotated
 from urllib.parse import quote
@@ -10,11 +11,14 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.models import MailNode, PhishingFinding
+from app.models import MailNode, MailThreatModelVersion, MailThreatShadowPrediction, PhishingFinding
 from app.models.mail import Mailbox, MailboxStatus, MailboxStorageType
 from app.services.mailboxes import normalize_destination
 from app.services.mail_intelligence import analyze_mail_message
 from app.services.mail_intelligence_learning import feature_snapshot, training_readiness
+from app.services.mail_sender_behavior import observe_sender_behavior
+from app.services.mail_threat_model import predict
+from app.services.mail_threat_shadow import baseline_probabilities
 from app.services.security_audit import record_webmail_security_event
 from app.services.security_controls import SecurityControlUnavailable, clear_webmail_login_failures, record_webmail_login_failure, webmail_login_allowed
 from app.services.webmail import (
@@ -207,6 +211,100 @@ def _security_event(db: Session, request: Request, address: str, action: str, ou
         raise HTTPException(status_code=503, detail="Security audit service is unavailable") from exc
 
 
+def _resolve_shadow_predictions(
+    db: Session,
+    *,
+    mailbox_id,
+    message_ref: str,
+    label: str,
+) -> None:
+    rows = db.scalars(
+        select(MailThreatShadowPrediction).where(
+            MailThreatShadowPrediction.mailbox_id == mailbox_id,
+            MailThreatShadowPrediction.message_ref == message_ref,
+            MailThreatShadowPrediction.verified_label.is_(None),
+        )
+    ).all()
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        row.verified_label = label
+        row.resolved_at = now
+
+
+def _shadow_score_message(
+    db: Session,
+    *,
+    mailbox: Mailbox,
+    message_payload: dict,
+    intelligence: dict,
+) -> dict | None:
+    model = db.scalar(
+        select(MailThreatModelVersion)
+        .where(
+            MailThreatModelVersion.tenant_id == mailbox.tenant_id,
+            MailThreatModelVersion.lifecycle_state.in_(["shadow", "qualified", "canary", "active"]),
+        )
+        .order_by(MailThreatModelVersion.created_at.desc())
+        .limit(1)
+    )
+    if model is None:
+        return None
+
+    message_ref = str(
+        message_payload.get("message_id")
+        or f"uid:{message_payload.get('uid') or ''}"
+    )[:512]
+    existing = db.scalar(
+        select(MailThreatShadowPrediction).where(
+            MailThreatShadowPrediction.model_id == model.id,
+            MailThreatShadowPrediction.mailbox_id == mailbox.id,
+            MailThreatShadowPrediction.message_ref == message_ref,
+        )
+    )
+    if existing is not None:
+        return {
+            "model_id": str(model.id),
+            "version": model.version,
+            "lifecycle_state": model.lifecycle_state,
+            "probabilities": existing.probabilities_json,
+            "baseline": existing.baseline_json,
+            "latency_ms": existing.latency_ms,
+            "shadow_only": model.lifecycle_state == "shadow",
+        }
+
+    features = feature_snapshot(message_payload, intelligence)
+    started = perf_counter()
+    probabilities = predict(model.artifact_json or {}, features)
+    latency_ms = (perf_counter() - started) * 1000.0
+    security = intelligence.get("security") if isinstance(intelligence.get("security"), dict) else {}
+    baseline = baseline_probabilities(
+        float(security.get("phishing_probability") or 0.0),
+        float(security.get("bec_probability") or 0.0),
+    )
+
+    row = MailThreatShadowPrediction(
+        tenant_id=mailbox.tenant_id,
+        mailbox_id=mailbox.id,
+        model_id=model.id,
+        message_ref=message_ref,
+        probabilities_json=probabilities,
+        baseline_json=baseline,
+        feature_snapshot_json=features,
+        latency_ms=round(latency_ms, 3),
+    )
+    db.add(row)
+    db.commit()
+    return {
+        "model_id": str(model.id),
+        "version": model.version,
+        "lifecycle_state": model.lifecycle_state,
+        "probabilities": probabilities,
+        "baseline": baseline,
+        "latency_ms": round(latency_ms, 3),
+        "shadow_only": model.lifecycle_state == "shadow",
+    }
+
+
 def _safe_attachment_name(filename: str) -> str:
     value = CONTROL_CHARS_RE.sub(" ", filename or "").replace("/", "_").replace("\\", "_").strip(" .")
     if not value or value in {".", ".."}:
@@ -332,11 +430,43 @@ def list_messages(folder: str = Query(default="INBOX", min_length=1, max_length=
 
 
 @router.get("/messages/{uid}")
-def get_message(uid: str, folder: str = Query(default="INBOX", min_length=1, max_length=255), token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None):
+def get_message(
+    uid: str,
+    folder: str = Query(default="INBOX", min_length=1, max_length=255),
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+    db: Session = Depends(get_db),
+):
     address, password = _credentials(token)
     try:
         payload = message(address, password, uid=_uid(uid), folder=folder)
-        payload["intelligence"] = analyze_mail_message(payload, mailbox_address=address)
+        intelligence = analyze_mail_message(payload, mailbox_address=address)
+        behavior = observe_sender_behavior(address, payload)
+        if behavior is not None:
+            intelligence["behavior"] = behavior
+        payload["intelligence"] = intelligence
+        mailbox = db.scalar(
+            select(Mailbox).where(
+                Mailbox.address == address.lower(),
+                Mailbox.status == MailboxStatus.active,
+            )
+        )
+        if mailbox is not None:
+            try:
+                shadow = _shadow_score_message(
+                    db,
+                    mailbox=mailbox,
+                    message_payload=payload,
+                    intelligence=intelligence,
+                )
+                if shadow is not None:
+                    payload["intelligence"]["supervised_shadow"] = shadow
+            except Exception:
+                db.rollback()
+                payload["intelligence"]["supervised_shadow"] = {
+                    "available": False,
+                    "shadow_only": True,
+                    "fallback": "ithute-mail-intelligence-v1",
+                }
         return payload
     except WebmailError as exc:
         raise _failure(exc) from exc
@@ -436,6 +566,13 @@ def save_message_intelligence_verdict(
         existing_label = str((existing.metadata_json or {}).get("verified_label") or existing.action_taken or "")
         if existing_label != payload.label:
             raise HTTPException(status_code=409, detail="Verified mail intelligence verdict is immutable")
+        _resolve_shadow_predictions(
+            db,
+            mailbox_id=mailbox.id,
+            message_ref=message_ref,
+            label=existing_label,
+        )
+        db.commit()
         return {
             "saved": True,
             "finding_id": str(existing.id),
@@ -467,6 +604,12 @@ def save_message_intelligence_verdict(
         },
     )
     db.add(finding)
+    _resolve_shadow_predictions(
+        db,
+        mailbox_id=mailbox.id,
+        message_ref=message_ref,
+        label=payload.label,
+    )
     db.commit()
     db.refresh(finding)
     return {

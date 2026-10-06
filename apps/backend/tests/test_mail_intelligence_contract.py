@@ -83,3 +83,72 @@ def test_imail_supervised_threat_model_contract():
     assert "class MailThreatModelVersion" in models
     assert "tenant_id" in migration
     assert "uq_mail_threat_model_tenant_name_version" in migration
+
+
+
+def test_imail_live_shadow_contract():
+    backend = Path(__file__).resolve().parents[1]
+
+    service = (backend / "app" / "services" / "mail_threat_shadow.py").read_text(encoding="utf-8")
+    webmail_api = (backend / "app" / "api" / "v1" / "webmail.py").read_text(encoding="utf-8")
+    mail_api = (backend / "app" / "api" / "v1" / "mail_intelligence.py").read_text(encoding="utf-8")
+    models = (backend / "app" / "models" / "mail_intelligence.py").read_text(encoding="utf-8")
+    migration = (backend / "alembic" / "versions" / "0090_mail_threat_shadow.py").read_text(encoding="utf-8")
+
+    assert "def shadow_validation" in service
+    assert "def rollback_decision" in service
+    assert "population_stability_index" in service
+    assert '"eligible_for_activation": False' in service
+    assert '"direct_activation_allowed": False' in service
+    assert '"canary_fraction": 0.05' in service
+
+    assert "def _shadow_score_message" in webmail_api
+    assert "supervised_shadow" in webmail_api
+    assert "def _resolve_shadow_predictions" in webmail_api
+    assert "fallback" in webmail_api
+
+    assert '@router.get("/tenants/{tenant_id}/threat-models/{model_id}/shadow-status")' in mail_api
+    assert '@router.post("/tenants/{tenant_id}/threat-models/{model_id}/qualify")' in mail_api
+    assert "Only shadow models can be qualified" in mail_api
+
+    assert "class MailThreatShadowPrediction" in models
+    assert "0090_mail_threat_shadow" in migration
+
+
+
+def test_imail_sender_behaviour_contract():
+    backend = Path(__file__).resolve().parents[1]
+
+    behavior = (backend / "app" / "services" / "mail_sender_behavior.py").read_text(encoding="utf-8")
+    learning = (backend / "app" / "services" / "mail_intelligence_learning.py").read_text(encoding="utf-8")
+    model = (backend / "app" / "services" / "mail_threat_model.py").read_text(encoding="utf-8")
+    api = (backend / "app" / "api" / "v1" / "webmail.py").read_text(encoding="utf-8")
+
+    assert "first_seen_sender" in behavior
+    assert "unusual_sending_hour" in behavior
+    assert "sender_reply_domain_changed" in behavior
+    assert "new_payment_request_pattern" in behavior
+    assert '"raw_body_stored": False' in behavior
+    assert "hashlib.sha256(identity)" in behavior
+    assert "message_ref_hash" in behavior
+
+    assert '"behavior_score"' in learning
+    assert '"behavior_signal_names"' in learning
+    assert '"behavior_score"' in model
+    assert '"sender_reply_domain_changed"' in model
+
+    assert "observe_sender_behavior" in api
+    assert 'intelligence["behavior"] = behavior' in api
+
+
+
+def test_imail_shadow_and_behavior_ui_contract():
+    repo = Path(__file__).resolve().parents[3]
+    ui = (repo / "apps" / "frontend" / "app" / "webmail" / "hosted-workspace.tsx").read_text(encoding="utf-8")
+
+    assert "Sender behaviour" in ui
+    assert "Supervised threat model · shadow" in ui
+    assert "does not control mail delivery" in ui
+    assert "heuristic fallback remains active" in ui
+    assert "supervised_shadow" in ui
+    assert "behavior?" in ui

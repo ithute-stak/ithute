@@ -103,6 +103,24 @@ type MailIntelligence = {
     };
     summary: string;
   };
+  behavior?: {
+    score: number;
+    state: "stable" | "watch" | "elevated" | "high";
+    confidence: number;
+    observations: number;
+    signals: Array<{ signal: string; weight: number; hour_utc?: number; reply_domain?: string; known_reply_domains?: string[] }>;
+  };
+  supervised_shadow?: {
+    available?: boolean;
+    model_id?: string;
+    version?: string;
+    lifecycle_state?: string;
+    probabilities?: { legitimate?: number; phishing?: number; bec?: number };
+    baseline?: { legitimate?: number; phishing?: number; bec?: number };
+    latency_ms?: number | null;
+    shadow_only?: boolean;
+    fallback?: string;
+  };
   governance: {
     automatic_blocking: boolean;
     training_use: boolean;
@@ -852,6 +870,62 @@ export function HostedMailWorkspace() {
                     {selectedIntelligence.business.entities.dates.slice(0, 3).map((value) => <span key={`date-${value}`} className="rounded-lg bg-white/70 px-2.5 py-1 dark:bg-white/10">Date: {value}</span>)}
                     {selectedIntelligence.business.entities.deadline_terms.slice(0, 3).map((value) => <span key={`deadline-${value}`} className="rounded-lg bg-white/70 px-2.5 py-1 dark:bg-white/10">Deadline: {value}</span>)}
                     {selectedIntelligence.business.entities.references.slice(0, 3).map((value) => <span key={`ref-${value}`} className="rounded-lg bg-white/70 px-2.5 py-1 dark:bg-white/10">Ref: {value}</span>)}
+                  </div>
+                ) : null}
+
+                {selectedIntelligence.behavior ? (
+                  <div className="mt-3 rounded-xl bg-white/60 p-3 dark:bg-white/10">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-[.08em]">Sender behaviour</p>
+                        <p className="mt-1 text-[11px] font-black">{selectedIntelligence.behavior.state.replaceAll("_", " ")} · score {selectedIntelligence.behavior.score}/100</p>
+                      </div>
+                      <span className="rounded-full bg-white/70 px-2.5 py-1 text-[9px] font-black dark:bg-white/10">
+                        {selectedIntelligence.behavior.observations} prior observation{selectedIntelligence.behavior.observations === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                    {selectedIntelligence.behavior.signals.length ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {selectedIntelligence.behavior.signals.slice(0, 5).map((signal) => (
+                          <span key={signal.signal} className="rounded-lg bg-white/70 px-2.5 py-1 text-[9px] font-bold dark:bg-white/10">
+                            {signal.signal.replaceAll("_", " ")} · +{signal.weight}
+                          </span>
+                        ))}
+                      </div>
+                    ) : <p className="mt-2 text-[10px] opacity-70">No behavioural anomaly detected for this sender.</p>}
+                  </div>
+                ) : null}
+
+                {selectedIntelligence.supervised_shadow?.probabilities ? (
+                  <div className="mt-3 rounded-xl bg-white/60 p-3 dark:bg-white/10">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-[.08em]">Supervised threat model · shadow</p>
+                        <p className="mt-1 text-[10px] opacity-75">
+                          {selectedIntelligence.supervised_shadow.version || "candidate"} · does not control mail delivery
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-white/70 px-2.5 py-1 text-[9px] font-black uppercase dark:bg-white/10">
+                        {selectedIntelligence.supervised_shadow.lifecycle_state || "shadow"}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                      <div className="rounded-lg bg-white/70 p-2 dark:bg-white/10">
+                        <p className="text-[8px] font-black uppercase opacity-60">Legitimate</p>
+                        <p className="mt-1 text-sm font-black">{Math.round((selectedIntelligence.supervised_shadow.probabilities.legitimate ?? 0) * 100)}%</p>
+                      </div>
+                      <div className="rounded-lg bg-white/70 p-2 dark:bg-white/10">
+                        <p className="text-[8px] font-black uppercase opacity-60">Phishing</p>
+                        <p className="mt-1 text-sm font-black">{Math.round((selectedIntelligence.supervised_shadow.probabilities.phishing ?? 0) * 100)}%</p>
+                      </div>
+                      <div className="rounded-lg bg-white/70 p-2 dark:bg-white/10">
+                        <p className="text-[8px] font-black uppercase opacity-60">BEC</p>
+                        <p className="mt-1 text-sm font-black">{Math.round((selectedIntelligence.supervised_shadow.probabilities.bec ?? 0) * 100)}%</p>
+                      </div>
+                    </div>
+                    <p className="mt-2 text-[9px] opacity-65">
+                      Inference latency {typeof selectedIntelligence.supervised_shadow.latency_ms === "number" ? `${selectedIntelligence.supervised_shadow.latency_ms.toFixed(2)} ms` : "n/a"} · heuristic fallback remains active.
+                    </p>
                   </div>
                 ) : null}
 

@@ -73,7 +73,7 @@ def _dataset():
     rows = []
     labels = ("legitimate", "phishing", "bec")
     for index in range(90):
-        rows.append(_row(index, labels[index % 3], f"mailbox-{index % 6}"))
+        rows.append(_row(index, labels[index % 3], f"mailbox-{(index // 3) % 6}"))
     return rows
 
 
