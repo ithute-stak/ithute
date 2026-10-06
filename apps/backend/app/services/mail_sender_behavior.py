@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import timezone
 from email.utils import getaddresses, parsedate_to_datetime
@@ -149,7 +150,8 @@ def observe_sender_behavior(mailbox_address: str, message: dict[str, Any]) -> di
     sender = _sender(message)
     if not sender:
         return None
-    key = f"imail:behavior:{mailbox_address.lower()}:{sender}"
+    identity = f"{mailbox_address.lower()}|{sender}".encode("utf-8")
+    key = f"imail:behavior:{hashlib.sha256(identity).hexdigest()}"
     client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
     try:
         raw = client.get(key)
@@ -158,7 +160,8 @@ def observe_sender_behavior(mailbox_address: str, message: dict[str, Any]) -> di
             profile = empty_profile()
         analysis = analyze_behavior(message, profile)
         message_ref = str(message.get("message_id") or f"uid:{message.get('uid') or ''}")[:512]
-        next_profile = updated_profile(message, profile, message_ref=message_ref)
+        message_ref_hash = hashlib.sha256(message_ref.encode("utf-8")).hexdigest()
+        next_profile = updated_profile(message, profile, message_ref=message_ref_hash)
         client.setex(key, PROFILE_TTL_SECONDS, json.dumps(next_profile, separators=(",", ":"), sort_keys=True))
         return analysis
     except (redis.RedisError, json.JSONDecodeError, TypeError, ValueError):
