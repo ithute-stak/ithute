@@ -186,11 +186,14 @@ def _stage_out(db: Session, workflow: HostingProvisioningWorkflow) -> dict:
     if route and route.status == "error":
         failures.append(route.error or "Edge route activation failed")
 
-    database_ready = database is None or database.status in {"ready", "suspended"}
+    database_ready = database is None or database.status == "ready"
+    database_suspended = database is not None and database.status == "suspended"
     deployment_ready = deployment is not None and deployment.status == "healthy"
     edge_ready = not project or not project.hostname or (route is not None and route.status == "active")
     if failures:
         status = "failed"
+    elif database_suspended:
+        status = "database_suspended"
     elif database_ready and deployment_ready and edge_ready:
         status = "completed"
     elif build and build.status in {"queued", "claimed", "building"}:
