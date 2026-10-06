@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -776,6 +776,88 @@ def list_hardware_incidents(
             for row in rows
         ]
     }
+
+
+@router.get("/operations-summary")
+def hardware_operations_summary(
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    incident_rows = dict(
+        db.execute(
+            select(HardwareIncident.severity, func.count(HardwareIncident.id))
+            .where(HardwareIncident.status == "open")
+            .group_by(HardwareIncident.severity)
+        ).all()
+    )
+    task_rows = dict(
+        db.execute(
+            select(HardwareMaintenanceTask.status, func.count(HardwareMaintenanceTask.id))
+            .group_by(HardwareMaintenanceTask.status)
+        ).all()
+    )
+    delivery_rows = dict(
+        db.execute(
+            select(HardwareIncidentDelivery.status, func.count(HardwareIncidentDelivery.id))
+            .group_by(HardwareIncidentDelivery.status)
+        ).all()
+    )
+    return {
+        "open_incidents": sum(int(value or 0) for value in incident_rows.values()),
+        "incidents_by_severity": {str(key): int(value or 0) for key, value in incident_rows.items()},
+        "tasks": {
+            "open": int(task_rows.get("open", 0) or 0),
+            "in_progress": int(task_rows.get("in_progress", 0) or 0),
+            "completed": int(task_rows.get("completed", 0) or 0),
+            "cancelled": int(task_rows.get("cancelled", 0) or 0),
+        },
+        "deliveries": {
+            "queued": int(delivery_rows.get("queued", 0) or 0),
+            "retry": int(delivery_rows.get("retry", 0) or 0),
+            "delivered": int(delivery_rows.get("delivered", 0) or 0),
+            "failed": int(delivery_rows.get("failed", 0) or 0),
+            "cancelled": int(delivery_rows.get("cancelled", 0) or 0),
+        },
+    }
+
+
+@router.post("/incidents/{incident_id}/retry-notifications")
+def retry_hardware_incident_notifications(
+    incident_id: str,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    try:
+        parsed = UUID(incident_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid hardware incident id") from exc
+
+    incident = db.get(HardwareIncident, parsed)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Hardware incident not found")
+    if incident.status != "open":
+        raise HTTPException(status_code=409, detail="Resolved hardware incidents cannot resend notifications")
+    if incident.notification_suppressed:
+        raise HTTPException(status_code=409, detail="Notifications are suppressed by an active maintenance window")
+
+    rows = list(
+        db.scalars(
+            select(HardwareIncidentDelivery).where(
+                HardwareIncidentDelivery.incident_id == incident.id,
+                HardwareIncidentDelivery.status.in_(["failed", "retry"]),
+            )
+        ).all()
+    )
+    for row in rows:
+        row.status = "queued"
+        row.attempts = 0
+        row.next_attempt_at = None
+        row.last_error = None
+        row.delivered_at = None
+    db.commit()
+    return {"incident_id": str(incident.id), "requeued": len(rows)}
 
 
 @router.get("/maintenance-tasks")
