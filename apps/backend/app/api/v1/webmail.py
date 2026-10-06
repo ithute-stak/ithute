@@ -13,6 +13,7 @@ from app.db.session import get_db
 from app.models import MailNode
 from app.models.mail import Mailbox, MailboxStatus, MailboxStorageType
 from app.services.mailboxes import normalize_destination
+from app.services.mail_intelligence import analyze_mail_message
 from app.services.security_audit import record_webmail_security_event
 from app.services.security_controls import SecurityControlUnavailable, clear_webmail_login_failures, record_webmail_login_failure, webmail_login_allowed
 from app.services.webmail import (
@@ -328,6 +329,60 @@ def get_message(uid: str, folder: str = Query(default="INBOX", min_length=1, max
     address, password = _credentials(token)
     try:
         return message(address, password, uid=_uid(uid), folder=folder)
+    except WebmailError as exc:
+        raise _failure(exc) from exc
+
+
+@router.get("/messages/{uid}/intelligence")
+def get_message_intelligence(
+    uid: str,
+    folder: str = Query(default="INBOX", min_length=1, max_length=255),
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+):
+    address, password = _credentials(token)
+    try:
+        payload = message(address, password, uid=_uid(uid), folder=folder)
+        return analyze_mail_message(payload, mailbox_address=address)
+    except WebmailError as exc:
+        raise _failure(exc) from exc
+
+
+@router.get("/intelligence")
+def analyze_message_batch(
+    folder: str = Query(default="INBOX", min_length=1, max_length=255),
+    limit: int = Query(default=20, ge=1, le=25),
+    offset: int = Query(default=0, ge=0, le=100000),
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+):
+    address, password = _credentials(token)
+    try:
+        listing = messages(address, password, folder=folder, limit=limit, offset=offset, query="")
+        source_items = listing.get("items", []) if isinstance(listing, dict) else []
+        analyzed = []
+        failures = []
+        for item in source_items:
+            uid = str(item.get("uid") or "")
+            if not UID_RE.fullmatch(uid):
+                continue
+            try:
+                payload = message(address, password, uid=uid, folder=folder)
+                analyzed.append({
+                    "uid": uid,
+                    "subject": payload.get("subject"),
+                    "from": payload.get("from"),
+                    "date": payload.get("date"),
+                    "intelligence": analyze_mail_message(payload, mailbox_address=address),
+                })
+            except WebmailError as exc:
+                failures.append({"uid": uid, "error": str(exc)})
+        return {
+            "folder": folder,
+            "items": analyzed,
+            "failures": failures,
+            "count": len(analyzed),
+            "requested": len(source_items),
+            "automatic_blocking": False,
+        }
     except WebmailError as exc:
         raise _failure(exc) from exc
 
