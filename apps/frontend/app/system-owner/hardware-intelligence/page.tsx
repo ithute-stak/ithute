@@ -206,6 +206,27 @@ type OperationsSummary = {
       maximum_brier_regression: number;
     };
   };
+  shadow_validation_policy?: {
+    lifecycle: string[];
+    algorithms: string[];
+    minimum_shadow_samples: number;
+    minimum_precision: number;
+    minimum_recall: number;
+    maximum_false_positive_rate: number;
+    maximum_brier_score: number;
+    maximum_expected_calibration_error: number;
+    maximum_population_stability_index: number;
+    maximum_mean_probability_drift: number;
+    canary_fraction: number;
+    automatic_rollback: {
+      minimum_recall: number;
+      maximum_false_positive_rate: number;
+      maximum_expected_calibration_error: number;
+      maximum_population_stability_index: number;
+      maximum_latency_ms: number;
+      fallback: string;
+    };
+  };
 };
 
 type Fleet = {
@@ -608,6 +629,26 @@ export default function HardwareIntelligencePage() {
                 <div className="rounded-lg bg-[#f7faf8] p-2">Brier ≤ {(operations?.candidate_promotion_policy?.thresholds.maximum_brier_score ?? 0.2).toFixed(2)}</div>
               </div>
             </div>
+          </div>
+          <div className="mt-3 rounded-xl border border-[var(--admin-line)] p-4">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Live AI shadow validation</p>
+                <p className="mt-1 text-[10px] font-black">Candidate → Shadow → Qualified → Canary → Active → Rollback/Retire</p>
+              </div>
+              <div className="rounded-lg bg-[#f7faf8] px-3 py-2 text-[8px] font-black">
+                Canary {Math.round((operations?.shadow_validation_policy?.canary_fraction ?? 0.05) * 100)}%
+              </div>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4 text-[8px]">
+              <div className="rounded-lg bg-[#f7faf8] p-2">ECE ≤ {((operations?.shadow_validation_policy?.maximum_expected_calibration_error ?? 0.10) * 100).toFixed(0)}%</div>
+              <div className="rounded-lg bg-[#f7faf8] p-2">PSI ≤ {(operations?.shadow_validation_policy?.maximum_population_stability_index ?? 0.20).toFixed(2)}</div>
+              <div className="rounded-lg bg-[#f7faf8] p-2">Shadow samples ≥ {operations?.shadow_validation_policy?.minimum_shadow_samples ?? 50}</div>
+              <div className="rounded-lg bg-[#f7faf8] p-2">Fallback: {operations?.shadow_validation_policy?.automatic_rollback.fallback?.replaceAll("_", " ") || "robust ensemble baseline"}</div>
+            </div>
+            <p className="mt-3 text-[8px] leading-4 text-[var(--admin-muted)]">
+              AI gates: {(operations?.shadow_validation_policy?.algorithms || ["classification metrics", "calibration", "PSI drift", "Page-Hinkley"]).join(" · ")}
+            </p>
           </div>
         </section>
 

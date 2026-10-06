@@ -23,6 +23,7 @@ from app.services.hardware_remediation_verification import verify_remediation
 from app.services.hardware_supervised_learning import supervised_training_readiness
 from app.services.hardware_model_evaluation import promotion_policy
 from app.services.hardware_training_dataset import build_training_example, dataset_summary
+from app.services.hardware_shadow_validation import shadow_policy
 
 router = APIRouter(prefix="/hardware-intelligence", tags=["hardware-intelligence"])
 
@@ -1012,6 +1013,7 @@ def hardware_model_training_status(
         "readiness": _supervised_training_readiness(db),
         "dataset": _supervised_training_dataset_summary(db),
         "promotion_policy": promotion_policy(),
+        "shadow_validation_policy": shadow_policy(),
     }
 
 
@@ -1151,6 +1153,7 @@ def hardware_operations_summary(
         "supervised_learning": _supervised_training_readiness(db),
         "training_dataset": _supervised_training_dataset_summary(db),
         "candidate_promotion_policy": promotion_policy(),
+        "shadow_validation_policy": shadow_policy(),
     }
 
 
