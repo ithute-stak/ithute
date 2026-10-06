@@ -622,6 +622,76 @@ def enterprise_xml_inspect(xml_bytes: bytes) -> tuple[dict, str]:
         return python_enterprise_xml_inspect(xml_bytes), "python-fallback"
 
 
+def python_hardware_workflow_plan(payload: dict) -> dict:
+    severity = str(payload.get("severity") or "").strip().lower()
+    health = str(payload.get("health_status") or "").strip().lower()
+    prediction = str(payload.get("predictive_state") or "").strip().lower()
+    suppressed = bool(payload.get("notification_suppressed"))
+    if severity not in {"high", "critical"}:
+        raise ValueError("severity must be high or critical")
+    if not health or not prediction:
+        raise ValueError("health_status and predictive_state are required")
+
+    actions = ["record_incident"]
+    if suppressed:
+        actions.append("suppress_notifications")
+        escalation = "maintenance_suppressed"
+    elif severity == "critical" or health == "critical":
+        actions.extend([
+            "block_new_placement",
+            "drain_after_safety_window",
+            "notify_platform_owner",
+            "create_maintenance_task",
+        ])
+        escalation = "immediate"
+    else:
+        actions.extend([
+            "block_new_placement",
+            "prepare_drain",
+            "notify_platform_owner",
+            "create_maintenance_task",
+        ])
+        escalation = "urgent"
+    return {
+        "engine": "python-fallback",
+        "plan_version": "1",
+        "escalation": escalation,
+        "actions": actions,
+    }
+
+
+def hardware_workflow_plan(payload: dict) -> tuple[dict, str]:
+    """Ask Java to classify a hardware incident workflow with a Python fallback."""
+    fallback = python_hardware_workflow_plan(payload)
+    form = {
+        "severity": str(payload.get("severity") or ""),
+        "health_status": str(payload.get("health_status") or ""),
+        "predictive_state": str(payload.get("predictive_state") or ""),
+        "notification_suppressed": "true" if payload.get("notification_suppressed") else "false",
+    }
+    try:
+        with httpx.Client(timeout=max(ENGINE_HTTP_TIMEOUT_SECONDS, 4.0), trust_env=False) as client:
+            response = client.post(
+                f"{JAVA_WORKER_URL}/v1/hardware/workflow",
+                data=form,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            response.raise_for_status()
+            body = response.json()
+        if not isinstance(body, dict) or body.get("engine") != "java":
+            raise ValueError("invalid Java hardware workflow response")
+        if body.get("plan_version") != "1" or body.get("escalation") not in {
+            "maintenance_suppressed", "immediate", "urgent"
+        }:
+            raise ValueError("invalid Java hardware workflow plan")
+        actions = body.get("actions")
+        if not isinstance(actions, list) or any(not isinstance(item, str) for item in actions):
+            raise ValueError("invalid Java hardware workflow actions")
+        return body, "java"
+    except (httpx.HTTPError, ValueError, TypeError):
+        return fallback, "python-fallback"
+
+
 def java_worker_status() -> dict:
     try:
         with httpx.Client(timeout=ENGINE_HTTP_TIMEOUT_SECONDS, trust_env=False) as client:
