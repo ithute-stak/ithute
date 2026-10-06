@@ -126,6 +126,12 @@ type MailIntelligence = {
       bec_probability: number;
       recommended_action: string;
     } | null;
+    active_champion?: {
+      model_id: string;
+      version: string;
+      probabilities: { legitimate?: number; phishing?: number; bec?: number };
+      latency_ms?: number | null;
+    } | null;
     fallback?: string;
   };
   governance: {
@@ -933,6 +939,11 @@ export function HostedMailWorkspace() {
                     <p className="mt-2 text-[9px] opacity-65">
                       Inference latency {typeof selectedIntelligence.supervised_shadow.latency_ms === "number" ? `${selectedIntelligence.supervised_shadow.latency_ms.toFixed(2)} ms` : "n/a"} · heuristic fallback remains active.
                     </p>
+                    {selectedIntelligence.supervised_shadow.active_champion ? (
+                      <p className="mt-1 text-[9px] font-bold opacity-75">
+                        Active champion remains serving: {selectedIntelligence.supervised_shadow.active_champion.version}
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
 
