@@ -95,10 +95,10 @@ func collectBMC(parent context.Context, path string) BMCSummary {
 		if len(parts) < 4 {
 			continue
 		}
-		name := strings.Trim(strings.TrimSpace(parts[0]), """)
-		valueText := strings.Trim(strings.TrimSpace(parts[1]), """)
-		unit := strings.ToLower(strings.Trim(strings.TrimSpace(parts[2]), """))
-		status := strings.ToLower(strings.Trim(strings.TrimSpace(parts[3]), """))
+		name := strings.Trim(strings.TrimSpace(parts[0]), "\"")
+		valueText := strings.Trim(strings.TrimSpace(parts[1]), "\"")
+		unit := strings.ToLower(strings.Trim(strings.TrimSpace(parts[2]), "\""))
+		status := strings.ToLower(strings.Trim(strings.TrimSpace(parts[3]), "\""))
 		result.SensorCount++
 
 		if strings.Contains(status, "cr") || strings.Contains(status, "nr") || strings.Contains(status, "fail") {
