@@ -216,3 +216,22 @@ def test_hardware_remediation_recommendation_contract_exists():
     assert '"recommendations": recommendations' in runtime
     assert "Recommended remediation" in page
     assert 'recommendations?: string[]' in page
+
+
+
+def test_ranked_remediation_contract_uses_predictive_context():
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]
+    api = (backend / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    runtime = (backend / "app" / "services" / "engine_runtime.py").read_text(encoding="utf-8")
+    page = (repo / "apps" / "frontend" / "app" / "system-owner" / "hardware-intelligence" / "page.tsx").read_text(encoding="utf-8")
+
+    assert '"predictive_risk_score": snapshot.predictive_risk_score' in api
+    assert '"predictive_confidence": snapshot.predictive_confidence' in api
+    assert '"plan_version": "3"' in runtime
+    assert '"ranked_recommendations": ranked_recommendations' in runtime
+    assert "priority_score" in page
+    assert "confidence_percent" in page
+    assert "Ranked remediation" in page
