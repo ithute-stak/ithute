@@ -123,6 +123,14 @@ type FleetItem = {
         learning_adjustment?: number;
       }>;
     };
+    failure_label?: {
+      id: string;
+      label: string;
+      component: string;
+      confidence: number;
+      evidence: string;
+      confirmed_at?: string | null;
+    } | null;
     deliveries?: Array<{
       channel: string;
       status: string;
@@ -155,6 +163,27 @@ type OperationsSummary = {
   incidents_by_severity: Record<string, number>;
   tasks: Record<string, number>;
   deliveries: Record<string, number>;
+  supervised_learning?: {
+    ready: boolean;
+    engine: string;
+    minimum_confidence: number;
+    total_labels: number;
+    high_confidence_labels: number;
+    binary_labels: number;
+    confirmed_failures: number;
+    false_positives: number;
+    distinct_servers: number;
+    components: string[];
+    class_imbalance_ratio?: number | null;
+    blockers: string[];
+    gates: Record<string, boolean>;
+    thresholds: {
+      minimum_binary_labels: number;
+      minimum_per_class: number;
+      minimum_distinct_servers: number;
+      maximum_class_imbalance_ratio: number;
+    };
+  };
 };
 
 type Fleet = {
@@ -266,6 +295,10 @@ export default function HardwareIntelligencePage() {
   const [taskNote, setTaskNote] = useState("");
   const [taskAction, setTaskAction] = useState("");
   const [taskOutcome, setTaskOutcome] = useState("");
+  const [failureLabel, setFailureLabel] = useState("");
+  const [failureComponent, setFailureComponent] = useState("unknown");
+  const [failureConfidence, setFailureConfidence] = useState("0.90");
+  const [failureEvidence, setFailureEvidence] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
 
   const loadFleet = useCallback(async () => {
