@@ -168,6 +168,10 @@ public final class Main {
         double ioPressure = doubleValue(form.getOrDefault("io_pressure_avg10", ""));
         double filesystemUsed = doubleValue(form.getOrDefault("filesystem_used_percent", ""));
         int storageWarnings = intValue(form.getOrDefault("storage_warning_count", ""), 0);
+        int predictiveRisk = intValue(form.getOrDefault("predictive_risk_score", ""), 0);
+        double predictiveConfidence = doubleValue(form.getOrDefault("predictive_confidence", ""));
+        if (Double.isNaN(predictiveConfidence)) predictiveConfidence = 0.0;
+        predictiveConfidence = Math.max(0.0, Math.min(1.0, predictiveConfidence));
 
         if (!List.of("high", "critical").contains(severity)) {
             throw new IllegalArgumentException("severity must be high or critical");
@@ -196,38 +200,172 @@ public final class Main {
             escalation = "urgent";
         }
 
-        List<String> recommendations = new ArrayList<>();
+        List<Map<String, Object>> rankedRecommendations = new ArrayList<>();
         if (temperature >= 85.0) {
-            recommendations.add("inspect_cooling_and_thermal_path");
+            double signal = Math.min(1.0, Math.max(0.0, (temperature - 80.0) / 20.0));
+            rankedRecommendations.add(remediation(
+                "inspect_cooling_and_thermal_path",
+                priorityScore(severity, signal, predictiveConfidence, predictiveRisk),
+                urgency(severity, signal),
+                confidence(predictiveConfidence, signal),
+                List.of("temperature_celsius=" + roundOne(temperature)),
+                "Reduce thermal throttling and prevent heat-related component degradation.",
+                false,
+                true
+            ));
         }
         if (memoryPressure >= 40.0) {
-            recommendations.add("investigate_memory_pressure_and_working_set");
+            double signal = Math.min(1.0, memoryPressure / 100.0);
+            rankedRecommendations.add(remediation(
+                "investigate_memory_pressure_and_working_set",
+                priorityScore(severity, signal, predictiveConfidence, predictiveRisk),
+                urgency(severity, signal),
+                confidence(predictiveConfidence, signal),
+                List.of("memory_pressure_avg10=" + roundOne(memoryPressure)),
+                "Reduce OOM risk, paging pressure, and application instability.",
+                false,
+                true
+            ));
         }
         if (ioPressure >= 35.0) {
-            recommendations.add("inspect_storage_latency_and_io_contention");
+            double signal = Math.min(1.0, ioPressure / 100.0);
+            rankedRecommendations.add(remediation(
+                "inspect_storage_latency_and_io_contention",
+                priorityScore(severity, signal, predictiveConfidence, predictiveRisk),
+                urgency(severity, signal),
+                confidence(predictiveConfidence, signal),
+                List.of("io_pressure_avg10=" + roundOne(ioPressure)),
+                "Identify storage contention before latency causes workload failure.",
+                false,
+                true
+            ));
         }
         if (filesystemUsed >= 90.0) {
-            recommendations.add("free_or_expand_filesystem_capacity");
+            double signal = Math.min(1.0, Math.max(0.0, (filesystemUsed - 85.0) / 15.0));
+            rankedRecommendations.add(remediation(
+                "free_or_expand_filesystem_capacity",
+                priorityScore(severity, signal, predictiveConfidence, predictiveRisk),
+                urgency(severity, signal),
+                confidence(predictiveConfidence, signal),
+                List.of("filesystem_used_percent=" + roundOne(filesystemUsed)),
+                "Prevent write failures, database corruption risk, and service interruption from disk exhaustion.",
+                false,
+                true
+            ));
         }
         if (storageWarnings > 0) {
-            recommendations.add("inspect_smart_nvme_and_prepare_storage_replacement");
+            double signal = Math.min(1.0, 0.55 + (storageWarnings * 0.12));
+            rankedRecommendations.add(remediation(
+                "inspect_smart_nvme_and_prepare_storage_replacement",
+                priorityScore(severity, signal, predictiveConfidence, predictiveRisk),
+                urgency(severity, signal),
+                confidence(predictiveConfidence, signal),
+                List.of("storage_warning_count=" + storageWarnings),
+                "Reduce the chance of data loss or sudden device failure.",
+                true,
+                true
+            ));
         }
-        if (recommendations.isEmpty()) {
-            recommendations.add("inspect_recent_kernel_hardware_and_system_logs");
+        if (rankedRecommendations.isEmpty()) {
+            rankedRecommendations.add(remediation(
+                "inspect_recent_kernel_hardware_and_system_logs",
+                priorityScore(severity, 0.35, predictiveConfidence, predictiveRisk),
+                "high".equals(severity) ? "high" : "critical",
+                confidence(predictiveConfidence, 0.35),
+                List.of("no single threshold explains the current risk"),
+                "Correlate machine-check, driver, kernel, and hardware events with the predictive alert.",
+                false,
+                true
+            ));
         }
         if (!suppressed && ("critical".equals(severity) || "critical".equals(health))) {
-            recommendations.add("prepare_safe_workload_drain_before_host_intervention");
+            rankedRecommendations.add(remediation(
+                "prepare_safe_workload_drain_before_host_intervention",
+                priorityScore(severity, 0.95, predictiveConfidence, predictiveRisk),
+                "critical",
+                confidence(predictiveConfidence, 0.95),
+                List.of("critical hardware health or escalation"),
+                "Protect running workloads before physical or host-level intervention.",
+                true,
+                true
+            ));
         } else if (!suppressed) {
-            recommendations.add("review_drain_readiness_and_schedule_maintenance");
+            rankedRecommendations.add(remediation(
+                "review_drain_readiness_and_schedule_maintenance",
+                priorityScore(severity, 0.55, predictiveConfidence, predictiveRisk),
+                "high",
+                confidence(predictiveConfidence, 0.55),
+                List.of("high predictive hardware risk"),
+                "Prepare a controlled maintenance path before risk becomes service-impacting.",
+                false,
+                true
+            ));
+        }
+
+        rankedRecommendations.sort((left, right) ->
+            Integer.compare((int) right.get("priority_score"), (int) left.get("priority_score"))
+        );
+
+        List<String> recommendations = new ArrayList<>();
+        for (Map<String, Object> item : rankedRecommendations) {
+            recommendations.add(String.valueOf(item.get("action")));
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("engine", "java");
-        result.put("plan_version", "2");
+        result.put("plan_version", "3");
         result.put("escalation", escalation);
         result.put("actions", actions);
         result.put("recommendations", recommendations);
+        result.put("ranked_recommendations", rankedRecommendations);
         return result;
+    }
+
+
+    private static Map<String, Object> remediation(
+        String action,
+        int priorityScore,
+        String urgency,
+        int confidence,
+        List<String> evidence,
+        String expectedImpact,
+        boolean drainRecommended,
+        boolean operatorApprovalRequired
+    ) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("action", action);
+        item.put("priority_score", priorityScore);
+        item.put("urgency", urgency);
+        item.put("confidence_percent", confidence);
+        item.put("evidence", evidence);
+        item.put("expected_impact", expectedImpact);
+        item.put("drain_recommended", drainRecommended);
+        item.put("operator_approval_required", operatorApprovalRequired);
+        return item;
+    }
+
+    private static int priorityScore(String severity, double signal, double predictiveConfidence, int predictiveRisk) {
+        double severityWeight = "critical".equals(severity) ? 35.0 : 25.0;
+        double signalWeight = Math.max(0.0, Math.min(1.0, signal)) * 30.0;
+        double confidenceWeight = Math.max(0.0, Math.min(1.0, predictiveConfidence)) * 20.0;
+        double riskWeight = Math.max(0, Math.min(100, predictiveRisk)) * 0.15;
+        return Math.max(0, Math.min(100, (int) Math.round(severityWeight + signalWeight + confidenceWeight + riskWeight)));
+    }
+
+    private static String urgency(String severity, double signal) {
+        if ("critical".equals(severity) || signal >= 0.85) return "critical";
+        if (signal >= 0.55) return "high";
+        return "medium";
+    }
+
+    private static int confidence(double predictiveConfidence, double signal) {
+        double blended = (Math.max(0.0, Math.min(1.0, predictiveConfidence)) * 0.65)
+            + (Math.max(0.0, Math.min(1.0, signal)) * 0.35);
+        return Math.max(0, Math.min(100, (int) Math.round(blended * 100.0)));
+    }
+
+    private static double roundOne(double value) {
+        return Math.round(value * 10.0) / 10.0;
     }
 
 
