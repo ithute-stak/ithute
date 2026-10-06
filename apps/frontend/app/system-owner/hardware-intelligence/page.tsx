@@ -13,6 +13,7 @@ import {
   Thermometer,
   WifiOff,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
 import { apiJson, apiMutation } from "@/lib/platform-api";
 
@@ -261,13 +262,13 @@ export default function HardwareIntelligencePage() {
         </section>
 
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          {[
+          {([
             ["Healthy", fleet?.counts.healthy ?? 0, ShieldCheck],
             ["Warning", fleet?.counts.warning ?? 0, AlertTriangle],
             ["Critical", fleet?.counts.critical ?? 0, Thermometer],
             ["Offline", fleet?.counts.offline ?? 0, WifiOff],
             ["Total servers", fleet?.total ?? 0, Server],
-          ].map(([label, value, Icon]) => (
+          ] satisfies Array<[string, number, LucideIcon]>).map(([label, value, Icon]) => (
             <article key={String(label)} className="surface-card p-4">
               <div className="flex items-center justify-between"><p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">{String(label)}</p><Icon size={15} /></div>
               <p className="mt-3 text-3xl font-black">{String(value)}</p>
