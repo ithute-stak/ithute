@@ -21,6 +21,8 @@ from app.services.engine_runtime import hardware_workflow_plan
 from app.services.hardware_prediction import MetricPoint, derive_rate_features, predict_hardware_drift
 from app.services.hardware_remediation_verification import verify_remediation
 from app.services.hardware_supervised_learning import supervised_training_readiness
+from app.services.hardware_model_evaluation import promotion_policy
+from app.services.hardware_training_dataset import build_training_example, dataset_summary
 
 router = APIRouter(prefix="/hardware-intelligence", tags=["hardware-intelligence"])
 
@@ -980,6 +982,39 @@ def _supervised_training_readiness(db: Session) -> dict[str, Any]:
     ])
 
 
+def _supervised_training_dataset_summary(db: Session) -> dict[str, Any]:
+    rows = db.execute(
+        select(HardwareFailureLabel, HardwareTelemetrySnapshot)
+        .join(
+            HardwareTelemetrySnapshot,
+            HardwareFailureLabel.snapshot_id == HardwareTelemetrySnapshot.id,
+        )
+        .where(
+            HardwareFailureLabel.confidence >= 0.8,
+            HardwareFailureLabel.label.in_(["confirmed_failure", "false_positive"]),
+        )
+    ).all()
+    examples = [
+        example
+        for label, snapshot in rows
+        if (example := build_training_example(label, snapshot)) is not None
+    ]
+    return dataset_summary(examples)
+
+
+@router.get("/model-training/status")
+def hardware_model_training_status(
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    return {
+        "readiness": _supervised_training_readiness(db),
+        "dataset": _supervised_training_dataset_summary(db),
+        "promotion_policy": promotion_policy(),
+    }
+
+
 @router.post("/incidents/{incident_id}/failure-label")
 def upsert_hardware_failure_label(
     incident_id: str,
@@ -1114,6 +1149,8 @@ def hardware_operations_summary(
             "cancelled": int(delivery_rows.get("cancelled", 0) or 0),
         },
         "supervised_learning": _supervised_training_readiness(db),
+        "training_dataset": _supervised_training_dataset_summary(db),
+        "candidate_promotion_policy": promotion_policy(),
     }
 
 
