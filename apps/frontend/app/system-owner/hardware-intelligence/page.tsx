@@ -64,6 +64,13 @@ type FleetItem = {
   predictive_state: "learning" | "stable" | "watch" | "elevated" | "high";
   predictive_confidence?: number | null;
   predictive_evidence: string[];
+  predictive_models?: {
+    robust_baseline?: { ready?: boolean; risk_score?: number };
+    isolation_forest?: { ready?: boolean; risk_score?: number; anomaly_score?: number; features?: number; trees?: number };
+    change_point?: { ready?: boolean; risk_score?: number; metric?: string; shift_sigma?: number };
+    survival?: { ready?: boolean; calibration?: string; median_risk_horizon_hours?: number; failure_probability_72h?: number; reason?: string };
+    supervised_boosting?: { ready?: boolean; engine?: string; reason?: string };
+  };
   evidence: string[];
   sampled_at?: string | null;
   maintenance: {
@@ -692,6 +699,24 @@ export default function HardwareIntelligencePage() {
                   {typeof riskDelta === "number" ? `${riskDelta > 0 ? "+" : ""}${riskDelta.toFixed(1)} points` : "Learning"}
                 </p>
               </div>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+              {[
+                ["Robust baseline", selectedServer.predictive_models?.robust_baseline?.ready, selectedServer.predictive_models?.robust_baseline?.risk_score, "Median/MAD + trend"],
+                ["Isolation Forest", selectedServer.predictive_models?.isolation_forest?.ready, selectedServer.predictive_models?.isolation_forest?.risk_score, selectedServer.predictive_models?.isolation_forest?.ready ? `${selectedServer.predictive_models.isolation_forest.trees || 0} trees · anomaly ${Number(selectedServer.predictive_models.isolation_forest.anomaly_score || 0).toFixed(3)}` : "Learning baseline"],
+                ["Change point", selectedServer.predictive_models?.change_point?.ready, selectedServer.predictive_models?.change_point?.risk_score, selectedServer.predictive_models?.change_point?.ready ? `${(selectedServer.predictive_models.change_point.metric || "signal").replaceAll("_", " ")} · ${Number(selectedServer.predictive_models.change_point.shift_sigma || 0).toFixed(1)}σ shift` : "No comparable window"],
+                ["72h survival risk", selectedServer.predictive_models?.survival?.ready, selectedServer.predictive_models?.survival?.failure_probability_72h, selectedServer.predictive_models?.survival?.ready ? `Prior-only · horizon ${Number(selectedServer.predictive_models.survival.median_risk_horizon_hours || 0).toFixed(0)}h` : "Not enough risk/confidence"],
+                ["Supervised boost", selectedServer.predictive_models?.supervised_boosting?.ready, null, selectedServer.predictive_models?.supervised_boosting?.ready ? "Calibrated labels available" : "Waiting for confirmed failure labels"],
+              ].map(([label, ready, score, detail]) => (
+                <div key={String(label)} className="rounded-xl border border-[var(--admin-line)] bg-[#f7faf8] p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">{String(label)}</p>
+                    <span className={`rounded-full border px-2 py-0.5 text-[7px] font-black uppercase ${ready ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>{ready ? "active" : "guarded"}</span>
+                  </div>
+                  <p className="mt-2 text-xl font-black">{typeof score === "number" ? `${Number(score).toFixed(0)}/100` : "—"}</p>
+                  <p className="mt-1 text-[8px] leading-4 text-[var(--admin-muted)]">{String(detail)}</p>
+                </div>
+              ))}
             </div>
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <TrendCard label="Temperature" value={selectedServer.temperature_celsius} suffix="°C" values={temperatureTrend} note="Thermal drift can precede throttling, fan or cooling failures." />
