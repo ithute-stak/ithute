@@ -300,7 +300,7 @@ int main(void) {
         block.devices, block.reads_completed, block.sectors_read, block.writes_completed, block.sectors_written, block.io_ms, block.weighted_io_ms);
     printf("\"network\":{\"rx_errors\":%llu,\"tx_errors\":%llu,\"rx_dropped\":%llu,\"tx_dropped\":%llu,\"tcp_retrans_segs\":%llu},",
         network.rx_errors, network.tx_errors, network.rx_dropped, network.tx_dropped, network.tcp_retrans_segs);
-    printf("\"cpu_native\":{\"available\":%s,\"vendor\":\"%s\",\"family\":%u,\"model\":%u,\"stepping\":%u,\"invariant_tsc\":%s,\"rdtscp\":%s,\"aes_ni\":%s,\"avx\":%s,\"avx2\":%s,\"cycle_counter\":%llu},",
+    printf("\"cpu_native\":{\"available\":%s,\"vendor\":\"%s\",\"family\":%u,\"model\":%u,\"stepping\":%u,\"invariant_tsc\":%s,\"rdtscp\":%s,\"aes_ni\":%s,\"avx\":%s,\"avx2\":%s,\"vmx\":%s,\"svm\":%s,\"hypervisor_present\":%s,\"hypervisor_vendor\":\"%s\",\"logical_processors\":%u,\"cycle_counter\":%llu},",
         cpu_native.available ? "true" : "false",
         cpu_native.vendor,
         cpu_native.family,
@@ -311,6 +311,11 @@ int main(void) {
         cpu_native.aes_ni ? "true" : "false",
         cpu_native.avx ? "true" : "false",
         cpu_native.avx2 ? "true" : "false",
+        cpu_native.vmx ? "true" : "false",
+        cpu_native.svm ? "true" : "false",
+        cpu_native.hypervisor_present ? "true" : "false",
+        cpu_native.hypervisor_vendor,
+        cpu_native.logical_processors,
         cpu_native.cycle_counter);
     printf("\"capabilities\":{");
     printf("\"hwmon\":%s,\"thermal\":%s,\"edac\":%s,\"ipmi\":%s,",
