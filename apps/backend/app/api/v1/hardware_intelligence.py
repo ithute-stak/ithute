@@ -887,6 +887,14 @@ def hardware_fleet_health(
         maintenance = _active_maintenance(db, server.id, now)
         acknowledgement = _ack_for_snapshot(db, latest.id if latest else None)
         incident = _active_hardware_incident(db, server.id)
+        maintenance_task = db.scalar(
+            select(HardwareMaintenanceTask).where(HardwareMaintenanceTask.incident_id == incident.id)
+        ) if incident else None
+        incident_deliveries = list(
+            db.scalars(
+                select(HardwareIncidentDelivery).where(HardwareIncidentDelivery.incident_id == incident.id)
+            ).all()
+        ) if incident else []
 
         online = bool(
             agent
@@ -987,6 +995,23 @@ def hardware_fleet_health(
                 "predictive_risk_score": incident.predictive_risk_score,
                 "notification_suppressed": incident.notification_suppressed,
                 "workflow_plan": json.loads(incident.workflow_plan_json or "{}"),
+                "deliveries": [
+                    {
+                        "channel": delivery.channel,
+                        "status": delivery.status,
+                        "attempts": delivery.attempts,
+                        "delivered_at": delivery.delivered_at.isoformat() if delivery.delivered_at else None,
+                    }
+                    for delivery in incident_deliveries
+                ],
+                "maintenance_task": {
+                    "id": str(maintenance_task.id),
+                    "priority": maintenance_task.priority,
+                    "status": maintenance_task.status,
+                    "assigned_to_user_id": str(maintenance_task.assigned_to_user_id) if maintenance_task.assigned_to_user_id else None,
+                    "completion_note": maintenance_task.completion_note,
+                    "completed_at": maintenance_task.completed_at.isoformat() if maintenance_task.completed_at else None,
+                } if maintenance_task else None,
                 "opened_at": incident.opened_at.isoformat() if incident.opened_at else None,
                 "last_seen_at": incident.last_seen_at.isoformat() if incident.last_seen_at else None,
             } if incident else None,
