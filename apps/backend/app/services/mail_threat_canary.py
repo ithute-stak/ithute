@@ -27,6 +27,19 @@ def deterministic_canary_member(
     return bucket < bounded
 
 
+def serving_source(
+    *,
+    challenger_state: str | None,
+    canary_member: bool,
+    active_present: bool,
+) -> str:
+    if challenger_state == "canary" and canary_member:
+        return "challenger"
+    if active_present:
+        return "active"
+    return "baseline"
+
+
 def candidate_action(probabilities: dict[str, Any]) -> str:
     phishing = float(probabilities.get("phishing") or 0.0)
     bec = float(probabilities.get("bec") or 0.0)
