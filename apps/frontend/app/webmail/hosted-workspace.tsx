@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   Archive,
   Building2,
+  BrainCircuit,
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
@@ -24,6 +25,7 @@ import {
   Search,
   Send,
   Settings2,
+  ShieldAlert,
   Star,
   UsersRound,
   Trash2,
@@ -77,6 +79,37 @@ type BusinessContact = {
   company?: string;
 };
 type ConversationMessage = MessageRow & { folder?: string };
+type MailIntelligence = {
+  model: string;
+  security: {
+    phishing_probability: number;
+    bec_probability: number;
+    recommended_action: "allow" | "review" | "warn_and_verify";
+    signals: Array<{ signal: string; weight: number; evidence: string[] }>;
+  };
+  business: {
+    intent: { label: string; confidence: number; alternatives?: Array<{ label: string; score: number }>; evidence?: string[] };
+    priority: "low" | "normal" | "high" | "critical";
+    priority_score: number;
+    reply_needed: boolean;
+    reply_evidence?: { question_mark: boolean; request_terms: string[] };
+    entities: {
+      emails: string[];
+      urls: string[];
+      money: string[];
+      dates: string[];
+      references: string[];
+      deadline_terms: string[];
+    };
+    summary: string;
+  };
+  governance: {
+    automatic_blocking: boolean;
+    training_use: boolean;
+    explainable: boolean;
+  };
+};
+type IntelligentMessage = MessageRow & { intelligence?: MailIntelligence };
 
 function folderIcon(name: string) {
   const kind = folderKind(name);
@@ -265,7 +298,7 @@ export function HostedMailWorkspace() {
       const response = await webmail(`/messages/${uid}?folder=${encodeURIComponent(targetFolder)}`);
       if (response.status === 401) { window.location.assign("/webmail"); return; }
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Unable to open message");
-      const full = (await response.json()) as MessageRow;
+      const full = (await response.json()) as IntelligentMessage;
       setSelected(full);
       setMessages((items) => items.map((item) => item.uid === uid ? { ...item, seen: true } : item));
       void loadCounts();
@@ -720,6 +753,13 @@ export function HostedMailWorkspace() {
     />
   ) : null;
 
+  const selectedIntelligence = (selected as IntelligentMessage | null)?.intelligence || null;
+  const intelligenceTone = selectedIntelligence?.security.recommended_action === "warn_and_verify"
+    ? "border-red-200 bg-red-50 text-red-900 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-100"
+    : selectedIntelligence?.security.recommended_action === "review"
+      ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
+      : "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100";
+
   const reader = selected ? (
     <section className="flex min-h-0 flex-1 flex-col bg-white dark:bg-slate-900">
       <div className="flex h-13 shrink-0 items-center gap-1 border-b border-slate-200 px-3 dark:border-white/10 sm:px-4">
@@ -748,6 +788,67 @@ export function HostedMailWorkspace() {
             </div>
 
             <div className="mt-5"><MailPrivacyNote /></div>
+            {selectedIntelligence ? (
+              <section className={`mt-4 rounded-2xl border p-4 ${intelligenceTone}`}>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex items-start gap-3">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/70 shadow-sm dark:bg-white/10"><BrainCircuit size={18} /></span>
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[.12em]">Ithute Mail Intelligence</p>
+                      <p className="mt-1 text-sm font-black">{selectedIntelligence.business.summary}</p>
+                      <p className="mt-1 text-[11px] opacity-75">Explainable analysis only — this model does not automatically block mail or use message content for training.</p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <span className="rounded-full bg-white/70 px-3 py-1 text-[10px] font-black uppercase dark:bg-white/10">{selectedIntelligence.business.priority} priority</span>
+                    <span className="rounded-full bg-white/70 px-3 py-1 text-[10px] font-black uppercase dark:bg-white/10">{selectedIntelligence.business.intent.label}</span>
+                    {selectedIntelligence.business.reply_needed ? <span className="rounded-full bg-white/70 px-3 py-1 text-[10px] font-black uppercase dark:bg-white/10">Reply likely</span> : null}
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-xl bg-white/70 p-3 dark:bg-white/10">
+                    <p className="text-[9px] font-black uppercase opacity-65">Phishing</p>
+                    <p className="mt-1 text-xl font-black">{Math.round(selectedIntelligence.security.phishing_probability * 100)}%</p>
+                  </div>
+                  <div className="rounded-xl bg-white/70 p-3 dark:bg-white/10">
+                    <p className="text-[9px] font-black uppercase opacity-65">BEC</p>
+                    <p className="mt-1 text-xl font-black">{Math.round(selectedIntelligence.security.bec_probability * 100)}%</p>
+                  </div>
+                  <div className="rounded-xl bg-white/70 p-3 dark:bg-white/10">
+                    <p className="text-[9px] font-black uppercase opacity-65">Intent confidence</p>
+                    <p className="mt-1 text-xl font-black">{Math.round(selectedIntelligence.business.intent.confidence * 100)}%</p>
+                  </div>
+                  <div className="rounded-xl bg-white/70 p-3 dark:bg-white/10">
+                    <p className="text-[9px] font-black uppercase opacity-65">Action</p>
+                    <p className="mt-1 flex items-center gap-2 text-sm font-black"><ShieldAlert size={15} /> {selectedIntelligence.security.recommended_action.replaceAll("_", " ")}</p>
+                  </div>
+                </div>
+
+                {(selectedIntelligence.business.entities.money.length || selectedIntelligence.business.entities.dates.length || selectedIntelligence.business.entities.deadline_terms.length || selectedIntelligence.business.entities.references.length) ? (
+                  <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold">
+                    {selectedIntelligence.business.entities.money.slice(0, 3).map((value) => <span key={`money-${value}`} className="rounded-lg bg-white/70 px-2.5 py-1 dark:bg-white/10">Amount: {value}</span>)}
+                    {selectedIntelligence.business.entities.dates.slice(0, 3).map((value) => <span key={`date-${value}`} className="rounded-lg bg-white/70 px-2.5 py-1 dark:bg-white/10">Date: {value}</span>)}
+                    {selectedIntelligence.business.entities.deadline_terms.slice(0, 3).map((value) => <span key={`deadline-${value}`} className="rounded-lg bg-white/70 px-2.5 py-1 dark:bg-white/10">Deadline: {value}</span>)}
+                    {selectedIntelligence.business.entities.references.slice(0, 3).map((value) => <span key={`ref-${value}`} className="rounded-lg bg-white/70 px-2.5 py-1 dark:bg-white/10">Ref: {value}</span>)}
+                  </div>
+                ) : null}
+
+                {selectedIntelligence.security.signals.length ? (
+                  <details className="mt-3 rounded-xl bg-white/60 p-3 text-[10px] dark:bg-white/10">
+                    <summary className="cursor-pointer font-black uppercase tracking-[.08em]">Why the model flagged this</summary>
+                    <div className="mt-2 space-y-2">
+                      {selectedIntelligence.security.signals.slice(0, 6).map((signal) => (
+                        <div key={signal.signal}>
+                          <p className="font-black">{signal.signal.replaceAll("_", " ")} · +{signal.weight}</p>
+                          <p className="mt-0.5 opacity-75">{signal.evidence.join(" · ")}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                ) : null}
+              </section>
+            ) : null}
             <div className="mt-6 min-h-[220px]">
               <div data-imail-message-body="true" data-imail-sender={addressOnly(selected.from)} className="whitespace-pre-wrap break-words leading-7 text-slate-800 dark:text-slate-100" style={{ fontSize }}>{selected.body_text || selected.snippet || ""}</div>
             </div>
