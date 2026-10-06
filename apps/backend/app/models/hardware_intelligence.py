@@ -288,6 +288,7 @@ class HardwareModelVersion(Base):
     algorithm: Mapped[str] = mapped_column(String(64), nullable=False)
     lifecycle_state: Mapped[str] = mapped_column(String(32), default="candidate", nullable=False, index=True)
     artifact_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    artifact_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     feature_schema_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     training_metrics_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     shadow_metrics_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
