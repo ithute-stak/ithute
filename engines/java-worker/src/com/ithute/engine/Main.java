@@ -303,7 +303,10 @@ public final class Main {
         }
 
         rankedRecommendations.sort((left, right) ->
-            Integer.compare((int) right.get("priority_score"), (int) left.get("priority_score"))
+            Integer.compare(
+                ((Number) right.get("priority_score")).intValue(),
+                ((Number) left.get("priority_score")).intValue()
+            )
         );
 
         List<String> recommendations = new ArrayList<>();
