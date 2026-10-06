@@ -5,6 +5,8 @@ from math import isfinite
 from statistics import median
 from typing import Iterable, Sequence
 
+from app.services.hardware_ai import ensemble_signals
+
 
 MIN_BASELINE_SAMPLES = 24
 TARGET_BASELINE_SAMPLES = 96
@@ -511,6 +513,9 @@ def predict_hardware_drift(
 
     confidence = min(1.0, sample_count / TARGET_BASELINE_SAMPLES)
     risk_score = round(risk_score * (0.65 + 0.35 * confidence))
+    robust_baseline_risk = int(risk_score)
+    models = ensemble_signals(history, current, robust_baseline_risk, confidence)
+    risk_score = int(models["ensemble_risk_score"])
 
     if risk_score >= 75:
         state = "high"
@@ -533,6 +538,25 @@ def predict_hardware_drift(
             parts.append(f"rising {metric.slope_per_sample:.2f} per sample")
         evidence.append("; ".join(parts))
 
+    isolation = models.get("isolation_forest") or {}
+    if isolation.get("ready") and float(isolation.get("risk_score") or 0) >= 35:
+        evidence.append(
+            f"Isolation Forest anomaly {float(isolation.get('anomaly_score') or 0):.3f}; "
+            f"model risk {float(isolation.get('risk_score') or 0):.0f}/100 across {int(isolation.get('features') or 0)} signals"
+        )
+    change = models.get("change_point") or {}
+    if change.get("ready") and float(change.get("risk_score") or 0) >= 35:
+        evidence.append(
+            f"Change point detected in {str(change.get('metric') or 'hardware signal').replace('_', ' ')}; "
+            f"shift {float(change.get('shift_sigma') or 0):.1f} robust deviations"
+        )
+    survival = models.get("survival") or {}
+    if survival.get("ready"):
+        evidence.append(
+            f"Prior-only survival projection: {float(survival.get('failure_probability_72h') or 0):.1f}% "
+            "risk within 72h; requires real failure labels for calibration"
+        )
+
     if not evidence:
         evidence.append("Current hardware signals remain close to this server's learned baseline")
 
@@ -542,6 +566,10 @@ def predict_hardware_drift(
         "confidence": round(confidence, 3),
         "sample_count": sample_count,
         "evidence": evidence[:8],
+        "models": {
+            "robust_baseline": {"risk_score": robust_baseline_risk, "ready": True},
+            **models,
+        },
         "metrics": [
             {
                 "name": metric.name,
