@@ -217,21 +217,29 @@ def ensemble_signals(history: Sequence[Any], current: Any, baseline_risk: float,
     isolation = isolation_forest_signal(history, current)
     change = change_point_signal(history, current)
 
-    votes = [max(0.0, min(100.0, float(baseline_risk)))]
-    weights = [0.60]
+    baseline = max(0.0, min(100.0, float(baseline_risk)))
+    weighted = baseline * 0.60
+    weight_total = 0.60
+    ai_strong_votes = 0
     if isolation.get("ready"):
-        votes.append(float(isolation["risk_score"]))
-        weights.append(0.25)
+        isolation_risk = float(isolation["risk_score"])
+        weighted += isolation_risk * 0.25
+        weight_total += 0.25
+        ai_strong_votes += 1 if isolation_risk >= 75.0 else 0
     if change.get("ready"):
-        votes.append(float(change["risk_score"]))
-        weights.append(0.15)
+        change_risk = float(change["risk_score"])
+        weighted += change_risk * 0.15
+        weight_total += 0.15
+        ai_strong_votes += 1 if change_risk >= 75.0 else 0
 
-    weight_total = sum(weights)
-    ensemble = sum(value * weight for value, weight in zip(votes, weights)) / max(weight_total, 1e-6)
+    corroborated = weighted / max(weight_total, 1e-6)
+    # The established robust detector is the safety floor: new AI can
+    # corroborate or raise risk, but never suppress a proven strong signal.
+    ensemble = max(baseline, corroborated)
 
-    # A single detector cannot independently create a high-risk incident.
-    strong_votes = sum(1 for value in votes if value >= 75.0)
-    if ensemble >= 75.0 and strong_votes < 2:
+    # Auxiliary AI may not promote a sub-high robust baseline into high risk
+    # unless two independent AI detectors agree strongly.
+    if baseline < 75.0 and ensemble >= 75.0 and ai_strong_votes < 2:
         ensemble = 74.0
 
     survival = weibull_survival_projection(ensemble, confidence)
