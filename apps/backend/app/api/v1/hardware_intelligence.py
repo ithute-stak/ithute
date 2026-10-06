@@ -190,11 +190,25 @@ def _ensure_hardware_maintenance_task(
 ) -> HardwareMaintenanceTask | None:
     actions = workflow_plan.get("actions") if isinstance(workflow_plan.get("actions"), list) else []
     recommendations = workflow_plan.get("recommendations") if isinstance(workflow_plan.get("recommendations"), list) else []
+    ranked = workflow_plan.get("ranked_recommendations") if isinstance(workflow_plan.get("ranked_recommendations"), list) else []
     if "create_maintenance_task" not in actions:
         return None
-    recommendation_text = "\n".join(
-        f"- {str(item).replace('_', ' ')}" for item in recommendations[:10]
-    )
+    recommendation_lines: list[str] = []
+    for item in ranked[:10]:
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action") or "").replace("_", " ")
+        score = item.get("priority_score")
+        confidence = item.get("confidence_percent")
+        urgency = str(item.get("urgency") or "")
+        impact = str(item.get("expected_impact") or "")
+        recommendation_lines.append(
+            f"- [{score}/100 · {urgency} · confidence {confidence}%] {action}"
+            + (f" — {impact}" if impact else "")
+        )
+    if not recommendation_lines:
+        recommendation_lines = [f"- {str(item).replace('_', ' ')}" for item in recommendations[:10]]
+    recommendation_text = "\n".join(recommendation_lines)
     task_description = summary if not recommendation_text else f"{summary}\n\nRecommended remediation:\n{recommendation_text}"
     existing = db.scalar(
         select(HardwareMaintenanceTask).where(HardwareMaintenanceTask.incident_id == incident.id)
@@ -250,6 +264,8 @@ def _reconcile_hardware_incident(
         "io_pressure_avg10": snapshot.io_pressure_avg10,
         "filesystem_used_percent": snapshot.filesystem_used_percent,
         "storage_warning_count": snapshot.storage_warning_count,
+        "predictive_risk_score": snapshot.predictive_risk_score,
+        "predictive_confidence": snapshot.predictive_confidence,
     })
     workflow_plan = {**workflow_plan, "engine": workflow_engine}
 
