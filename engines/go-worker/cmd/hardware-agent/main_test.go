@@ -241,7 +241,10 @@ func TestReadEBPFSnapshotAcceptsFreshRootExport(t *testing.T) {
 func TestReadEBPFSnapshotRejectsWritableOrStaleFiles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ebpf.json")
 	fresh := fmt.Sprintf(`{"available":true,"sampled_at_unix":%d}`, time.Now().Unix())
-	if err := os.WriteFile(path, []byte(fresh), 0o666); err != nil {
+	if err := os.WriteFile(path, []byte(fresh), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := readEBPFSnapshot(path, 90*time.Second); err == nil {
