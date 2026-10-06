@@ -60,10 +60,10 @@ func validateWithRust(parent context.Context, validatorPath string, sample Sampl
 	cmd := exec.CommandContext(ctx, validatorPath, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("Rust telemetry validation failed: %s: %w", strings.TrimSpace(string(output)), err)
+		return fmt.Errorf("rust telemetry validation failed: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	if strings.TrimSpace(string(output)) != "ok" {
-		return fmt.Errorf("Rust telemetry validator returned unexpected response")
+		return fmt.Errorf("rust telemetry validator returned unexpected response")
 	}
 	return nil
 }
