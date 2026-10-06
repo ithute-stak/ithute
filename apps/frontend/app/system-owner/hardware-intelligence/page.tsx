@@ -90,6 +90,7 @@ type FleetItem = {
       engine?: string;
       escalation?: string;
       actions?: string[];
+      recommendations?: string[];
     };
     deliveries?: Array<{
       channel: string;
@@ -471,6 +472,16 @@ export default function HardwareIntelligencePage() {
                       <button disabled={actionLoading} onClick={() => void retryIncidentNotifications()} className="mt-3 rounded-lg border border-current/30 bg-white/70 px-3 py-2 text-[8px] font-black uppercase disabled:opacity-50">
                         Retry failed notifications
                       </button>
+                    ) : null}
+                    {selectedServer.incident.workflow_plan?.recommendations?.length ? (
+                      <div className="mt-3 rounded-lg border border-current/20 bg-white/60 p-3">
+                        <p className="text-[8px] font-black uppercase">Recommended remediation</p>
+                        <ul className="mt-2 space-y-1 text-[9px]">
+                          {selectedServer.incident.workflow_plan.recommendations.map((item) => (
+                            <li key={item}>• {item.replaceAll("_", " ")}</li>
+                          ))}
+                        </ul>
+                      </div>
                     ) : null}
                     {selectedServer.incident.deliveries?.length ? (
                       <div className="mt-3 flex flex-wrap gap-1.5">
