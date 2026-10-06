@@ -158,7 +158,7 @@ def _queue_hardware_incident_notifications(
             select(Notification).where(
                 Notification.user_id == owner.id,
                 Notification.category == "hardware_intelligence",
-                Notification.action_url == f"/system-owner/hardware-intelligence?server={server.id}",
+                Notification.action_url == f"/system-owner/hardware-intelligence?server={server.id}&incident={incident.id}",
                 Notification.title == title,
             )
         )
@@ -171,7 +171,7 @@ def _queue_hardware_incident_notifications(
                     severity=severity,
                     title=title,
                     message=summary,
-                    action_url=f"/system-owner/hardware-intelligence?server={server.id}",
+                    action_url=f"/system-owner/hardware-intelligence?server={server.id}&incident={incident.id}",
                 )
             )
         _queue_hardware_incident_delivery(db, incident=incident, owner=owner, channel="email")
