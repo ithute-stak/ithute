@@ -160,7 +160,7 @@ def _record_auth_failure(db: Session, request: Request, address: str, client_ip:
         ) from exc
 
 
-@router.post("/session")
+# Called by external_webmail_smart; that router owns POST /session.
 def login(payload: ExternalLogin, request: Request, response: Response, db: Session = Depends(get_db)):
     address = str(payload.address).strip().lower()
     client_ip = _client_ip(request)
@@ -253,7 +253,7 @@ def list_folders(token: Annotated[str | None, Cookie(alias=EXTERNAL_COOKIE)] = N
         raise _failure(exc) from exc
 
 
-@router.get("/folder-counts")
+# Exact folder-count router owns GET /folder-counts.
 def counts(token: Annotated[str | None, Cookie(alias=EXTERNAL_COOKIE)] = None):
     try:
         return {"items": folder_counts(_config(token))}
@@ -349,7 +349,7 @@ def download_attachment(
     )
 
 
-@router.post("/drafts", status_code=201)
+# Rich alias router owns POST /drafts.
 def draft(
     payload: ExternalDraft,
     token: Annotated[str | None, Cookie(alias=EXTERNAL_COOKIE)] = None,
@@ -378,7 +378,7 @@ def identity(token: Annotated[str | None, Cookie(alias=EXTERNAL_COOKIE)] = None)
     }
 
 
-@router.post("/send", status_code=202)
+# Rich alias router owns POST /send.
 def compose(
     payload: ExternalSend,
     token: Annotated[str | None, Cookie(alias=EXTERNAL_COOKIE)] = None,
