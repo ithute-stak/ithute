@@ -519,7 +519,12 @@
         "aes_ni",
         "avx",
         "avx2",
-        "cycle_counter"
+        "cycle_counter",
+        "vmx",
+        "svm",
+        "hypervisor_present",
+        "hypervisor_vendor",
+        "logical_processors"
       ],
       "properties": {
         "available": {
@@ -557,6 +562,23 @@
           "type": "boolean"
         },
         "cycle_counter": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "vmx": {
+          "type": "boolean"
+        },
+        "svm": {
+          "type": "boolean"
+        },
+        "hypervisor_present": {
+          "type": "boolean"
+        },
+        "hypervisor_vendor": {
+          "type": "string",
+          "maxLength": 12
+        },
+        "logical_processors": {
           "type": "integer",
           "minimum": 0
         }
