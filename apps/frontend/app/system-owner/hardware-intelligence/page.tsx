@@ -184,6 +184,28 @@ type OperationsSummary = {
       maximum_class_imbalance_ratio: number;
     };
   };
+  training_dataset?: {
+    examples: number;
+    positive_examples: number;
+    negative_examples: number;
+    distinct_servers: number;
+    components: string[];
+    features: string[];
+    feature_coverage: Record<string, number>;
+  };
+  candidate_promotion_policy?: {
+    eligible_for_activation: boolean;
+    activation_rule: string;
+    thresholds: {
+      minimum_evaluation_samples: number;
+      minimum_precision: number;
+      minimum_recall: number;
+      maximum_false_positive_rate: number;
+      maximum_brier_score: number;
+      maximum_f1_regression: number;
+      maximum_brier_regression: number;
+    };
+  };
 };
 
 type Fleet = {
@@ -559,6 +581,34 @@ export default function HardwareIntelligencePage() {
               </ul>
             </div>
           ) : null}
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <div className="rounded-xl border border-[var(--admin-line)] p-4">
+              <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Usable training dataset</p>
+              <p className="mt-2 text-2xl font-black">{operations?.training_dataset?.examples ?? 0} examples</p>
+              <p className="mt-1 text-[9px] text-[var(--admin-muted)]">
+                {operations?.training_dataset?.positive_examples ?? 0} positive · {operations?.training_dataset?.negative_examples ?? 0} negative · {operations?.training_dataset?.distinct_servers ?? 0} servers
+              </p>
+              <div className="mt-3 grid gap-1">
+                {(operations?.training_dataset?.features || []).map((feature) => (
+                  <div key={feature} className="flex items-center justify-between text-[8px]">
+                    <span>{feature.replaceAll("_", " ")}</span>
+                    <span className="font-black">{operations?.training_dataset?.feature_coverage?.[feature] ?? 0}/{operations?.training_dataset?.examples ?? 0}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-xl border border-[var(--admin-line)] p-4">
+              <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Candidate promotion gate</p>
+              <p className="mt-2 text-[10px] font-black">Shadow first. Activation never direct.</p>
+              <p className="mt-1 text-[9px] leading-4 text-[var(--admin-muted)]">{operations?.candidate_promotion_policy?.activation_rule || "Candidate must pass held-out evaluation and live shadow validation before activation."}</p>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-[8px]">
+                <div className="rounded-lg bg-[#f7faf8] p-2">Precision ≥ {Math.round((operations?.candidate_promotion_policy?.thresholds.minimum_precision ?? 0.8) * 100)}%</div>
+                <div className="rounded-lg bg-[#f7faf8] p-2">Recall ≥ {Math.round((operations?.candidate_promotion_policy?.thresholds.minimum_recall ?? 0.7) * 100)}%</div>
+                <div className="rounded-lg bg-[#f7faf8] p-2">FPR ≤ {Math.round((operations?.candidate_promotion_policy?.thresholds.maximum_false_positive_rate ?? 0.15) * 100)}%</div>
+                <div className="rounded-lg bg-[#f7faf8] p-2">Brier ≤ {(operations?.candidate_promotion_policy?.thresholds.maximum_brier_score ?? 0.2).toFixed(2)}</div>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section className="surface-card p-5">
