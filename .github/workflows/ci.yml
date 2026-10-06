@@ -61,7 +61,7 @@ jobs:
           make -C engines/hardware-intelligence
           bash -n engines/hardware-intelligence/bin/ithute-ebpf-loader
           engines/hardware-intelligence/build/ithute-hw-probe | python3 -m json.tool >/dev/null
-          cargo build --release --locked --manifest-path engines/rust-core/Cargo.toml --bin hardware-validator
+          cargo build --release --locked --manifest-path engines/rust-core/Cargo.toml --bin hardware_validator
           cd engines/go-worker
           go test ./cmd/hardware-agent
           printf '%s' '0123456789abcdef0123456789abcdef' > /tmp/ithute-hardware-agent.key
@@ -69,7 +69,7 @@ jobs:
           go run ./cmd/hardware-agent \
             --once \
             --probe ../hardware-intelligence/build/ithute-hw-probe \
-            --validator ../rust-core/target/release/hardware-validator \
+            --validator ../rust-core/target/release/hardware_validator \
             --agent-id ci-server-01 \
             --signing-key-file /tmp/ithute-hardware-agent.key \
             > /tmp/ithute-hardware-envelope.json
