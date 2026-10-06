@@ -239,6 +239,15 @@ def dispatch_hardware_incident_deliveries(db: Session, limit: int = 50) -> dict:
             row.attempts += 1
             failed += 1
             continue
+        if incident.status != "open":
+            row.status = "cancelled"
+            row.next_attempt_at = None
+            row.last_error = "incident resolved before delivery"
+            skipped += 1
+            continue
+        if incident.notification_suppressed:
+            skipped += 1
+            continue
 
         try:
             row.attempts += 1
