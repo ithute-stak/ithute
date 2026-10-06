@@ -122,6 +122,15 @@ class Settings(BaseSettings):
 
     external_provider_timeout_seconds: float = 20.0
 
+    hardware_notification_email_enabled: bool = True
+    hardware_notification_push_enabled: bool = False
+    hardware_notification_auth_token_url: str = "http://ithute-auth:8080/v1/auth/service-token"
+    hardware_notification_push_url: str = "http://ithute-push:8080"
+    hardware_notification_client_id: str = "ithute-notification"
+    hardware_notification_client_secret: str | None = None
+    hardware_notification_retry_seconds: int = 60
+    hardware_notification_max_attempts: int = 5
+
     dpo_api_url: str = "https://secure.3gdirectpay.com/API/v6/"
     dpo_checkout_url: str = "https://secure.3gdirectpay.com/payv2.php?ID={token}"
     dpo_company_token: str | None = None
@@ -286,6 +295,17 @@ class Settings(BaseSettings):
             raise ValueError("POWERDNS_DEFAULT_TTL must be between 60 and 86400")
         if not 2 <= self.external_provider_timeout_seconds <= 120:
             raise ValueError("EXTERNAL_PROVIDER_TIMEOUT_SECONDS must be between 2 and 120")
+        if not self.hardware_notification_auth_token_url.startswith(("http://", "https://")):
+            raise ValueError("HARDWARE_NOTIFICATION_AUTH_TOKEN_URL must be an HTTP(S) URL")
+        if not self.hardware_notification_push_url.startswith(("http://", "https://")):
+            raise ValueError("HARDWARE_NOTIFICATION_PUSH_URL must be an HTTP(S) URL")
+        if not 10 <= self.hardware_notification_retry_seconds <= 3600:
+            raise ValueError("HARDWARE_NOTIFICATION_RETRY_SECONDS must be between 10 and 3600")
+        if not 1 <= self.hardware_notification_max_attempts <= 20:
+            raise ValueError("HARDWARE_NOTIFICATION_MAX_ATTEMPTS must be between 1 and 20")
+        if self.hardware_notification_push_enabled:
+            if not self.hardware_notification_client_secret or len(self.hardware_notification_client_secret.strip()) < 24:
+                raise ValueError("HARDWARE_NOTIFICATION_CLIENT_SECRET must be configured when Push delivery is enabled")
         if self.dpo_company_token and not self.dpo_service_type:
             raise ValueError("DPO_SERVICE_TYPE is required when DPO_COMPANY_TOKEN is configured")
         if self.opensrs_username and not self.opensrs_api_key:
