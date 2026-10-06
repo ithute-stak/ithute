@@ -347,3 +347,35 @@ def test_remediation_verification_contract_exists():
     assert '"latest_remediation": {' in api
     assert "latest_remediation?:" in page
     assert "selectedServer.latest_remediation" in page
+
+
+
+def test_hardware_supervised_learning_readiness_contract_exists():
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]
+    api = (backend / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    models = (backend / "app" / "models" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    service = (backend / "app" / "services" / "hardware_supervised_learning.py").read_text(encoding="utf-8")
+    migration = (backend / "alembic" / "versions" / "0087_hardware_failure_labels.py").read_text(encoding="utf-8")
+    page = (repo / "apps" / "frontend" / "app" / "system-owner" / "hardware-intelligence" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "class HardwareFailureLabel" in models
+    assert "uq_hardware_failure_label_incident" in models
+    assert "class FailureLabelUpsert" in api
+    assert '"/incidents/{incident_id}/failure-label"' in api
+    assert '"/failure-labels"' in api
+    assert '"supervised_learning": _supervised_training_readiness(db)' in api
+    assert "def supervised_training_readiness" in service
+    assert "MIN_LABEL_CONFIDENCE = 0.80" in service
+    assert "MIN_BINARY_LABELS = 40" in service
+    assert "MIN_PER_CLASS = 12" in service
+    assert "MIN_DISTINCT_SERVERS = 3" in service
+    assert "MAX_CLASS_IMBALANCE_RATIO = 3.0" in service
+    assert "0087_hw_failure_labels" in migration
+    assert "Supervised learning readiness" in page
+    assert "Ground truth before XGBoost" in page
+    assert "Ground-truth failure label" in page
+    assert "Save confirmed label" in page
+    assert "saveFailureLabel" in page

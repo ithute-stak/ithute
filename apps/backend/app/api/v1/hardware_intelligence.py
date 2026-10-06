@@ -16,10 +16,11 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
-from app.models import HardwareAlertAcknowledgement, HardwareIncident, HardwareIncidentDelivery, HardwareMaintenanceTask, HardwareMaintenanceWindow, HardwareTelemetrySnapshot, InfrastructureServer, InfrastructureServerAgent, Notification, User
+from app.models import HardwareAlertAcknowledgement, HardwareFailureLabel, HardwareIncident, HardwareIncidentDelivery, HardwareMaintenanceTask, HardwareMaintenanceWindow, HardwareTelemetrySnapshot, InfrastructureServer, InfrastructureServerAgent, Notification, User
 from app.services.engine_runtime import hardware_workflow_plan
 from app.services.hardware_prediction import MetricPoint, derive_rate_features, predict_hardware_drift
 from app.services.hardware_remediation_verification import verify_remediation
+from app.services.hardware_supervised_learning import supervised_training_readiness
 
 router = APIRouter(prefix="/hardware-intelligence", tags=["hardware-intelligence"])
 
@@ -53,6 +54,16 @@ class MaintenanceTaskUpdate(BaseModel):
     note: str = Field(default="", max_length=1000)
     remediation_action: str = Field(default="", max_length=128)
     outcome: str = Field(default="", pattern=r"^(|resolved|improved|no_change|worsened)$")
+
+
+class FailureLabelUpsert(BaseModel):
+    label: str = Field(pattern=r"^(confirmed_failure|confirmed_degradation|false_positive|inconclusive)$")
+    component: str = Field(
+        default="unknown",
+        pattern=r"^(unknown|cpu|memory|storage|thermal|network|power|motherboard|other)$",
+    )
+    confidence: float = Field(ge=0.5, le=1.0)
+    evidence: str = Field(min_length=3, max_length=2000)
 
 
 def _utc(value: datetime) -> datetime:
@@ -949,6 +960,118 @@ def list_hardware_incidents(
     }
 
 
+def _supervised_training_readiness(db: Session) -> dict[str, Any]:
+    rows = db.execute(
+        select(
+            HardwareFailureLabel.label,
+            HardwareFailureLabel.component,
+            HardwareFailureLabel.confidence,
+            HardwareFailureLabel.server_id,
+        )
+    ).all()
+    return supervised_training_readiness([
+        {
+            "label": label,
+            "component": component,
+            "confidence": confidence,
+            "server_id": server_id,
+        }
+        for label, component, confidence, server_id in rows
+    ])
+
+
+@router.post("/incidents/{incident_id}/failure-label")
+def upsert_hardware_failure_label(
+    incident_id: str,
+    payload: FailureLabelUpsert,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    try:
+        parsed = UUID(incident_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid hardware incident id") from exc
+
+    incident = db.get(HardwareIncident, parsed)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Hardware incident not found")
+
+    now = datetime.now(timezone.utc)
+    row = db.scalar(
+        select(HardwareFailureLabel).where(HardwareFailureLabel.incident_id == incident.id)
+    )
+    if row is None:
+        row = HardwareFailureLabel(
+            incident_id=incident.id,
+            server_id=incident.server_id,
+            snapshot_id=incident.latest_snapshot_id,
+            label=payload.label,
+            component=payload.component,
+            confidence=payload.confidence,
+            evidence=payload.evidence.strip(),
+            confirmed_by_user_id=current.id,
+            confirmed_at=now,
+        )
+        db.add(row)
+    else:
+        row.server_id = incident.server_id
+        row.snapshot_id = incident.latest_snapshot_id
+        row.label = payload.label
+        row.component = payload.component
+        row.confidence = payload.confidence
+        row.evidence = payload.evidence.strip()
+        row.confirmed_by_user_id = current.id
+        row.confirmed_at = now
+
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": str(row.id),
+        "incident_id": str(row.incident_id),
+        "server_id": str(row.server_id),
+        "snapshot_id": str(row.snapshot_id) if row.snapshot_id else None,
+        "label": row.label,
+        "component": row.component,
+        "confidence": row.confidence,
+        "evidence": row.evidence,
+        "confirmed_by_user_id": str(row.confirmed_by_user_id) if row.confirmed_by_user_id else None,
+        "confirmed_at": row.confirmed_at.isoformat() if row.confirmed_at else None,
+        "training_readiness": _supervised_training_readiness(db),
+    }
+
+
+@router.get("/failure-labels")
+def list_hardware_failure_labels(
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    _ = current
+    rows = db.scalars(
+        select(HardwareFailureLabel)
+        .order_by(HardwareFailureLabel.confirmed_at.desc())
+        .limit(max(1, min(limit, 500)))
+    ).all()
+    return {
+        "training_readiness": _supervised_training_readiness(db),
+        "items": [
+            {
+                "id": str(row.id),
+                "incident_id": str(row.incident_id),
+                "server_id": str(row.server_id),
+                "snapshot_id": str(row.snapshot_id) if row.snapshot_id else None,
+                "label": row.label,
+                "component": row.component,
+                "confidence": row.confidence,
+                "evidence": row.evidence,
+                "confirmed_by_user_id": str(row.confirmed_by_user_id) if row.confirmed_by_user_id else None,
+                "confirmed_at": row.confirmed_at.isoformat() if row.confirmed_at else None,
+            }
+            for row in rows
+        ],
+    }
+
+
 @router.get("/operations-summary")
 def hardware_operations_summary(
     db: Session = Depends(get_db),
@@ -990,6 +1113,7 @@ def hardware_operations_summary(
             "failed": int(delivery_rows.get("failed", 0) or 0),
             "cancelled": int(delivery_rows.get("cancelled", 0) or 0),
         },
+        "supervised_learning": _supervised_training_readiness(db),
     }
 
 
@@ -1166,6 +1290,9 @@ def hardware_fleet_health(
         maintenance_task = db.scalar(
             select(HardwareMaintenanceTask).where(HardwareMaintenanceTask.incident_id == incident.id)
         ) if incident else None
+        failure_label = db.scalar(
+            select(HardwareFailureLabel).where(HardwareFailureLabel.incident_id == incident.id)
+        ) if incident else None
         latest_remediation_task = db.scalar(
             select(HardwareMaintenanceTask)
             .where(
@@ -1293,6 +1420,14 @@ def hardware_fleet_health(
                 "predictive_risk_score": incident.predictive_risk_score,
                 "notification_suppressed": incident.notification_suppressed,
                 "workflow_plan": json.loads(incident.workflow_plan_json or "{}"),
+                "failure_label": {
+                    "id": str(failure_label.id),
+                    "label": failure_label.label,
+                    "component": failure_label.component,
+                    "confidence": failure_label.confidence,
+                    "evidence": failure_label.evidence,
+                    "confirmed_at": failure_label.confirmed_at.isoformat() if failure_label.confirmed_at else None,
+                } if failure_label else None,
                 "deliveries": [
                     {
                         "channel": delivery.channel,

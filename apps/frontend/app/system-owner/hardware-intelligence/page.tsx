@@ -123,6 +123,14 @@ type FleetItem = {
         learning_adjustment?: number;
       }>;
     };
+    failure_label?: {
+      id: string;
+      label: string;
+      component: string;
+      confidence: number;
+      evidence: string;
+      confirmed_at?: string | null;
+    } | null;
     deliveries?: Array<{
       channel: string;
       status: string;
@@ -155,6 +163,27 @@ type OperationsSummary = {
   incidents_by_severity: Record<string, number>;
   tasks: Record<string, number>;
   deliveries: Record<string, number>;
+  supervised_learning?: {
+    ready: boolean;
+    engine: string;
+    minimum_confidence: number;
+    total_labels: number;
+    high_confidence_labels: number;
+    binary_labels: number;
+    confirmed_failures: number;
+    false_positives: number;
+    distinct_servers: number;
+    components: string[];
+    class_imbalance_ratio?: number | null;
+    blockers: string[];
+    gates: Record<string, boolean>;
+    thresholds: {
+      minimum_binary_labels: number;
+      minimum_per_class: number;
+      minimum_distinct_servers: number;
+      maximum_class_imbalance_ratio: number;
+    };
+  };
 };
 
 type Fleet = {
@@ -266,6 +295,10 @@ export default function HardwareIntelligencePage() {
   const [taskNote, setTaskNote] = useState("");
   const [taskAction, setTaskAction] = useState("");
   const [taskOutcome, setTaskOutcome] = useState("");
+  const [failureLabel, setFailureLabel] = useState("");
+  const [failureComponent, setFailureComponent] = useState("unknown");
+  const [failureConfidence, setFailureConfidence] = useState("0.90");
+  const [failureEvidence, setFailureEvidence] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
 
   const loadFleet = useCallback(async () => {
@@ -381,6 +414,32 @@ export default function HardwareIntelligencePage() {
     }
   }, [fleet, selected, loadFleet]);
 
+  const saveFailureLabel = useCallback(async () => {
+    const incidentId = fleet?.items.find((item) => item.server_id === selected)?.incident?.id;
+    if (!incidentId || !failureLabel || !failureEvidence.trim()) return;
+    const confidence = Math.max(0.5, Math.min(1, Number(failureConfidence) || 0.9));
+    setActionLoading(true);
+    setActionError("");
+    try {
+      await apiMutation(`/hardware-intelligence/incidents/${incidentId}/failure-label`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: failureLabel,
+          component: failureComponent,
+          confidence,
+          evidence: failureEvidence.trim(),
+        }),
+      }, ["/hardware-intelligence/fleet", "/hardware-intelligence/operations-summary"]);
+      setFailureEvidence("");
+      await loadFleet();
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Unable to record hardware failure label.");
+    } finally {
+      setActionLoading(false);
+    }
+  }, [fleet, selected, failureLabel, failureComponent, failureConfidence, failureEvidence, loadFleet]);
+
   const loadHistory = useCallback(async (serverId: string) => {
     if (!serverId) {
       setHistory(null);
@@ -464,6 +523,42 @@ export default function HardwareIntelligencePage() {
               <p className="mt-2 text-2xl font-black">{String(value)}</p>
             </article>
           ))}
+        </section>
+
+        <section className="surface-card p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-[.12em] text-[var(--admin-muted)]">Supervised learning readiness</p>
+              <h2 className="mt-1 text-lg font-black">Ground truth before XGBoost</h2>
+              <p className="mt-1 max-w-3xl text-[10px] leading-4 text-[var(--admin-muted)]">Ithute will not activate supervised hardware-failure boosting until operators have supplied enough balanced, high-confidence ground-truth labels from multiple servers.</p>
+            </div>
+            <span className={`rounded-full border px-3 py-1 text-[8px] font-black uppercase ${operations?.supervised_learning?.ready ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+              {operations?.supervised_learning?.ready ? "Training eligible" : "Training guarded"}
+            </span>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            {[
+              ["Binary labels", operations?.supervised_learning?.binary_labels ?? 0, operations?.supervised_learning?.thresholds.minimum_binary_labels ?? 40],
+              ["Confirmed failures", operations?.supervised_learning?.confirmed_failures ?? 0, operations?.supervised_learning?.thresholds.minimum_per_class ?? 12],
+              ["False positives", operations?.supervised_learning?.false_positives ?? 0, operations?.supervised_learning?.thresholds.minimum_per_class ?? 12],
+              ["Distinct servers", operations?.supervised_learning?.distinct_servers ?? 0, operations?.supervised_learning?.thresholds.minimum_distinct_servers ?? 3],
+              ["Min confidence", Math.round((operations?.supervised_learning?.minimum_confidence ?? 0.8) * 100), 80],
+            ].map(([label, value, target]) => (
+              <div key={String(label)} className="rounded-xl border border-[var(--admin-line)] bg-[#f7faf8] p-3">
+                <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">{String(label)}</p>
+                <p className="mt-2 text-xl font-black">{String(value)}{String(label) === "Min confidence" ? "%" : ""}</p>
+                <p className="mt-1 text-[8px] text-[var(--admin-muted)]">Target {String(target)}{String(label) === "Min confidence" ? "%" : ""}</p>
+              </div>
+            ))}
+          </div>
+          {operations?.supervised_learning?.blockers?.length ? (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <p className="text-[8px] font-black uppercase text-amber-800">Current blockers</p>
+              <ul className="mt-2 space-y-1 text-[9px] font-bold text-amber-800">
+                {operations.supervised_learning.blockers.map((item, index) => <li key={`${item}-${index}`}>• {item}</li>)}
+              </ul>
+            </div>
+          ) : null}
         </section>
 
         <section className="surface-card p-5">
@@ -817,6 +912,32 @@ export default function HardwareIntelligencePage() {
                 <input value={ackNote} onChange={(event) => setAckNote(event.target.value)} placeholder="Optional operator note" className="mt-3 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]" />
                 <button disabled={actionLoading || selectedServer.acknowledgement.acknowledged} onClick={() => void acknowledgeCurrent()} className="mt-2 rounded-xl bg-[#d8c56a] px-4 py-2 text-[9px] font-black text-[#123a38] disabled:opacity-50">{selectedServer.acknowledgement.acknowledged ? "Acknowledged" : "Acknowledge current sample"}</button>
               </div>
+              {selectedServer.incident ? (
+                <div className="rounded-xl border border-[var(--admin-line)] p-4">
+                  <p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">Ground-truth failure label</p>
+                  <p className="mt-1 text-[10px] text-[var(--admin-muted)]">Confirm what actually happened. Only high-confidence confirmed failures and false positives count toward the first supervised model.</p>
+                  {selectedServer.incident.failure_label ? (
+                    <div className="mt-2 rounded-lg bg-[#f7faf8] p-2 text-[9px] font-bold">
+                      Current: {selectedServer.incident.failure_label.label.replaceAll("_", " ")} · {selectedServer.incident.failure_label.component} · {(selectedServer.incident.failure_label.confidence * 100).toFixed(0)}%
+                    </div>
+                  ) : null}
+                  <select value={failureLabel} onChange={(event) => setFailureLabel(event.target.value)} className="mt-3 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]">
+                    <option value="">Select ground-truth label</option>
+                    <option value="confirmed_failure">Confirmed hardware failure</option>
+                    <option value="confirmed_degradation">Confirmed degradation, no failure</option>
+                    <option value="false_positive">False positive</option>
+                    <option value="inconclusive">Inconclusive</option>
+                  </select>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <select value={failureComponent} onChange={(event) => setFailureComponent(event.target.value)} className="rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]">
+                      {["unknown", "cpu", "memory", "storage", "thermal", "network", "power", "motherboard", "other"].map((item) => <option key={item} value={item}>{item}</option>)}
+                    </select>
+                    <input value={failureConfidence} onChange={(event) => setFailureConfidence(event.target.value)} type="number" min="0.5" max="1" step="0.05" className="rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]" aria-label="Failure label confidence" />
+                  </div>
+                  <textarea value={failureEvidence} onChange={(event) => setFailureEvidence(event.target.value)} placeholder="Evidence: diagnostics, replaced component, vendor test, postmortem finding…" className="mt-2 min-h-20 w-full rounded-xl border border-[var(--admin-line)] bg-white px-3 py-2 text-[10px]" />
+                  <button disabled={actionLoading || !failureLabel || !failureEvidence.trim()} onClick={() => void saveFailureLabel()} className="mt-2 rounded-xl bg-[#18524d] px-4 py-2 text-[9px] font-black text-white disabled:opacity-50">Save confirmed label</button>
+                </div>
+              ) : null}
               {selectedServer.incident?.maintenance_task ? (
                 <div className="rounded-xl border border-[var(--admin-line)] p-4">
                   <p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">Incident maintenance task</p>
