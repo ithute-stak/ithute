@@ -42,6 +42,18 @@ type FleetItem = {
   ebpf_block_latency_p99_ms?: number | null;
   ebpf_block_latency_max_ms?: number | null;
   ebpf_latency_percentiles_capped?: boolean;
+  cpu_native?: {
+    available: boolean;
+    vendor: string;
+    family: number;
+    model: number;
+    stepping: number;
+    invariant_tsc: boolean;
+    rdtscp: boolean;
+    aes_ni: boolean;
+    avx: boolean;
+    avx2: boolean;
+  };
   predictive_risk_score?: number | null;
   predictive_state: "learning" | "stable" | "watch" | "elevated" | "high";
   predictive_confidence?: number | null;
@@ -249,7 +261,7 @@ export default function HardwareIntelligencePage() {
           <div className="bg-[linear-gradient(120deg,#123a38,#18524d)] p-6 text-white">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-[9px] font-black uppercase tracking-[.16em] text-[#d8c56a]">C + eBPF · Rust · Go · Python</p>
+                <p className="text-[9px] font-black uppercase tracking-[.16em] text-[#d8c56a]">Assembly · C + eBPF · Rust · Go · Python</p>
                 <h1 className="mt-2 text-3xl font-black">Hardware Intelligence</h1>
                 <p className="mt-2 max-w-3xl text-[11px] leading-5 text-[#c8d8d2]">See which servers are healthy, degrading, critical or offline. Every warning is backed by measurable evidence rather than an unexplained score.</p>
               </div>
@@ -365,6 +377,25 @@ export default function HardwareIntelligencePage() {
                     <p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">BMC sensors</p>
                     <p className="mt-1 text-sm font-black">{selectedServer.bmc_critical_count ?? 0} critical · {selectedServer.bmc_warning_count ?? 0} warning</p>
                   </div>
+                </div>
+                <div className="rounded-xl border border-[var(--admin-line)] p-3">
+                  <div className="flex items-center justify-between"><p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">CPU precision layer</p><Cpu size={12}/></div>
+                  {selectedServer.cpu_native?.available ? (
+                    <>
+                      <p className="mt-2 text-[10px] font-black">{selectedServer.cpu_native.vendor || "x86_64 CPU"} · family {selectedServer.cpu_native.family} · model {selectedServer.cpu_native.model} · stepping {selectedServer.cpu_native.stepping}</p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {[
+                          ["Invariant TSC", selectedServer.cpu_native.invariant_tsc],
+                          ["RDTSCP", selectedServer.cpu_native.rdtscp],
+                          ["AES-NI", selectedServer.cpu_native.aes_ni],
+                          ["AVX", selectedServer.cpu_native.avx],
+                          ["AVX2", selectedServer.cpu_native.avx2],
+                        ].map(([label, enabled]) => (
+                          <span key={String(label)} className={`rounded-full border px-2 py-1 text-[8px] font-black ${enabled ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>{String(label)}</span>
+                        ))}
+                      </div>
+                    </>
+                  ) : <p className="mt-2 text-[9px] text-[var(--admin-muted)]">Assembly CPU telemetry is unavailable on this host architecture.</p>}
                 </div>
                 <div className="rounded-xl border border-[var(--admin-line)] p-3">
                   <div className="flex items-center justify-between"><p className="text-[8px] font-black uppercase text-[var(--admin-muted)]">Kernel block latency</p><HardDrive size={12}/></div>
