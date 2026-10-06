@@ -31,3 +31,26 @@ def test_imail_intelligence_v1_contract():
     assert "bec_probability" in ui
     assert "Explainable analysis only" in ui
     assert "does not automatically block mail" in ui
+
+
+
+def test_imail_intelligence_learning_contract():
+    backend = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]
+
+    api = (backend / "app" / "api" / "v1" / "webmail.py").read_text(encoding="utf-8")
+    learning = (backend / "app" / "services" / "mail_intelligence_learning.py").read_text(encoding="utf-8")
+    ui = (repo / "apps" / "frontend" / "app" / "webmail" / "hosted-workspace.tsx").read_text(encoding="utf-8")
+
+    assert '@router.post("/messages/{uid}/intelligence/verdict")' in api
+    assert "Verified mail intelligence verdict is immutable" in api
+    assert "mail_intelligence_training_label" in api
+    assert '"raw_body_stored": False' in learning
+    assert "def training_readiness" in learning
+    assert "MIN_LABEL_CONFIDENCE = 0.80" in learning
+
+    assert "Verified verdict" in ui
+    assert 'saveIntelligenceVerdict("legitimate")' in ui
+    assert 'saveIntelligenceVerdict("phishing")' in ui
+    assert 'saveIntelligenceVerdict("bec")' in ui
+    assert "Raw message content is not stored" in ui
