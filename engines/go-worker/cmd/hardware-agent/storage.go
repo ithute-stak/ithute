@@ -81,6 +81,7 @@ func collectSmartStorage(parent context.Context, smartctl string) []StorageHealt
 	results := make([]StorageHealth, 0, len(devices))
 	for _, device := range devices {
 		ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+		// #nosec G204 -- smartctl is resolved from fixed system paths and device comes from /sys/block.
 		cmd := exec.CommandContext(ctx, smartctl, "-a", "-j", device)
 		output, err := cmd.Output()
 		cancel()
