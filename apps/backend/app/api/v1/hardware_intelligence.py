@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_platform_owner
 from app.core.security import hash_token
 from app.db.session import get_db
-from app.models import HardwareAlertAcknowledgement, HardwareMaintenanceWindow, HardwareTelemetrySnapshot, InfrastructureServer, InfrastructureServerAgent, User
+from app.models import HardwareAlertAcknowledgement, HardwareIncident, HardwareMaintenanceWindow, HardwareTelemetrySnapshot, InfrastructureServer, InfrastructureServerAgent, Notification, User
 from app.services.hardware_prediction import MetricPoint, derive_rate_features, predict_hardware_drift
 
 router = APIRouter(prefix="/hardware-intelligence", tags=["hardware-intelligence"])
@@ -81,6 +81,108 @@ def _ack_for_snapshot(db: Session, snapshot_id) -> HardwareAlertAcknowledgement 
             HardwareAlertAcknowledgement.snapshot_id == snapshot_id
         )
     )
+
+def _active_hardware_incident(db: Session, server_id) -> HardwareIncident | None:
+    return db.scalar(
+        select(HardwareIncident)
+        .where(
+            HardwareIncident.server_id == server_id,
+            HardwareIncident.status == "open",
+        )
+        .order_by(HardwareIncident.opened_at.desc())
+        .limit(1)
+    )
+
+
+def _hardware_incident_summary(server: InfrastructureServer, health: dict[str, Any], prediction: dict[str, Any]) -> tuple[str, str, str]:
+    predictive_state = str(prediction.get("state") or "learning").strip().lower()
+    risk_score = prediction.get("risk_score")
+    critical = health.get("status") == "critical"
+    severity = "critical" if critical else "high"
+    if critical:
+        title = f"Critical hardware health on {server.name}"
+        evidence = list(health.get("evidence") or [])
+    else:
+        title = f"High predicted hardware failure risk on {server.name}"
+        evidence = list(prediction.get("evidence") or [])
+    risk_text = f" Predictive risk is {risk_score}/100 ({predictive_state})." if risk_score is not None else ""
+    evidence_text = f" Evidence: {'; '.join(str(item) for item in evidence[:5])}." if evidence else ""
+    return severity, title, f"{title}.{risk_text}{evidence_text}"
+
+
+def _reconcile_hardware_incident(
+    db: Session,
+    server: InfrastructureServer,
+    snapshot: HardwareTelemetrySnapshot,
+    health: dict[str, Any],
+    prediction: dict[str, Any],
+    maintenance: HardwareMaintenanceWindow | None,
+    now: datetime,
+) -> HardwareIncident | None:
+    predictive_state = str(prediction.get("state") or "learning").strip().lower()
+    active_risk = health.get("status") == "critical" or predictive_state == "high"
+    incident = _active_hardware_incident(db, server.id)
+
+    if not active_risk:
+        if incident is not None:
+            incident.status = "resolved"
+            incident.resolved_at = now
+            incident.last_seen_at = now
+            incident.latest_snapshot_id = snapshot.id
+        return incident
+
+    severity, title, summary = _hardware_incident_summary(server, health, prediction)
+    suppressed = bool(maintenance and maintenance.suppress_notifications)
+
+    if incident is None:
+        incident = HardwareIncident(
+            server_id=server.id,
+            latest_snapshot_id=snapshot.id,
+            kind="hardware_risk",
+            severity=severity,
+            status="open",
+            title=title,
+            summary=summary,
+            predictive_state=predictive_state,
+            predictive_risk_score=prediction.get("risk_score"),
+            health_status=str(health.get("status") or "unknown"),
+            notification_suppressed=suppressed,
+            opened_at=now,
+            last_seen_at=now,
+        )
+        db.add(incident)
+        db.flush()
+
+        if not suppressed:
+            owners = db.scalars(
+                select(User).where(User.is_platform_owner.is_(True), User.is_active.is_(True))
+            ).all()
+            for owner in owners:
+                db.add(
+                    Notification(
+                        tenant_id=None,
+                        user_id=owner.id,
+                        category="hardware_intelligence",
+                        severity=severity,
+                        title=title,
+                        message=summary,
+                        action_url=f"/system-owner/hardware-intelligence?server={server.id}",
+                    )
+                )
+    else:
+        incident.latest_snapshot_id = snapshot.id
+        incident.severity = severity
+        incident.title = title
+        incident.summary = summary
+        incident.predictive_state = predictive_state
+        incident.predictive_risk_score = prediction.get("risk_score")
+        incident.health_status = str(health.get("status") or "unknown")
+        incident.notification_suppressed = suppressed
+        incident.last_seen_at = now
+        incident.resolved_at = None
+
+    return incident
+
 
 
 def _agent_from_token(db: Session, token: str | None) -> tuple[str, InfrastructureServerAgent, InfrastructureServer]:
@@ -419,6 +521,16 @@ def ingest_hardware_telemetry(
         db.rollback()
         raise HTTPException(status_code=409, detail="Hardware telemetry nonce has already been used") from exc
 
+    incident = _reconcile_hardware_incident(
+        db,
+        server,
+        row,
+        health,
+        prediction,
+        active_maintenance,
+        now,
+    )
+
     db.execute(
         delete(HardwareTelemetrySnapshot).where(
             HardwareTelemetrySnapshot.server_id == server.id,
@@ -435,6 +547,12 @@ def ingest_hardware_telemetry(
             "evidence": health["evidence"],
         },
         "prediction": prediction,
+        "incident": {
+            "id": str(incident.id),
+            "status": incident.status,
+            "severity": incident.severity,
+            "notification_suppressed": incident.notification_suppressed,
+        } if incident is not None else None,
         "maintenance": {
             "active": active_maintenance is not None,
             "suppress_notifications": bool(active_maintenance and active_maintenance.suppress_notifications),
