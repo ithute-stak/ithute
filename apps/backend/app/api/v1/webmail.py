@@ -328,7 +328,9 @@ def list_messages(folder: str = Query(default="INBOX", min_length=1, max_length=
 def get_message(uid: str, folder: str = Query(default="INBOX", min_length=1, max_length=255), token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None):
     address, password = _credentials(token)
     try:
-        return message(address, password, uid=_uid(uid), folder=folder)
+        payload = message(address, password, uid=_uid(uid), folder=folder)
+        payload["intelligence"] = analyze_mail_message(payload, mailbox_address=address)
+        return payload
     except WebmailError as exc:
         raise _failure(exc) from exc
 
