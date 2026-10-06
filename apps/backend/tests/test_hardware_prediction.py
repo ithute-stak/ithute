@@ -338,11 +338,11 @@ def test_survival_projection_is_guarded_and_prior_only():
     assert elevated["median_risk_horizon_hours"] > 0
 
 
-def test_ai_ensemble_requires_consensus_for_high_risk():
+def test_ai_ensemble_never_downgrades_strong_robust_baseline():
     history = [_point(temp=45, memory=1, io=1, disk=50) for _ in range(96)]
     current = _point(temp=45, memory=1, io=1, disk=50)
     result = ensemble_signals(history, current, baseline_risk=100, confidence=1.0)
-    assert result["ensemble_risk_score"] <= 74
+    assert result["ensemble_risk_score"] == 100
     assert result["supervised_boosting"]["ready"] is False
 
 
