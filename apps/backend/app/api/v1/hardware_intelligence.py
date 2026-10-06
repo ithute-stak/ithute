@@ -345,10 +345,11 @@ def _verify_completed_remediation(
                 HardwareTelemetrySnapshot.server_id == server_id,
                 HardwareTelemetrySnapshot.issued_at >= completed_at,
             )
-            .order_by(HardwareTelemetrySnapshot.issued_at.asc())
+            .order_by(HardwareTelemetrySnapshot.issued_at.desc())
             .limit(6)
         ).all()
     )
+    post_rows.reverse()
     if current_snapshot.issued_at >= completed_at and all(row.id != current_snapshot.id for row in post_rows):
         post_rows.append(current_snapshot)
         post_rows = post_rows[-6:]
