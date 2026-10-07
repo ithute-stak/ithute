@@ -18,7 +18,7 @@ import redis
 
 from app.core.config import settings
 from app.core.security import decrypt_secret, encrypt_secret, hash_token
-from app.services.engine_router import execute_binary
+from app.services.engine_router import execute_binary, execute_mail_render_plan, execute_mail_structured_profile
 from app.services.engine_runtime import MimeScan
 from app.services.metrics import MAIL_MIME_SCAN_BYTES, MAIL_MIME_SCAN_TOTAL
 
@@ -303,7 +303,7 @@ def _html_body(message) -> str:
     return ""
 
 
-def _render_contract(body_text: str, body_html: str, attachments: list[dict], scan: MimeScan, raw: bytes) -> dict:
+def _render_contract(body_text: str, body_html: str, attachments: list[dict], scan: MimeScan, scan_engine: str, raw: bytes) -> dict:
     normalized_text = body_text.replace("\r\n", "\n").replace("\r", "\n")
     lines = normalized_text.split("\n") if normalized_text else []
     longest_line = max((len(line) for line in lines), default=0)
@@ -313,6 +313,19 @@ def _render_contract(body_text: str, body_html: str, attachments: list[dict], sc
     heading_count = sum(html_lower.count(f"<h{level}") for level in range(1, 7))
     quote_count = html_lower.count("<blockquote") + sum(1 for line in lines if line.lstrip().startswith(">"))
     cpp_profile = execute_binary("native.blob_profile", normalized_text.encode("utf-8", errors="replace"))
+    metrics = {
+        "has_html": bool(body_html),
+        "characters": len(normalized_text),
+        "lines": len(lines),
+        "longest_line": longest_line,
+        "table_count": table_count,
+        "heading_count": heading_count,
+        "quote_count": quote_count,
+        "link_count": link_count,
+        "attachment_count": len(attachments),
+    }
+    go_plan = execute_mail_render_plan(metrics)
+    java_profile = execute_mail_structured_profile(metrics)
     if body_html:
         kind = "structured_html"
     elif longest_line > 220 or (lines and len(lines) <= 3 and len(normalized_text) > 800):
@@ -321,7 +334,12 @@ def _render_contract(body_text: str, body_html: str, attachments: list[dict], sc
         kind = "plain"
     if table_count:
         kind = "transactional_table"
-    density = "compact" if len(normalized_text) < 800 else "comfortable" if len(normalized_text) < 6000 else "long"
+    layout = str(go_plan.value.get("layout") or "")
+    if layout == "transactional":
+        kind = "transactional_table"
+    elif layout == "longform_plain":
+        kind = "longform_plain"
+    density = str(go_plan.value.get("density") or ("compact" if len(normalized_text) < 800 else "comfortable" if len(normalized_text) < 6000 else "long"))
     return {
         "version": 1,
         "kind": kind,
@@ -337,11 +355,15 @@ def _render_contract(body_text: str, body_html: str, attachments: list[dict], sc
         "link_count": link_count,
         "attachment_count": len(attachments),
         "engines": {
-            "mime_structure": "rust" if scan.bytes == len(raw) else "python",
+            "mime_structure": scan_engine,
             "text_shape": cpp_profile.engine,
+            "layout_plan": go_plan.engine,
+            "structured_profile": java_profile.engine,
             "orchestrator": "python",
         },
         "safe_html_policy": "semantic-tags-no-style-no-script-no-form-no-remote-media",
+        "layout_plan": go_plan.value,
+        "structured_profile": java_profile.value,
     }
 
 
@@ -442,7 +464,7 @@ def _message_json(uid: str, raw: bytes, meta: bytes | str = b"", include_body: b
     if include_body:
         row["body_text"] = body
         row["body_html"] = safe_html
-        row["render_contract"] = _render_contract(body, safe_html, attachments, scan, raw)
+        row["render_contract"] = _render_contract(body, safe_html, attachments, scan, scan_engine, raw)
     return row
 
 
