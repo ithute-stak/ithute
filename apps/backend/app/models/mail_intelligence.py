@@ -50,7 +50,10 @@ class DmarcAggregateReport(Base):
 
 class PhishingFinding(Base):
     __tablename__ = "phishing_findings"
-    __table_args__ = (Index("ix_phishing_tenant_created", "tenant_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_phishing_tenant_created", "tenant_id", "created_at"),
+        Index("ix_phishing_mailbox_created", "mailbox_id", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
