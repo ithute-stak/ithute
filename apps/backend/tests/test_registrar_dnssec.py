@@ -60,3 +60,14 @@ def test_opensrs_rejects_unsupported_algorithm_before_network(monkeypatch):
     except Exception as exc:
         assert "algorithm 13" in str(exc)
     assert called == []
+
+
+def test_preferred_ds_can_filter_to_registrar_algorithms():
+    values = [
+        "41805 13 2 426D93D1248D7C64E88794E3EDD986D08D9AC9FDD42061A92A3FE9F3AE74920C",
+        "51000 8 2 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    ]
+    selected = preferred_ds(values, allowed_algorithms={8})
+    assert selected is not None
+    assert selected.algorithm == 8
+    assert selected.key_tag == 51000
