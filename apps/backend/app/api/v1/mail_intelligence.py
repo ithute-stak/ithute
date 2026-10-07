@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -318,7 +318,7 @@ def enrich_domain_reputation(
     item.domain_age_days = payload.domain_age_days
     item.identity_status = payload.identity_status
     item.enrichment_source = payload.source.strip()
-    item.enrichment_checked_at = datetime.now().astimezone()
+    item.enrichment_checked_at = datetime.now(timezone.utc)
     refresh_domain_profile(item)
     db.commit()
     db.refresh(item)
