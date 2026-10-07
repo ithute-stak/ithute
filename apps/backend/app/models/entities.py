@@ -71,6 +71,8 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     memberships: Mapped[list["TenantMembership"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     sessions: Mapped[list["UserSession"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    trusted_devices: Mapped[list["TrustedDevice"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    recovery_codes: Mapped[list["RecoveryCode"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class TenantMembership(Base):
@@ -86,13 +88,45 @@ class TenantMembership(Base):
     user: Mapped[User] = relationship(back_populates="memberships")
 
 
+class TrustedDevice(Base):
+    __tablename__ = "trusted_devices"
+    __table_args__ = (UniqueConstraint("user_id", "token_hash", name="uq_trusted_device_user_token"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    label: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    first_user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    first_ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    trusted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    user: Mapped[User] = relationship(back_populates="trusted_devices")
+
+
+class RecoveryCode(Base):
+    __tablename__ = "recovery_codes"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    user: Mapped[User] = relationship(back_populates="recovery_codes")
+
+
 class UserSession(Base):
     __tablename__ = "user_sessions"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     refresh_token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    trusted_device_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("trusted_devices.id", ondelete="SET NULL"), index=True, nullable=True)
     user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    risk_score: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    risk_level: Mapped[str] = mapped_column(String(20), default="low", server_default="low", nullable=False)
+    new_device: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

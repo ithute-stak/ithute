@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ExternalLink, KeyRound, Laptop, LockKeyhole, ShieldCheck, Smartphone, Trash2 } from "lucide-react";
+import { Activity, ExternalLink, KeyRound, Laptop, LockKeyhole, ShieldCheck, Smartphone, Trash2 } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
 import { ConfirmDialog, EmptyState, PageHeader, StatusBadge, Toast } from "@/components/ui-kit";
 import { apiFetch } from "@/lib/platform-api";
@@ -16,6 +16,32 @@ type Session = {
   user_agent?: string;
   ip_address?: string;
   revoked: boolean;
+  trusted_device_id?: string | null;
+  risk_score?: number;
+  risk_level?: string;
+  new_device?: boolean;
+  last_seen_at?: string | null;
+};
+
+type TrustedDevice = {
+  id: string;
+  label?: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+  first_ip_address?: string | null;
+  last_ip_address?: string | null;
+  first_user_agent?: string | null;
+  trusted: boolean;
+  revoked: boolean;
+};
+
+type SecurityEvent = {
+  id: string;
+  action: string;
+  resource_type: string;
+  resource_id?: string | null;
+  created_at: string;
+  metadata: Record<string, unknown>;
 };
 
 type Me = {
@@ -40,6 +66,10 @@ export default function SecurityPage() {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [devices, setDevices] = useState<TrustedDevice[]>([]);
+  const [events, setEvents] = useState<SecurityEvent[]>([]);
+  const [recoveryRemaining, setRecoveryRemaining] = useState(0);
+  const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
   const [localControls, setLocalControls] = useState(false);
   const [centralStatus, setCentralStatus] = useState<CentralAuthStatus | null>(null);
   const [secret, setSecret] = useState("");
@@ -74,11 +104,21 @@ export default function SecurityPage() {
 
     if (!localSecurityEnabled) {
       setSessions([]);
+      setDevices([]);
+      setEvents([]);
       return;
     }
 
-    const sessionResponse = await apiFetch("/auth/sessions", { cache: "no-store" });
+    const [sessionResponse, deviceResponse, recoveryResponse, eventResponse] = await Promise.all([
+      apiFetch("/auth/sessions", { cache: "no-store" }),
+      apiFetch("/auth/devices", { cache: "no-store" }),
+      apiFetch("/auth/recovery-codes", { cache: "no-store" }),
+      apiFetch("/auth/security-events", { cache: "no-store" }),
+    ]);
     if (sessionResponse.ok) setSessions(await sessionResponse.json());
+    if (deviceResponse.ok) setDevices(await deviceResponse.json());
+    if (recoveryResponse.ok) setRecoveryRemaining(Number((await recoveryResponse.json()).remaining || 0));
+    if (eventResponse.ok) setEvents(await eventResponse.json());
   }
 
   useEffect(() => {
@@ -119,6 +159,37 @@ export default function SecurityPage() {
   async function revokeEverywhere() {
     await apiFetch("/auth/sessions", { method: "DELETE" });
     router.replace("/login");
+  }
+
+
+  async function generateRecoveryCodes() {
+    const response = await apiFetch("/auth/recovery-codes/regenerate", { method: "POST" });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      setToast(String(body.detail || "Unable to generate recovery codes"));
+      return;
+    }
+    const data = await response.json();
+    setRecoveryCodes(data.codes || []);
+    setRecoveryRemaining(Number(data.remaining || 0));
+    setToast("New recovery codes generated. Save them now; they are shown only once.");
+    await load();
+  }
+
+  async function trustDevice(id: string) {
+    const response = await apiFetch(`/auth/devices/${id}/trust`, { method: "POST" });
+    if (response.ok) {
+      setToast("Device marked as trusted");
+      await load();
+    }
+  }
+
+  async function revokeDevice(id: string) {
+    const response = await apiFetch(`/auth/devices/${id}`, { method: "DELETE" });
+    if (response.ok) {
+      setToast("Device revoked");
+      await load();
+    }
   }
 
   async function changePassword(event: FormEvent<HTMLFormElement>) {
@@ -293,6 +364,85 @@ export default function SecurityPage() {
               </form>
             </section>
 
+
+            <section className="grid gap-4 xl:grid-cols-2">
+              <div className="surface-card p-4 sm:p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-black">Recovery codes</p>
+                    <p className="mt-1 text-[10px] leading-5 text-[var(--admin-muted)]">One-time backup codes for accounts protected by authenticator MFA.</p>
+                  </div>
+                  <StatusBadge state={recoveryRemaining > 2 ? "good" : recoveryRemaining ? "warn" : "neutral"}>{recoveryRemaining} remaining</StatusBadge>
+                </div>
+                <button className="btn-secondary mt-4" disabled={!me?.mfa_enabled} onClick={() => void generateRecoveryCodes()}>
+                  <KeyRound size={14} />
+                  {recoveryRemaining ? "Regenerate codes" : "Generate codes"}
+                </button>
+                {!me?.mfa_enabled ? <p className="mt-2 text-[9px] text-[var(--admin-muted)]">Enable MFA before generating recovery codes.</p> : null}
+                {recoveryCodes.length ? (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <p className="text-[10px] font-black text-amber-900">Save these codes now. Ithute will not show them again.</p>
+                    <div className="mt-3 grid grid-cols-2 gap-2 font-mono text-[11px] font-bold text-amber-950">
+                      {recoveryCodes.map((value) => <code key={value} className="rounded-lg bg-white px-2 py-1.5">{value}</code>)}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="surface-card p-4 sm:p-5">
+                <div className="flex items-start gap-3">
+                  <div className="grid h-10 w-10 place-items-center rounded-xl bg-[#eef4f1] text-[var(--admin-pine)]"><Activity size={18} /></div>
+                  <div>
+                    <p className="text-sm font-black">Adaptive sign-in protection</p>
+                    <p className="mt-1 text-[10px] leading-5 text-[var(--admin-muted)]">Every login is scored from device familiarity, network changes, client changes and verified MFA.</p>
+                  </div>
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-xl bg-[#f7faf8] p-3"><p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">Devices</p><p className="mt-1 text-xl font-black">{devices.filter((d) => !d.revoked).length}</p></div>
+                  <div className="rounded-xl bg-[#f7faf8] p-3"><p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">Trusted</p><p className="mt-1 text-xl font-black">{devices.filter((d) => d.trusted && !d.revoked).length}</p></div>
+                  <div className="rounded-xl bg-[#f7faf8] p-3"><p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">New alerts</p><p className="mt-1 text-xl font-black">{events.filter((e) => e.action === "auth.device.new").length}</p></div>
+                </div>
+              </div>
+            </section>
+
+            <section className="surface-card p-4 sm:p-5">
+              <div>
+                <p className="text-sm font-black">Trusted devices</p>
+                <p className="mt-1 text-[10px] text-[var(--admin-muted)]">Device trust is stored by the backend and survives browser refreshes and session rotation.</p>
+              </div>
+              <div className="mt-4 space-y-2">
+                {devices.length ? devices.map((device) => (
+                  <div key={device.id} className="flex flex-col gap-3 rounded-xl border border-[var(--admin-line)] p-4 md:flex-row md:items-center">
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#f3f6f4] text-[var(--admin-pine)]"><Laptop size={17} /></div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-[11px] font-black">{device.label || device.first_user_agent || "Unknown device"}</p>
+                        <StatusBadge state={device.revoked ? "neutral" : device.trusted ? "good" : "warn"}>{device.revoked ? "Revoked" : device.trusted ? "Trusted" : "Untrusted"}</StatusBadge>
+                      </div>
+                      <p className="mt-1 text-[9px] text-[var(--admin-muted)]">Last IP {device.last_ip_address || "unknown"} · last seen {new Date(device.last_seen_at).toLocaleString()}</p>
+                    </div>
+                    {!device.revoked ? <div className="flex gap-2">{!device.trusted ? <button className="btn-secondary" onClick={() => void trustDevice(device.id)}>Trust</button> : null}<button className="btn-danger" onClick={() => void revokeDevice(device.id)}>Revoke</button></div> : null}
+                  </div>
+                )) : <EmptyState title="No devices yet" description="Devices will appear here after successful sign-ins." />}
+              </div>
+            </section>
+
+            <section className="surface-card p-4 sm:p-5">
+              <div>
+                <p className="text-sm font-black">Security event history</p>
+                <p className="mt-1 text-[10px] text-[var(--admin-muted)]">Recent authentication and account-security activity recorded by the backend.</p>
+              </div>
+              <div className="mt-4 space-y-2">
+                {events.length ? events.slice(0, 20).map((event) => (
+                  <div key={event.id} className="flex items-center gap-3 rounded-xl border border-[var(--admin-line)] px-4 py-3">
+                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#eef4f1] text-[var(--admin-pine)]"><Activity size={15} /></div>
+                    <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-black">{event.action.replaceAll(".", " ")}</p><p className="mt-1 text-[9px] text-[var(--admin-muted)]">{new Date(event.created_at).toLocaleString()} · {event.resource_type}</p></div>
+                    {typeof event.metadata?.risk_score === "number" ? <StatusBadge state={Number(event.metadata.risk_score) >= 50 ? "warn" : "good"}>Risk {String(event.metadata.risk_score)}</StatusBadge> : null}
+                  </div>
+                )) : <EmptyState title="No security events" description="Authentication activity will appear here as it occurs." />}
+              </div>
+            </section>
+
             <section className="surface-card p-4 sm:p-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
@@ -312,6 +462,8 @@ export default function SecurityPage() {
                       <div className="flex items-center gap-2">
                         <p className="truncate text-[11px] font-black">{session.user_agent || "Unknown client"}</p>
                         <StatusBadge state={session.revoked ? "neutral" : "good"}>{session.revoked ? "Revoked" : "Active"}</StatusBadge>
+                        {session.new_device ? <StatusBadge state="warn">New device</StatusBadge> : null}
+                        {session.risk_level ? <StatusBadge state={(session.risk_score || 0) >= 50 ? "warn" : "good"}>Risk {session.risk_score || 0}/100</StatusBadge> : null}
                       </div>
                       <p className="mt-1 text-[9px] text-[var(--admin-muted)]">
                         IP {session.ip_address || "unknown"} · created {new Date(session.created_at).toLocaleString()} · expires {new Date(session.expires_at).toLocaleString()}

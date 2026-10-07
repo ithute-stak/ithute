@@ -10,6 +10,8 @@ from app.models.entities import (
     User,
     UserRole,
     UserSession,
+    TrustedDevice,
+    RecoveryCode,
 )
 from app.models.auth import PasswordResetToken
 from app.models.domains import Domain, DomainDnsMode, DomainEvent, DomainStatus, DomainVerificationAttempt
@@ -131,7 +133,7 @@ from app.models.mail_relationship import MailRelationship
 
 __all__ = [
     "ApiKey", "AuditLog", "Invitation", "MembershipRole", "MembershipStatus", "Tenant",
-    "TenantMembership", "TenantStatus", "User", "UserRole", "UserSession", "PasswordResetToken", "Domain",
+    "TenantMembership", "TenantStatus", "User", "UserRole", "UserSession", "TrustedDevice", "RecoveryCode", "PasswordResetToken", "Domain",
     "DomainDnsMode", "DomainEvent", "DomainStatus", "DomainVerificationAttempt", "DomainHealthMonitorState", "SecurityApprovalRequest", "Mailbox",
     "MailboxStatus", "MailboxStorageType", "MailAlias", "DistributionGroup", "DistributionGroupMember", "PlatformMailDomainGrant",
     "PlatformMailboxBinding", "PlatformMailOutboundDelivery", "DkimKey", "BillingPlan", "TenantSubscription", "UsageSnapshot", "BillingInvoice",
