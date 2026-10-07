@@ -53,11 +53,13 @@ class DSRecord:
         return f"{self.key_tag} {self.algorithm} {self.digest_type} {self.digest}"
 
 
-def preferred_ds(values: list[str]) -> DSRecord | None:
+def preferred_ds(values: list[str], *, allowed_algorithms: set[int] | None = None) -> DSRecord | None:
     records: list[DSRecord] = []
     for value in values:
         try:
-            records.append(DSRecord.parse(value))
+            record = DSRecord.parse(value)
+            if allowed_algorithms is None or record.algorithm in allowed_algorithms:
+                records.append(record)
         except (TypeError, ValueError):
             continue
     if not records:
