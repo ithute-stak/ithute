@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0098_sender_reputation"
+LATEST_MIGRATION_HEAD = "0099_org_identity"
 
 
 def test_alembic_has_one_consolidated_head():
