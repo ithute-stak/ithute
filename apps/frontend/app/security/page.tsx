@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ExternalLink, KeyRound, Laptop, LockKeyhole, ShieldCheck, Smartphone, Trash2 } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
 import { ConfirmDialog, EmptyState, PageHeader, StatusBadge, Toast } from "@/components/ui-kit";
+import { apiFetch } from "@/lib/platform-api";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
 
@@ -42,7 +43,7 @@ export default function SecurityPage() {
 
   async function load() {
     const [meResponse, capabilityResponse] = await Promise.all([
-      fetch(`${API}/auth/me`, { credentials: "include", cache: "no-store" }),
+      apiFetch("/auth/me", { cache: "no-store" }),
       fetch(`${API}/auth/capabilities`, { cache: "no-store" }),
     ]);
 
@@ -63,7 +64,7 @@ export default function SecurityPage() {
       return;
     }
 
-    const sessionResponse = await fetch(`${API}/auth/sessions`, { credentials: "include" });
+    const sessionResponse = await apiFetch("/auth/sessions", { cache: "no-store" });
     if (sessionResponse.ok) setSessions(await sessionResponse.json());
   }
 
@@ -72,7 +73,7 @@ export default function SecurityPage() {
   }, []);
 
   async function setupMfa() {
-    const response = await fetch(`${API}/auth/mfa/setup`, { method: "POST", credentials: "include" });
+    const response = await apiFetch("/auth/mfa/setup", { method: "POST" });
     if (!response.ok) {
       setToast("Unable to start MFA setup");
       return;
@@ -83,9 +84,8 @@ export default function SecurityPage() {
   }
 
   async function enableMfa() {
-    const response = await fetch(`${API}/auth/mfa/enable`, {
+    const response = await apiFetch("/auth/mfa/enable", {
       method: "POST",
-      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code }),
     });
@@ -98,13 +98,13 @@ export default function SecurityPage() {
   }
 
   async function revoke(id: string) {
-    await fetch(`${API}/auth/sessions/${id}`, { method: "DELETE", credentials: "include" });
+    await apiFetch(`/auth/sessions/${id}`, { method: "DELETE" });
     setToast("Session revoked");
     await load();
   }
 
   async function revokeEverywhere() {
-    await fetch(`${API}/auth/sessions`, { method: "DELETE", credentials: "include" });
+    await apiFetch("/auth/sessions", { method: "DELETE" });
     router.replace("/login");
   }
 
@@ -116,9 +116,8 @@ export default function SecurityPage() {
       setToast("New passwords do not match");
       return;
     }
-    const response = await fetch(`${API}/auth/password`, {
+    const response = await apiFetch("/auth/password", {
       method: "POST",
-      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         current_password: form.get("current_password"),
