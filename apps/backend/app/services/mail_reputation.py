@@ -130,7 +130,9 @@ def _recent_refs(profile: SenderReputationProfile | DomainIntelligenceProfile) -
 
 
 def _set_recent_refs(profile: SenderReputationProfile | DomainIntelligenceProfile, refs: list[str], score_evidence: dict[str, Any]) -> None:
+    existing = profile.evidence_json if isinstance(profile.evidence_json, dict) else {}
     profile.evidence_json = {
+        **existing,
         **score_evidence,
         "recent_message_refs": refs[-MAX_RECENT_MESSAGE_REFS:],
         "raw_message_content_stored": False,
