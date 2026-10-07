@@ -311,7 +311,7 @@ def passkey_authentication_verify(
 
     raw_refresh = new_refresh_token()
     device = resolve_device(db, user=user, request=request)
-    risk = assess_login_risk(user=user, request=request, device=device, auth_method="passkey")
+    risk = assess_login_risk(db=db, user=user, request=request, device=device, auth_method="passkey")
     session = AuthSession(
         user_id=user.id,
         client_id=payload.client_id,
