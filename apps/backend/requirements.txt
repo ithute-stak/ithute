@@ -20,3 +20,4 @@ dnspython==2.8.0
 bleach[css]==6.4.0
 prometheus-client==0.26.0
 reportlab==5.0.1
+webauthn==3.0.1
