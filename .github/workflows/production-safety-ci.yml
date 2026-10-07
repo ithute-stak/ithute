@@ -6,6 +6,7 @@ on:
       - "scripts/deploy-production.sh"
       - "scripts/deploy-production-manual.sh"
       - "scripts/deploy-production-latest.sh"
+      - "scripts/install-production-pull-command.sh"
       - "platform/ithute-auth/**"
       - ".github/workflows/release-images.yml"
       - ".github/workflows/production-readiness-ci.yml"
@@ -37,6 +38,7 @@ jobs:
           bash -n scripts/deploy-production.sh
           bash -n scripts/deploy-production-manual.sh
           bash -n scripts/deploy-production-latest.sh
+          bash -n scripts/install-production-pull-command.sh
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -45,6 +47,7 @@ jobs:
               Path("scripts/deploy-production.sh"),
               Path("scripts/deploy-production-manual.sh"),
               Path("scripts/deploy-production-latest.sh"),
+              Path("scripts/install-production-pull-command.sh"),
           ]
           forbidden = (
               "docker compose down",
@@ -67,6 +70,7 @@ jobs:
           script = Path("scripts/deploy-production.sh").read_text(encoding="utf-8")
           manual = Path("scripts/deploy-production-manual.sh").read_text(encoding="utf-8")
           latest = Path("scripts/deploy-production-latest.sh").read_text(encoding="utf-8")
+          installer = Path("scripts/install-production-pull-command.sh").read_text(encoding="utf-8")
           release = Path(".github/workflows/release-images.yml").read_text(encoding="utf-8")
 
           for required in (
@@ -98,6 +102,33 @@ jobs:
           ):
               if required not in latest:
                   failures.append(f"deploy-production-latest.sh is missing latest-release contract: {required}")
+
+          for required in (
+              "pull ithute latest",
+              "deploy-production-latest.sh",
+              "/branches/main",
+              "raw.githubusercontent.com",
+          ):
+              if required not in installer:
+                  failures.append(f"install-production-pull-command.sh is missing evergreen launcher contract: {required}")
+
+          required_images = (
+              "ithute-web",
+              "ithute-app-api",
+              "ithute-go-worker",
+              "ithute-java-worker",
+              "ithute-auth",
+              "ithute-push",
+              "ithute-realtime",
+          )
+          for image in required_images:
+              if image not in manual:
+                  failures.append(f"deploy-production-manual.sh does not pull required image: {image}")
+              if image not in release:
+                  failures.append(f"Ithute Release Images does not publish required image: {image}")
+          for image in ("ithute-go-worker", "ithute-java-worker"):
+              if image not in script:
+                  failures.append(f"deploy-production.sh does not require candidate image: {image}")
 
           if ':latest' in manual or ':latest' in release:
               failures.append('Mutable latest image tags are forbidden for Ithute production.')
