@@ -90,9 +90,10 @@ class TenantMembership(Base):
 
 class TrustedDevice(Base):
     __tablename__ = "trusted_devices"
+    __table_args__ = (UniqueConstraint("user_id", "token_hash", name="uq_trusted_device_user_token"),)
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     label: Mapped[str | None] = mapped_column(String(120), nullable=True)
     first_user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
     first_ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
