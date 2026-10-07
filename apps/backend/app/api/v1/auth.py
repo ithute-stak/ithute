@@ -24,7 +24,7 @@ from app.core.security import (
     verify_totp,
 )
 from app.db.session import get_db
-from app.models import AuditLog, PasswordResetToken, RecoveryCode, TrustedDevice, User, UserSession
+from app.models import AuditLog, PasskeyCredential, PasswordResetToken, RecoveryCode, TrustedDevice, User, UserSession
 from app.schemas.auth import (
     LoginRequest,
     MfaCodeRequest,
@@ -39,6 +39,9 @@ from app.schemas.auth import (
     TrustedDeviceOut,
     TrustedDeviceLabelRequest,
     SecurityEventOut,
+    PasskeyRegistrationRequest,
+    PasskeyAuthenticationRequest,
+    PasskeyOut,
 )
 from app.services.auth_security import (
     clear_login_failures,
@@ -56,6 +59,13 @@ from app.services.identity_security import (
     resolve_or_create_device,
 )
 from app.services.ithute_auth import ithute_auth_enabled
+from app.services.passkeys import (
+    PasskeyError,
+    authentication_options as passkey_authentication_options,
+    registration_options as passkey_registration_options,
+    verify_authentication as verify_passkey_authentication,
+    verify_registration as verify_passkey_registration,
+)
 from app.services.signup_security import send_system_email
 
 def _require_local_auth_surface() -> None:
@@ -664,6 +674,196 @@ def regenerate_recovery_codes(db: Session = Depends(get_db), current: User = Dep
     ))
     db.commit()
     return RecoveryCodesResponse(codes=codes, remaining=len(codes))
+
+
+@router.get("/passkeys", response_model=list[PasskeyOut])
+def list_passkeys(db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    _require_local_auth_surface()
+    rows = db.scalars(
+        select(PasskeyCredential)
+        .where(PasskeyCredential.user_id == current.id)
+        .order_by(PasskeyCredential.created_at.desc())
+    ).all()
+    return [
+        PasskeyOut(
+            id=str(row.id),
+            name=row.name,
+            created_at=row.created_at.isoformat(),
+            last_used_at=row.last_used_at.isoformat() if row.last_used_at else None,
+            device_type=row.device_type,
+            backed_up=row.backed_up,
+            revoked=row.revoked_at is not None,
+        )
+        for row in rows
+    ]
+
+
+@router.post("/passkeys/register/options")
+def passkey_register_options(db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    _require_local_auth_surface()
+    if current.central_auth_enforced:
+        raise HTTPException(status_code=409, detail="Passkeys for this account are managed by Ithute Central Authentication")
+    try:
+        return passkey_registration_options(db, current)
+    except PasskeyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/passkeys/register/verify", response_model=PasskeyOut, status_code=201)
+def passkey_register_verify(
+    payload: PasskeyRegistrationRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    _require_local_auth_surface()
+    if current.central_auth_enforced:
+        raise HTTPException(status_code=409, detail="Passkeys for this account are managed by Ithute Central Authentication")
+    try:
+        item = verify_passkey_registration(
+            db,
+            user=current,
+            flow_id=payload.flow_id,
+            credential=payload.credential,
+            name=payload.name,
+        )
+    except PasskeyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.add(AuditLog(
+        actor_user_id=current.id,
+        action="auth.passkey.register",
+        resource_type="passkey",
+        resource_id=str(item.id),
+        metadata_json=json.dumps({"name": item.name, "device_type": item.device_type, "backed_up": item.backed_up}, separators=(",", ":")),
+    ))
+    db.commit()
+    db.refresh(item)
+    return PasskeyOut(
+        id=str(item.id),
+        name=item.name,
+        created_at=item.created_at.isoformat(),
+        last_used_at=None,
+        device_type=item.device_type,
+        backed_up=item.backed_up,
+        revoked=False,
+    )
+
+
+@router.delete("/passkeys/{passkey_id}", status_code=204)
+def revoke_passkey(passkey_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    _require_local_auth_surface()
+    item = db.get(PasskeyCredential, passkey_id)
+    if item is None or item.user_id != current.id:
+        raise HTTPException(status_code=404, detail="Passkey not found")
+    if item.revoked_at is None:
+        item.revoked_at = datetime.now(timezone.utc)
+        db.add(AuditLog(actor_user_id=current.id, action="auth.passkey.revoke", resource_type="passkey", resource_id=str(item.id)))
+        db.commit()
+
+
+@router.post("/passkeys/auth/options")
+def passkey_auth_options():
+    _require_local_auth_surface()
+    try:
+        return passkey_authentication_options()
+    except PasskeyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/passkeys/auth/verify", response_model=TokenResponse)
+def passkey_auth_verify(
+    payload: PasskeyAuthenticationRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    _require_local_auth_surface()
+    _require_secure_auth_transport(request)
+    enforce_login_rate_limit(request, "passkey")
+    try:
+        user, passkey = verify_passkey_authentication(
+            db,
+            flow_id=payload.flow_id,
+            credential=payload.credential,
+        )
+    except PasskeyError as exc:
+        db.rollback()
+        record_login_failure(request, "passkey")
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    _require_verified_email(user)
+    if user.central_auth_enforced:
+        db.rollback()
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "CENTRAL_AUTH_REQUIRED", "message": "This account requires Ithute Central Authentication."},
+        )
+
+    clear_login_failures("passkey")
+    now = datetime.now(timezone.utc)
+    passkey.last_used_at = now
+    device, device_token, is_new_device = resolve_or_create_device(db, user=user, request=request)
+    risk = assess_login_risk(device=device, request=request, is_new_device=is_new_device, mfa_verified=True)
+    refresh_token, session = _new_session(user, request, db)
+    session.trusted_device_id = device.id
+    session.risk_score = int(risk["score"])
+    session.risk_level = str(risk["level"])
+    session.new_device = bool(is_new_device)
+    session.last_seen_at = now
+    access = create_access_token(str(user.id), {"sv": user.session_version, "sid": str(session.id)})
+    db.add(AuditLog(
+        actor_user_id=user.id,
+        action="auth.passkey.login",
+        resource_type="session",
+        resource_id=str(session.id),
+        metadata_json=json.dumps({
+            "passkey_id": str(passkey.id),
+            "risk_score": risk["score"],
+            "risk_level": risk["level"],
+            "new_device": is_new_device,
+            "trusted_device_id": str(device.id),
+            "signals": risk["signals"],
+        }, separators=(",", ":")),
+    ))
+    if is_new_device:
+        db.add(AuditLog(
+            actor_user_id=user.id,
+            action="auth.device.new",
+            resource_type="trusted_device",
+            resource_id=str(device.id),
+            metadata_json=json.dumps({
+                "source": "passkey",
+                "ip_address": request_client_ip(request),
+                "user_agent": request.headers.get("user-agent"),
+                "risk_score": risk["score"],
+                "risk_level": risk["level"],
+            }, separators=(",", ":")),
+        ))
+    db.commit()
+    _set_auth_cookies(response, access, refresh_token, request)
+    _set_device_cookie(response, device_token, request)
+
+    if is_new_device:
+        try:
+            ip = request_client_ip(request)
+            agent = request.headers.get("user-agent") or "Unknown browser or device"
+            send_system_email(
+                user.email,
+                "New passkey sign-in to your Ithute account",
+                "A new device signed in to your Ithute account using a passkey.\n\n"
+                f"Device: {agent}\nIP: {ip}\nRisk: {risk['level']} ({risk['score']}/100)\n\n"
+                "If this was not you, open Ithute Security Center and revoke the passkey, device and active sessions.",
+                "<html><body style=\"font-family:Arial,sans-serif;color:#173228\"><div style=\"max-width:560px;margin:auto;padding:28px\">"
+                "<div style=\"font-size:13px;font-weight:700;color:#285b55\">Ithute Identity &amp; Account Security</div>"
+                "<h2>New passkey sign-in</h2>"
+                f"<p><strong>Device:</strong> {escape(agent)}</p><p><strong>IP:</strong> {escape(ip)}</p>"
+                f"<p><strong>Risk:</strong> {escape(str(risk['level']))} ({int(risk['score'])}/100)</p>"
+                "<p>If this was not you, revoke the passkey, device and active sessions immediately.</p></div></body></html>",
+            )
+        except RuntimeError:
+            pass
+
+    return TokenResponse(access_token=access, user=_user_payload(user))
 
 
 @router.get("/security-events", response_model=list[SecurityEventOut])
