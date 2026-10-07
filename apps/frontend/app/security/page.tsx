@@ -46,6 +46,28 @@ type Passkey = {
   revoked: boolean;
 };
 
+type SecurityPosture = {
+  score: number;
+  label: string;
+  defenses: {
+    central_auth: boolean;
+    passkeys: number;
+    mfa: boolean;
+    recovery_codes_remaining: number;
+    trusted_devices: number;
+    email_verified: boolean;
+  };
+  mail_identity_correlation: {
+    active: boolean;
+    weight: number;
+    signal?: string | null;
+    verified_threat_count: number;
+    window_hours: number;
+    highest_confidence?: number;
+    labels?: string[];
+  };
+};
+
 type SecurityEvent = {
   id: string;
   action: string;
@@ -79,6 +101,7 @@ export default function SecurityPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [devices, setDevices] = useState<TrustedDevice[]>([]);
   const [events, setEvents] = useState<SecurityEvent[]>([]);
+  const [posture, setPosture] = useState<SecurityPosture | null>(null);
   const [passkeys, setPasskeys] = useState<Passkey[]>([]);
   const [passkeyBusy, setPasskeyBusy] = useState(false);
   const [passkeyPassword, setPasskeyPassword] = useState("");
@@ -121,21 +144,24 @@ export default function SecurityPage() {
       setDevices([]);
       setEvents([]);
       setPasskeys([]);
+      setPosture(null);
       return;
     }
 
-    const [sessionResponse, deviceResponse, recoveryResponse, eventResponse, passkeyResponse] = await Promise.all([
+    const [sessionResponse, deviceResponse, recoveryResponse, eventResponse, passkeyResponse, postureResponse] = await Promise.all([
       apiFetch("/auth/sessions", { cache: "no-store" }),
       apiFetch("/auth/devices", { cache: "no-store" }),
       apiFetch("/auth/recovery-codes", { cache: "no-store" }),
       apiFetch("/auth/security-events", { cache: "no-store" }),
       apiFetch("/auth/passkeys", { cache: "no-store" }),
+      apiFetch("/auth/security-posture", { cache: "no-store" }),
     ]);
     if (sessionResponse.ok) setSessions(await sessionResponse.json());
     if (deviceResponse.ok) setDevices(await deviceResponse.json());
     if (recoveryResponse.ok) setRecoveryRemaining(Number((await recoveryResponse.json()).remaining || 0));
     if (eventResponse.ok) setEvents(await eventResponse.json());
     if (passkeyResponse.ok) setPasskeys(await passkeyResponse.json());
+    if (postureResponse.ok) setPosture(await postureResponse.json());
   }
 
   useEffect(() => {
@@ -516,11 +542,27 @@ export default function SecurityPage() {
                     <p className="mt-1 text-[10px] leading-5 text-[var(--admin-muted)]">Every login is scored from device familiarity, network changes, client changes and verified MFA.</p>
                   </div>
                 </div>
-                <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                <div className="mt-4 grid grid-cols-4 gap-2 text-center">
+                  <div className="rounded-xl bg-[#f7faf8] p-3"><p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">Score</p><p className="mt-1 text-xl font-black">{posture?.score ?? "—"}</p></div>
                   <div className="rounded-xl bg-[#f7faf8] p-3"><p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">Devices</p><p className="mt-1 text-xl font-black">{devices.filter((d) => !d.revoked).length}</p></div>
                   <div className="rounded-xl bg-[#f7faf8] p-3"><p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">Trusted</p><p className="mt-1 text-xl font-black">{devices.filter((d) => d.trusted && !d.revoked).length}</p></div>
                   <div className="rounded-xl bg-[#f7faf8] p-3"><p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">New alerts</p><p className="mt-1 text-xl font-black">{events.filter((e) => e.action === "auth.device.new").length}</p></div>
                 </div>
+                {posture?.mail_identity_correlation.active ? (
+                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-950">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[10px] font-black uppercase tracking-[.08em]">Mail + Identity correlation active</p>
+                      <StatusBadge state="warn">+{posture.mail_identity_correlation.weight} login risk</StatusBadge>
+                    </div>
+                    <p className="mt-1 text-[10px] leading-5">
+                      {posture.mail_identity_correlation.verified_threat_count} high-confidence verified phishing/BEC verdict{posture.mail_identity_correlation.verified_threat_count === 1 ? "" : "s"} affected this mailbox in the last {posture.mail_identity_correlation.window_hours} hours. Ithute will use that evidence only as a bounded amplifier when another suspicious sign-in signal appears.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[10px] font-bold leading-5 text-emerald-800">
+                    No recent high-confidence verified mail threats are currently influencing sign-in risk.
+                  </div>
+                )}
               </div>
             </section>
 

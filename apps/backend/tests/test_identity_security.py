@@ -7,6 +7,7 @@ from app.services.identity_security import (
     normalize_recovery_code,
     issue_adaptive_challenge,
     verify_adaptive_challenge,
+    recent_mail_threat_context,
 )
 
 
@@ -208,3 +209,135 @@ def test_trusted_device_with_network_and_client_change_requires_step_up():
 
     assert result["score"] == 30
     assert result["recommended_action"] == "step_up"
+
+
+
+def test_verified_mail_threat_context_amplifies_login_risk():
+    from datetime import datetime, timezone
+
+    result = assess_login_risk(
+        device=_device(trusted_at=datetime.now(timezone.utc)),
+        request=_request(ip="198.51.100.30"),
+        is_new_device=False,
+        mfa_verified=False,
+        contextual_signals=[
+            {
+                "signal": "recent_verified_phishing_exposure",
+                "weight": 12,
+                "source": "mail_intelligence",
+                "evidence_count": 2,
+            }
+        ],
+    )
+
+    names = {row["signal"] for row in result["signals"]}
+    assert "recent_verified_phishing_exposure" in names
+    assert result["score"] == 24
+    assert result["recommended_action"] == "allow"
+
+
+def test_mail_threat_context_can_push_suspicious_login_into_step_up():
+    from datetime import datetime, timezone
+
+    result = assess_login_risk(
+        device=_device(trusted_at=datetime.now(timezone.utc)),
+        request=_request(ip="198.51.100.30"),
+        is_new_device=False,
+        mfa_verified=False,
+        contextual_signals=[
+            {
+                "signal": "recent_verified_bec_exposure",
+                "weight": 18,
+                "source": "mail_intelligence",
+                "evidence_count": 1,
+            }
+        ],
+    )
+
+    assert result["score"] == 30
+    assert result["recommended_action"] == "step_up"
+
+
+def test_contextual_risk_signal_is_bounded():
+    from datetime import datetime, timezone
+
+    result = assess_login_risk(
+        device=_device(trusted_at=datetime.now(timezone.utc)),
+        request=_request(),
+        is_new_device=False,
+        mfa_verified=False,
+        contextual_signals=[
+            {
+                "signal": "untrusted_context",
+                "weight": 999,
+                "source": "test",
+                "evidence_count": 100,
+            }
+        ],
+    )
+
+    assert result["score"] == 25
+    assert result["recommended_action"] == "allow"
+
+
+
+def test_recent_mail_threat_context_uses_only_high_confidence_verified_labels():
+    import uuid
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from app.models import User
+
+    class _Scalars:
+        def all(self):
+            return [
+                SimpleNamespace(
+                    action_taken="phishing",
+                    metadata_json={"verified_label": "phishing", "label_confidence": 0.95},
+                    created_at=datetime.now(timezone.utc),
+                ),
+                SimpleNamespace(
+                    action_taken="bec",
+                    metadata_json={"verified_label": "bec", "label_confidence": 0.72},
+                    created_at=datetime.now(timezone.utc),
+                ),
+            ]
+
+    class _Db:
+        def scalars(self, _statement):
+            return _Scalars()
+
+    user = User(id=uuid.uuid4(), email="user@ithute.co.ls", password_hash="x")
+    context = recent_mail_threat_context(_Db(), user=user)
+
+    assert context["active"] is True
+    assert context["signal"] == "recent_verified_phishing_exposure"
+    assert context["weight"] == 12
+    assert context["verified_threat_count"] == 1
+
+
+def test_recent_verified_bec_gets_stronger_bounded_weight():
+    import uuid
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from app.models import User
+
+    class _Scalars:
+        def all(self):
+            return [
+                SimpleNamespace(
+                    action_taken="bec",
+                    metadata_json={"verified_label": "bec", "label_confidence": 0.99},
+                    created_at=datetime.now(timezone.utc),
+                )
+            ]
+
+    class _Db:
+        def scalars(self, _statement):
+            return _Scalars()
+
+    user = User(id=uuid.uuid4(), email="user@ithute.co.ls", password_hash="x")
+    context = recent_mail_threat_context(_Db(), user=user)
+
+    assert context["signal"] == "recent_verified_bec_exposure"
+    assert context["weight"] == 18
+    assert context["highest_confidence"] == 0.99
