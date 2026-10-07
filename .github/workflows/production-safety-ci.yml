@@ -130,6 +130,20 @@ jobs:
               if image not in script:
                   failures.append(f"deploy-production.sh does not require candidate image: {image}")
 
+          try:
+              candidate_preflight = script.index('candidate_images_present "$CANDIDATE_TAG"')
+              runtime_preflight = script.index("validate_runtime || exit 1")
+              dependency_pull = script.index("compose pull \\")
+              network_mutation = script.index("\nconfigure_edge_private_network || exit 1\n")
+              candidate_cutover = script.index("if ! compose up -d --no-build; then")
+              if not (candidate_preflight < runtime_preflight < dependency_pull < network_mutation < candidate_cutover):
+                  failures.append(
+                      "deploy-production.sh must complete candidate/runtime preflight and dependency pulls "
+                      "before mutating WireGuard/firewall state, and network setup must finish before cutover"
+                  )
+          except ValueError as exc:
+              failures.append(f"deploy-production.sh is missing deployment preflight ordering marker: {exc}")
+
           if ':latest' in manual or ':latest' in release:
               failures.append('Mutable latest image tags are forbidden for Ithute production.')
           if 'ssh ' in release or 'scp ' in release or 'VPS_HOST' in release or 'VPS_SSH' in release:
