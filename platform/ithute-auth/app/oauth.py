@@ -471,7 +471,7 @@ def token(
         row.consumed_at = now
         raw_refresh = new_refresh_token()
         device = resolve_device(db, user=user, request=request)
-        risk = assess_login_risk(user=user, request=request, device=device, auth_method=row.auth_method)
+        risk = assess_login_risk(db=db, user=user, request=request, device=device, auth_method=row.auth_method)
         session = AuthSession(
             user_id=user.id,
             client_id=client_id,
