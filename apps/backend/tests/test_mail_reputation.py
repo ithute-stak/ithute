@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from app.services.mail_reputation import _score, _state, reputation_context
+from app.services.mail_reputation import _score, _state, observe_reputation, record_verified_verdict, sender_identity
 
 
 def test_reputation_score_rewards_consistent_authenticated_history():
@@ -73,3 +73,67 @@ def test_state_requires_confidence_before_calling_sender_good():
     assert _state(95, 0.2) == "unknown"
     assert _state(85, 0.8) == "strong"
     assert _state(20, 0.8) == "poor"
+
+
+
+def test_sender_hash_is_tenant_scoped():
+    message = {"from": "Alice <alice@example.com>"}
+    tenant_a = uuid.uuid4()
+    tenant_b = uuid.uuid4()
+
+    _sender_a, _domain_a, hash_a = sender_identity(message, tenant_id=tenant_a)
+    _sender_b, _domain_b, hash_b = sender_identity(message, tenant_id=tenant_b)
+
+    assert hash_a != hash_b
+    assert "alice@example.com" not in hash_a
+
+
+def test_observation_is_deduplicated_by_message_reference(db, tenant_admin):
+    _user, tenant, _membership = tenant_admin
+    message = {
+        "from": "Alice <alice@example.com>",
+        "message_id": "<same-message@example.com>",
+        "authentication_results": "mx; spf=pass; dkim=pass; dmarc=pass",
+        "received_spf": "pass",
+        "body_text": "Routine message",
+    }
+    intelligence = {
+        "trust": {
+            "verified": False,
+            "authentication": {"authenticated": True, "any_failure": False},
+            "url_intelligence": {"suspicious_count": 0},
+        }
+    }
+
+    first = observe_reputation(db, tenant_id=tenant.id, message=message, intelligence=intelligence)
+    second = observe_reputation(db, tenant_id=tenant.id, message=message, intelligence=intelligence)
+
+    assert first["sender"]["observations"] == 1
+    assert second["sender"]["observations"] == 1
+    assert second["domain"]["observations"] == 1
+
+
+def test_verified_feedback_changes_durable_reputation(db, tenant_admin):
+    _user, tenant, _membership = tenant_admin
+    message = {
+        "from": "Alice <alice@example.com>",
+        "message_id": "<verdict-message@example.com>",
+        "body_text": "Routine message",
+    }
+    observe_reputation(
+        db,
+        tenant_id=tenant.id,
+        message=message,
+        intelligence={"trust": {"authentication": {}, "url_intelligence": {}}},
+    )
+    record_verified_verdict(db, tenant_id=tenant.id, message=message, label="phishing")
+
+    result = observe_reputation(
+        db,
+        tenant_id=tenant.id,
+        message=message,
+        intelligence={"trust": {"authentication": {}, "url_intelligence": {}}},
+    )
+
+    assert result["sender"]["score"] < 50
+    assert result["domain"]["score"] < 50
