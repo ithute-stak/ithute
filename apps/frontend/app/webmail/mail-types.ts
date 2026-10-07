@@ -43,10 +43,26 @@ export type MessageRow = {
       mime_structure: string;
       text_shape: string;
       orchestrator: string;
-      network_resources?: string;
-      structured_content?: string;
+      layout_plan?: string;
+      structured_profile?: string;
     };
     safe_html_policy: string;
+    layout_plan?: {
+      engine?: string;
+      layout?: string;
+      reader_width?: string;
+      horizontal_fit?: string;
+      density?: string;
+      collapse_quotes?: boolean;
+    };
+    structured_profile?: {
+      engine?: string;
+      semantic_type?: string;
+      collapse_quoted_history?: boolean;
+      preserve_semantic_tables?: boolean;
+      prefer_readable_width?: boolean;
+      standards_profile?: string;
+    };
   };
 };
 
