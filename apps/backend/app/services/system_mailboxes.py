@@ -22,12 +22,14 @@ from app.models import (
     User,
 )
 from app.services.mailboxes import hash_mailbox_password
+from app.core.config import settings
 
 SYSTEM_TENANT_NAME = "ithute.co.ls"
 SYSTEM_TENANT_SLUG = "ithute-system"
 SYSTEM_DOMAIN = "ithute.co.ls"
 SYSTEM_MAILBOXES: tuple[tuple[str, str], ...] = (
     ("info", "!thute Information"),
+    ("auth", "Ithute Identity & Account Security"),
     ("supperadmin", "!thute Super Admin"),
     ("thekoetlisi", "Thekoetlisi"),
 )
@@ -136,7 +138,14 @@ def _ensure_mailbox(db: Session, tenant: Tenant, domain: Domain, owner: User, lo
         # Dovecot password hash.  It is never logged or stored in plaintext.
         # A platform owner can set the usable mailbox password from Dashboard
         # -> Mailboxes before the first interactive Webmail login.
-        bootstrap_password = secrets.token_urlsafe(32) + "!Aa1"
+        bootstrap_password = (
+            settings.system_smtp_password
+            if local_part == "auth"
+            and settings.system_smtp_username
+            and settings.system_smtp_password
+            and settings.system_smtp_username.strip().lower() == address
+            else secrets.token_urlsafe(32) + "!Aa1"
+        )
         mailbox = Mailbox(
             tenant_id=tenant.id,
             domain_id=domain.id,
@@ -156,6 +165,15 @@ def _ensure_mailbox(db: Session, tenant: Tenant, domain: Domain, owner: User, lo
     mailbox.local_part = local_part
     mailbox.status = MailboxStatus.active
     mailbox.display_name = mailbox.display_name or display_name
+    if (
+        local_part == "auth"
+        and settings.system_smtp_username
+        and settings.system_smtp_password
+        and settings.system_smtp_username.strip().lower() == address
+    ):
+        # Keep the dedicated security sender credential aligned with the
+        # production secret without logging or persisting plaintext.
+        mailbox.password_hash = hash_mailbox_password(settings.system_smtp_password)
     return mailbox, False
 
 
