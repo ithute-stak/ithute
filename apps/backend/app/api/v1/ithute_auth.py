@@ -11,14 +11,14 @@ import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import central_user_from_claims, get_current_local_user, get_current_user
 from app.core.config import settings
 from app.core.security import verify_password
 from app.db.session import get_db
-from app.models import AuditLog, User
+from app.models import AuditLog, User, UserSession
 from app.services.ithute_auth import (
     IthuteAuthDisabled,
     IthuteAuthUnavailable,
@@ -320,6 +320,12 @@ def enforce_central_auth(
     now = datetime.now(timezone.utc)
     current.central_auth_enforced = True
     current.central_auth_enforced_at = now
+    current.session_version += 1
+    db.execute(
+        update(UserSession)
+        .where(UserSession.user_id == current.id, UserSession.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
     db.add(
         AuditLog(
             actor_user_id=current.id,
