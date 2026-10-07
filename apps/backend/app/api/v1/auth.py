@@ -1,5 +1,6 @@
 import json
 import secrets
+from html import escape
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -286,8 +287,8 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
                 "<div style=\"max-width:560px;margin:auto;padding:28px\">"
                 "<div style=\"font-size:13px;font-weight:700;color:#285b55\">Ithute Identity &amp; Account Security</div>"
                 "<h2>New device sign-in</h2>"
-                f"<p><strong>Device:</strong> {agent}</p><p><strong>IP:</strong> {ip}</p>"
-                f"<p><strong>Risk:</strong> {risk['level']} ({risk['score']}/100)</p>"
+                f"<p><strong>Device:</strong> {escape(agent)}</p><p><strong>IP:</strong> {escape(ip)}</p>"
+                f"<p><strong>Risk:</strong> {escape(str(risk['level']))} ({int(risk['score'])}/100)</p>"
                 "<p>If this was not you, open Ithute Security Center and revoke the device and active sessions immediately.</p>"
                 "</div></body></html>",
             )
@@ -476,6 +477,16 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
 
     session.revoked_at = now
     new_refresh, new_session = _new_session(user, request, db)
+    new_session.trusted_device_id = session.trusted_device_id
+    new_session.risk_score = session.risk_score
+    new_session.risk_level = session.risk_level
+    new_session.new_device = False
+    new_session.last_seen_at = now
+    if session.trusted_device_id:
+        device = db.get(TrustedDevice, session.trusted_device_id)
+        if device is not None and device.revoked_at is None:
+            device.last_seen_at = now
+            device.last_ip_address = request_client_ip(request)
     access = create_access_token(str(user.id), {"sv": user.session_version, "sid": str(new_session.id)})
     db.add(AuditLog(actor_user_id=user.id, action="auth.refresh", resource_type="session", resource_id=str(new_session.id)))
     db.commit()
