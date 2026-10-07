@@ -301,6 +301,14 @@ class Settings(BaseSettings):
             raise ValueError("POWERDNS_DEFAULT_TTL must be between 60 and 86400")
         if not 2 <= self.external_provider_timeout_seconds <= 120:
             raise ValueError("EXTERNAL_PROVIDER_TIMEOUT_SECONDS must be between 2 and 120")
+        if not 10 <= self.domain_intelligence_enrichment_poll_seconds <= 3600:
+            raise ValueError("DOMAIN_INTELLIGENCE_ENRICHMENT_POLL_SECONDS must be between 10 and 3600")
+        if not 300 <= self.domain_intelligence_enrichment_stale_seconds <= 2_592_000:
+            raise ValueError("DOMAIN_INTELLIGENCE_ENRICHMENT_STALE_SECONDS must be between 300 and 2592000")
+        if not 1 <= self.domain_intelligence_enrichment_timeout_seconds <= 15:
+            raise ValueError("DOMAIN_INTELLIGENCE_ENRICHMENT_TIMEOUT_SECONDS must be between 1 and 15")
+        if not 1 <= self.domain_intelligence_enrichment_batch_size <= 200:
+            raise ValueError("DOMAIN_INTELLIGENCE_ENRICHMENT_BATCH_SIZE must be between 1 and 200")
         if not self.hardware_notification_auth_token_url.startswith(("http://", "https://")):
             raise ValueError("HARDWARE_NOTIFICATION_AUTH_TOKEN_URL must be an HTTP(S) URL")
         if not self.hardware_notification_push_url.startswith(("http://", "https://")):
