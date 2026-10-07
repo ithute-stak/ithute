@@ -71,7 +71,11 @@ def main() -> None:
             return
 
         if path == "/api/v1/auth/ithute/account":
-            route.fulfill(status=303, headers={"Location": "/central-security"})
+            route.fulfill(
+                status=200,
+                content_type="text/html",
+                body="<html><body><h1>Ithute Central Security Handoff</h1></body></html>",
+            )
             return
 
         if path == "/api/v1/auth/logout" and method == "POST":
@@ -98,15 +102,6 @@ def main() -> None:
             "**/health/ready",
             lambda route: route.fulfill(status=200, content_type="application/json", body='{"status":"ok"}'),
         )
-        page.route(
-            "**/central-security",
-            lambda route: route.fulfill(
-                status=200,
-                content_type="text/html",
-                body="<html><body><h1>Ithute Central Security Center</h1></body></html>",
-            ),
-        )
-
         page.goto(f"{BASE_URL}/login")
         page.get_by_role("link", name="Sign in with Ithute").click()
         page.wait_for_url(f"{BASE_URL}/dashboard")
@@ -126,8 +121,8 @@ def main() -> None:
         assert center.get_attribute("href") == f"{BASE_URL}/api/v1/auth/ithute/account"
 
         center.click()
-        page.wait_for_url(f"{BASE_URL}/central-security")
-        page.get_by_role("heading", name="Ithute Central Security Center").wait_for()
+        page.wait_for_url(f"{BASE_URL}/api/v1/auth/ithute/account")
+        page.get_by_role("heading", name="Ithute Central Security Handoff").wait_for()
 
         page.go_back()
         page.wait_for_url(f"{BASE_URL}/security")
