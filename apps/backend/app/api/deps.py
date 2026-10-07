@@ -62,13 +62,13 @@ COMMERCIAL_SERVICE_MUTATIONS = frozenset({
 })
 
 
-def _legacy_local_auth_allowed() -> bool:
-    return settings.environment.lower() != "production" or settings.legacy_local_auth_production_enabled
+def _local_auth_allowed() -> bool:
+    return settings.local_auth_enabled
 
 
 def _decode_local_user(token: str, db: Session) -> User:
-    if not _legacy_local_auth_allowed():
-        raise HTTPException(status_code=401, detail="Legacy local authentication is disabled")
+    if not _local_auth_allowed():
+        raise HTTPException(status_code=401, detail="Local authentication is disabled")
     try:
         payload = jwt.decode(
             token,
@@ -85,6 +85,14 @@ def _decode_local_user(token: str, db: Session) -> User:
     user = db.get(User, user_id)
     if not user or not user.is_active or token_version != user.session_version:
         raise HTTPException(status_code=401, detail="Inactive, expired, or unknown user")
+    if user.central_auth_enforced:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "code": "CENTRAL_AUTH_REQUIRED",
+                "message": "This account requires Ithute Central Authentication.",
+            },
+        )
     return user
 
 
