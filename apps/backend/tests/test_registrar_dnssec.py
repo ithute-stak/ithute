@@ -47,3 +47,16 @@ def test_remove_managed_preserves_unrelated_ds(monkeypatch):
     remaining = registrar.remove_managed("example.com", [managed])
     assert remaining == [unrelated]
     assert written == [("example.com", [unrelated])]
+
+
+def test_opensrs_rejects_unsupported_algorithm_before_network(monkeypatch):
+    registrar = OpenSRSRegistrar()
+    record = DSRecord.parse("41805 13 2 426D93D1248D7C64E88794E3EDD986D08D9AC9FDD42061A92A3FE9F3AE74920C")
+    called = []
+    monkeypatch.setattr(registrar, "_request", lambda *args, **kwargs: called.append((args, kwargs)))
+    try:
+        registrar.set_dnssec("example.com", [record])
+        assert False, "expected unsupported OpenSRS algorithm to fail"
+    except Exception as exc:
+        assert "algorithm 13" in str(exc)
+    assert called == []
