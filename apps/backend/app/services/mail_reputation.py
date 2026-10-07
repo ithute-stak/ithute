@@ -351,3 +351,60 @@ def record_verified_verdict(
         profile.score = score
         profile.state = _state(score, profile.confidence)
         _set_recent_refs(profile, _recent_refs(profile), evidence)
+
+
+
+def refresh_domain_profile(profile: DomainIntelligenceProfile) -> None:
+    score, evidence = _score(
+        observations=profile.observations,
+        authenticated=profile.authenticated_messages,
+        failures=profile.authentication_failures,
+        suspicious_links=profile.suspicious_link_messages,
+        legitimate=profile.verified_legitimate,
+        phishing=profile.verified_phishing,
+        bec=profile.verified_bec,
+        trusted_matches=profile.trusted_registry_matches,
+        domain_age_days=profile.domain_age_days,
+        identity_status=profile.identity_status,
+    )
+    verified_total = profile.verified_legitimate + profile.verified_phishing + profile.verified_bec
+    profile.confidence = _confidence(profile.observations, verified_total)
+    profile.score = score
+    profile.state = _state(score, profile.confidence)
+    _set_recent_refs(profile, _recent_refs(profile), evidence)
+
+
+def reputation_profile_payload(profile: SenderReputationProfile | DomainIntelligenceProfile) -> dict[str, Any]:
+    base = {
+        "id": str(profile.id),
+        "score": profile.score,
+        "state": profile.state,
+        "confidence": profile.confidence,
+        "observations": profile.observations,
+        "authenticated_messages": profile.authenticated_messages,
+        "authentication_failures": profile.authentication_failures,
+        "suspicious_link_messages": profile.suspicious_link_messages,
+        "verified_legitimate": profile.verified_legitimate,
+        "verified_phishing": profile.verified_phishing,
+        "verified_bec": profile.verified_bec,
+        "first_seen_at": profile.first_seen_at.isoformat(),
+        "last_seen_at": profile.last_seen_at.isoformat(),
+        "updated_at": profile.updated_at.isoformat(),
+    }
+    if isinstance(profile, SenderReputationProfile):
+        return {
+            **base,
+            "kind": "sender",
+            "sender_domain": profile.sender_domain,
+            "registry_verified_messages": profile.registry_verified_messages,
+        }
+    return {
+        **base,
+        "kind": "domain",
+        "domain": profile.domain,
+        "trusted_registry_matches": profile.trusted_registry_matches,
+        "domain_age_days": profile.domain_age_days,
+        "identity_status": profile.identity_status,
+        "enrichment_source": profile.enrichment_source,
+        "enrichment_checked_at": profile.enrichment_checked_at.isoformat() if profile.enrichment_checked_at else None,
+    }
