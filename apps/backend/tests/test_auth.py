@@ -182,3 +182,17 @@ def test_central_auth_enforcement_blocks_password_login_across_devices(client, d
     assert login.status_code == 403
     assert login.json()["detail"]["code"] == "CENTRAL_AUTH_REQUIRED"
     assert login.json()["detail"]["message"] == "This account requires Ithute Central Authentication."
+
+
+def test_existing_local_session_is_rejected_after_central_auth_is_enforced(client, db, platform_owner):
+    user = db.get(User, platform_owner.id)
+    token = create_access_token(str(user.id), {"sv": user.session_version})
+
+    user.central_auth_enforced = True
+    user.central_auth_enforced_at = datetime.now(timezone.utc)
+    db.commit()
+
+    response = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "CENTRAL_AUTH_REQUIRED"
