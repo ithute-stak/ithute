@@ -13,10 +13,11 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_tenant_permission
 from app.db.session import get_db
 from app.services.mail_intelligence_learning import training_readiness
+from app.services.mail_reputation import refresh_domain_profile, reputation_profile_payload
 from app.services.mail_threat_model import ALGORITHM, train_and_evaluate
 from app.services.mail_threat_shadow import shadow_policy, shadow_validation
 from app.services.mail_threat_canary import canary_policy, canary_validation, deterministic_canary_member
-from app.models import DmarcAggregateReport, MailAutomationRule, MailRetentionPolicy, MailThreatModelVersion, MailThreatShadowPrediction, PhishingFinding, TrustedSenderProfile, User
+from app.models import DmarcAggregateReport, DomainIntelligenceProfile, MailAutomationRule, MailRetentionPolicy, MailThreatModelVersion, MailThreatShadowPrediction, PhishingFinding, SenderReputationProfile, TrustedSenderProfile, User
 
 router = APIRouter(prefix="/mail-intelligence", tags=["mail-intelligence"])
 
@@ -60,6 +61,12 @@ class TrustedSenderProfileIn(BaseModel):
     require_dkim: bool = True
     require_dmarc: bool = True
     active: bool = True
+
+
+class DomainEnrichmentIn(BaseModel):
+    domain_age_days: int | None = Field(default=None, ge=0, le=100000)
+    identity_status: str = Field(default="unverified", pattern=r"^(unverified|verified|known_business|known_government|known_bank|suspicious|disposable|impersonation)$")
+    source: str = Field(min_length=2, max_length=80)
 
 
 class AutomationRuleIn(BaseModel):
@@ -176,6 +183,8 @@ def overview(tenant_id: uuid.UUID, db: Session = Depends(get_db), current: User 
         "phishing_open": db.scalar(select(func.count()).select_from(PhishingFinding).where(PhishingFinding.tenant_id == tenant_id, PhishingFinding.resolved.is_(False))) or 0,
         "automations_enabled": db.scalar(select(func.count()).select_from(MailAutomationRule).where(MailAutomationRule.tenant_id == tenant_id, MailAutomationRule.enabled.is_(True))) or 0,
         "trusted_senders": db.scalar(select(func.count()).select_from(TrustedSenderProfile).where(TrustedSenderProfile.tenant_id == tenant_id, TrustedSenderProfile.active.is_(True))) or 0,
+        "sender_reputation_profiles": db.scalar(select(func.count()).select_from(SenderReputationProfile).where(SenderReputationProfile.tenant_id == tenant_id)) or 0,
+        "domain_intelligence_profiles": db.scalar(select(func.count()).select_from(DomainIntelligenceProfile).where(DomainIntelligenceProfile.tenant_id == tenant_id)) or 0,
         "latest_dmarc": ({"domain": latest.domain, "period_end": latest.period_end.isoformat(), "total_messages": latest.total_messages, "aligned_messages": latest.aligned_messages, "failed_messages": latest.failed_messages, "alignment_rate": round((latest.aligned_messages / latest.total_messages) * 100, 2) if latest.total_messages else 0} if latest else None),
     }
 
@@ -250,6 +259,70 @@ def delete_trusted_sender(
     db.delete(item)
     db.commit()
     return Response(status_code=204)
+
+
+@router.get("/tenants/{tenant_id}/reputation/senders")
+def sender_reputation_profiles(
+    tenant_id: uuid.UUID,
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    _require(tenant_id, "mail.read", db, current)
+    rows = db.scalars(
+        select(SenderReputationProfile)
+        .where(SenderReputationProfile.tenant_id == tenant_id)
+        .order_by(SenderReputationProfile.score.asc(), SenderReputationProfile.observations.desc())
+        .limit(limit)
+    ).all()
+    return [reputation_profile_payload(item) for item in rows]
+
+
+@router.get("/tenants/{tenant_id}/reputation/domains")
+def domain_reputation_profiles(
+    tenant_id: uuid.UUID,
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    _require(tenant_id, "mail.read", db, current)
+    rows = db.scalars(
+        select(DomainIntelligenceProfile)
+        .where(DomainIntelligenceProfile.tenant_id == tenant_id)
+        .order_by(DomainIntelligenceProfile.score.asc(), DomainIntelligenceProfile.observations.desc())
+        .limit(limit)
+    ).all()
+    return [reputation_profile_payload(item) for item in rows]
+
+
+@router.post("/tenants/{tenant_id}/reputation/domains/{domain}/enrichment")
+def enrich_domain_reputation(
+    tenant_id: uuid.UUID,
+    domain: str,
+    payload: DomainEnrichmentIn,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require(tenant_id, "mail.manage", db, current)
+    normalized = _normalize_domain(domain)
+    item = db.scalar(
+        select(DomainIntelligenceProfile).where(
+            DomainIntelligenceProfile.tenant_id == tenant_id,
+            DomainIntelligenceProfile.domain == normalized,
+        )
+    )
+    if item is None:
+        item = DomainIntelligenceProfile(tenant_id=tenant_id, domain=normalized)
+        db.add(item)
+        db.flush()
+    item.domain_age_days = payload.domain_age_days
+    item.identity_status = payload.identity_status
+    item.enrichment_source = payload.source.strip()
+    item.enrichment_checked_at = datetime.now().astimezone()
+    refresh_domain_profile(item)
+    db.commit()
+    db.refresh(item)
+    return reputation_profile_payload(item)
 
 
 @router.get("/tenants/{tenant_id}/retention")
