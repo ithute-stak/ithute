@@ -881,7 +881,15 @@ export function HostedMailWorkspace() {
 
             <div className="mt-5"><MailPrivacyNote /></div>
             {selectedIntelligence ? (
-              <section className={`mt-4 rounded-2xl border p-4 ${intelligenceTone}`}>
+              <details className={`group mt-4 rounded-2xl border ${intelligenceTone}`}>
+                <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/70 shadow-sm dark:bg-white/10"><BrainCircuit size={18} /></span>
+                  <div className="min-w-0 flex-1"><p className="text-[10px] font-black uppercase tracking-[.12em]">Ithute Mail Intelligence</p><p className="truncate text-xs font-bold">{selectedIntelligence.business.summary}</p></div>
+                  <span className="rounded-full bg-white/70 px-2.5 py-1 text-[9px] font-black uppercase dark:bg-white/10">{selectedIntelligence.security.recommended_action.replaceAll("_", " ")}</span>
+                  <ChevronRight size={16} className="shrink-0 transition group-open:rotate-90" />
+                </summary>
+                <section className="border-t border-current/10 px-4 pb-4 pt-3">
+
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="flex items-start gap-3">
                     <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/70 shadow-sm dark:bg-white/10"><BrainCircuit size={18} /></span>
@@ -1077,6 +1085,7 @@ export function HostedMailWorkspace() {
                   </div>
                 </div>
               </section>
+              </details>
             ) : null}
             <div className="mt-6 min-h-[220px]">
               <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,.03)] dark:border-white/10 dark:bg-white/[.025]">
