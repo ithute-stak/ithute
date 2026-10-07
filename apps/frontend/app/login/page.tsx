@@ -193,7 +193,14 @@ export default function Login() {
               <div>
                 <div className="mb-1.5 flex items-center justify-between gap-3">
                   <label className="block text-[11px] font-extrabold text-[#243b31]" htmlFor="password">Password</label>
-                  {capsLock ? <span className="text-[10px] font-bold text-amber-700">Caps Lock is on</span> : null}
+                  <div className="flex items-center gap-3">
+                    {capsLock ? <span className="text-[10px] font-bold text-amber-700">Caps Lock is on</span> : null}
+                    {!mfaRequired ? (
+                      <Link href="/forgot-password" className="text-[10px] font-extrabold text-[#285b55] transition hover:text-[#123a38]">
+                        Forgot password?
+                      </Link>
+                    ) : null}
+                  </div>
                 </div>
                 <div className="relative">
                   <LockKeyhole size={17} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#829087]" />

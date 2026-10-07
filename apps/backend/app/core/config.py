@@ -367,6 +367,8 @@ class Settings(BaseSettings):
                     raise ValueError("Domain production mode requires MAIL_TLS_MODE=acme or external")
                 if not self.system_email_from or not self.system_smtp_host:
                     raise ValueError("Domain production mode requires SYSTEM_EMAIL_FROM and SYSTEM_SMTP_HOST for customer verification")
+                if not self.system_smtp_username or not self.system_smtp_password:
+                    raise ValueError("Domain production mode requires authenticated SYSTEM_SMTP credentials for security email")
                 if not (self.system_smtp_ssl or self.system_smtp_starttls):
                     raise ValueError("Domain production mode system SMTP must use TLS")
                 if not self.groupware_public_url.startswith("https://"):

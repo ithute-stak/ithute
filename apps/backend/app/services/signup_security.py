@@ -50,7 +50,7 @@ def enforce_signup_rate_limit(request: Request) -> None:
         raise HTTPException(status_code=429, detail="Too many signup attempts. Try again later.")
 
 
-def send_system_email(to_address: str, subject: str, text_body: str) -> None:
+def send_system_email(to_address: str, subject: str, text_body: str, html_body: str | None = None) -> None:
     if not settings.system_email_from or not settings.system_smtp_host:
         if settings.environment.lower() == "production":
             raise RuntimeError("System email delivery is not configured")
@@ -60,6 +60,8 @@ def send_system_email(to_address: str, subject: str, text_body: str) -> None:
     message["To"] = to_address
     message["Subject"] = subject
     message.set_content(text_body)
+    if html_body:
+        message.add_alternative(html_body, subtype="html")
     context = ssl.create_default_context()
     if settings.system_smtp_ssl:
         client = smtplib.SMTP_SSL(settings.system_smtp_host, settings.system_smtp_port, timeout=15, context=context)
