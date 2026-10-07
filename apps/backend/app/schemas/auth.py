@@ -6,6 +6,8 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=8, max_length=256)
     mfa_code: str | None = Field(default=None, min_length=6, max_length=32)
     recovery_code: str | None = Field(default=None, min_length=8, max_length=32)
+    step_up_challenge_id: str | None = Field(default=None, min_length=20, max_length=256)
+    step_up_code: str | None = Field(default=None, min_length=6, max_length=12)
 
 
 class TokenResponse(BaseModel):
