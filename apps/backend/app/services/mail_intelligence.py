@@ -110,6 +110,8 @@ def _domain(address: str) -> str:
 def _registrable_hint(host: str) -> str:
     host = (host or "").lower().strip(".")
     labels = [label for label in host.split(".") if label]
+    if len(labels) >= 3 and ".".join(labels[-2:]) in {"co.ls", "org.ls", "gov.ls", "ac.ls", "net.ls"}:
+        return ".".join(labels[-3:])
     return ".".join(labels[-2:]) if len(labels) >= 2 else host
 
 
