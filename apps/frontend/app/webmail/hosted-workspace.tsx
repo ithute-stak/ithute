@@ -81,6 +81,34 @@ type BusinessContact = {
 type ConversationMessage = MessageRow & { folder?: string };
 type MailIntelligence = {
   model: string;
+  trust?: {
+    state: string;
+    verified: boolean;
+    registry_match: boolean;
+    sender: string;
+    display_name: string;
+    category: string;
+    trust_reason: string;
+    authentication: {
+      spf: string;
+      dkim: string;
+      dmarc: string;
+      arc: string;
+      authenticated: boolean;
+      any_failure: boolean;
+    };
+    url_intelligence: {
+      count: number;
+      suspicious_count: number;
+      items: Array<{ url: string; host: string; trusted_domain_match: boolean; reasons: string[] }>;
+    };
+    explainable_score?: {
+      risk_before_trust_credit: number;
+      verified_trust_credit: number;
+      final_phishing_score: number;
+      rule: string;
+    };
+  };
   security: {
     phishing_probability: number;
     bec_probability: number;
@@ -853,10 +881,36 @@ export function HostedMailWorkspace() {
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
                     <span className="rounded-full bg-white/70 px-3 py-1 text-[10px] font-black uppercase dark:bg-white/10">{selectedIntelligence.business.priority} priority</span>
-                    <span className="rounded-full bg-white/70 px-3 py-1 text-[10px] font-black uppercase dark:bg-white/10">{selectedIntelligence.business.intent.label}</span>
+                    <span className="rounded-full bg-white/70 px-3 py-1 text-[10px] font-black uppercase dark:bg-white/10">{selectedIntelligence.business.intent.label.replaceAll("_", " ")}</span>
                     {selectedIntelligence.business.reply_needed ? <span className="rounded-full bg-white/70 px-3 py-1 text-[10px] font-black uppercase dark:bg-white/10">Reply likely</span> : null}
                   </div>
                 </div>
+
+                {selectedIntelligence.trust?.registry_match ? (
+                  <div className={`mt-4 rounded-2xl border p-3.5 ${selectedIntelligence.trust.verified ? "border-emerald-300/70 bg-emerald-50/80 text-emerald-950 dark:border-emerald-400/25 dark:bg-emerald-400/10 dark:text-emerald-50" : "border-amber-300/70 bg-amber-50/80 text-amber-950 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-50"}`}>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-[.12em]">{selectedIntelligence.trust.verified ? "Verified Ithute system sender" : "Ithute sender identity requires verification"}</p>
+                        <p className="mt-1 text-[12px] font-black">{selectedIntelligence.trust.display_name || selectedIntelligence.trust.sender}</p>
+                        <p className="mt-1 text-[10px] opacity-75">{selectedIntelligence.trust.trust_reason}</p>
+                      </div>
+                      <span className="rounded-full bg-white/75 px-2.5 py-1 text-[9px] font-black uppercase dark:bg-white/10">{selectedIntelligence.trust.state.replaceAll("_", " ")}</span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      {(["spf", "dkim", "dmarc", "arc"] as const).map((mechanism) => (
+                        <div key={mechanism} className="rounded-xl bg-white/75 p-2 dark:bg-white/10">
+                          <p className="text-[8px] font-black uppercase opacity-60">{mechanism}</p>
+                          <p className="mt-1 text-[11px] font-black uppercase">{selectedIntelligence.trust?.authentication[mechanism] || "unknown"}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[9px] font-bold">
+                      <span className="rounded-lg bg-white/75 px-2.5 py-1 dark:bg-white/10">Links: {selectedIntelligence.trust.url_intelligence.count}</span>
+                      <span className="rounded-lg bg-white/75 px-2.5 py-1 dark:bg-white/10">Suspicious links: {selectedIntelligence.trust.url_intelligence.suspicious_count}</span>
+                      {selectedIntelligence.trust.explainable_score ? <span className="rounded-lg bg-white/75 px-2.5 py-1 dark:bg-white/10">Trust credit: -{selectedIntelligence.trust.explainable_score.verified_trust_credit}</span> : null}
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                   <div className="rounded-xl bg-white/70 p-3 dark:bg-white/10">
