@@ -54,6 +54,7 @@ from app.services.identity_security import (
     DEVICE_COOKIE_MAX_AGE,
     DEVICE_COOKIE_NAME,
     assess_login_risk,
+    cancel_adaptive_challenge,
     generate_recovery_codes,
     issue_adaptive_challenge,
     lookup_device,
@@ -355,6 +356,7 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
                         "</div></body></html>",
                     )
                 except RuntimeError as exc:
+                    cancel_adaptive_challenge(user=user, request=request, challenge_id=challenge_id)
                     raise HTTPException(status_code=503, detail="Unable to deliver the sign-in verification code") from exc
 
             db.add(AuditLog(
