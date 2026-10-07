@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     sms_webhook_url: str = ""
     sms_webhook_token: str = ""
     notification_gateway_secret: str = ""
+    mail_intelligence_gateway_secret: str = ""
 
     # One global human owner is provisioned only inside central !thute Auth.
     # Products receive only the signed is_platform_admin claim and never this
