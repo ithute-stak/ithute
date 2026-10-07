@@ -13,7 +13,13 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models import MailNode, MailRelationship, MailThreatModelVersion, MailThreatShadowPrediction, PhishingFinding
 from app.models.mail import Mailbox, MailboxStatus, MailboxStorageType
-from app.services.mailboxes import normalize_destination\nfrom app.services.mail_first_contact import (\n    decorate_first_contact_html,\n    decorate_first_contact_text,\n    prepare_first_contact,\n    record_successful_send,\n)
+from app.services.mailboxes import normalize_destination
+from app.services.mail_first_contact import (
+    decorate_first_contact_html,
+    decorate_first_contact_text,
+    prepare_first_contact,
+    record_successful_send,
+)
 from app.services.mail_intelligence import analyze_mail_message
 from app.services.mail_intelligence_learning import feature_snapshot, training_readiness
 from app.services.mail_sender_behavior import observe_sender_behavior
