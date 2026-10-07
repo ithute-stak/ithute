@@ -91,6 +91,7 @@ class PasskeyRegistrationRequest(BaseModel):
     flow_id: str = Field(min_length=20, max_length=256)
     credential: dict
     name: str = Field(default="Passkey", min_length=1, max_length=120)
+    current_password: str = Field(min_length=8, max_length=256)
 
 
 class PasskeyAuthenticationRequest(BaseModel):
