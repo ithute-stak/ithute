@@ -101,7 +101,7 @@ def test_central_security_center_redirects_to_auth_portal(client, monkeypatch):
 
 
 def test_enforce_central_auth_is_irreversible_and_persisted(client, db, platform_owner):
-    from app.api.deps import get_current_local_user
+    from app.api.deps import get_current_local_user, get_current_user
     from app.models import User
 
     user = db.get(User, platform_owner.id)
@@ -109,6 +109,7 @@ def test_enforce_central_auth_is_irreversible_and_persisted(client, db, platform
     db.commit()
 
     client.app.dependency_overrides[get_current_local_user] = lambda: user
+    client.app.dependency_overrides[get_current_user] = lambda: user
     try:
         response = client.post(
             "/api/v1/auth/ithute/enforce",
@@ -134,3 +135,4 @@ def test_enforce_central_auth_is_irreversible_and_persisted(client, db, platform
         assert unlink.json()["detail"]["code"] == "CENTRAL_AUTH_PERMANENTLY_ENFORCED"
     finally:
         client.app.dependency_overrides.pop(get_current_local_user, None)
+        client.app.dependency_overrides.pop(get_current_user, None)
