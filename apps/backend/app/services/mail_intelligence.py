@@ -6,6 +6,8 @@ from email.utils import getaddresses
 from typing import Any
 from urllib.parse import urlparse
 
+from app.services.mail_trust import trusted_sender_evidence
+
 
 URL_RE = re.compile(r"https?://[^\s<>()\[\]\"']+", re.IGNORECASE)
 MONEY_RE = re.compile(
@@ -78,6 +80,9 @@ RISKY_ATTACHMENT_EXTENSIONS = {
 }
 
 INTENT_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "account_recovery": ("reset your password", "password reset", "recovery link", "reset link", "choose a new password", "forgot password"),
+    "login_alert": ("new sign-in", "new login", "sign-in alert", "security alert", "unrecognized device", "new device"),
+    "payment_change": ("change bank details", "new bank details", "change account", "new beneficiary", "updated payment details"),
     "payment": ("payment", "paid", "pay ", "bank details", "transfer", "invoice"),
     "quotation": ("quotation", "quote", "pricing", "price", "estimate", "proposal"),
     "support": ("support", "help", "issue", "problem", "error", "not working", "failed"),
@@ -144,17 +149,18 @@ def _extract_entities(message: dict[str, Any]) -> dict[str, list[str]]:
 def _intent(text: str) -> dict[str, Any]:
     scores: Counter[str] = Counter()
     evidence: dict[str, list[str]] = {}
+    priority_intents = {"account_recovery": 3, "login_alert": 3, "payment_change": 2}
     for intent, keywords in INTENT_KEYWORDS.items():
         found = [keyword for keyword in keywords if keyword in text]
         if found:
-            scores[intent] = len(found)
+            scores[intent] = len(found) * priority_intents.get(intent, 1)
             evidence[intent] = found
     if not scores:
         return {"label": "general", "confidence": 0.45, "alternatives": [], "evidence": []}
     ranked = scores.most_common(3)
     total = sum(scores.values())
     winner, winner_score = ranked[0]
-    confidence = min(0.95, 0.55 + 0.08 * winner_score + 0.05 * (winner_score / max(1, total)))
+    confidence = min(0.98, 0.57 + 0.06 * winner_score + 0.05 * (winner_score / max(1, total)))
     return {
         "label": winner,
         "confidence": round(confidence, 3),
@@ -174,6 +180,7 @@ def analyze_mail_message(message: dict[str, Any], *, mailbox_address: str = "") 
     reply_domain = _domain(reply_addresses[0]) if reply_addresses else sender_domain
     authentication_results = _lower(message.get("authentication_results"))
     received_spf = _lower(message.get("received_spf"))
+    trust = trusted_sender_evidence(message)
 
     risk_score = 0
     bec_score = 0
@@ -211,6 +218,15 @@ def analyze_mail_message(message: dict[str, Any], *, mailbox_address: str = "") 
             "signal": "mail_authentication_failure",
             "weight": auth_weight,
             "evidence": auth_failures,
+        })
+
+    if trust["registry_match"] and trust["authentication"]["any_failure"]:
+        risk_score += 35
+        bec_score += 12
+        risk_signals.append({
+            "signal": "registered_sender_authentication_mismatch",
+            "weight": 35,
+            "evidence": [trust["sender"], trust["trust_reason"]],
         })
 
     if reply_domain and sender_domain and _registrable_hint(reply_domain) != _registrable_hint(sender_domain):
@@ -264,15 +280,28 @@ def analyze_mail_message(message: dict[str, Any], *, mailbox_address: str = "") 
         # reduces only the generic phishing prior, never explicit risky signals.
         risk_score = max(0, risk_score - 5)
 
-    phishing_probability = min(0.99, max(0.01, risk_score / 100.0))
-    bec_probability = min(0.99, max(0.01, bec_score / 100.0))
+    # Verified system identity can reduce generic lexical suspicion such as the
+    # word "password", but only after registry membership, SPF, DKIM, DMARC and
+    # link-domain checks all succeed. Explicit failures are never discounted.
+    trust_credit = 0
+    if trust["verified"]:
+        trust_credit = 28
+        risk_score = max(0, risk_score - trust_credit)
+        bec_score = max(0, bec_score - 12)
+
+    phishing_probability = min(0.99, max(0.003 if trust["verified"] else 0.01, risk_score / 100.0))
+    bec_probability = min(0.99, max(0.003 if trust["verified"] else 0.01, bec_score / 100.0))
 
     intent = _intent(text)
     entities = _extract_entities(message)
 
     question_signal = "?" in body
     request_hits = [term for term in REQUEST_TERMS if term in text]
-    reply_needed = bool(question_signal or request_hits or intent["label"] in {"quotation", "support", "sales", "payment", "meeting", "complaint"})
+    non_reply_intents = {"account_recovery", "login_alert"}
+    reply_needed = bool(
+        intent["label"] not in non_reply_intents
+        and (question_signal or request_hits or intent["label"] in {"quotation", "support", "sales", "payment", "payment_change", "meeting", "complaint"})
+    )
     priority_score = min(
         100,
         int(round(
@@ -298,8 +327,10 @@ def analyze_mail_message(message: dict[str, Any], *, mailbox_address: str = "") 
         security_action = "review"
 
     summary_bits = []
-    if intent["label"] != "general":
-        summary_bits.append(f"Likely {intent['label']} message")
+    if trust["verified"]:
+        summary_bits.append(f"Verified {trust['display_name']} message")
+    elif intent["label"] != "general":
+        summary_bits.append(f"Likely {intent['label'].replace('_', ' ')} message")
     if entities["money"]:
         summary_bits.append(f"mentions {entities['money'][0]}")
     if entities["deadline_terms"]:
@@ -308,7 +339,16 @@ def analyze_mail_message(message: dict[str, Any], *, mailbox_address: str = "") 
         summary_bits.append("likely needs a reply")
 
     return {
-        "model": "ithute-mail-intelligence-v1",
+        "model": "ithute-mail-intelligence-v2",
+        "trust": {
+            **trust,
+            "explainable_score": {
+                "risk_before_trust_credit": min(100, risk_score + trust_credit),
+                "verified_trust_credit": trust_credit,
+                "final_phishing_score": round(phishing_probability * 100, 1),
+                "rule": "trust credit requires registry + SPF/DKIM/DMARC pass + trusted link domains",
+            },
+        },
         "security": {
             "phishing_probability": round(phishing_probability, 3),
             "bec_probability": round(bec_probability, 3),

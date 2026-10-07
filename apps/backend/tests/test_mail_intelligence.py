@@ -129,3 +129,45 @@ def test_mail_authentication_failures_raise_risk():
     signal = next(item for item in result["security"]["signals"] if item["signal"] == "mail_authentication_failure")
     assert set(signal["evidence"]) == {"spf", "dkim", "dmarc"}
     assert result["security"]["phishing_probability"] >= 0.4
+
+
+
+def test_verified_ithute_password_reset_is_classified_as_account_recovery():
+    result = analyze_mail_message(
+        _message(
+            from="Ithute Security <auth@ithute.co.ls>",
+            subject="Reset your Ithute password",
+            body_text="Open https://ithute.co.ls/reset-password#token=abc to choose a new password.",
+            authentication_results=(
+                "mx.ithute.co.ls; spf=pass smtp.mailfrom=ithute.co.ls; "
+                "dkim=pass header.d=ithute.co.ls; dmarc=pass header.from=ithute.co.ls"
+            ),
+            received_spf="pass (authorized)",
+        ),
+        mailbox_address="user@ithute.co.ls",
+    )
+
+    assert result["trust"]["verified"] is True
+    assert result["business"]["intent"]["label"] == "account_recovery"
+    assert result["business"]["reply_needed"] is False
+    assert result["security"]["recommended_action"] == "allow"
+    assert result["security"]["phishing_probability"] < 0.10
+    assert "Verified Ithute Identity & Account Security message" in result["business"]["summary"]
+
+
+def test_spoofed_registered_sender_is_more_suspicious_not_more_trusted():
+    result = analyze_mail_message(
+        _message(
+            from="Ithute Security <auth@ithute.co.ls>",
+            subject="Reset your Ithute password",
+            body_text="Open https://evil.example/reset-password now.",
+            authentication_results="mx; spf=fail; dkim=fail; dmarc=fail",
+            received_spf="fail (not authorized)",
+        )
+    )
+
+    names = {signal["signal"] for signal in result["security"]["signals"]}
+    assert result["trust"]["verified"] is False
+    assert result["trust"]["state"] == "registry_sender_auth_failed"
+    assert "registered_sender_authentication_mismatch" in names
+    assert result["security"]["phishing_probability"] >= 0.55

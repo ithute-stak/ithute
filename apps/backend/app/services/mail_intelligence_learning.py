@@ -13,6 +13,9 @@ def feature_snapshot(message: dict[str, Any], intelligence: dict[str, Any]) -> d
     security = intelligence.get("security") if isinstance(intelligence.get("security"), dict) else {}
     business = intelligence.get("business") if isinstance(intelligence.get("business"), dict) else {}
     behavior = intelligence.get("behavior") if isinstance(intelligence.get("behavior"), dict) else {}
+    trust = intelligence.get("trust") if isinstance(intelligence.get("trust"), dict) else {}
+    authentication = trust.get("authentication") if isinstance(trust.get("authentication"), dict) else {}
+    url_intelligence = trust.get("url_intelligence") if isinstance(trust.get("url_intelligence"), dict) else {}
     entities = business.get("entities") if isinstance(business.get("entities"), dict) else {}
     signals = security.get("signals") if isinstance(security.get("signals"), list) else []
 
@@ -43,6 +46,13 @@ def feature_snapshot(message: dict[str, Any], intelligence: dict[str, Any]) -> d
             if isinstance(item, dict) and item.get("signal")
         ],
         "reply_needed": bool(business.get("reply_needed")),
+        "trusted_sender_verified": bool(trust.get("verified")),
+        "trusted_sender_registry_match": bool(trust.get("registry_match")),
+        "trusted_sender_category": str(trust.get("category") or ""),
+        "spf_status": str(authentication.get("spf") or "unknown"),
+        "dkim_status": str(authentication.get("dkim") or "unknown"),
+        "dmarc_status": str(authentication.get("dmarc") or "unknown"),
+        "suspicious_url_count": int(url_intelligence.get("suspicious_count") or 0),
         "attachment_count": len(message.get("attachments") or []),
         "url_count": len(entities.get("urls") or []),
         "money_count": len(entities.get("money") or []),
