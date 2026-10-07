@@ -11,7 +11,7 @@ from app.models import User
 from app.services.dns_phase5 import delegation_diagnostics, dns_templates
 from app.services.domains import add_domain_event
 from app.services.powerdns import PowerDNSClient, PowerDNSError
-from app.services.registrar_dnssec import DSRecord, OpenSRSRegistrar, RegistrarError, preferred_ds
+from app.services.registrar_dnssec import DSRecord, OPENSRS_DNSSEC_ALGORITHMS, OpenSRSRegistrar, RegistrarError, preferred_ds
 
 router = APIRouter(prefix="/tenants/{tenant_id}/domains/{domain_id}/dns", tags=["dns-security"])
 
@@ -71,13 +71,16 @@ def parent_ds_status(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get
         _pdns_error(exc)
     ds_values = [value for key in keys for value in (key.get("ds") or [])]
     selected = preferred_ds(ds_values)
+    compatible = preferred_ds(ds_values, allowed_algorithms=OPENSRS_DNSSEC_ALGORITHMS)
     registrar = OpenSRSRegistrar()
     result = {
         "provider": "opensrs",
         "configured": registrar.configured,
         "domain": domain.ascii_name,
-        "recommended": selected.as_opensrs() if selected else None,
-        "recommended_text": selected.text() if selected else None,
+        "recommended": (compatible or selected).as_opensrs() if (compatible or selected) else None,
+        "recommended_text": (compatible or selected).text() if (compatible or selected) else None,
+        "registrar_compatible": compatible is not None,
+        "auto_prepare_supported": True,
         "registrar_records": [],
     }
     if registrar.configured:
@@ -96,23 +99,42 @@ def publish_parent_ds(tenant_id: UUID, domain_id: UUID, db: Session = Depends(ge
     if not registrar.configured:
         raise HTTPException(409, "OpenSRS registrar integration is not configured. Configure OPENSRS_USERNAME and OPENSRS_API_KEY first.")
     try:
-        zone = PowerDNSClient().get_zone(domain.ascii_name)
+        client = PowerDNSClient()
+        zone = client.get_zone(domain.ascii_name)
         if not zone.get("dnssec"):
             raise HTTPException(409, "Enable DNSSEC signing before publishing a parent DS record")
-        keys = PowerDNSClient().list_cryptokeys(domain.ascii_name)
+        keys = client.list_cryptokeys(domain.ascii_name)
         ds_values = [value for key in keys for value in (key.get("ds") or [])]
-        selected = preferred_ds(ds_values)
+        selected = preferred_ds(ds_values, allowed_algorithms=OPENSRS_DNSSEC_ALGORITHMS)
+        generated_compatible_key = False
         if selected is None:
-            raise HTTPException(409, "PowerDNS has not produced a DS record yet")
+            # Keep the existing signing material in place and add a registrar-compatible
+            # KSK. This avoids a destructive algorithm cutover while allowing the parent
+            # registry to establish a valid chain of trust.
+            client.create_cryptokey(
+                domain.ascii_name,
+                keytype="ksk",
+                algorithm="rsasha256",
+                bits=2048,
+                active=True,
+                published=True,
+            )
+            client.rectify_zone(domain.ascii_name)
+            keys = client.list_cryptokeys(domain.ascii_name)
+            ds_values = [value for key in keys for value in (key.get("ds") or [])]
+            selected = preferred_ds(ds_values, allowed_algorithms=OPENSRS_DNSSEC_ALGORITHMS)
+            generated_compatible_key = True
+        if selected is None:
+            raise HTTPException(409, "PowerDNS could not produce a registrar-compatible DS record")
         records = registrar.publish(domain.ascii_name, selected)
     except PowerDNSError as exc:
         _pdns_error(exc)
     except RegistrarError as exc:
         raise HTTPException(502, str(exc)) from exc
-    add_domain_event(db, domain, current.id, "dns.parent_ds_publish_requested", {"provider": "opensrs", "ds": selected.text()})
-    _audit(db, tenant_id, current, "dns.parent_ds.publish", domain, {"provider": "opensrs", "ds": selected.text()})
+    add_domain_event(db, domain, current.id, "dns.parent_ds_publish_requested", {"provider": "opensrs", "ds": selected.text(), "generated_compatible_key": generated_compatible_key})
+    _audit(db, tenant_id, current, "dns.parent_ds.publish", domain, {"provider": "opensrs", "ds": selected.text(), "generated_compatible_key": generated_compatible_key})
     db.commit()
-    return {"published": True, "provider": "opensrs", "selected": selected.as_opensrs(), "registrar_records": [record.as_opensrs() for record in records]}
+    return {"published": True, "provider": "opensrs", "selected": selected.as_opensrs(), "generated_compatible_key": generated_compatible_key, "registrar_records": [record.as_opensrs() for record in records]}
 
 
 @router.post("/parent-ds/remove")
