@@ -98,3 +98,39 @@ def test_central_security_center_redirects_to_auth_portal(client, monkeypatch):
 
     assert response.status_code == 303
     assert response.headers["location"] == "https://auth.ithute.co.ls/account"
+
+
+def test_enforce_central_auth_is_irreversible_and_persisted(client, db, platform_owner):
+    from app.api.deps import get_current_local_user
+    from app.models import User
+
+    user = db.get(User, platform_owner.id)
+    user.auth_user_id = uuid4()
+    db.commit()
+
+    client.app.dependency_overrides[get_current_local_user] = lambda: user
+    try:
+        response = client.post(
+            "/api/v1/auth/ithute/enforce",
+            json={"current_password": "Phase1-Test-Password!"},
+        )
+        assert response.status_code == 200
+        assert response.json()["enforced"] is True
+
+        db.expire_all()
+        persisted = db.get(User, platform_owner.id)
+        assert persisted.central_auth_enforced is True
+        assert persisted.central_auth_enforced_at is not None
+
+        status = client.get("/api/v1/auth/ithute/status")
+        assert status.status_code == 200
+        assert status.json()["enforced"] is True
+
+        unlink = client.post(
+            "/api/v1/auth/ithute/unlink",
+            json={"current_password": "Phase1-Test-Password!"},
+        )
+        assert unlink.status_code == 409
+        assert unlink.json()["detail"]["code"] == "CENTRAL_AUTH_PERMANENTLY_ENFORCED"
+    finally:
+        client.app.dependency_overrides.pop(get_current_local_user, None)
