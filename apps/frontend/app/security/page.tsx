@@ -29,11 +29,21 @@ type AuthCapabilities = {
   local_security_controls_enabled: boolean;
 };
 
+type CentralAuthStatus = {
+  enabled: boolean;
+  linked: boolean;
+  enforced: boolean;
+  enforced_at?: string | null;
+};
+
 export default function SecurityPage() {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [localControls, setLocalControls] = useState(false);
+  const [centralStatus, setCentralStatus] = useState<CentralAuthStatus | null>(null);
+  const [centralPassword, setCentralPassword] = useState("");
+  const [centralEnabling, setCentralEnabling] = useState(false);
   const [secret, setSecret] = useState("");
   const [uri, setUri] = useState("");
   const [code, setCode] = useState("");
@@ -42,9 +52,10 @@ export default function SecurityPage() {
   const [confirm, setConfirm] = useState("");
 
   async function load() {
-    const [meResponse, capabilityResponse] = await Promise.all([
+    const [meResponse, capabilityResponse, centralResponse] = await Promise.all([
       apiFetch("/auth/me", { cache: "no-store" }),
       fetch(`${API}/auth/capabilities`, { cache: "no-store" }),
+      apiFetch("/auth/ithute/status", { cache: "no-store" }),
     ]);
 
     if (meResponse.status === 401) {
@@ -56,7 +67,11 @@ export default function SecurityPage() {
     const capabilities: AuthCapabilities | null = capabilityResponse.ok
       ? await capabilityResponse.json()
       : null;
-    const localSecurityEnabled = Boolean(capabilities?.local_security_controls_enabled);
+    const central: CentralAuthStatus | null = centralResponse.ok
+      ? await centralResponse.json()
+      : null;
+    setCentralStatus(central);
+    const localSecurityEnabled = Boolean(capabilities?.local_security_controls_enabled) && !Boolean(central?.enforced);
     setLocalControls(localSecurityEnabled);
 
     if (!localSecurityEnabled) {
@@ -71,6 +86,39 @@ export default function SecurityPage() {
   useEffect(() => {
     void load();
   }, []);
+
+  async function permanentlyEnableCentralAuth() {
+    if (centralStatus?.enforced || centralEnabling) return;
+    if (!centralStatus?.linked) {
+      setToast("Link this account to Ithute Identity before permanently enabling Central Authentication.");
+      return;
+    }
+    if (!centralPassword) {
+      setToast("Enter your current password to confirm this permanent security change.");
+      return;
+    }
+    setCentralEnabling(true);
+    try {
+      const response = await apiFetch("/auth/ithute/enforce", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_password: centralPassword }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = typeof body.detail === "object" && body.detail?.message
+          ? body.detail.message
+          : body.detail;
+        setToast(String(detail || "Unable to enable Central Authentication."));
+        return;
+      }
+      setCentralPassword("");
+      setToast("Central Authentication is now permanently enforced for this account.");
+      await load();
+    } finally {
+      setCentralEnabling(false);
+    }
+  }
 
   async function setupMfa() {
     const response = await apiFetch("/auth/mfa/setup", { method: "POST" });
@@ -154,6 +202,57 @@ export default function SecurityPage() {
             </StatusBadge>
           }
         />
+
+        {centralStatus?.enabled ? (
+          <section className="surface-card p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="grid h-11 w-11 place-items-center rounded-xl bg-[#eef4f1] text-[var(--admin-pine)]">
+                  <ShieldCheck size={20} />
+                </div>
+                <div>
+                  <p className="text-sm font-black">Permanent Central Authentication</p>
+                  <p className="mt-1 max-w-2xl text-[11px] leading-5 text-[var(--admin-muted)]">
+                    This is an account-level backend policy. Once enabled, password login is blocked and every device must use Ithute Central Authentication. It cannot be switched off.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-pressed={Boolean(centralStatus.enforced)}
+                disabled={centralStatus.enforced || centralEnabling}
+                onClick={() => void permanentlyEnableCentralAuth()}
+                className={`relative h-7 w-12 shrink-0 rounded-full transition ${centralStatus.enforced ? "cursor-not-allowed bg-emerald-600" : "bg-slate-300 hover:bg-slate-400"}`}
+                title={centralStatus.enforced ? "Central Authentication is permanently locked on" : "Permanently enable Central Authentication"}
+              >
+                <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${centralStatus.enforced ? "left-6" : "left-1"}`} />
+              </button>
+            </div>
+            {centralStatus.enforced ? (
+              <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-[11px] font-bold text-emerald-800">
+                Locked on permanently{centralStatus.enforced_at ? ` · enabled ${new Date(centralStatus.enforced_at).toLocaleString()}` : ""}. This state is stored on the server and follows the account to every device.
+              </div>
+            ) : (
+              <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+                <input
+                  type="password"
+                  value={centralPassword}
+                  onChange={(event) => setCentralPassword(event.target.value)}
+                  autoComplete="current-password"
+                  placeholder="Current password to confirm"
+                  className="min-h-10 rounded-xl border border-[#dce6e0] bg-white px-3 text-xs outline-none focus:border-[#285b55]"
+                />
+                <button
+                  className="btn-primary"
+                  disabled={centralEnabling || !centralStatus.linked}
+                  onClick={() => void permanentlyEnableCentralAuth()}
+                >
+                  {centralEnabling ? "Enabling…" : centralStatus.linked ? "Enable permanently" : "Link Ithute Identity first"}
+                </button>
+              </div>
+            )}
+          </section>
+        ) : null}
 
         {!localControls ? (
           <section className="surface-card p-5">
