@@ -400,8 +400,6 @@ def login(
 
     user.failed_login_attempts = 0
     user.locked_until = None
-    user.last_login_at = now
-    user.last_login_ip = client_ip(request)
 
     device = resolve_device(db, user=user, request=request)
     risk = assess_login_risk(db=db, user=user, request=request, device=device, auth_method="password")
@@ -419,6 +417,9 @@ def login(
             )
             db.commit()
             raise HTTPException(status_code=403, detail={"code": "PASSKEY_REQUIRED", "message": "Use your passkey to complete this high-risk sign-in."})
+
+    user.last_login_at = now
+    user.last_login_ip = client_ip(request)
 
     refresh_token = new_refresh_token()
     auth_session = AuthSession(
