@@ -18,7 +18,7 @@ USER = {
 def main() -> None:
     state = {
         "authenticated": False,
-        "fail_me_once": False,
+        "needs_refresh": False,
         "refresh_calls": 0,
         "logout_calls": 0,
     }
@@ -29,7 +29,7 @@ def main() -> None:
 
         if path == "/api/v1/auth/ithute/login":
             state["authenticated"] = True
-            state["fail_me_once"] = True
+            state["needs_refresh"] = True
             route.fulfill(status=303, headers={"Location": "/dashboard"})
             return
 
@@ -37,8 +37,7 @@ def main() -> None:
             if not state["authenticated"]:
                 route.fulfill(status=401, content_type="application/json", body='{"detail":"Authentication required"}')
                 return
-            if state["fail_me_once"]:
-                state["fail_me_once"] = False
+            if state["needs_refresh"]:
                 route.fulfill(status=401, content_type="application/json", body='{"detail":"expired"}')
                 return
             route.fulfill(status=200, content_type="application/json", body=json.dumps(USER))
@@ -49,6 +48,7 @@ def main() -> None:
             if not state["authenticated"]:
                 route.fulfill(status=401, content_type="application/json", body='{"detail":"expired"}')
                 return
+            state["needs_refresh"] = False
             route.fulfill(status=200, content_type="application/json", body='{"refreshed":true}')
             return
 
