@@ -39,6 +39,7 @@ from app.services.auth_security import (
     enforce_password_reset_rate_limit,
     record_login_failure,
 )
+from app.services.ithute_auth import ithute_auth_enabled
 from app.services.signup_security import send_system_email
 
 def _require_local_auth_surface() -> None:
@@ -129,6 +130,16 @@ def _revoke_all_sessions(db: Session, user_id: UUID) -> None:
 def _require_verified_email(user: User) -> None:
     if settings.environment.lower() == "production" and user.email_verified_at is None:
         raise HTTPException(status_code=403, detail="Email verification required")
+
+
+@router.get("/capabilities")
+def auth_capabilities():
+    local_enabled = settings.environment.lower() != "production" or settings.legacy_local_auth_production_enabled
+    return {
+        "local_auth_enabled": local_enabled,
+        "central_auth_enabled": ithute_auth_enabled(),
+        "local_security_controls_enabled": local_enabled,
+    }
 
 
 @router.post("/login", response_model=TokenResponse)

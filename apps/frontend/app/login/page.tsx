@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
 import {
   ArrowRight,
   BadgeCheck,
@@ -34,6 +34,19 @@ export default function Login() {
   const [mfaRequired, setMfaRequired] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [capsLock, setCapsLock] = useState(false);
+  const [localAuthEnabled, setLocalAuthEnabled] = useState(false);
+  const [centralAuthEnabled, setCentralAuthEnabled] = useState(true);
+
+  useEffect(() => {
+    void fetch(`${API}/auth/capabilities`, { cache: "no-store" })
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => {
+        if (!data) return;
+        setLocalAuthEnabled(Boolean(data.local_auth_enabled));
+        setCentralAuthEnabled(Boolean(data.central_auth_enabled));
+      })
+      .catch(() => undefined);
+  }, []);
 
   function detectCapsLock(event: KeyboardEvent<HTMLInputElement>) {
     setCapsLock(event.getModifierState("CapsLock"));
@@ -159,7 +172,7 @@ export default function Login() {
               </div>
             </div>
 
-            {!mfaRequired ? (
+            {!mfaRequired && centralAuthEnabled ? (
               <div className="mt-6">
                 <a
                   href={`${API}/auth/ithute/login`}
@@ -169,14 +182,17 @@ export default function Login() {
                   Sign in with Ithute
                   <ArrowRight size={16} className="transition group-hover:translate-x-0.5" />
                 </a>
-                <div className="my-5 flex items-center gap-3 text-[10px] font-extrabold uppercase tracking-[.12em] text-[#98a49e]">
-                  <span className="h-px flex-1 bg-[#e1e7e3]" />
-                  <span>or use a local account</span>
-                  <span className="h-px flex-1 bg-[#e1e7e3]" />
-                </div>
+                {localAuthEnabled ? (
+                  <div className="my-5 flex items-center gap-3 text-[10px] font-extrabold uppercase tracking-[.12em] text-[#98a49e]">
+                    <span className="h-px flex-1 bg-[#e1e7e3]" />
+                    <span>or use a local account</span>
+                    <span className="h-px flex-1 bg-[#e1e7e3]" />
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
+            {localAuthEnabled || mfaRequired ? (
             <form className={mfaRequired ? "mt-6 space-y-4" : "space-y-4"} onSubmit={submit}>
               <div>
                 <label className="mb-1.5 block text-[11px] font-extrabold text-[#243b31]" htmlFor="email">Email address</label>
@@ -220,6 +236,11 @@ export default function Login() {
 
               {mfaRequired ? <button type="button" onClick={() => { setMfaRequired(false); setError(""); }} className="w-full text-center text-xs font-bold text-[#55766c] transition hover:text-[#173f38]">Use a different account</button> : null}
             </form>
+            ) : (
+              <div className="mt-5 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs font-semibold leading-5 text-emerald-800">
+                This deployment uses Ithute central authentication. Local password sign-in is disabled.
+              </div>
+            )}
 
             <div className="mt-6 border-t border-[#e5eae7] pt-5">
               <div className="flex items-center justify-center gap-2 text-[10px] font-semibold text-[#87938d]"><BadgeCheck size={13} className="text-[#4f7d72]" /> HttpOnly cookies · rotating sessions · MFA capable</div>
