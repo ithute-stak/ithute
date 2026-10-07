@@ -39,8 +39,10 @@ def domain_kwargs():
         {
             "platform_mode": "domain",
             "mail_tls_mode": "acme",
-            "system_email_from": "no-reply@example.org",
+            "system_email_from": "auth@example.org",
             "system_smtp_host": "smtp.example.org",
+            "system_smtp_username": "auth@example.org",
+            "system_smtp_password": "System-SMTP-Recovery-Secret-123!",
             "groupware_public_url": "https://groupware.example.org",
         }
     )
@@ -215,3 +217,10 @@ def test_platform_signup_mode_defaults_fail_closed_during_bootstrap():
     assert settings.platform_bootstrap_signup_enabled is False
     assert settings.platform_domain_signup_enabled is True
     assert settings.legacy_local_auth_production_enabled is False
+
+
+def test_domain_mode_requires_authenticated_system_smtp():
+    values = domain_kwargs()
+    values["system_smtp_password"] = None
+    with pytest.raises(ValidationError):
+        make_settings(values=values, cookie_secure=True)
