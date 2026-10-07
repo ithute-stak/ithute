@@ -162,7 +162,7 @@ export default function Login() {
           setError("Ithute blocked this sign-in because the security risk was unusually high. Use a passkey, trusted device, or Central Authentication.");
           return;
         }
-        if (detail.toLowerCase().includes("mfa code required")) {
+        if (detail.toLowerCase().includes("mfa") && detail.toLowerCase().includes("required")) {
           setMfaRequired(true);
           setError("");
         } else if (detail.toLowerCase().includes("invalid mfa")) {
