@@ -106,6 +106,54 @@ type dnsLookupResponse struct {
 	Results []dnsLookupResult `json:"results"`
 }
 
+type mailRenderPlanRequest struct {
+    HasHTML         bool `json:"has_html"`
+    Characters      int  `json:"characters"`
+    Lines           int  `json:"lines"`
+    LongestLine     int  `json:"longest_line"`
+    TableCount      int  `json:"table_count"`
+    LinkCount       int  `json:"link_count"`
+    AttachmentCount int  `json:"attachment_count"`
+}
+
+type mailRenderPlanResponse struct {
+    Engine        string `json:"engine"`
+    Layout        string `json:"layout"`
+    ReaderWidth   string `json:"reader_width"`
+    HorizontalFit string `json:"horizontal_fit"`
+    Density       string `json:"density"`
+    CollapseQuotes bool  `json:"collapse_quotes"`
+}
+
+func planMailRender(request mailRenderPlanRequest) mailRenderPlanResponse {
+    layout := "document"
+    width := "comfortable"
+    fit := "wrap"
+    density := "comfortable"
+    collapseQuotes := request.Characters > 12000
+    if request.TableCount > 0 {
+        layout = "transactional"
+        width = "wide"
+        fit = "scroll_tables"
+    } else if !request.HasHTML && (request.LongestLine > 220 || (request.Lines <= 3 && request.Characters > 800)) {
+        layout = "longform_plain"
+        width = "comfortable"
+        fit = "wrap"
+    } else if request.Characters < 800 {
+        density = "compact"
+    } else if request.Characters > 6000 {
+        density = "long"
+    }
+    return mailRenderPlanResponse{
+        Engine: "go",
+        Layout: layout,
+        ReaderWidth: width,
+        HorizontalFit: fit,
+        Density: density,
+        CollapseQuotes: collapseQuotes,
+    }
+}
+
 type originProbeRequest struct {
 	Scheme         string `json:"scheme"`
 	Hostname       string `json:"hostname"`
@@ -134,7 +182,7 @@ var engineStatus = status{
 	Service:      "ithute-go-worker",
 	Engine:       "go",
 	Version:      "0.4.0",
-	Capabilities: []string{"health", "network-concurrency", "tcp-reachability", "network-topology-row", "dns-lookup", "origin-http-tls"},
+	Capabilities: []string{"health", "network-concurrency", "tcp-reachability", "network-topology-row", "dns-lookup", "origin-http-tls", "mail-render-plan"},
 }
 
 func writeJSON(w http.ResponseWriter, code int, value any) {
@@ -696,6 +744,21 @@ func main() {
 			return
 		}
 		writeJSON(w, http.StatusOK, response)
+	})
+	mux.HandleFunc("POST /v1/mail/render-plan", func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024))
+		decoder.DisallowUnknownFields()
+		var request mailRenderPlanRequest
+		if err := decoder.Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+			return
+		}
+		if request.Characters < 0 || request.Lines < 0 || request.LongestLine < 0 || request.TableCount < 0 || request.LinkCount < 0 || request.AttachmentCount < 0 {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "render metrics must be non-negative"})
+			return
+		}
+		writeJSON(w, http.StatusOK, planMailRender(request))
 	})
 	mux.HandleFunc("POST /v1/network/origin", func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
