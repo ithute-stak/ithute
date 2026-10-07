@@ -58,6 +58,7 @@ from app.services.identity_security import (
     generate_recovery_codes,
     issue_adaptive_challenge,
     lookup_device,
+    recent_mail_threat_context,
     normalize_recovery_code,
     resolve_or_create_device,
     verify_adaptive_challenge,
@@ -246,11 +247,21 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
 
     observed_device = lookup_device(db, user=user, request=request)
     is_new_device = observed_device is None
+    mail_threat_context = recent_mail_threat_context(db, user=user)
+    contextual_signals = []
+    if mail_threat_context.get("active"):
+        contextual_signals.append({
+            "signal": mail_threat_context.get("signal"),
+            "weight": mail_threat_context.get("weight"),
+            "source": "mail_intelligence",
+            "evidence_count": mail_threat_context.get("verified_threat_count"),
+        })
     risk = assess_login_risk(
         device=observed_device,
         request=request,
         is_new_device=is_new_device,
         mfa_verified=mfa_verified,
+        contextual_signals=contextual_signals,
     )
 
     if risk["recommended_action"] == "block":
@@ -369,6 +380,7 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
                     "risk_level": risk["level"],
                     "new_device": is_new_device,
                     "signals": risk["signals"],
+                    "mail_threat_context": mail_threat_context,
                 }, separators=(",", ":")),
             ))
             db.commit()
@@ -390,6 +402,7 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
             request=request,
             is_new_device=is_new_device,
             mfa_verified=True,
+            contextual_signals=contextual_signals,
         )
 
     clear_login_failures(email)
@@ -415,6 +428,7 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
             "recovery_code_used": recovery_code_used,
             "adaptive_step_up_verified": adaptive_verified,
             "signals": risk["signals"],
+            "mail_threat_context": mail_threat_context,
         }, separators=(",", ":")),
     ))
     if adaptive_verified:
