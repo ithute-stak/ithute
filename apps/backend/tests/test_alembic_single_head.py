@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0092_mail_relationships"
+LATEST_MIGRATION_HEAD = "0093_central_auth_policy"
 
 
 def test_alembic_has_one_consolidated_head():
