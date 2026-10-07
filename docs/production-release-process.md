@@ -7,9 +7,11 @@ Ithute production is operator-controlled. GitHub validates and publishes immutab
 1. Merge tested changes into `main`.
 2. `Ithute Standalone CI` must complete successfully for that exact commit.
 3. `Production Safety CI` must complete successfully for that exact commit.
-4. `Ithute Release Images` publishes all five application images to GHCR using the exact commit SHA:
+4. `Ithute Release Images` publishes all seven application images to GHCR using the exact commit SHA:
    - `ghcr.io/ithute-stak/ithute-web:<sha>`
    - `ghcr.io/ithute-stak/ithute-app-api:<sha>`
+   - `ghcr.io/ithute-stak/ithute-go-worker:<sha>`
+   - `ghcr.io/ithute-stak/ithute-java-worker:<sha>`
    - `ghcr.io/ithute-stak/ithute-auth:<sha>`
    - `ghcr.io/ithute-stak/ithute-push:<sha>`
    - `ghcr.io/ithute-stak/ithute-realtime:<sha>`
@@ -65,12 +67,27 @@ If the requested SHA is already recorded in `.image.env`, the helper exits succe
 
 ## Global pull command
 
-The VPS may expose a global command such as:
+Install the checked-in evergreen launcher once:
+
+```bash
+cd /home/administrator/ithute-platform
+sudo bash scripts/install-production-pull-command.sh
+```
+
+This installs:
+
+```text
+/usr/local/bin/pull
+```
+
+After that, deploy with:
 
 ```bash
 pull ithute latest
 ```
 
-`latest` must mean the current `main` SHA only after `Ithute Standalone CI`, `Production Safety CI`, and `Ithute Release Images` all succeeded for that exact SHA. If `.image.env` already contains that SHA, the command must stop without redeploying.
+The launcher is intentionally tiny. On every invocation it resolves the exact current `main` SHA, downloads `scripts/deploy-production-latest.sh` from that exact commit, syntax-checks it, and executes that fresh launcher. This prevents a stale VPS copy of the global `pull` command from silently using an outdated image list or deployment contract.
+
+`latest` must mean the current `main` SHA only after `Ithute Standalone CI`, `Production Safety CI`, and `Ithute Release Images` all succeeded for that exact SHA. The exact deployment helper must include the complete seven-image production bundle: Web, App API, Go worker, Java worker, Auth, Push, and Realtime. If `.image.env` already contains that SHA, the command must stop without redeploying.
 
 Never choose the most recently listed successful workflow run without comparing it to current `main`; old successful runs may appear later in the Actions API and are not necessarily newer code.
