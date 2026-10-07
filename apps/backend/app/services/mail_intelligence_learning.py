@@ -16,6 +16,7 @@ def feature_snapshot(message: dict[str, Any], intelligence: dict[str, Any]) -> d
     trust = intelligence.get("trust") if isinstance(intelligence.get("trust"), dict) else {}
     authentication = trust.get("authentication") if isinstance(trust.get("authentication"), dict) else {}
     url_intelligence = trust.get("url_intelligence") if isinstance(trust.get("url_intelligence"), dict) else {}
+    reputation = intelligence.get("reputation") if isinstance(intelligence.get("reputation"), dict) else {}
     entities = business.get("entities") if isinstance(business.get("entities"), dict) else {}
     signals = security.get("signals") if isinstance(security.get("signals"), list) else []
 
@@ -53,6 +54,14 @@ def feature_snapshot(message: dict[str, Any], intelligence: dict[str, Any]) -> d
         "dkim_status": str(authentication.get("dkim") or "unknown"),
         "dmarc_status": str(authentication.get("dmarc") or "unknown"),
         "suspicious_url_count": int(url_intelligence.get("suspicious_count") or 0),
+        "reputation_available": bool(reputation.get("available")),
+        "reputation_combined_score": int(reputation.get("combined_score") or 50),
+        "reputation_confidence": float(reputation.get("confidence") or 0.0),
+        "reputation_risk_adjustment": int(reputation.get("applied_risk_adjustment") or 0),
+        "sender_reputation_state": str((reputation.get("sender") or {}).get("state") or "unknown"),
+        "domain_reputation_state": str((reputation.get("domain") or {}).get("state") or "unknown"),
+        "domain_age_days": (reputation.get("domain") or {}).get("domain_age_days"),
+        "domain_identity_status": str((reputation.get("domain") or {}).get("identity_status") or "unverified"),
         "attachment_count": len(message.get("attachments") or []),
         "url_count": len(entities.get("urls") or []),
         "money_count": len(entities.get("money") or []),
