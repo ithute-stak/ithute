@@ -53,7 +53,13 @@ def resolve_or_create_device(
     ip = request_client_ip(request)
     user_agent = request.headers.get("user-agent")
 
-    if device is None or device.revoked_at is not None:
+    if device is not None and device.revoked_at is not None:
+        token = new_device_token()
+        digest = normalized_device_hash(token)
+        device = None
+        created_token = True
+
+    if device is None:
         device = TrustedDevice(
             user_id=user.id,
             token_hash=digest,
