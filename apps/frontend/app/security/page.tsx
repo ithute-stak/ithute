@@ -81,6 +81,7 @@ export default function SecurityPage() {
   const [events, setEvents] = useState<SecurityEvent[]>([]);
   const [passkeys, setPasskeys] = useState<Passkey[]>([]);
   const [passkeyBusy, setPasskeyBusy] = useState(false);
+  const [passkeyPassword, setPasskeyPassword] = useState("");
   const [recoveryRemaining, setRecoveryRemaining] = useState(0);
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
   const [localControls, setLocalControls] = useState(false);
@@ -166,6 +167,7 @@ export default function SecurityPage() {
         body: JSON.stringify({
           flow_id: payload.flow_id,
           name: "Passkey",
+          current_password: passkeyPassword,
           credential: registrationCredentialToJSON(credential),
         }),
       });
@@ -173,6 +175,7 @@ export default function SecurityPage() {
         const body = await response.json().catch(() => ({}));
         throw new Error(String(body.detail || "Unable to verify the passkey"));
       }
+      setPasskeyPassword("");
       setToast("Passkey added. You can now sign in without your password on supported devices.");
       await load();
     } catch (cause) {
@@ -445,10 +448,23 @@ export default function SecurityPage() {
                     <p className="mt-1 max-w-2xl text-[10px] leading-5 text-[var(--admin-muted)]">Phishing-resistant sign-in using your device biometrics, PIN or security key. Biometric data stays on your device.</p>
                   </div>
                 </div>
-                <button className="btn-primary" disabled={passkeyBusy} onClick={() => void addPasskey()}>
-                  <Fingerprint size={14} />
-                  {passkeyBusy ? "Waiting for device…" : "Add passkey"}
-                </button>
+                <div className="w-full sm:w-auto">
+                  <label className="label">Confirm current password</label>
+                  <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+                    <input
+                      className="input min-w-[220px]"
+                      type="password"
+                      value={passkeyPassword}
+                      onChange={(event) => setPasskeyPassword(event.target.value)}
+                      autoComplete="current-password"
+                      placeholder="Required to add a passkey"
+                    />
+                    <button className="btn-primary" disabled={passkeyBusy || passkeyPassword.length < 8} onClick={() => void addPasskey()}>
+                      <Fingerprint size={14} />
+                      {passkeyBusy ? "Waiting for device…" : "Add passkey"}
+                    </button>
+                  </div>
+                </div>
               </div>
               <div className="mt-4 space-y-2">
                 {passkeys.length ? passkeys.map((passkey) => (
