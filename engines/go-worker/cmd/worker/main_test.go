@@ -170,3 +170,34 @@ func TestRunTopologyProbeRejectsExcessiveSamples(t *testing.T) {
 		t.Fatal("expected excessive samples to be rejected")
 	}
 }
+
+
+func TestPlanMailRenderUsesWideTransactionalLayout(t *testing.T) {
+	response := planMailRender(mailRenderPlanRequest{
+		HasHTML:         true,
+		Characters:      1400,
+		Lines:           40,
+		LongestLine:     120,
+		TableCount:      2,
+		LinkCount:       5,
+		AttachmentCount: 1,
+	})
+	if response.Engine != "go" || response.Layout != "transactional" {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+	if response.ReaderWidth != "wide" || response.HorizontalFit != "scroll_tables" {
+		t.Fatalf("expected wide table-safe plan: %#v", response)
+	}
+}
+
+func TestPlanMailRenderDetectsLongPlainMail(t *testing.T) {
+	response := planMailRender(mailRenderPlanRequest{
+		HasHTML:     false,
+		Characters:  5000,
+		Lines:       2,
+		LongestLine: 2500,
+	})
+	if response.Layout != "longform_plain" || response.HorizontalFit != "wrap" {
+		t.Fatalf("unexpected plain render plan: %#v", response)
+	}
+}
