@@ -42,8 +42,6 @@ export default function SecurityPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [localControls, setLocalControls] = useState(false);
   const [centralStatus, setCentralStatus] = useState<CentralAuthStatus | null>(null);
-  const [centralPassword, setCentralPassword] = useState("");
-  const [centralEnabling, setCentralEnabling] = useState(false);
   const [secret, setSecret] = useState("");
   const [uri, setUri] = useState("");
   const [code, setCode] = useState("");
@@ -86,39 +84,6 @@ export default function SecurityPage() {
   useEffect(() => {
     void load();
   }, []);
-
-  async function permanentlyEnableCentralAuth() {
-    if (centralStatus?.enforced || centralEnabling) return;
-    if (!centralStatus?.linked) {
-      setToast("Link this account to Ithute Identity before permanently enabling Central Authentication.");
-      return;
-    }
-    if (!centralPassword) {
-      setToast("Enter your current password to confirm this permanent security change.");
-      return;
-    }
-    setCentralEnabling(true);
-    try {
-      const response = await apiFetch("/auth/ithute/enforce", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ current_password: centralPassword }),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        const detail = typeof body.detail === "object" && body.detail?.message
-          ? body.detail.message
-          : body.detail;
-        setToast(String(detail || "Unable to enable Central Authentication."));
-        return;
-      }
-      setCentralPassword("");
-      setToast("Central Authentication is now permanently enforced for this account.");
-      await load();
-    } finally {
-      setCentralEnabling(false);
-    }
-  }
 
   async function setupMfa() {
     const response = await apiFetch("/auth/mfa/setup", { method: "POST" });
@@ -220,8 +185,10 @@ export default function SecurityPage() {
               <button
                 type="button"
                 aria-pressed={Boolean(centralStatus.enforced)}
-                disabled={centralStatus.enforced || centralEnabling}
-                onClick={() => void permanentlyEnableCentralAuth()}
+                disabled={centralStatus.enforced}
+                onClick={() => {
+                  if (!centralStatus.enforced) window.location.assign(`${API}/auth/ithute/enroll`);
+                }}
                 className={`relative h-7 w-12 shrink-0 rounded-full transition ${centralStatus.enforced ? "cursor-not-allowed bg-emerald-600" : "bg-slate-300 hover:bg-slate-400"}`}
                 title={centralStatus.enforced ? "Central Authentication is permanently locked on" : "Permanently enable Central Authentication"}
               >
@@ -233,22 +200,13 @@ export default function SecurityPage() {
                 Locked on permanently{centralStatus.enforced_at ? ` · enabled ${new Date(centralStatus.enforced_at).toLocaleString()}` : ""}. This state is stored on the server and follows the account to every device.
               </div>
             ) : (
-              <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
-                <input
-                  type="password"
-                  value={centralPassword}
-                  onChange={(event) => setCentralPassword(event.target.value)}
-                  autoComplete="current-password"
-                  placeholder="Current password to confirm"
-                  className="min-h-10 rounded-xl border border-[#dce6e0] bg-white px-3 text-xs outline-none focus:border-[#285b55]"
-                />
-                <button
-                  className="btn-primary"
-                  disabled={centralEnabling || !centralStatus.linked}
-                  onClick={() => void permanentlyEnableCentralAuth()}
-                >
-                  {centralEnabling ? "Enabling…" : centralStatus.linked ? "Enable permanently" : "Link Ithute Identity first"}
-                </button>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <a className="btn-primary" href={`${API}/auth/ithute/enroll`}>
+                  Enable permanently
+                </a>
+                <p className="text-[10px] leading-5 text-[var(--admin-muted)]">
+                  You will confirm your Ithute Identity before the backend locks this policy on.
+                </p>
               </div>
             )}
           </section>
