@@ -169,6 +169,46 @@ def seed_first_party_clients() -> None:
                 )
             ).all():
                 other.revoked_at = now
+
+        mail_intelligence_secret = settings.mail_intelligence_gateway_secret.strip()
+        if mail_intelligence_secret:
+            if len(mail_intelligence_secret) < 32:
+                raise RuntimeError("AUTH_MAIL_INTELLIGENCE_GATEWAY_SECRET must be at least 32 characters")
+            from .managed_service_models import ManagedServiceClient, ManagedServiceCredential
+            from .models import utcnow
+            from .service_clients import hash_service_secret
+
+            intelligence_client = db.scalar(
+                select(ManagedServiceClient).where(
+                    ManagedServiceClient.client_id == "ithute-mail-intelligence"
+                )
+            )
+            if intelligence_client is None:
+                raise RuntimeError("ithute-mail-intelligence managed service client migration is missing")
+            intelligence_digest = hash_service_secret(mail_intelligence_secret)
+            intelligence_credential = db.scalar(
+                select(ManagedServiceCredential).where(
+                    ManagedServiceCredential.service_client_id == intelligence_client.id,
+                    ManagedServiceCredential.secret_hash == intelligence_digest,
+                )
+            )
+            if intelligence_credential is None:
+                intelligence_credential = ManagedServiceCredential(
+                    service_client_id=intelligence_client.id,
+                    secret_hash=intelligence_digest,
+                    secret_prefix=mail_intelligence_secret[:18],
+                )
+                db.add(intelligence_credential)
+            intelligence_credential.revoked_at = None
+            intelligence_now = utcnow()
+            for other in db.scalars(
+                select(ManagedServiceCredential).where(
+                    ManagedServiceCredential.service_client_id == intelligence_client.id,
+                    ManagedServiceCredential.secret_hash != intelligence_digest,
+                    ManagedServiceCredential.revoked_at.is_(None),
+                )
+            ).all():
+                other.revoked_at = intelligence_now
         db.commit()
 
 
