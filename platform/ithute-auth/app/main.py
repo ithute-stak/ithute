@@ -16,7 +16,7 @@ from .account_dashboard import apply_account_dashboard
 from .admin import router as admin_router
 from .config import Settings, get_settings
 from .db import get_db
-from .models import Application, AuthSession, Device, User, utcnow
+from .models import Application, AuthSession, Device, PasskeyCredential, User, utcnow
 from .oauth import router as oauth_router
 from .passkeys import router as passkey_router
 from .portal import router as portal_router
@@ -50,7 +50,7 @@ from .security import (
     verify_password,
 )
 from .security_service import client_ip, login_rate_limited, record_audit, verify_second_factor
-from .zero_trust import initialize_device
+from .zero_trust import assess_login_risk, initialize_device, resolve_device
 
 
 bearer = HTTPBearer(auto_error=False)
@@ -403,6 +403,23 @@ def login(
     user.last_login_at = now
     user.last_login_ip = client_ip(request)
 
+    device = resolve_device(db, user=user, request=request)
+    risk = assess_login_risk(db=db, user=user, request=request, device=device, auth_method="password")
+    if risk.level == "high":
+        has_passkey = db.scalar(select(PasskeyCredential.id).where(PasskeyCredential.user_id == user.id).limit(1)) is not None
+        if has_passkey:
+            record_audit(
+                db,
+                event_type="login_step_up_required",
+                user=user,
+                success=False,
+                client_id=payload.client_id,
+                request=request,
+                details={"required_method": "passkey", "risk_score": risk.score, "risk_reasons": list(risk.reasons)},
+            )
+            db.commit()
+            raise HTTPException(status_code=403, detail={"code": "PASSKEY_REQUIRED", "message": "Use your passkey to complete this high-risk sign-in."})
+
     refresh_token = new_refresh_token()
     auth_session = AuthSession(
         user_id=user.id,
@@ -411,10 +428,15 @@ def login(
         user_agent=user_agent,
         ip_address=client_ip(request),
         expires_at=now + timedelta(days=config.refresh_token_days),
+        auth_method="password",
+        risk_score=risk.score,
+        risk_reasons_json=risk.reasons_json(),
+        step_up_at=now if user.totp_enabled else None,
+        device_id=device.id if device else None,
     )
     db.add(auth_session)
     db.flush()
-    record_audit(db, event_type="login_succeeded", user=user, client_id=payload.client_id, request=request, details={"session_id": str(auth_session.id)})
+    record_audit(db, event_type="login_succeeded", user=user, client_id=payload.client_id, request=request, details={"session_id": str(auth_session.id), "risk_score": risk.score, "risk_level": risk.level, "risk_reasons": list(risk.reasons)})
     db.commit()
     db.refresh(auth_session)
 
