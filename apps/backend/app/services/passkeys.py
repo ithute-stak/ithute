@@ -40,12 +40,13 @@ def _redis() -> redis.Redis:
 
 
 def relying_party() -> tuple[str, str]:
-    origin = str(settings.frontend_url or "").strip().rstrip("/")
-    parsed = urlparse(origin)
+    configured = str(settings.frontend_url or "").strip()
+    parsed = urlparse(configured)
     rp_id = (parsed.hostname or "").lower()
-    if not origin or not rp_id or parsed.scheme not in {"http", "https"}:
+    if not configured or not rp_id or parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise PasskeyError("Passkey relying-party configuration is invalid")
-    if settings.environment.lower() == "production" and parsed.scheme != "https":
+    origin = f"{parsed.scheme.lower()}://{parsed.netloc}"
+    if settings.environment.lower() == "production" and parsed.scheme.lower() != "https":
         raise PasskeyError("Passkeys require HTTPS in production")
     return rp_id, origin
 
