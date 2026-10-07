@@ -99,6 +99,8 @@ jobs:
               "production-safety-ci.yml",
               "release-images.yml",
               "Production is already running the latest main release",
+              "Elevating production deployment launcher",
+              'exec sudo bash "$0" "$@"',
           ):
               if required not in latest:
                   failures.append(f"deploy-production-latest.sh is missing latest-release contract: {required}")

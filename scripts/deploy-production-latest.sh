@@ -12,6 +12,15 @@ if [ "$APP_DIR" != "/home/administrator/ithute-platform" ]; then
   exit 2
 fi
 
+# Production state files are intentionally root-readable only. Elevate the
+# exact SHA-pinned launcher before reading .image.env or changing runtime files.
+# The tiny /usr/local/bin/pull wrapper may run as an operator account; this
+# boundary keeps the convenience command usable without weakening file modes.
+if [ "$(id -u)" -ne 0 ]; then
+  echo "[Ithute] Elevating production deployment launcher"
+  exec sudo bash "$0" "$@"
+fi
+
 tmpdir="$(mktemp -d /tmp/ithute-latest.XXXXXX)"
 cleanup() { rm -rf "$tmpdir"; }
 trap cleanup EXIT
