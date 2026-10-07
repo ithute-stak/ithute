@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0094_identity_device_risk"
+LATEST_MIGRATION_HEAD = "0095_passkey_credentials"
 
 
 def test_alembic_has_one_consolidated_head():
