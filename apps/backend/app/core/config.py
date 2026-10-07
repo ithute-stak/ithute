@@ -132,6 +132,10 @@ class Settings(BaseSettings):
     hardware_notification_retry_seconds: int = 60
     hardware_notification_max_attempts: int = 5
 
+    security_intelligence_client_id: str = "ithute-mail-intelligence"
+    security_intelligence_client_secret: str | None = None
+    security_intelligence_timeout_seconds: float = 5.0
+
     dpo_api_url: str = "https://secure.3gdirectpay.com/API/v6/"
     dpo_checkout_url: str = "https://secure.3gdirectpay.com/payv2.php?ID={token}"
     dpo_company_token: str | None = None
