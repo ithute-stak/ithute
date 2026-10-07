@@ -196,3 +196,86 @@ def test_existing_local_session_is_rejected_after_central_auth_is_enforced(clien
 
     assert response.status_code == 401
     assert response.json()["detail"]["code"] == "CENTRAL_AUTH_REQUIRED"
+
+
+def test_password_reset_sends_one_time_verification_email(client, platform_owner, monkeypatch):
+    from app.api.v1 import auth as auth_api
+
+    sent = {}
+    def capture(to_address, subject, text_body, html_body=None):
+        sent.update(
+            to_address=to_address,
+            subject=subject,
+            text_body=text_body,
+            html_body=html_body,
+        )
+
+    monkeypatch.setattr(auth_api, "send_system_email", capture)
+
+    response = client.post(
+        "/api/v1/auth/password-reset/request",
+        json={"email": platform_owner.email},
+    )
+
+    assert response.status_code == 202
+    assert sent["to_address"] == platform_owner.email
+    assert sent["subject"] == "Reset your Ithute password"
+    assert "one-time verification link" in sent["text_body"]
+    assert "Verify and reset password" in sent["html_body"]
+    assert "#token=" in sent["html_body"]
+
+
+def test_central_auth_hardened_account_cannot_issue_local_reset_token(client, db, platform_owner, monkeypatch):
+    from app.api.v1 import auth as auth_api
+
+    user = db.get(User, platform_owner.id)
+    user.central_auth_enforced = True
+    user.central_auth_enforced_at = datetime.now(timezone.utc)
+    db.commit()
+
+    sent = {}
+    monkeypatch.setattr(
+        auth_api,
+        "send_system_email",
+        lambda to_address, subject, text_body, html_body=None: sent.update(
+            to_address=to_address, subject=subject, text_body=text_body, html_body=html_body
+        ),
+    )
+
+    before = db.scalars(select(PasswordResetToken).where(PasswordResetToken.user_id == user.id)).all()
+    response = client.post(
+        "/api/v1/auth/password-reset/request",
+        json={"email": user.email},
+    )
+    db.expire_all()
+    after = db.scalars(select(PasswordResetToken).where(PasswordResetToken.user_id == user.id)).all()
+
+    assert response.status_code == 202
+    assert response.json() == {"accepted": True}
+    assert len(after) == len(before)
+    assert sent["subject"] == "Ithute account recovery notice"
+    assert "Central Authentication" in sent["text_body"]
+
+
+def test_central_auth_hardened_account_rejects_preexisting_reset_token(client, db, platform_owner):
+    raw = "preexisting-reset-token-that-is-long-enough"
+    token = PasswordResetToken(
+        user_id=platform_owner.id,
+        token_hash=hash_token(raw),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+    )
+    user = db.get(User, platform_owner.id)
+    user.central_auth_enforced = True
+    user.central_auth_enforced_at = datetime.now(timezone.utc)
+    db.add(token)
+    db.commit()
+
+    response = client.post(
+        "/api/v1/auth/password-reset/complete",
+        json={"token": raw, "new_password": NEW_PASSWORD},
+    )
+
+    assert response.status_code == 400
+    assert "invalid or expired" in response.json()["detail"].lower()
+    db.refresh(token)
+    assert token.used_at is not None
