@@ -319,6 +319,10 @@ def complete_password_reset(
         token.used_at = now
         db.commit()
         raise HTTPException(status_code=400, detail="Password reset link is invalid or expired")
+    if user.central_auth_enforced:
+        token.used_at = now
+        db.commit()
+        raise HTTPException(status_code=400, detail="Password reset link is invalid or expired")
     if verify_password(payload.new_password, user.password_hash):
         raise HTTPException(status_code=400, detail="Choose a password you have not just been using")
 
