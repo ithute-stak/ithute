@@ -208,3 +208,72 @@ def test_trusted_device_with_network_and_client_change_requires_step_up():
 
     assert result["score"] == 30
     assert result["recommended_action"] == "step_up"
+
+
+
+def test_verified_mail_threat_context_amplifies_login_risk():
+    from datetime import datetime, timezone
+
+    result = assess_login_risk(
+        device=_device(trusted_at=datetime.now(timezone.utc)),
+        request=_request(ip="198.51.100.30"),
+        is_new_device=False,
+        mfa_verified=False,
+        contextual_signals=[
+            {
+                "signal": "recent_verified_phishing_exposure",
+                "weight": 12,
+                "source": "mail_intelligence",
+                "evidence_count": 2,
+            }
+        ],
+    )
+
+    names = {row["signal"] for row in result["signals"]}
+    assert "recent_verified_phishing_exposure" in names
+    assert result["score"] == 24
+    assert result["recommended_action"] == "allow"
+
+
+def test_mail_threat_context_can_push_suspicious_login_into_step_up():
+    from datetime import datetime, timezone
+
+    result = assess_login_risk(
+        device=_device(trusted_at=datetime.now(timezone.utc)),
+        request=_request(ip="198.51.100.30"),
+        is_new_device=False,
+        mfa_verified=False,
+        contextual_signals=[
+            {
+                "signal": "recent_verified_bec_exposure",
+                "weight": 18,
+                "source": "mail_intelligence",
+                "evidence_count": 1,
+            }
+        ],
+    )
+
+    assert result["score"] == 30
+    assert result["recommended_action"] == "step_up"
+
+
+def test_contextual_risk_signal_is_bounded():
+    from datetime import datetime, timezone
+
+    result = assess_login_risk(
+        device=_device(trusted_at=datetime.now(timezone.utc)),
+        request=_request(),
+        is_new_device=False,
+        mfa_verified=False,
+        contextual_signals=[
+            {
+                "signal": "untrusted_context",
+                "weight": 999,
+                "source": "test",
+                "evidence_count": 100,
+            }
+        ],
+    )
+
+    assert result["score"] == 25
+    assert result["recommended_action"] == "allow"
