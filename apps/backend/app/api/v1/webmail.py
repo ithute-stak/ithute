@@ -698,6 +698,8 @@ def get_message(
                 )
                 if shadow is not None:
                     payload["intelligence"]["supervised_shadow"] = shadow
+                else:
+                    db.commit()
             except Exception:
                 db.rollback()
                 payload["intelligence"]["supervised_shadow"] = {
