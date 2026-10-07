@@ -282,7 +282,7 @@ services:
     command: ["python", "-m", "app.services.domain_intelligence_daemon"]
     environment:
       ENVIRONMENT: production
-      PLATFORM_MODE: domain
+      PLATFORM_MODE: bootstrap
       SECRET_KEY: ${ITHUTE_APP_SECRET_KEY}
       DKIM_ENCRYPTION_KEY: ${ITHUTE_APP_DKIM_ENCRYPTION_KEY}
       BILLING_WEBHOOK_SECRET: ${ITHUTE_APP_BILLING_WEBHOOK_SECRET}
