@@ -210,7 +210,7 @@ def observe_reputation(
     message: dict[str, Any],
     intelligence: dict[str, Any],
 ) -> dict[str, Any]:
-    _sender, domain, sender_hash = sender_identity(message)
+    _sender, domain, sender_hash = sender_identity(message, tenant_id=tenant_id)
     if not sender_hash or not domain:
         return reputation_context(db, tenant_id=tenant_id, message=message)
 
