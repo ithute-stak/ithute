@@ -12,6 +12,7 @@ from app.models.entities import (
     UserSession,
     TrustedDevice,
     RecoveryCode,
+    PasskeyCredential,
 )
 from app.models.auth import PasswordResetToken
 from app.models.domains import Domain, DomainDnsMode, DomainEvent, DomainStatus, DomainVerificationAttempt
