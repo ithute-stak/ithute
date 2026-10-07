@@ -8,7 +8,7 @@ from fastapi import Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Device, User, utcnow
+from .models import Device, ExternalRiskSignal, User, utcnow
 from .security_service import client_ip
 
 
@@ -59,6 +59,7 @@ class RiskAssessment:
 
 def assess_login_risk(
     *,
+    db: Session,
     user: User,
     request: Request,
     device: Device | None,
@@ -86,6 +87,24 @@ def assess_login_risk(
     if user.is_platform_admin and auth_method != "passkey":
         score += 50
         reasons.append("privileged_without_passkey")
+
+    active_external = db.scalars(
+        select(ExternalRiskSignal).where(
+            ExternalRiskSignal.user_id == user.id,
+            ExternalRiskSignal.verified.is_(True),
+            ExternalRiskSignal.expires_at > utcnow(),
+        )
+    ).all()
+    if active_external:
+        # Multiple reports from the same campaign must not make risk unbounded.
+        # The central service owns the weights and caps total external influence.
+        external_weight = min(40, max(int(row.risk_weight) for row in active_external))
+        score += external_weight
+        signal_types = {row.signal_type for row in active_external}
+        if "mail.bec.verified" in signal_types:
+            reasons.append("recent_verified_bec_exposure")
+        if "mail.phishing.verified" in signal_types:
+            reasons.append("recent_verified_phishing_exposure")
 
     return RiskAssessment(min(score, 100), tuple(dict.fromkeys(reasons)))
 
