@@ -109,6 +109,18 @@ type MailIntelligence = {
       rule: string;
     };
   };
+  reputation?: {
+    available?: boolean;
+    combined_score?: number;
+    confidence?: number;
+    requested_risk_adjustment?: number;
+    applied_risk_adjustment?: number;
+    negative_credit_suppressed?: boolean;
+    sender?: { score?: number; state?: string; confidence?: number; observations?: number };
+    domain?: { name?: string; score?: number; state?: string; confidence?: number; observations?: number; domain_age_days?: number | null; identity_status?: string; enrichment_source?: string | null };
+    privacy?: { sender_address_stored?: boolean; sender_hash_algorithm?: string; raw_message_content_stored?: boolean };
+    rule?: string;
+  };
   security: {
     phishing_probability: number;
     bec_probability: number;
@@ -940,6 +952,46 @@ export function HostedMailWorkspace() {
                   </div>
                 ) : null}
 
+                {selectedIntelligence.reputation?.available ? (
+                  <div className="mt-3 rounded-xl bg-white/60 p-3 dark:bg-white/10">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-[.08em]">Sender reputation + domain intelligence</p>
+                        <p className="mt-1 text-[11px] font-black">
+                          Reputation {selectedIntelligence.reputation.combined_score ?? 50}/100 · {Math.round((selectedIntelligence.reputation.confidence ?? 0) * 100)}% confidence
+                        </p>
+                        <p className="mt-1 text-[9px] opacity-70">{selectedIntelligence.reputation.rule}</p>
+                      </div>
+                      <span className="rounded-full bg-white/70 px-2.5 py-1 text-[9px] font-black uppercase dark:bg-white/10">
+                        {selectedIntelligence.reputation.applied_risk_adjustment
+                          ? `${selectedIntelligence.reputation.applied_risk_adjustment > 0 ? "+" : ""}${selectedIntelligence.reputation.applied_risk_adjustment} risk`
+                          : "No score adjustment"}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <div className="rounded-lg bg-white/70 p-2.5 dark:bg-white/10">
+                        <p className="text-[8px] font-black uppercase opacity-60">Sender history</p>
+                        <p className="mt-1 text-[11px] font-black">{selectedIntelligence.reputation.sender?.state || "unknown"} · {selectedIntelligence.reputation.sender?.score ?? 50}/100</p>
+                        <p className="mt-1 text-[9px] opacity-65">{selectedIntelligence.reputation.sender?.observations ?? 0} durable observation{selectedIntelligence.reputation.sender?.observations === 1 ? "" : "s"}</p>
+                      </div>
+                      <div className="rounded-lg bg-white/70 p-2.5 dark:bg-white/10">
+                        <p className="text-[8px] font-black uppercase opacity-60">Domain intelligence</p>
+                        <p className="mt-1 text-[11px] font-black">{selectedIntelligence.reputation.domain?.state || "unknown"} · {selectedIntelligence.reputation.domain?.score ?? 50}/100</p>
+                        <p className="mt-1 text-[9px] opacity-65">
+                          {selectedIntelligence.reputation.domain?.identity_status?.replaceAll("_", " ") || "unverified identity"}
+                          {typeof selectedIntelligence.reputation.domain?.domain_age_days === "number" ? ` · ${selectedIntelligence.reputation.domain.domain_age_days} days old` : ""}
+                        </p>
+                      </div>
+                    </div>
+                    {selectedIntelligence.reputation.negative_credit_suppressed ? (
+                      <p className="mt-2 rounded-lg bg-amber-50/80 px-2.5 py-2 text-[9px] font-bold text-amber-900 dark:bg-amber-400/10 dark:text-amber-100">
+                        Historical trust credit was suppressed because this message has a current hard security failure.
+                      </p>
+                    ) : null}
+                    <p className="mt-2 text-[9px] opacity-60">Reputation stores sender hashes and aggregate evidence only; raw message content is not stored in the reputation profile.</p>
+                  </div>
+                ) : null}
+
                 {selectedIntelligence.behavior ? (
                   <div className="mt-3 rounded-xl bg-white/60 p-3 dark:bg-white/10">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -955,7 +1007,7 @@ export function HostedMailWorkspace() {
                       <div className="mt-2 flex flex-wrap gap-2">
                         {selectedIntelligence.behavior.signals.slice(0, 5).map((signal) => (
                           <span key={signal.signal} className="rounded-lg bg-white/70 px-2.5 py-1 text-[9px] font-bold dark:bg-white/10">
-                            {signal.signal.replaceAll("_", " ")} · +{signal.weight}
+                            {signal.signal.replaceAll("_", " ")} · {signal.weight > 0 ? "+" : ""}{signal.weight}
                           </span>
                         ))}
                       </div>
@@ -1007,7 +1059,7 @@ export function HostedMailWorkspace() {
                     <div className="mt-2 space-y-2">
                       {selectedIntelligence.security.signals.slice(0, 6).map((signal) => (
                         <div key={signal.signal}>
-                          <p className="font-black">{signal.signal.replaceAll("_", " ")} · +{signal.weight}</p>
+                          <p className="font-black">{signal.signal.replaceAll("_", " ")} · {signal.weight > 0 ? "+" : ""}{signal.weight}</p>
                           <p className="mt-0.5 opacity-75">{signal.evidence.join(" · ")}</p>
                         </div>
                       ))}
