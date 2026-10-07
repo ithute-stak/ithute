@@ -230,6 +230,8 @@ def status_view(current: User = Depends(get_current_user)):
         "enabled": ithute_auth_enabled(),
         "linked": current.auth_user_id is not None,
         "auth_user_id": str(current.auth_user_id) if current.auth_user_id else None,
+        "enforced": current.central_auth_enforced,
+        "enforced_at": current.central_auth_enforced_at.isoformat() if current.central_auth_enforced_at else None,
     }
 
 
@@ -292,12 +294,63 @@ def link_account(
     }
 
 
+@router.post("/enforce")
+def enforce_central_auth(
+    payload: IthuteUnlinkRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_local_user),
+):
+    if current.central_auth_enforced:
+        return {
+            "enforced": True,
+            "enforced_at": current.central_auth_enforced_at.isoformat() if current.central_auth_enforced_at else None,
+            "message": "Central authentication is permanently enforced for this account.",
+        }
+    if current.auth_user_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "ITHUTE_ACCOUNT_NOT_LINKED",
+                "message": "Link this account to Ithute Identity before enforcing central authentication.",
+            },
+        )
+    if not verify_password(payload.current_password, current.password_hash):
+        raise HTTPException(status_code=400, detail="Current Mailbox DNS password is incorrect")
+
+    now = datetime.now(timezone.utc)
+    current.central_auth_enforced = True
+    current.central_auth_enforced_at = now
+    db.add(
+        AuditLog(
+            actor_user_id=current.id,
+            action="auth.ithute.enforce",
+            resource_type="user",
+            resource_id=str(current.id),
+            metadata_json='{"irreversible":true}',
+        )
+    )
+    db.commit()
+    return {
+        "enforced": True,
+        "enforced_at": now.isoformat(),
+        "message": "Central authentication is now permanently enforced for this account.",
+    }
+
+
 @router.post("/unlink")
 def unlink_account(
     payload: IthuteUnlinkRequest,
     db: Session = Depends(get_db),
     current: User = Depends(get_current_local_user),
 ):
+    if current.central_auth_enforced:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "CENTRAL_AUTH_PERMANENTLY_ENFORCED",
+                "message": "Central authentication is permanently enforced for this account and cannot be disabled.",
+            },
+        )
     if not verify_password(payload.current_password, current.password_hash):
         raise HTTPException(status_code=400, detail="Current Mailbox DNS password is incorrect")
     if current.auth_user_id is None:
