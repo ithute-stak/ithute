@@ -128,6 +128,7 @@ from app.models.mail_intelligence import (
     MailThreatShadowPrediction,
     PhishingFinding,
     TrustedSenderProfile,
+    OrganisationIdentityProfile,
     SenderReputationProfile,
     DomainIntelligenceProfile,
 )
