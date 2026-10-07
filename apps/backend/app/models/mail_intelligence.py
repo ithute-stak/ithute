@@ -71,6 +71,29 @@ class PhishingFinding(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class TrustedSenderProfile(Base):
+    __tablename__ = "trusted_sender_profiles"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_trusted_sender_tenant_name"),
+        Index("ix_trusted_sender_tenant_active", "tenant_id", "active"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    category: Mapped[str] = mapped_column(String(80), nullable=False, default="business_partner")
+    sender_addresses_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    sender_domains_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    allowed_link_domains_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    require_spf: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    require_dkim: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    require_dmarc: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class MailAutomationRule(Base):
     __tablename__ = "mail_automation_rules"
     __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_mail_automation_tenant_name"),)
