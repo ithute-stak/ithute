@@ -133,12 +133,6 @@ verify_edge_private_network() {
   test "$(wg show ithute0 listen-port)" = "$listen_port" || return 1
 }
 
-configure_edge_private_network || exit 1
-verify_edge_private_network || {
-  echo "Managed private-network edge readiness failed." >&2
-  exit 1
-}
-
 valid_tag() {
   local tag="${1:-}"
   [[ "$tag" =~ ^[0-9a-f]{40}$ ]]
@@ -392,6 +386,18 @@ compose pull \
   ithute-realtime-redis \
   ithute-dns \
   caddy
+
+# Host-network mutation is deliberately deferred until every immutable
+# candidate image is present, the runtime renders cleanly, and third-party
+# dependencies have been pulled. An incomplete candidate must fail before
+# WireGuard, iptables, systemd, or host networking are changed.
+echo "[Ithute] Configuring managed private network after candidate preflight"
+configure_edge_private_network || exit 1
+verify_edge_private_network || {
+  echo "Managed private-network edge readiness failed." >&2
+  exit 1
+}
+echo "[Ithute] Managed private-network preflight passed"
 
 # Replace only services declared by the production Compose file. In particular,
 # do not use --remove-orphans: operational services in the same project are not
