@@ -14,11 +14,12 @@ from app.models import DomainIntelligenceProfile, SenderReputationProfile
 MAX_RECENT_MESSAGE_REFS = 100
 
 
-def sender_identity(message: dict[str, Any]) -> tuple[str, str, str]:
+def sender_identity(message: dict[str, Any], *, tenant_id: uuid.UUID | None = None) -> tuple[str, str, str]:
     addresses = [addr.lower() for _, addr in getaddresses([str(message.get("from") or "")]) if addr]
     sender = addresses[0] if addresses else ""
     domain = sender.rsplit("@", 1)[-1].strip(".") if "@" in sender else ""
-    sender_hash = hashlib.sha256(sender.encode("utf-8")).hexdigest() if sender else ""
+    scope = str(tenant_id or "unscoped")
+    sender_hash = hashlib.sha256(f"{scope}|{sender}".encode("utf-8")).hexdigest() if sender else ""
     return sender, domain, sender_hash
 
 
@@ -137,7 +138,7 @@ def _set_recent_refs(profile: SenderReputationProfile | DomainIntelligenceProfil
 
 
 def reputation_context(db: Session, *, tenant_id: uuid.UUID, message: dict[str, Any]) -> dict[str, Any]:
-    _sender, domain, sender_hash = sender_identity(message)
+    _sender, domain, sender_hash = sender_identity(message, tenant_id=tenant_id)
     if not sender_hash or not domain:
         return {"available": False, "sender": None, "domain": None, "risk_adjustment": 0}
 
