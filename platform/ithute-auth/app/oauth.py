@@ -390,9 +390,25 @@ def authorize_post(
 
     user.failed_login_attempts = 0
     user.locked_until = None
+    device = resolve_device(db, user=user, request=request)
+    risk = assess_login_risk(db=db, user=user, request=request, device=device, auth_method="password")
+    if risk.level == "high":
+        passkey_count = db.scalar(select(PasskeyCredential.id).where(PasskeyCredential.user_id == user.id).limit(1))
+        if passkey_count is not None:
+            record_audit(
+                db,
+                event_type="oidc_risk_step_up_required",
+                user=user,
+                success=False,
+                client_id=client_id,
+                request=request,
+                details={"required_method": "passkey", "risk_score": risk.score, "risk_reasons": list(risk.reasons)},
+            )
+            db.commit()
+            return login_error("This sign-in needs stronger verification. Continue with your passkey.", 403)
     user.last_login_at = now
     user.last_login_ip = client_ip(request)
-    record_audit(db, event_type="oidc_login_succeeded", user=user, client_id=client_id, request=request)
+    record_audit(db, event_type="oidc_login_succeeded", user=user, client_id=client_id, request=request, details={"risk_score": risk.score, "risk_level": risk.level, "risk_reasons": list(risk.reasons)})
     code = _issue_authorization_code(
         db=db,
         settings=settings,
