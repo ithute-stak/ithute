@@ -59,7 +59,7 @@ class RiskAssessment:
 
 def assess_login_risk(
     *,
-    db: Session,
+    db: Session | None = None,
     user: User,
     request: Request,
     device: Device | None,
@@ -88,13 +88,15 @@ def assess_login_risk(
         score += 50
         reasons.append("privileged_without_passkey")
 
-    active_external = db.scalars(
-        select(ExternalRiskSignal).where(
-            ExternalRiskSignal.user_id == user.id,
-            ExternalRiskSignal.verified.is_(True),
-            ExternalRiskSignal.expires_at > utcnow(),
-        )
-    ).all()
+    active_external = []
+    if db is not None:
+        active_external = db.scalars(
+            select(ExternalRiskSignal).where(
+                ExternalRiskSignal.user_id == user.id,
+                ExternalRiskSignal.verified.is_(True),
+                ExternalRiskSignal.expires_at > utcnow(),
+            )
+        ).all()
     if active_external:
         # Multiple reports from the same campaign must not make risk unbounded.
         # The central service owns the weights and caps total external influence.
