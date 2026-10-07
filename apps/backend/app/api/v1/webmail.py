@@ -11,9 +11,15 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.models import MailNode, MailThreatModelVersion, MailThreatShadowPrediction, PhishingFinding
+from app.models import MailNode, MailRelationship, MailThreatModelVersion, MailThreatShadowPrediction, PhishingFinding
 from app.models.mail import Mailbox, MailboxStatus, MailboxStorageType
 from app.services.mailboxes import normalize_destination
+from app.services.mail_first_contact import (
+    decorate_first_contact_html,
+    decorate_first_contact_text,
+    prepare_first_contact,
+    record_successful_send,
+)
 from app.services.mail_intelligence import analyze_mail_message
 from app.services.mail_intelligence_learning import feature_snapshot, training_readiness
 from app.services.mail_sender_behavior import observe_sender_behavior
@@ -1141,6 +1147,38 @@ def create_business_chat(
         raise _failure(exc, 422) from exc
 
 
+@router.get("/relationships")
+def mail_relationships(
+    limit: int = Query(default=100, ge=1, le=500),
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+    db: Session = Depends(get_db),
+):
+    address, _ = _credentials(token)
+    mailbox = db.scalar(select(Mailbox).where(Mailbox.address == address.lower()))
+    if mailbox is None:
+        raise HTTPException(status_code=404, detail="Mailbox not found")
+    rows = db.scalars(
+        select(MailRelationship)
+        .where(MailRelationship.mailbox_id == mailbox.id)
+        .order_by(MailRelationship.last_sent_at.desc().nullslast(), MailRelationship.created_at.desc())
+        .limit(limit)
+    ).all()
+    return {
+        "items": [
+            {
+                "peer_address": row.peer_address,
+                "state": row.state,
+                "messages_sent": row.messages_sent,
+                "replies_received": row.replies_received,
+                "first_contact_at": row.first_contact_at.isoformat() if row.first_contact_at else None,
+                "last_sent_at": row.last_sent_at.isoformat() if row.last_sent_at else None,
+                "last_reply_at": row.last_reply_at.isoformat() if row.last_reply_at else None,
+            }
+            for row in rows
+        ]
+    }
+
+
 @router.post("/contacts", status_code=201)
 def put_contact(payload: WebmailContact, token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None):
     address, _ = _credentials(token)
@@ -1151,34 +1189,66 @@ def put_contact(payload: WebmailContact, token: Annotated[str | None, Cookie(ali
 
 
 @router.post("/send", status_code=202)
-def compose(payload: WebmailSend, token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None):
+def compose(
+    payload: WebmailSend,
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+    db: Session = Depends(get_db),
+):
     address, password = _credentials(token)
     recipients = [str(value).lower() for value in payload.to]
     cc = [str(value).lower() for value in payload.cc]
     bcc = [str(value).lower() for value in payload.bcc]
     try:
-        return send_message(address, password, recipients, cc, bcc, payload.subject, payload.body_text, [item.model_dump() for item in payload.attachments], payload.in_reply_to, payload.references)
+        mailbox, first_contact = prepare_first_contact(
+            db,
+            sender_address=address,
+            visible_recipients=[*recipients, *cc],
+            hidden_recipients=bcc,
+        )
+        body_text = decorate_first_contact_text(payload.body_text, first_contact)
+        result = send_message(address, password, recipients, cc, bcc, payload.subject, body_text, [item.model_dump() for item in payload.attachments], payload.in_reply_to, payload.references)
+        record_successful_send(db, mailbox=mailbox, recipients=[*recipients, *cc, *bcc])
+        return {**result, "first_contact": first_contact.public_dict()}
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except WebmailError as exc:
         raise _failure(exc) from exc
 
 
 @router.post("/send-rich", status_code=202)
-def compose_rich(payload: WebmailRichSend, token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None):
+def compose_rich(
+    payload: WebmailRichSend,
+    token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+    db: Session = Depends(get_db),
+):
     address, password = _credentials(token)
+    to = [str(v).lower() for v in payload.to]
+    cc = [str(v).lower() for v in payload.cc]
+    bcc = [str(v).lower() for v in payload.bcc]
     try:
-        return send_rich_message(
+        mailbox, first_contact = prepare_first_contact(
+            db,
+            sender_address=address,
+            visible_recipients=[*to, *cc],
+            hidden_recipients=bcc,
+        )
+        result = send_rich_message(
             address,
             password,
-            [str(v).lower() for v in payload.to],
-            [str(v).lower() for v in payload.cc],
-            [str(v).lower() for v in payload.bcc],
+            to,
+            cc,
+            bcc,
             payload.subject,
-            payload.body_text,
-            payload.body_html,
+            decorate_first_contact_text(payload.body_text, first_contact),
+            decorate_first_contact_html(payload.body_html, first_contact),
             payload.signature_html,
             [item.model_dump() for item in payload.attachments],
             payload.in_reply_to,
             payload.references,
         )
+        record_successful_send(db, mailbox=mailbox, recipients=[*to, *cc, *bcc])
+        return {**result, "first_contact": first_contact.public_dict()}
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except WebmailError as exc:
         raise _failure(exc) from exc

@@ -127,6 +127,7 @@ from app.models.mail_intelligence import (
 )
 from app.models.webmail_next import ConnectedMailAccount, MailSnooze, ScheduledMail
 from app.models.webmail_rules import MailboxRule
+from app.models.mail_relationship import MailRelationship
 
 __all__ = [
     "ApiKey", "AuditLog", "Invitation", "MembershipRole", "MembershipStatus", "Tenant",
@@ -152,5 +153,5 @@ __all__ = [
     "IthuteSupportContext", "ProductOperationalStatus", "PlatformEventStatus", "SubscriptionGrantStatus",
     "DeploymentStatus", "BackupStatus", "SecuritySeverity",
     "MailRetentionPolicy", "DmarcAggregateReport", "PhishingFinding", "MailAutomationRule", "MailThreatModelVersion", "MailThreatShadowPrediction",
-    "ConnectedMailAccount", "MailSnooze", "ScheduledMail", "MailboxRule",
+    "ConnectedMailAccount", "MailSnooze", "ScheduledMail", "MailboxRule", "MailRelationship",
 ]
