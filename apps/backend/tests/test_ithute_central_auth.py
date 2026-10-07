@@ -83,3 +83,18 @@ def test_mailbox_rejects_non_access_central_token():
             config=config,
             jwks_client=_JwksClient(public_key),
         )
+
+
+def test_central_security_center_redirects_to_auth_portal(client, monkeypatch):
+    from app.api.v1 import ithute_auth as ithute_auth_api
+
+    monkeypatch.setattr(
+        ithute_auth_api,
+        "get_ithute_auth_settings",
+        lambda: IthuteAuthSettings(enabled=True, issuer="https://auth.ithute.co.ls", audience="mailbox-dns"),
+    )
+
+    response = client.get("/api/v1/auth/ithute/account", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "https://auth.ithute.co.ls/account"

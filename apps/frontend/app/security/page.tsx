@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { KeyRound, Laptop, LockKeyhole, ShieldCheck, Smartphone, Trash2 } from "lucide-react";
+import { ExternalLink, KeyRound, Laptop, LockKeyhole, ShieldCheck, Smartphone, Trash2 } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
 import { ConfirmDialog, EmptyState, PageHeader, StatusBadge, Toast } from "@/components/ui-kit";
 
@@ -162,12 +162,18 @@ export default function SecurityPage() {
               <div className="grid h-11 w-11 place-items-center rounded-xl bg-emerald-50 text-emerald-700">
                 <ShieldCheck size={20} />
               </div>
-              <div>
+              <div className="flex-1">
                 <p className="text-sm font-black">Managed by Ithute central authentication</p>
                 <p className="mt-1 max-w-2xl text-[11px] leading-5 text-[var(--admin-muted)]">
-                  Local passwords, local MFA setup and local refresh-session controls are intentionally disabled on this production deployment.
-                  Your active Ithute identity remains valid across the control centre without falling back to legacy local authentication.
+                  Manage active product sessions, trusted devices, MFA and recovery codes, passkeys, password security and recent security activity from the central identity service.
                 </p>
+                <a
+                  className="btn-primary mt-4 inline-flex"
+                  href={`${API}/auth/ithute/account`}
+                >
+                  <ExternalLink size={14} />
+                  Open central security center
+                </a>
               </div>
             </div>
           </section>

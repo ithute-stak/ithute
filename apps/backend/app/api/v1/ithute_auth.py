@@ -216,6 +216,14 @@ async def central_refresh(request: Request, response: Response, db: Session = De
     return {"refreshed": True}
 
 
+@router.get("/account")
+def central_account_portal():
+    config = get_ithute_auth_settings()
+    if not config.enabled:
+        raise HTTPException(status_code=503, detail="!thute Auth is not enabled for Mailbox DNS")
+    return RedirectResponse(f"{config.resolved_issuer}/account", status_code=303)
+
+
 @router.get("/status")
 def status_view(current: User = Depends(get_current_user)):
     return {
