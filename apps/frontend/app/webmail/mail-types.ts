@@ -24,6 +24,30 @@ export type MessageRow = {
   snippet: string;
   attachments: Attachment[];
   body_text?: string;
+  body_html?: string;
+  render_contract?: {
+    version: number;
+    kind: "plain" | "longform_plain" | "structured_html" | "transactional_table";
+    density: "compact" | "comfortable" | "long";
+    has_html: boolean;
+    has_plain: boolean;
+    character_count: number;
+    line_count: number;
+    longest_line: number;
+    table_count: number;
+    heading_count: number;
+    quote_count: number;
+    link_count: number;
+    attachment_count: number;
+    engines: {
+      mime_structure: string;
+      text_shape: string;
+      orchestrator: string;
+      network_resources?: string;
+      structured_content?: string;
+    };
+    safe_html_policy: string;
+  };
 };
 
 export type ComposeState = {
