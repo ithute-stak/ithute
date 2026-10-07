@@ -22,6 +22,7 @@ from app.services.mail_first_contact import (
 )
 from app.services.mail_intelligence import analyze_mail_message
 from app.services.mail_intelligence_learning import feature_snapshot, training_readiness
+from app.services.mail_reputation import observe_reputation, record_verified_verdict, reputation_context
 from app.services.mail_sender_behavior import observe_sender_behavior
 from app.services.mail_threat_model import predict
 from app.services.mail_threat_shadow import baseline_probabilities
@@ -210,6 +211,40 @@ def _trusted_sender_registry(db: Session, address: str) -> tuple[Mailbox | None,
         }
         for row in rows
     ]
+
+
+def _analyze_with_reputation(
+    db: Session,
+    *,
+    mailbox: Mailbox | None,
+    address: str,
+    payload: dict,
+    trusted_registry: list[dict],
+) -> dict:
+    baseline = analyze_mail_message(
+        payload,
+        mailbox_address=address,
+        trusted_sender_registry=trusted_registry,
+    )
+    if mailbox is None:
+        return baseline
+    try:
+        reputation = observe_reputation(
+            db,
+            tenant_id=mailbox.tenant_id,
+            message=payload,
+            intelligence=baseline,
+        )
+        enriched = analyze_mail_message(
+            payload,
+            mailbox_address=address,
+            trusted_sender_registry=trusted_registry,
+            reputation=reputation,
+        )
+        return enriched
+    except Exception:
+        db.rollback()
+        return baseline
 
 
 def _credentials(token: str | None) -> tuple[str, str]:
@@ -629,10 +664,12 @@ def get_message(
     try:
         payload = message(address, password, uid=_uid(uid), folder=folder)
         mailbox, trusted_registry = _trusted_sender_registry(db, address)
-        intelligence = analyze_mail_message(
-            payload,
-            mailbox_address=address,
-            trusted_sender_registry=trusted_registry,
+        intelligence = _analyze_with_reputation(
+            db,
+            mailbox=mailbox,
+            address=address,
+            payload=payload,
+            trusted_registry=trusted_registry,
         )
         behavior = observe_sender_behavior(address, payload)
         if behavior is not None:
@@ -683,12 +720,17 @@ def get_message_intelligence(
     address, password = _credentials(token)
     try:
         payload = message(address, password, uid=_uid(uid), folder=folder)
-        _mailbox, trusted_registry = _trusted_sender_registry(db, address)
-        return analyze_mail_message(
-            payload,
-            mailbox_address=address,
-            trusted_sender_registry=trusted_registry,
+        mailbox, trusted_registry = _trusted_sender_registry(db, address)
+        intelligence = _analyze_with_reputation(
+            db,
+            mailbox=mailbox,
+            address=address,
+            payload=payload,
+            trusted_registry=trusted_registry,
         )
+        if mailbox is not None:
+            db.commit()
+        return intelligence
     except WebmailError as exc:
         raise _failure(exc) from exc
 
@@ -712,21 +754,25 @@ def analyze_message_batch(
             query="",
         )
         source_items = listing.get("items", []) if isinstance(listing, dict) else []
-        _mailbox, trusted_registry = _trusted_sender_registry(db, address)
+        mailbox, trusted_registry = _trusted_sender_registry(db, address)
         analyzed = [
             {
                 "uid": str(item.get("uid") or ""),
                 "subject": item.get("subject"),
                 "from": item.get("from"),
                 "date": item.get("date"),
-                "intelligence": analyze_mail_message(
-                    item,
-                    mailbox_address=address,
-                    trusted_sender_registry=trusted_registry,
+                "intelligence": _analyze_with_reputation(
+                    db,
+                    mailbox=mailbox,
+                    address=address,
+                    payload=item,
+                    trusted_registry=trusted_registry,
                 ),
             }
             for item in source_items
         ]
+        if mailbox is not None:
+            db.commit()
         return {
             "folder": folder,
             "items": analyzed,
@@ -767,10 +813,12 @@ def save_message_intelligence_verdict(
         raise _failure(exc) from exc
 
     _mailbox, trusted_registry = _trusted_sender_registry(db, address)
-    intelligence = analyze_mail_message(
-        message_payload,
-        mailbox_address=address,
-        trusted_sender_registry=trusted_registry,
+    intelligence = _analyze_with_reputation(
+        db,
+        mailbox=mailbox,
+        address=address,
+        payload=message_payload,
+        trusted_registry=trusted_registry,
     )
     message_ref = str(message_payload.get("message_id") or f"{folder}:{uid}")[:512]
     existing = db.scalar(
@@ -823,6 +871,12 @@ def save_message_intelligence_verdict(
         },
     )
     db.add(finding)
+    record_verified_verdict(
+        db,
+        tenant_id=mailbox.tenant_id,
+        message=message_payload,
+        label=payload.label,
+    )
     _resolve_shadow_predictions(
         db,
         mailbox_id=mailbox.id,
