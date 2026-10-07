@@ -1,3 +1,4 @@
+import json
 import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
@@ -22,7 +23,7 @@ from app.core.security import (
     verify_totp,
 )
 from app.db.session import get_db
-from app.models import AuditLog, PasswordResetToken, User, UserSession
+from app.models import AuditLog, PasswordResetToken, RecoveryCode, TrustedDevice, User, UserSession
 from app.schemas.auth import (
     LoginRequest,
     MfaCodeRequest,
@@ -32,12 +33,26 @@ from app.schemas.auth import (
     PasswordResetRequest,
     SessionOut,
     TokenResponse,
+    RecoveryCodesResponse,
+    RecoveryCodeStatus,
+    TrustedDeviceOut,
+    TrustedDeviceLabelRequest,
+    SecurityEventOut,
 )
 from app.services.auth_security import (
     clear_login_failures,
     enforce_login_rate_limit,
     enforce_password_reset_rate_limit,
     record_login_failure,
+    request_client_ip,
+)
+from app.services.identity_security import (
+    DEVICE_COOKIE_MAX_AGE,
+    DEVICE_COOKIE_NAME,
+    assess_login_risk,
+    generate_recovery_codes,
+    normalize_recovery_code,
+    resolve_or_create_device,
 )
 from app.services.ithute_auth import ithute_auth_enabled
 from app.services.signup_security import send_system_email
@@ -107,6 +122,18 @@ def _clear_auth_cookies(response: Response) -> None:
     response.delete_cookie(settings.refresh_cookie_name, path="/")
 
 
+def _set_device_cookie(response: Response, token: str, request: Request) -> None:
+    response.set_cookie(
+        DEVICE_COOKIE_NAME,
+        token,
+        max_age=DEVICE_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=settings.cookie_secure or _request_is_https(request),
+        samesite=settings.cookie_samesite,
+        path="/",
+    )
+
+
 def _new_session(user: User, request: Request, db: Session) -> tuple[str, UserSession]:
     raw = generate_refresh_token()
     session = UserSession(
@@ -167,27 +194,106 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
                 "message": "This account requires Ithute Central Authentication.",
             },
         )
+    mfa_verified = False
+    recovery_code_used = False
     if user.mfa_enabled:
-        if not payload.mfa_code:
-            raise HTTPException(status_code=401, detail="MFA code required")
-        if not user.mfa_secret:
-            record_login_failure(request, email)
-            raise HTTPException(status_code=401, detail="Unable to verify sign-in")
-        try:
-            secret = decrypt_secret(user.mfa_secret)
-        except ValueError as exc:
-            record_login_failure(request, email)
-            raise HTTPException(status_code=401, detail="Unable to verify sign-in") from exc
-        if not verify_totp(secret, payload.mfa_code):
-            record_login_failure(request, email)
-            raise HTTPException(status_code=401, detail="Invalid MFA code")
+        if payload.recovery_code:
+            normalized = normalize_recovery_code(payload.recovery_code)
+            recovery = db.scalar(
+                select(RecoveryCode).where(
+                    RecoveryCode.user_id == user.id,
+                    RecoveryCode.code_hash == hash_token(normalized),
+                    RecoveryCode.used_at.is_(None),
+                )
+            )
+            if recovery is None:
+                record_login_failure(request, email)
+                raise HTTPException(status_code=401, detail="Invalid recovery code")
+            recovery.used_at = datetime.now(timezone.utc)
+            mfa_verified = True
+            recovery_code_used = True
+        else:
+            if not payload.mfa_code:
+                raise HTTPException(status_code=401, detail="MFA or recovery code required")
+            if not user.mfa_secret:
+                record_login_failure(request, email)
+                raise HTTPException(status_code=401, detail="Unable to verify sign-in")
+            try:
+                secret = decrypt_secret(user.mfa_secret)
+            except ValueError as exc:
+                record_login_failure(request, email)
+                raise HTTPException(status_code=401, detail="Unable to verify sign-in") from exc
+            if not verify_totp(secret, payload.mfa_code):
+                record_login_failure(request, email)
+                raise HTTPException(status_code=401, detail="Invalid MFA code")
+            mfa_verified = True
 
     clear_login_failures(email)
+    device, device_token, is_new_device = resolve_or_create_device(db, user=user, request=request)
+    risk = assess_login_risk(device=device, request=request, is_new_device=is_new_device, mfa_verified=mfa_verified)
     refresh_token, session = _new_session(user, request, db)
+    session.trusted_device_id = device.id
+    session.risk_score = int(risk["score"])
+    session.risk_level = str(risk["level"])
+    session.new_device = bool(is_new_device)
+    session.last_seen_at = datetime.now(timezone.utc)
     access = create_access_token(str(user.id), {"sv": user.session_version, "sid": str(session.id)})
-    db.add(AuditLog(actor_user_id=user.id, action="auth.login", resource_type="session", resource_id=str(session.id)))
+    db.add(AuditLog(
+        actor_user_id=user.id,
+        action="auth.login",
+        resource_type="session",
+        resource_id=str(session.id),
+        metadata_json=json.dumps({
+            "risk_score": risk["score"],
+            "risk_level": risk["level"],
+            "recommended_action": risk["recommended_action"],
+            "new_device": is_new_device,
+            "trusted_device_id": str(device.id),
+            "recovery_code_used": recovery_code_used,
+            "signals": risk["signals"],
+        }, separators=(",", ":")),
+    ))
+    if is_new_device:
+        db.add(AuditLog(
+            actor_user_id=user.id,
+            action="auth.device.new",
+            resource_type="trusted_device",
+            resource_id=str(device.id),
+            metadata_json=json.dumps({
+                "ip_address": request_client_ip(request),
+                "user_agent": request.headers.get("user-agent"),
+                "risk_score": risk["score"],
+                "risk_level": risk["level"],
+            }, separators=(",", ":")),
+        ))
+    if recovery_code_used:
+        db.add(AuditLog(actor_user_id=user.id, action="auth.recovery_code.used", resource_type="user", resource_id=str(user.id)))
     db.commit()
     _set_auth_cookies(response, access, refresh_token, request)
+    _set_device_cookie(response, device_token, request)
+
+    if is_new_device:
+        try:
+            ip = request_client_ip(request)
+            agent = request.headers.get("user-agent") or "Unknown browser or device"
+            send_system_email(
+                user.email,
+                "New device signed in to your Ithute account",
+                "A new device signed in to your Ithute account.\n\n"
+                f"Device: {agent}\nIP: {ip}\nRisk: {risk['level']} ({risk['score']}/100)\n\n"
+                "If this was not you, sign in to Ithute Security Center and revoke the device and active sessions.",
+                "<html><body style=\"font-family:Arial,sans-serif;color:#173228\">"
+                "<div style=\"max-width:560px;margin:auto;padding:28px\">"
+                "<div style=\"font-size:13px;font-weight:700;color:#285b55\">Ithute Identity &amp; Account Security</div>"
+                "<h2>New device sign-in</h2>"
+                f"<p><strong>Device:</strong> {agent}</p><p><strong>IP:</strong> {ip}</p>"
+                f"<p><strong>Risk:</strong> {risk['level']} ({risk['score']}/100)</p>"
+                "<p>If this was not you, open Ithute Security Center and revoke the device and active sessions immediately.</p>"
+                "</div></body></html>",
+            )
+        except RuntimeError:
+            pass
+
     return TokenResponse(access_token=access, user=_user_payload(user))
 
 
@@ -406,6 +512,11 @@ def list_sessions(db: Session = Depends(get_db), current: User = Depends(get_cur
             user_agent=row.user_agent,
             ip_address=row.ip_address,
             revoked=row.revoked_at is not None,
+            trusted_device_id=str(row.trusted_device_id) if row.trusted_device_id else None,
+            risk_score=row.risk_score,
+            risk_level=row.risk_level,
+            new_device=row.new_device,
+            last_seen_at=row.last_seen_at.isoformat() if row.last_seen_at else None,
         )
         for row in rows
     ]
@@ -431,6 +542,146 @@ def revoke_all_sessions(response: Response, db: Session = Depends(get_db), curre
     db.add(AuditLog(actor_user_id=current.id, action="auth.sessions.revoke_all", resource_type="user", resource_id=str(current.id)))
     db.commit()
     _clear_auth_cookies(response)
+
+
+@router.get("/devices", response_model=list[TrustedDeviceOut])
+def list_trusted_devices(db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    _require_local_auth_surface()
+    rows = db.scalars(
+        select(TrustedDevice)
+        .where(TrustedDevice.user_id == current.id)
+        .order_by(TrustedDevice.last_seen_at.desc())
+    ).all()
+    return [
+        TrustedDeviceOut(
+            id=str(row.id),
+            label=row.label,
+            first_seen_at=row.first_seen_at.isoformat(),
+            last_seen_at=row.last_seen_at.isoformat(),
+            first_ip_address=row.first_ip_address,
+            last_ip_address=row.last_ip_address,
+            first_user_agent=row.first_user_agent,
+            trusted=row.trusted_at is not None and row.revoked_at is None,
+            revoked=row.revoked_at is not None,
+        )
+        for row in rows
+    ]
+
+
+@router.post("/devices/{device_id}/trust", response_model=TrustedDeviceOut)
+def trust_device(
+    device_id: UUID,
+    payload: TrustedDeviceLabelRequest | None = None,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    _require_local_auth_surface()
+    device = db.get(TrustedDevice, device_id)
+    if device is None or device.user_id != current.id or device.revoked_at is not None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    device.trusted_at = device.trusted_at or datetime.now(timezone.utc)
+    if payload is not None:
+        device.label = payload.label.strip()
+    db.add(AuditLog(
+        actor_user_id=current.id,
+        action="auth.device.trust",
+        resource_type="trusted_device",
+        resource_id=str(device.id),
+        metadata_json=json.dumps({"label": device.label}, separators=(",", ":")),
+    ))
+    db.commit()
+    db.refresh(device)
+    return TrustedDeviceOut(
+        id=str(device.id),
+        label=device.label,
+        first_seen_at=device.first_seen_at.isoformat(),
+        last_seen_at=device.last_seen_at.isoformat(),
+        first_ip_address=device.first_ip_address,
+        last_ip_address=device.last_ip_address,
+        first_user_agent=device.first_user_agent,
+        trusted=True,
+        revoked=False,
+    )
+
+
+@router.delete("/devices/{device_id}", status_code=204)
+def revoke_device(device_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    _require_local_auth_surface()
+    device = db.get(TrustedDevice, device_id)
+    if device is None or device.user_id != current.id:
+        raise HTTPException(status_code=404, detail="Device not found")
+    now = datetime.now(timezone.utc)
+    device.revoked_at = device.revoked_at or now
+    db.execute(
+        update(UserSession)
+        .where(
+            UserSession.user_id == current.id,
+            UserSession.trusted_device_id == device.id,
+            UserSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
+    db.add(AuditLog(actor_user_id=current.id, action="auth.device.revoke", resource_type="trusted_device", resource_id=str(device.id)))
+    db.commit()
+
+
+@router.get("/recovery-codes", response_model=RecoveryCodeStatus)
+def recovery_code_status(db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    _require_local_auth_surface()
+    rows = db.scalars(select(RecoveryCode).where(RecoveryCode.user_id == current.id)).all()
+    remaining = sum(1 for row in rows if row.used_at is None)
+    return RecoveryCodeStatus(remaining=remaining, generated=bool(rows))
+
+
+@router.post("/recovery-codes/regenerate", response_model=RecoveryCodesResponse)
+def regenerate_recovery_codes(db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    _require_local_auth_surface()
+    if not current.mfa_enabled:
+        raise HTTPException(status_code=409, detail="Enable MFA before generating recovery codes")
+    previous = db.scalars(select(RecoveryCode).where(RecoveryCode.user_id == current.id)).all()
+    for row in previous:
+        db.delete(row)
+    codes = generate_recovery_codes()
+    for value in codes:
+        db.add(RecoveryCode(user_id=current.id, code_hash=hash_token(normalize_recovery_code(value))))
+    db.add(AuditLog(
+        actor_user_id=current.id,
+        action="auth.recovery_codes.regenerate",
+        resource_type="user",
+        resource_id=str(current.id),
+        metadata_json=json.dumps({"count": len(codes)}, separators=(",", ":")),
+    ))
+    db.commit()
+    return RecoveryCodesResponse(codes=codes, remaining=len(codes))
+
+
+@router.get("/security-events", response_model=list[SecurityEventOut])
+def security_events(db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    rows = db.scalars(
+        select(AuditLog)
+        .where(AuditLog.actor_user_id == current.id, AuditLog.action.like("auth.%"))
+        .order_by(AuditLog.created_at.desc())
+        .limit(100)
+    ).all()
+    result = []
+    for row in rows:
+        metadata = {}
+        if row.metadata_json:
+            try:
+                parsed = json.loads(row.metadata_json)
+                if isinstance(parsed, dict):
+                    metadata = parsed
+            except (TypeError, ValueError, json.JSONDecodeError):
+                metadata = {}
+        result.append(SecurityEventOut(
+            id=str(row.id),
+            action=row.action,
+            resource_type=row.resource_type,
+            resource_id=row.resource_id,
+            created_at=row.created_at.isoformat(),
+            metadata=metadata,
+        ))
+    return result
 
 
 @router.post("/mfa/setup", response_model=MfaSetupResponse)
