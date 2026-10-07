@@ -306,12 +306,12 @@ def passkey_authentication_verify(
     passkey.last_used_at = now
     user.failed_login_attempts = 0
     user.locked_until = None
-    user.last_login_at = now
-    user.last_login_ip = client_ip(request)
 
     raw_refresh = new_refresh_token()
     device = resolve_device(db, user=user, request=request)
     risk = assess_login_risk(db=db, user=user, request=request, device=device, auth_method="passkey")
+    user.last_login_at = now
+    user.last_login_ip = client_ip(request)
     session = AuthSession(
         user_id=user.id,
         client_id=payload.client_id,
