@@ -94,7 +94,7 @@ def authentication_evidence(message: dict[str, Any]) -> dict[str, Any]:
 def inspect_urls(message: dict[str, Any], *, sender_domain: str = "", allowed_domains: set[str] | None = None) -> dict[str, Any]:
     text = f"{message.get('subject') or ''}\n{message.get('body_text') or ''}"
     urls = re.findall(r"https?://[^\s<>()\[\]\"']+", text, flags=re.IGNORECASE)
-    allowed = {registrable_hint(item) for item in (allowed_domains or set()) if item}
+    allowed = {str(item).lower().strip(".") for item in (allowed_domains or set()) if item}
     sender_root = registrable_hint(sender_domain)
     rows: list[dict[str, Any]] = []
     suspicious = 0
@@ -123,7 +123,8 @@ def inspect_urls(message: dict[str, Any], *, sender_domain: str = "", allowed_do
                 reasons.append("userinfo_in_url")
             if "xn--" in host:
                 reasons.append("punycode_hostname")
-            if allowed and root not in allowed:
+            trusted_allowed_domain = any(host == item or host.endswith(f".{item}") for item in allowed)
+            if allowed and not trusted_allowed_domain:
                 reasons.append("outside_trusted_sender_domains")
             elif not allowed and sender_root and root != sender_root:
                 reasons.append("different_from_sender_domain")
@@ -133,7 +134,7 @@ def inspect_urls(message: dict[str, Any], *, sender_domain: str = "", allowed_do
             "url": clean,
             "host": host,
             "registrable_domain": root,
-            "trusted_domain_match": bool(host and allowed and root in allowed),
+            "trusted_domain_match": bool(host and allowed and any(host == item or host.endswith(f".{item}") for item in allowed)),
             "reasons": reasons,
         })
 
@@ -173,7 +174,10 @@ def _normalize_registry_entry(entry: dict[str, Any]) -> dict[str, Any]:
 def _tenant_registry_match(sender: str, sender_domain: str, entries: list[dict[str, Any]] | None) -> dict[str, Any] | None:
     for raw in entries or []:
         entry = _normalize_registry_entry(raw)
-        if sender in entry["sender_addresses"] or sender_domain in entry["sender_domains"]:
+        if sender in entry["sender_addresses"] or any(
+            sender_domain == domain or sender_domain.endswith(f".{domain}")
+            for domain in entry["sender_domains"]
+        ):
             return entry
     return None
 
