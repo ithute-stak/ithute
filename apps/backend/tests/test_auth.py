@@ -141,6 +141,17 @@ def test_protected_endpoint_rejects_missing_token(client):
     assert response.status_code == 401
 
 
+def test_auth_capabilities_hide_local_controls_when_production_local_auth_is_disabled(client, monkeypatch):
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "legacy_local_auth_production_enabled", False)
+
+    response = client.get("/api/v1/auth/capabilities")
+
+    assert response.status_code == 200
+    assert response.json()["local_auth_enabled"] is False
+    assert response.json()["local_security_controls_enabled"] is False
+
+
 def test_production_central_session_can_read_me_when_local_auth_is_disabled(client, platform_owner, monkeypatch):
     monkeypatch.setattr(settings, "environment", "production")
     monkeypatch.setattr(settings, "legacy_local_auth_production_enabled", False)
