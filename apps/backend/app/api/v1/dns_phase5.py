@@ -11,6 +11,7 @@ from app.models import User
 from app.services.dns_phase5 import delegation_diagnostics, dns_templates
 from app.services.domains import add_domain_event
 from app.services.powerdns import PowerDNSClient, PowerDNSError
+from app.services.registrar_dnssec import DSRecord, OpenSRSRegistrar, RegistrarError, preferred_ds
 
 router = APIRouter(prefix="/tenants/{tenant_id}/domains/{domain_id}/dns", tags=["dns-security"])
 
@@ -57,6 +58,87 @@ def enable_dnssec(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db
     db.commit()
     ds = [value for key in keys for value in (key.get("ds") or [])]
     return {"enabled": bool(zone.get("dnssec")), "ds_records": ds, "registrar_action_required": bool(ds)}
+
+
+@router.get("/parent-ds")
+def parent_ds_status(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    require_tenant_permission(tenant_id, "dns.read", db, current)
+    domain = _managed_domain(db, tenant_id, domain_id)
+    client = PowerDNSClient()
+    try:
+        keys = client.list_cryptokeys(domain.ascii_name)
+    except PowerDNSError as exc:
+        _pdns_error(exc)
+    ds_values = [value for key in keys for value in (key.get("ds") or [])]
+    selected = preferred_ds(ds_values)
+    registrar = OpenSRSRegistrar()
+    result = {
+        "provider": "opensrs",
+        "configured": registrar.configured,
+        "domain": domain.ascii_name,
+        "recommended": selected.as_opensrs() if selected else None,
+        "recommended_text": selected.text() if selected else None,
+        "registrar_records": [],
+    }
+    if registrar.configured:
+        try:
+            result["registrar_records"] = [record.as_opensrs() for record in registrar.get_dnssec(domain.ascii_name)]
+        except RegistrarError as exc:
+            result["provider_error"] = str(exc)
+    return result
+
+
+@router.post("/parent-ds/publish")
+def publish_parent_ds(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    require_tenant_permission(tenant_id, "dns.manage", db, current)
+    domain = _managed_domain(db, tenant_id, domain_id)
+    registrar = OpenSRSRegistrar()
+    if not registrar.configured:
+        raise HTTPException(409, "OpenSRS registrar integration is not configured. Configure OPENSRS_USERNAME and OPENSRS_API_KEY first.")
+    try:
+        zone = PowerDNSClient().get_zone(domain.ascii_name)
+        if not zone.get("dnssec"):
+            raise HTTPException(409, "Enable DNSSEC signing before publishing a parent DS record")
+        keys = PowerDNSClient().list_cryptokeys(domain.ascii_name)
+        ds_values = [value for key in keys for value in (key.get("ds") or [])]
+        selected = preferred_ds(ds_values)
+        if selected is None:
+            raise HTTPException(409, "PowerDNS has not produced a DS record yet")
+        records = registrar.publish(domain.ascii_name, selected)
+    except PowerDNSError as exc:
+        _pdns_error(exc)
+    except RegistrarError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    add_domain_event(db, domain, current.id, "dns.parent_ds_publish_requested", {"provider": "opensrs", "ds": selected.text()})
+    _audit(db, tenant_id, current, "dns.parent_ds.publish", domain, {"provider": "opensrs", "ds": selected.text()})
+    db.commit()
+    return {"published": True, "provider": "opensrs", "selected": selected.as_opensrs(), "registrar_records": [record.as_opensrs() for record in records]}
+
+
+@router.post("/parent-ds/remove")
+def remove_parent_ds(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    require_tenant_permission(tenant_id, "dns.manage", db, current)
+    domain = _managed_domain(db, tenant_id, domain_id)
+    registrar = OpenSRSRegistrar()
+    if not registrar.configured:
+        raise HTTPException(409, "OpenSRS registrar integration is not configured")
+    try:
+        keys = PowerDNSClient().list_cryptokeys(domain.ascii_name)
+        managed = []
+        for value in [value for key in keys for value in (key.get("ds") or [])]:
+            try:
+                managed.append(DSRecord.parse(value))
+            except ValueError:
+                continue
+        remaining = registrar.remove_managed(domain.ascii_name, managed)
+    except PowerDNSError as exc:
+        _pdns_error(exc)
+    except RegistrarError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    add_domain_event(db, domain, current.id, "dns.parent_ds_remove_requested", {"provider": "opensrs", "managed_removed": len(managed)})
+    _audit(db, tenant_id, current, "dns.parent_ds.remove", domain, {"provider": "opensrs", "managed_removed": len(managed)})
+    db.commit()
+    return {"removed": True, "provider": "opensrs", "registrar_records": [record.as_opensrs() for record in remaining]}
 
 
 @router.post("/dnssec/disable")
