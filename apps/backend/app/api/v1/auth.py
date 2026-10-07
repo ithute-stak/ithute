@@ -54,9 +54,13 @@ from app.services.identity_security import (
     DEVICE_COOKIE_MAX_AGE,
     DEVICE_COOKIE_NAME,
     assess_login_risk,
+    cancel_adaptive_challenge,
     generate_recovery_codes,
+    issue_adaptive_challenge,
+    lookup_device,
     normalize_recovery_code,
     resolve_or_create_device,
+    verify_adaptive_challenge,
 )
 from app.services.ithute_auth import ithute_auth_enabled
 from app.services.passkeys import (
@@ -205,6 +209,7 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
                 "message": "This account requires Ithute Central Authentication.",
             },
         )
+
     mfa_verified = False
     recovery_code_used = False
     if user.mfa_enabled:
@@ -239,9 +244,156 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
                 raise HTTPException(status_code=401, detail="Invalid MFA code")
             mfa_verified = True
 
+    observed_device = lookup_device(db, user=user, request=request)
+    is_new_device = observed_device is None
+    risk = assess_login_risk(
+        device=observed_device,
+        request=request,
+        is_new_device=is_new_device,
+        mfa_verified=mfa_verified,
+    )
+
+    if risk["recommended_action"] == "block":
+        db.add(AuditLog(
+            actor_user_id=user.id,
+            action="auth.login.blocked",
+            resource_type="user",
+            resource_id=str(user.id),
+            metadata_json=json.dumps({
+                "risk_score": risk["score"],
+                "risk_level": risk["level"],
+                "signals": risk["signals"],
+                "ip_address": request_client_ip(request),
+                "user_agent": request.headers.get("user-agent"),
+            }, separators=(",", ":")),
+        ))
+        db.commit()
+        try:
+            ip = request_client_ip(request)
+            agent = request.headers.get("user-agent") or "Unknown browser or device"
+            send_system_email(
+                user.email,
+                "Ithute blocked a high-risk sign-in",
+                "Ithute blocked a sign-in because its security risk was too high.\n\n"
+                f"Device: {agent}\nIP: {ip}\nRisk: {risk['level']} ({risk['score']}/100)\n\n"
+                "If this was you, use a trusted device, a passkey, or Ithute Central Authentication. "
+                "If this was not you, review your Security Center immediately.",
+                "<html><body style=\"font-family:Arial,sans-serif;color:#173228\"><div style=\"max-width:560px;margin:auto;padding:28px\">"
+                "<div style=\"font-size:13px;font-weight:700;color:#285b55\">Ithute Identity &amp; Account Security</div>"
+                "<h2>High-risk sign-in blocked</h2>"
+                f"<p><strong>Device:</strong> {escape(agent)}</p><p><strong>IP:</strong> {escape(ip)}</p>"
+                f"<p><strong>Risk:</strong> {escape(str(risk['level']))} ({int(risk['score'])}/100)</p>"
+                "<p>If this was you, use a trusted device, passkey or Central Authentication. If not, review Security Center immediately.</p>"
+                "</div></body></html>",
+            )
+        except RuntimeError:
+            pass
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "AUTH_RISK_BLOCKED",
+                "message": "This sign-in was blocked because Ithute detected unusually high risk.",
+                "risk_level": risk["level"],
+                "risk_score": risk["score"],
+            },
+        )
+
+    adaptive_verified = False
+    if risk["recommended_action"] == "step_up" and not mfa_verified:
+        if payload.step_up_challenge_id and payload.step_up_code:
+            adaptive_verified = verify_adaptive_challenge(
+                user=user,
+                request=request,
+                challenge_id=payload.step_up_challenge_id,
+                code=payload.step_up_code,
+            )
+            if not adaptive_verified:
+                db.add(AuditLog(
+                    actor_user_id=user.id,
+                    action="auth.step_up.failed",
+                    resource_type="user",
+                    resource_id=str(user.id),
+                    metadata_json=json.dumps({
+                        "risk_score": risk["score"],
+                        "risk_level": risk["level"],
+                        "ip_address": request_client_ip(request),
+                    }, separators=(",", ":")),
+                ))
+                db.commit()
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "code": "AUTH_STEP_UP_INVALID",
+                        "message": "That verification code is invalid or expired.",
+                    },
+                )
+        else:
+            try:
+                challenge_id, code, created = issue_adaptive_challenge(user=user, request=request, risk=risk)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail="Adaptive authentication is temporarily unavailable") from exc
+
+            if created:
+                try:
+                    ip = request_client_ip(request)
+                    agent = request.headers.get("user-agent") or "Unknown browser or device"
+                    send_system_email(
+                        user.email,
+                        "Verify your Ithute sign-in",
+                        "Ithute detected a sign-in that needs extra verification.\n\n"
+                        f"Verification code: {code}\n\n"
+                        f"Device: {agent}\nIP: {ip}\nRisk: {risk['level']} ({risk['score']}/100)\n\n"
+                        "This code expires in 10 minutes. If this was not you, do not share the code and review your Security Center.",
+                        "<html><body style=\"font-family:Arial,sans-serif;color:#173228\"><div style=\"max-width:560px;margin:auto;padding:28px\">"
+                        "<div style=\"font-size:13px;font-weight:700;color:#285b55\">Ithute Identity &amp; Account Security</div>"
+                        "<h2>Verify your sign-in</h2>"
+                        "<p>Ithute detected a sign-in that needs extra verification.</p>"
+                        f"<div style=\"font-size:30px;font-weight:800;letter-spacing:8px;margin:22px 0\">{escape(code)}</div>"
+                        "<p>This code expires in 10 minutes.</p>"
+                        f"<p><strong>Device:</strong> {escape(agent)}</p><p><strong>IP:</strong> {escape(ip)}</p>"
+                        f"<p><strong>Risk:</strong> {escape(str(risk['level']))} ({int(risk['score'])}/100)</p>"
+                        "<p>If this was not you, do not share the code and review your Security Center.</p>"
+                        "</div></body></html>",
+                    )
+                except RuntimeError as exc:
+                    cancel_adaptive_challenge(user=user, request=request, challenge_id=challenge_id)
+                    raise HTTPException(status_code=503, detail="Unable to deliver the sign-in verification code") from exc
+
+            db.add(AuditLog(
+                actor_user_id=user.id,
+                action="auth.step_up.required",
+                resource_type="user",
+                resource_id=str(user.id),
+                metadata_json=json.dumps({
+                    "risk_score": risk["score"],
+                    "risk_level": risk["level"],
+                    "new_device": is_new_device,
+                    "signals": risk["signals"],
+                }, separators=(",", ":")),
+            ))
+            db.commit()
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "AUTH_STEP_UP_REQUIRED",
+                    "message": "This sign-in needs additional verification.",
+                    "challenge_id": challenge_id,
+                    "methods": ["email_code", "passkey"],
+                    "risk_level": risk["level"],
+                    "risk_score": risk["score"],
+                },
+            )
+
+    if adaptive_verified:
+        risk = assess_login_risk(
+            device=observed_device,
+            request=request,
+            is_new_device=is_new_device,
+            mfa_verified=True,
+        )
+
     clear_login_failures(email)
     device, device_token, is_new_device = resolve_or_create_device(db, user=user, request=request)
-    risk = assess_login_risk(device=device, request=request, is_new_device=is_new_device, mfa_verified=mfa_verified)
     refresh_token, session = _new_session(user, request, db)
     session.trusted_device_id = device.id
     session.risk_score = int(risk["score"])
@@ -261,9 +413,18 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
             "new_device": is_new_device,
             "trusted_device_id": str(device.id),
             "recovery_code_used": recovery_code_used,
+            "adaptive_step_up_verified": adaptive_verified,
             "signals": risk["signals"],
         }, separators=(",", ":")),
     ))
+    if adaptive_verified:
+        db.add(AuditLog(
+            actor_user_id=user.id,
+            action="auth.step_up.verified",
+            resource_type="session",
+            resource_id=str(session.id),
+            metadata_json=json.dumps({"risk_score": risk["score"], "risk_level": risk["level"]}, separators=(",", ":")),
+        ))
     if is_new_device:
         db.add(AuditLog(
             actor_user_id=user.id,
