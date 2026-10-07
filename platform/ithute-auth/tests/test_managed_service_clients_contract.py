@@ -13,6 +13,8 @@ MIGRATION = ROOT / "alembic" / "versions" / "0006_managed_service_clients.py"
 BDA_GRANTS_MIGRATION = ROOT / "alembic" / "versions" / "0008_bda_service_grants.py"
 BDA_FORWARD_GRANT_MIGRATION = ROOT / "alembic" / "versions" / "0009_bda_mail_forward_grant.py"
 NOTIFICATION_CLIENT_MIGRATION = ROOT / "alembic" / "versions" / "0011_notification_gateway_client.py"
+RISK_SIGNAL_MIGRATION = ROOT / "alembic" / "versions" / "0012_external_risk_signals.py"
+RISK_SIGNAL_API = ROOT / "app" / "risk_signals.py"
 SERVER = ROOT / "app" / "server.py"
 MAIN = ROOT / "app" / "main.py"
 CONFIG = ROOT / "app" / "config.py"
@@ -148,3 +150,28 @@ def test_notification_gateway_managed_identity_bootstraps_from_hashed_secret() -
     assert "ManagedServiceCredential" in main
     assert "other.revoked_at = now" in main
     assert "secret_hash=digest" in main
+
+
+
+def test_mail_intelligence_managed_identity_is_least_privilege():
+    migration = RISK_SIGNAL_MIGRATION.read_text(encoding="utf-8")
+    api = RISK_SIGNAL_API.read_text(encoding="utf-8")
+    main = MAIN.read_text(encoding="utf-8")
+    config = CONFIG.read_text(encoding="utf-8")
+
+    assert '"ithute-mail-intelligence"' in migration
+    assert 'json.dumps(["ithute-auth"]' in migration
+    assert 'json.dumps(["security.risk.write"]' in migration
+    assert 'require_managed_service_scope("security.risk.write")' in api
+    assert "mail_intelligence_gateway_secret" in config
+    assert "settings.mail_intelligence_gateway_secret" in main
+    assert "hash_service_secret(mail_intelligence_secret)" in main
+
+
+def test_external_risk_policy_accepts_only_human_verified_known_signals():
+    api = RISK_SIGNAL_API.read_text(encoding="utf-8")
+    assert '"mail.phishing.verified"' in api
+    assert '"mail.bec.verified"' in api
+    assert "not payload.verified_by_human" in api
+    assert "The central identity service, not the publisher, decides" in api
+    assert "risk_weight=weight" in api
