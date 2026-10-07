@@ -153,3 +153,14 @@ def test_tenant_registry_cannot_weaken_first_party_ithute_policy():
     assert evidence["registry_source"] == "ithute_system_registry"
     assert evidence["verified"] is False
     assert set(evidence["authentication_policy"]["required"]) == {"spf", "dkim", "dmarc"}
+
+
+
+def test_lesotho_public_suffix_does_not_collapse_unrelated_organizations():
+    result = inspect_urls(
+        {"subject": "", "body_text": "Open https://evil.co.ls/login"},
+        sender_domain="partner.co.ls",
+    )
+
+    assert result["suspicious_count"] == 1
+    assert "different_from_sender_domain" in result["items"][0]["reasons"]
