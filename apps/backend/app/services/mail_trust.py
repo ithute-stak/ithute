@@ -55,6 +55,8 @@ def domain_of(address: str) -> str:
 def registrable_hint(host: str) -> str:
     host = str(host or "").lower().strip(".")
     labels = [label for label in host.split(".") if label]
+    if len(labels) >= 3 and ".".join(labels[-2:]) in {"co.ls", "org.ls", "gov.ls", "ac.ls", "net.ls"}:
+        return ".".join(labels[-3:])
     return ".".join(labels[-2:]) if len(labels) >= 2 else host
 
 

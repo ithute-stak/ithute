@@ -114,6 +114,63 @@ class MailAutomationRule(Base):
 
 
 
+class SenderReputationProfile(Base):
+    __tablename__ = "sender_reputation_profiles"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "sender_hash", name="uq_sender_reputation_tenant_sender"),
+        Index("ix_sender_reputation_tenant_score", "tenant_id", "score"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    sender_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    sender_domain: Mapped[str] = mapped_column(String(253), nullable=False, index=True)
+    observations: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    authenticated_messages: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    authentication_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    suspicious_link_messages: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    verified_legitimate: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    verified_phishing: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    verified_bec: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    registry_verified_messages: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    score: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    evidence_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class DomainIntelligenceProfile(Base):
+    __tablename__ = "domain_intelligence_profiles"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "domain", name="uq_domain_intelligence_tenant_domain"),
+        Index("ix_domain_intelligence_tenant_score", "tenant_id", "score"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    observations: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    authenticated_messages: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    authentication_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    suspicious_link_messages: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    verified_legitimate: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    verified_phishing: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    verified_bec: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    trusted_registry_matches: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    domain_age_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    identity_status: Mapped[str] = mapped_column(String(40), nullable=False, default="unverified")
+    enrichment_source: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    enrichment_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    score: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    evidence_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class MailThreatModelVersion(Base):
     __tablename__ = "mail_threat_model_versions"
     __table_args__ = (

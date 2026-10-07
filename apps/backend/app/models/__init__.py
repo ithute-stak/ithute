@@ -128,6 +128,8 @@ from app.models.mail_intelligence import (
     MailThreatShadowPrediction,
     PhishingFinding,
     TrustedSenderProfile,
+    SenderReputationProfile,
+    DomainIntelligenceProfile,
 )
 from app.models.webmail_next import ConnectedMailAccount, MailSnooze, ScheduledMail
 from app.models.webmail_rules import MailboxRule
@@ -156,6 +158,6 @@ __all__ = [
     "IthuteSecurityEvent", "IthuteSecretReference", "IthuteDeveloperClient", "IthuteWebhookSubscription",
     "IthuteSupportContext", "ProductOperationalStatus", "PlatformEventStatus", "SubscriptionGrantStatus",
     "DeploymentStatus", "BackupStatus", "SecuritySeverity",
-    "MailRetentionPolicy", "DmarcAggregateReport", "PhishingFinding", "TrustedSenderProfile", "MailAutomationRule", "MailThreatModelVersion", "MailThreatShadowPrediction",
+    "MailRetentionPolicy", "DmarcAggregateReport", "PhishingFinding", "TrustedSenderProfile", "SenderReputationProfile", "DomainIntelligenceProfile", "MailAutomationRule", "MailThreatModelVersion", "MailThreatShadowPrediction",
     "ConnectedMailAccount", "MailSnooze", "ScheduledMail", "MailboxRule", "MailRelationship",
 ]

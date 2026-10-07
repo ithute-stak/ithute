@@ -223,3 +223,64 @@ def test_registry_sender_with_unapproved_link_is_not_verified():
     assert result["trust"]["verified"] is False
     assert result["trust"]["url_intelligence"]["suspicious_count"] == 1
     assert result["trust"]["explainable_score"]["verified_trust_credit"] == 0
+
+
+
+def test_poor_reputation_amplifies_message_risk():
+    result = analyze_mail_message(
+        _message(subject="Routine notice", body_text="Please review this notice."),
+        reputation={
+            "available": True,
+            "combined_score": 20,
+            "confidence": 0.8,
+            "risk_adjustment": 20,
+            "sender": {"state": "poor"},
+            "domain": {"state": "watch"},
+        },
+    )
+
+    assert result["reputation"]["applied_risk_adjustment"] == 20
+    assert any(signal["signal"] == "sender_reputation_risk" for signal in result["security"]["signals"])
+    assert result["security"]["phishing_probability"] >= 0.20
+
+
+def test_strong_reputation_credit_is_suppressed_by_current_auth_failure():
+    result = analyze_mail_message(
+        _message(
+            subject="Routine notice",
+            body_text="Please review this notice.",
+            authentication_results="mx; spf=fail; dkim=fail; dmarc=fail",
+            received_spf="fail",
+        ),
+        reputation={
+            "available": True,
+            "combined_score": 95,
+            "confidence": 0.9,
+            "risk_adjustment": -10,
+            "sender": {"state": "strong"},
+            "domain": {"state": "strong"},
+        },
+    )
+
+    assert result["reputation"]["requested_risk_adjustment"] == -10
+    assert result["reputation"]["applied_risk_adjustment"] == 0
+    assert result["reputation"]["negative_credit_suppressed"] is True
+    assert any(signal["signal"] == "mail_authentication_failure" for signal in result["security"]["signals"])
+
+
+def test_strong_reputation_can_reduce_only_generic_risk():
+    result = analyze_mail_message(
+        _message(subject="Monthly update", body_text="Here is the monthly update."),
+        reputation={
+            "available": True,
+            "combined_score": 90,
+            "confidence": 0.85,
+            "risk_adjustment": -10,
+            "sender": {"state": "strong"},
+            "domain": {"state": "strong"},
+        },
+    )
+
+    assert result["reputation"]["applied_risk_adjustment"] == -10
+    assert result["reputation"]["negative_credit_suppressed"] is False
+    assert any(signal["signal"] == "sender_reputation_credit" for signal in result["security"]["signals"])
