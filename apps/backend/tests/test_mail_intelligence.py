@@ -171,3 +171,55 @@ def test_spoofed_registered_sender_is_more_suspicious_not_more_trusted():
     assert result["trust"]["state"] == "registry_sender_auth_failed"
     assert "registered_sender_authentication_mismatch" in names
     assert result["security"]["phishing_probability"] >= 0.55
+
+
+
+def test_verified_tenant_registry_sender_gets_bounded_trust_credit():
+    result = analyze_mail_message(
+        _message(
+            from="Alerts <alerts@partner.example>",
+            subject="Account update",
+            body_text="Review https://secure.partner.example/account today.",
+            authentication_results="mx; spf=pass; dkim=pass; dmarc=pass",
+            received_spf="pass",
+        ),
+        mailbox_address="user@ithute.co.ls",
+        trusted_sender_registry=[{
+            "name": "Example Partner",
+            "category": "business_partner",
+            "sender_domains": ["partner.example"],
+            "allowed_link_domains": ["partner.example"],
+            "require_spf": True,
+            "require_dkim": True,
+            "require_dmarc": True,
+        }],
+    )
+
+    assert result["trust"]["verified"] is True
+    assert result["trust"]["registry_source"] == "tenant_registry"
+    assert result["trust"]["explainable_score"]["verified_trust_credit"] == 28
+    assert result["security"]["recommended_action"] == "allow"
+
+
+def test_registry_sender_with_unapproved_link_is_not_verified():
+    result = analyze_mail_message(
+        _message(
+            from="Alerts <alerts@partner.example>",
+            body_text="Review https://outside.example/account immediately.",
+            authentication_results="mx; spf=pass; dkim=pass; dmarc=pass",
+            received_spf="pass",
+        ),
+        trusted_sender_registry=[{
+            "name": "Example Partner",
+            "category": "business_partner",
+            "sender_domains": ["partner.example"],
+            "allowed_link_domains": ["partner.example"],
+            "require_spf": True,
+            "require_dkim": True,
+            "require_dmarc": True,
+        }],
+    )
+
+    assert result["trust"]["verified"] is False
+    assert result["trust"]["url_intelligence"]["suspicious_count"] == 1
+    assert result["trust"]["explainable_score"]["verified_trust_credit"] == 0
