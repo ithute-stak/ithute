@@ -113,7 +113,7 @@ def _client_binding(request: Request) -> dict[str, str]:
 
 def issue_adaptive_challenge(*, user: User, request: Request, risk: dict[str, Any]) -> tuple[str, str, bool]:
     binding = _client_binding(request)
-    active_key = f"ithute:adaptive:active:{user.id}:{binding['user_agent_hash']}"
+    active_key = f"ithute:adaptive:active:{user.id}:{hash_token(binding['ip'])}:{binding['user_agent_hash']}"
     try:
         client = _adaptive_redis()
         existing = client.get(active_key)
@@ -175,7 +175,7 @@ def verify_adaptive_challenge(*, user: User, request: Request, challenge_id: str
                 client.setex(key, ttl, json.dumps(payload, separators=(",", ":")))
             return False
 
-        active_key = f"ithute:adaptive:active:{user.id}:{binding['user_agent_hash']}"
+        active_key = f"ithute:adaptive:active:{user.id}:{hash_token(binding['ip'])}:{binding['user_agent_hash']}"
         pipe = client.pipeline()
         pipe.delete(key)
         pipe.delete(active_key)
@@ -222,7 +222,7 @@ def assess_login_risk(
         reasons.append({"signal": "mfa_verified", "weight": -15})
 
     level = "critical" if score >= 75 else "high" if score >= 50 else "medium" if score >= 25 else "low"
-    action = "block" if score >= 85 else "step_up" if score >= 35 else "allow"
+    action = "block" if score >= 75 else "step_up" if score >= 30 else "allow"
 
     return {
         "score": min(100, score),
