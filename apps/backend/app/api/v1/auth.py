@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -694,6 +694,56 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
 @router.get("/me")
 def me(current: User = Depends(get_current_user)):
     return _user_payload(current)
+
+
+@router.get("/security-posture")
+def security_posture(db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    passkey_count = int(db.scalar(
+        select(func.count()).select_from(PasskeyCredential).where(
+            PasskeyCredential.user_id == current.id,
+            PasskeyCredential.revoked_at.is_(None),
+        )
+    ) or 0)
+    trusted_device_count = int(db.scalar(
+        select(func.count()).select_from(TrustedDevice).where(
+            TrustedDevice.user_id == current.id,
+            TrustedDevice.trusted_at.is_not(None),
+            TrustedDevice.revoked_at.is_(None),
+        )
+    ) or 0)
+    recovery_remaining = int(db.scalar(
+        select(func.count()).select_from(RecoveryCode).where(
+            RecoveryCode.user_id == current.id,
+            RecoveryCode.used_at.is_(None),
+        )
+    ) or 0)
+    mail_context = recent_mail_threat_context(db, user=current)
+
+    score = 35
+    score += 20 if current.central_auth_enforced else 0
+    score += 20 if passkey_count else 0
+    score += 15 if current.mfa_enabled else 0
+    score += 10 if recovery_remaining else 0
+    score += 10 if trusted_device_count else 0
+    score += 5 if current.email_verified_at is not None else 0
+    if mail_context.get("active"):
+        score -= 5
+    score = max(0, min(100, score))
+    label = "strong" if score >= 85 else "good" if score >= 65 else "fair" if score >= 45 else "needs_attention"
+
+    return {
+        "score": score,
+        "label": label,
+        "defenses": {
+            "central_auth": bool(current.central_auth_enforced),
+            "passkeys": passkey_count,
+            "mfa": bool(current.mfa_enabled),
+            "recovery_codes_remaining": recovery_remaining,
+            "trusted_devices": trusted_device_count,
+            "email_verified": current.email_verified_at is not None,
+        },
+        "mail_identity_correlation": mail_context,
+    }
 
 
 @router.get("/sessions", response_model=list[SessionOut])
