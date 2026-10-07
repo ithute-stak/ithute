@@ -38,6 +38,11 @@ export default function Login() {
   const [localAuthEnabled, setLocalAuthEnabled] = useState(true);
   const [centralAuthEnabled, setCentralAuthEnabled] = useState(true);
   const [passkeyLoading, setPasskeyLoading] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [stepUpRequired, setStepUpRequired] = useState(false);
+  const [stepUpChallengeId, setStepUpChallengeId] = useState("");
+  const [stepUpRisk, setStepUpRisk] = useState<{ level: string; score: number } | null>(null);
 
   useEffect(() => {
     void fetch(`${API}/auth/capabilities`, { cache: "no-store" })
@@ -110,6 +115,7 @@ export default function Login() {
     setLoading(true);
     const form = new FormData(event.currentTarget);
     const mfaCode = String(form.get("mfa_code") || "").replace(/\s/g, "").trim();
+    const stepUpCode = String(form.get("step_up_code") || "").replace(/\s/g, "").trim();
 
     try {
       const response = await fetch(`${API}/auth/login`, {
@@ -117,9 +123,12 @@ export default function Login() {
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          email: String(form.get("email") || "").trim(),
-          password: String(form.get("password") || ""),
+          email: loginEmail.trim(),
+          password: loginPassword,
           ...(mfaCode ? { mfa_code: mfaCode } : {}),
+          ...(stepUpRequired && stepUpChallengeId && stepUpCode
+            ? { step_up_challenge_id: stepUpChallengeId, step_up_code: stepUpCode }
+            : {}),
         }),
       });
 
@@ -132,6 +141,25 @@ export default function Login() {
           : String(body.detail || "We could not sign you in with those credentials.");
         if (code === "CENTRAL_AUTH_REQUIRED") {
           window.location.assign(`${API}/auth/ithute/login`);
+          return;
+        }
+        if (code === "AUTH_STEP_UP_REQUIRED") {
+          setStepUpRequired(true);
+          setStepUpChallengeId(String(structured?.challenge_id || ""));
+          setStepUpRisk({
+            level: String(structured?.risk_level || "elevated"),
+            score: Number(structured?.risk_score || 0),
+          });
+          setError("");
+          return;
+        }
+        if (code === "AUTH_STEP_UP_INVALID") {
+          setStepUpRequired(true);
+          setError("That verification code was not accepted or has expired. Try again.");
+          return;
+        }
+        if (code === "AUTH_RISK_BLOCKED") {
+          setError("Ithute blocked this sign-in because the security risk was unusually high. Use a passkey, trusted device, or Central Authentication.");
           return;
         }
         if (detail.toLowerCase().includes("mfa code required")) {
@@ -213,11 +241,13 @@ export default function Login() {
               <div className="flex items-center gap-2 text-[10px] font-extrabold uppercase tracking-[.14em] text-[#55766c]">
                 <ServerCog size={14} /> Administration
               </div>
-              <h2 className="mt-3 text-[34px] font-black tracking-[-.045em] text-[#173228]">{mfaRequired ? "Verify it’s you" : "Welcome back"}</h2>
+              <h2 className="mt-3 text-[34px] font-black tracking-[-.045em] text-[#173228]">{mfaRequired ? "Verify it’s you" : stepUpRequired ? "Verify this sign-in" : "Welcome back"}</h2>
               <p className="mt-2 max-w-md text-sm leading-6 text-[#6f8178]">
                 {mfaRequired
                   ? "Your password is correct. Enter the current 6-digit code from your authenticator app to finish signing in."
-                  : "Sign in to manage your organisation, domains, DNS and mail infrastructure."}
+                  : stepUpRequired
+                    ? "Your password is correct, but Ithute detected a new or unusual sign-in. Enter the verification code sent to your email, or use a passkey."
+                    : "Sign in to manage your organisation, domains, DNS and mail infrastructure."}
               </p>
             </div>
 
@@ -238,7 +268,7 @@ export default function Login() {
                 <label className="mb-1.5 block text-[11px] font-extrabold text-[#243b31]" htmlFor="email">Email address</label>
                 <div className="relative">
                   <Mail size={17} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#829087]" />
-                  <input id="email" className="min-h-12 w-full rounded-xl border border-[#d9e2dd] bg-white pl-11 pr-4 text-sm font-semibold text-[#20372d] outline-none transition placeholder:text-[#a7b1ab] focus:border-[#2d6d66] focus:ring-4 focus:ring-[#2d6d66]/10" name="email" type="email" autoComplete="email" required placeholder="name@company.co.ls" disabled={mfaRequired} />
+                  <input id="email" className="min-h-12 w-full rounded-xl border border-[#d9e2dd] bg-white pl-11 pr-4 text-sm font-semibold text-[#20372d] outline-none transition placeholder:text-[#a7b1ab] focus:border-[#2d6d66] focus:ring-4 focus:ring-[#2d6d66]/10" name="email" type="email" autoComplete="email" required placeholder="name@company.co.ls" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} disabled={mfaRequired || stepUpRequired} />
                 </div>
               </div>
 
@@ -256,7 +286,7 @@ export default function Login() {
                 </div>
                 <div className="relative">
                   <LockKeyhole size={17} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#829087]" />
-                  <input id="password" className="min-h-12 w-full rounded-xl border border-[#d9e2dd] bg-white pl-11 pr-12 text-sm font-semibold text-[#20372d] outline-none transition placeholder:text-[#a7b1ab] focus:border-[#2d6d66] focus:ring-4 focus:ring-[#2d6d66]/10" name="password" type={showPassword ? "text" : "password"} autoComplete="current-password" required placeholder="Enter your password" onKeyDown={detectCapsLock} onKeyUp={detectCapsLock} disabled={mfaRequired} />
+                  <input id="password" className="min-h-12 w-full rounded-xl border border-[#d9e2dd] bg-white pl-11 pr-12 text-sm font-semibold text-[#20372d] outline-none transition placeholder:text-[#a7b1ab] focus:border-[#2d6d66] focus:ring-4 focus:ring-[#2d6d66]/10" name="password" type={showPassword ? "text" : "password"} autoComplete="current-password" required placeholder="Enter your password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} onKeyDown={detectCapsLock} onKeyUp={detectCapsLock} disabled={mfaRequired || stepUpRequired} />
                   <button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute right-3 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg text-[#708078] transition hover:bg-[#eef4f1] hover:text-[#264d46]" aria-label={showPassword ? "Hide password" : "Show password"}>
                     {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                   </button>
@@ -274,14 +304,34 @@ export default function Login() {
                 </div>
               ) : null}
 
+              {stepUpRequired ? (
+                <div className="rounded-2xl border border-[#b8d8cc] bg-[#f1f8f5] p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <label className="block text-[11px] font-extrabold text-[#24483d]" htmlFor="step_up_code">Email verification code</label>
+                      <p className="mt-1 text-[10px] leading-4 text-[#6f8178]">Enter the 6-digit code from <strong>auth@ithute.co.ls</strong>. It expires after 10 minutes.</p>
+                    </div>
+                    {stepUpRisk ? <span className="rounded-full bg-white px-2.5 py-1 text-[9px] font-black uppercase text-[#496d61]">Risk {stepUpRisk.score}/100</span> : null}
+                  </div>
+                  <div className="relative mt-3">
+                    <ShieldCheck size={18} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#397765]" />
+                    <input id="step_up_code" className="min-h-13 w-full rounded-xl border border-[#b8d8cc] bg-white pl-11 pr-4 text-center text-xl font-black tracking-[.35em] text-[#263a31] outline-none transition placeholder:tracking-[.25em] placeholder:text-[#a9c5bb] focus:border-[#2d7a63] focus:ring-4 focus:ring-[#2d7a63]/15" name="step_up_code" inputMode="numeric" pattern="[0-9]*" autoComplete="one-time-code" maxLength={6} required placeholder="000000" autoFocus />
+                  </div>
+                  <button type="button" onClick={() => void signInWithPasskey()} disabled={passkeyLoading} className="mt-3 inline-flex items-center gap-2 text-[10px] font-black text-[#285b55] hover:text-[#123a38]">
+                    <Fingerprint size={14} />
+                    {passkeyLoading ? "Waiting for passkey…" : "Use a passkey instead"}
+                  </button>
+                </div>
+              ) : null}
+
               {error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold leading-5 text-red-700">{error}</div> : null}
 
               <button className="group flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#123a38] px-4 text-sm font-extrabold text-white shadow-[0_14px_30px_rgba(18,58,56,.20)] transition hover:-translate-y-0.5 hover:bg-[#285b55] disabled:cursor-wait disabled:translate-y-0 disabled:opacity-70" type="submit" disabled={loading}>
-                {loading ? "Securing your session…" : mfaRequired ? "Verify and continue" : "Sign in securely"}
+                {loading ? "Securing your session…" : mfaRequired || stepUpRequired ? "Verify and continue" : "Sign in securely"}
                 {!loading ? <ArrowRight size={16} className="transition group-hover:translate-x-0.5" /> : null}
               </button>
 
-              {mfaRequired ? <button type="button" onClick={() => { setMfaRequired(false); setError(""); }} className="w-full text-center text-xs font-bold text-[#55766c] transition hover:text-[#173f38]">Use a different account</button> : null}
+              {mfaRequired || stepUpRequired ? <button type="button" onClick={() => { setMfaRequired(false); setStepUpRequired(false); setStepUpChallengeId(""); setStepUpRisk(null); setLoginPassword(""); setError(""); }} className="w-full text-center text-xs font-bold text-[#55766c] transition hover:text-[#173f38]">Use a different account</button> : null}
             </form>
             ) : (
               <div className="mt-5 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs font-semibold leading-5 text-emerald-800">
@@ -289,7 +339,7 @@ export default function Login() {
               </div>
             )}
 
-            {!mfaRequired && localAuthEnabled ? (
+            {!mfaRequired && !stepUpRequired && localAuthEnabled ? (
               <div className="mt-5">
                 <div className="flex items-center gap-3">
                   <span className="h-px flex-1 bg-[#e1e8e4]" />
@@ -309,7 +359,7 @@ export default function Login() {
               </div>
             ) : null}
 
-            {!mfaRequired && centralAuthEnabled ? (
+            {!mfaRequired && !stepUpRequired && centralAuthEnabled ? (
               <div className="mt-5 rounded-2xl border border-[#d9e6e1] bg-[#f7faf8] p-4">
                 <div className="flex items-start gap-3">
                   <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#e8f2ee] text-[#285b55]">
