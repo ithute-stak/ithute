@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.models import MailNode, MailRelationship, MailThreatModelVersion, MailThreatShadowPrediction, PhishingFinding
+from app.models import MailNode, MailRelationship, MailThreatModelVersion, MailThreatShadowPrediction, PhishingFinding, TrustedSenderProfile
 from app.models.mail import Mailbox, MailboxStatus, MailboxStorageType
 from app.services.mailboxes import normalize_destination
 from app.services.mail_first_contact import (
@@ -179,6 +179,37 @@ def _failure(exc: WebmailError, status: int = 503) -> HTTPException:
     elif "not found" in text.lower():
         status = 404
     return HTTPException(status_code=status, detail=text)
+
+
+def _trusted_sender_registry(db: Session, address: str) -> tuple[Mailbox | None, list[dict]]:
+    mailbox = db.scalar(
+        select(Mailbox).where(
+            Mailbox.address == address.lower(),
+            Mailbox.status == MailboxStatus.active,
+        )
+    )
+    if mailbox is None:
+        return None, []
+    rows = db.scalars(
+        select(TrustedSenderProfile).where(
+            TrustedSenderProfile.tenant_id == mailbox.tenant_id,
+            TrustedSenderProfile.active.is_(True),
+        )
+    ).all()
+    return mailbox, [
+        {
+            "name": row.name,
+            "category": row.category,
+            "sender_addresses": row.sender_addresses_json or [],
+            "sender_domains": row.sender_domains_json or [],
+            "allowed_link_domains": row.allowed_link_domains_json or [],
+            "require_spf": row.require_spf,
+            "require_dkim": row.require_dkim,
+            "require_dmarc": row.require_dmarc,
+            "source": "tenant_registry",
+        }
+        for row in rows
+    ]
 
 
 def _credentials(token: str | None) -> tuple[str, str]:
@@ -597,7 +628,12 @@ def get_message(
     address, password = _credentials(token)
     try:
         payload = message(address, password, uid=_uid(uid), folder=folder)
-        intelligence = analyze_mail_message(payload, mailbox_address=address)
+        mailbox, trusted_registry = _trusted_sender_registry(db, address)
+        intelligence = analyze_mail_message(
+            payload,
+            mailbox_address=address,
+            trusted_sender_registry=trusted_registry,
+        )
         behavior = observe_sender_behavior(address, payload)
         if behavior is not None:
             if bool((intelligence.get("trust") or {}).get("verified")):
@@ -615,12 +651,6 @@ def get_message(
                 }
             intelligence["behavior"] = behavior
         payload["intelligence"] = intelligence
-        mailbox = db.scalar(
-            select(Mailbox).where(
-                Mailbox.address == address.lower(),
-                Mailbox.status == MailboxStatus.active,
-            )
-        )
         if mailbox is not None:
             try:
                 shadow = _shadow_score_message(
@@ -648,11 +678,17 @@ def get_message_intelligence(
     uid: str,
     folder: str = Query(default="INBOX", min_length=1, max_length=255),
     token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+    db: Session = Depends(get_db),
 ):
     address, password = _credentials(token)
     try:
         payload = message(address, password, uid=_uid(uid), folder=folder)
-        return analyze_mail_message(payload, mailbox_address=address)
+        _mailbox, trusted_registry = _trusted_sender_registry(db, address)
+        return analyze_mail_message(
+            payload,
+            mailbox_address=address,
+            trusted_sender_registry=trusted_registry,
+        )
     except WebmailError as exc:
         raise _failure(exc) from exc
 
@@ -663,6 +699,7 @@ def analyze_message_batch(
     limit: int = Query(default=20, ge=1, le=25),
     offset: int = Query(default=0, ge=0, le=100000),
     token: Annotated[str | None, Cookie(alias=settings.webmail_session_cookie_name)] = None,
+    db: Session = Depends(get_db),
 ):
     address, password = _credentials(token)
     try:
@@ -675,13 +712,18 @@ def analyze_message_batch(
             query="",
         )
         source_items = listing.get("items", []) if isinstance(listing, dict) else []
+        _mailbox, trusted_registry = _trusted_sender_registry(db, address)
         analyzed = [
             {
                 "uid": str(item.get("uid") or ""),
                 "subject": item.get("subject"),
                 "from": item.get("from"),
                 "date": item.get("date"),
-                "intelligence": analyze_mail_message(item, mailbox_address=address),
+                "intelligence": analyze_mail_message(
+                    item,
+                    mailbox_address=address,
+                    trusted_sender_registry=trusted_registry,
+                ),
             }
             for item in source_items
         ]
@@ -724,7 +766,12 @@ def save_message_intelligence_verdict(
     except WebmailError as exc:
         raise _failure(exc) from exc
 
-    intelligence = analyze_mail_message(message_payload, mailbox_address=address)
+    _mailbox, trusted_registry = _trusted_sender_registry(db, address)
+    intelligence = analyze_mail_message(
+        message_payload,
+        mailbox_address=address,
+        trusted_sender_registry=trusted_registry,
+    )
     message_ref = str(message_payload.get("message_id") or f"{folder}:{uid}")[:512]
     existing = db.scalar(
         select(PhishingFinding).where(
