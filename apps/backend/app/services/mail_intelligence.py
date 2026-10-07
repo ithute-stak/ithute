@@ -225,13 +225,14 @@ def analyze_mail_message(
             "evidence": auth_failures,
         })
 
-    if trust["registry_match"] and trust["authentication"]["any_failure"]:
+    required_auth_mismatch = list((trust.get("authentication_policy") or {}).get("missing_or_failed") or [])
+    if trust["registry_match"] and required_auth_mismatch:
         risk_score += 35
         bec_score += 12
         risk_signals.append({
             "signal": "registered_sender_authentication_mismatch",
             "weight": 35,
-            "evidence": [trust["sender"], trust["trust_reason"]],
+            "evidence": [trust["sender"], *required_auth_mismatch[:3]],
         })
 
     if reply_domain and sender_domain and _registrable_hint(reply_domain) != _registrable_hint(sender_domain):
