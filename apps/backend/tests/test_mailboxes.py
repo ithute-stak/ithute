@@ -553,3 +553,10 @@ def test_member_without_mail_permission_is_forbidden(client, tenant_member):
     headers = login(client, tenant_member.email)
     response = client.get(f"/api/v1/tenants/{membership.tenant_id}/mailboxes", headers=headers)
     assert response.status_code == 403
+
+
+def test_system_mailbox_catalog_includes_dedicated_auth_sender():
+    from app.services.system_mailboxes import SYSTEM_MAILBOXES
+
+    addresses = {local_part for local_part, _display_name in SYSTEM_MAILBOXES}
+    assert "auth" in addresses
