@@ -28,9 +28,10 @@ def upgrade() -> None:
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("first_seen_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("last_seen_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint("user_id", "token_hash", name="uq_trusted_device_user_token"),
     )
     op.create_index("ix_trusted_devices_user_id", "trusted_devices", ["user_id"])
-    op.create_index("ix_trusted_devices_token_hash", "trusted_devices", ["token_hash"], unique=True)
+    op.create_index("ix_trusted_devices_token_hash", "trusted_devices", ["token_hash"])
 
     op.create_table(
         "recovery_codes",
