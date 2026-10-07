@@ -141,15 +141,15 @@ def test_protected_endpoint_rejects_missing_token(client):
     assert response.status_code == 401
 
 
-def test_auth_capabilities_hide_local_controls_when_production_local_auth_is_disabled(client, monkeypatch):
+def test_auth_capabilities_keep_password_login_enabled_by_default_in_production(client, monkeypatch):
     monkeypatch.setattr(settings, "environment", "production")
-    monkeypatch.setattr(settings, "legacy_local_auth_production_enabled", False)
+    monkeypatch.setattr(settings, "local_auth_enabled", True)
 
     response = client.get("/api/v1/auth/capabilities")
 
     assert response.status_code == 200
-    assert response.json()["local_auth_enabled"] is False
-    assert response.json()["local_security_controls_enabled"] is False
+    assert response.json()["local_auth_enabled"] is True
+    assert response.json()["local_security_controls_enabled"] is True
 
 
 def test_production_central_session_can_read_me_when_local_auth_is_disabled(client, platform_owner, monkeypatch):
@@ -165,17 +165,34 @@ def test_production_central_session_can_read_me_when_local_auth_is_disabled(clie
     assert response.json()["email"] == platform_owner.email
 
 
-def test_production_disables_legacy_local_auth_surface_by_default(client, platform_owner, monkeypatch):
+def test_central_auth_enforcement_blocks_password_login_across_devices(client, db, platform_owner, monkeypatch):
     monkeypatch.setattr(settings, "environment", "production")
-    monkeypatch.setattr(settings, "legacy_local_auth_production_enabled", False)
+    monkeypatch.setattr(settings, "local_auth_enabled", True)
+
+    user = db.get(User, platform_owner.id)
+    user.central_auth_enforced = True
+    user.central_auth_enforced_at = datetime.now(timezone.utc)
+    db.commit()
 
     login = client.post(
         "/api/v1/auth/login",
         json={"email": platform_owner.email, "password": PASSWORD},
     )
-    assert login.status_code == 404
 
-    legacy_token = create_access_token(str(platform_owner.id), {"sv": platform_owner.session_version})
-    protected = client.get("/api/v1/tenants", headers={"Authorization": f"Bearer {legacy_token}"})
-    assert protected.status_code == 401
-    assert protected.json()["detail"] == "Legacy local authentication is disabled"
+    assert login.status_code == 403
+    assert login.json()["detail"]["code"] == "CENTRAL_AUTH_REQUIRED"
+    assert login.json()["detail"]["message"] == "This account requires Ithute Central Authentication."
+
+
+def test_existing_local_session_is_rejected_after_central_auth_is_enforced(client, db, platform_owner):
+    user = db.get(User, platform_owner.id)
+    token = create_access_token(str(user.id), {"sv": user.session_version})
+
+    user.central_auth_enforced = True
+    user.central_auth_enforced_at = datetime.now(timezone.utc)
+    db.commit()
+
+    response = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "CENTRAL_AUTH_REQUIRED"

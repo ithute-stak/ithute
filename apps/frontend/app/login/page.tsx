@@ -34,7 +34,7 @@ export default function Login() {
   const [mfaRequired, setMfaRequired] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [capsLock, setCapsLock] = useState(false);
-  const [localAuthEnabled, setLocalAuthEnabled] = useState(false);
+  const [localAuthEnabled, setLocalAuthEnabled] = useState(true);
   const [centralAuthEnabled, setCentralAuthEnabled] = useState(true);
 
   useEffect(() => {
@@ -73,7 +73,15 @@ export default function Login() {
 
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        const detail = String(body.detail || "We could not sign you in with those credentials.");
+        const structured = typeof body.detail === "object" && body.detail ? body.detail : null;
+        const code = structured?.code ? String(structured.code) : "";
+        const detail = structured?.message
+          ? String(structured.message)
+          : String(body.detail || "We could not sign you in with those credentials.");
+        if (code === "CENTRAL_AUTH_REQUIRED") {
+          window.location.assign(`${API}/auth/ithute/login`);
+          return;
+        }
         if (detail.toLowerCase().includes("mfa code required")) {
           setMfaRequired(true);
           setError("");
@@ -172,26 +180,6 @@ export default function Login() {
               </div>
             </div>
 
-            {!mfaRequired && centralAuthEnabled ? (
-              <div className="mt-6">
-                <a
-                  href={`${API}/auth/ithute/login`}
-                  className="group flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-[#b7d1c8] bg-[#eff8f4] px-4 text-sm font-extrabold text-[#174a40] shadow-sm transition hover:-translate-y-0.5 hover:border-[#7fb0a0] hover:bg-[#e7f4ef]"
-                >
-                  <Fingerprint size={18} />
-                  Sign in with Ithute
-                  <ArrowRight size={16} className="transition group-hover:translate-x-0.5" />
-                </a>
-                {localAuthEnabled ? (
-                  <div className="my-5 flex items-center gap-3 text-[10px] font-extrabold uppercase tracking-[.12em] text-[#98a49e]">
-                    <span className="h-px flex-1 bg-[#e1e7e3]" />
-                    <span>or use a local account</span>
-                    <span className="h-px flex-1 bg-[#e1e7e3]" />
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
             {localAuthEnabled || mfaRequired ? (
             <form className={mfaRequired ? "mt-6 space-y-4" : "space-y-4"} onSubmit={submit}>
               <div>
@@ -241,6 +229,28 @@ export default function Login() {
                 This deployment uses Ithute central authentication. Local password sign-in is disabled.
               </div>
             )}
+
+            {!mfaRequired && centralAuthEnabled ? (
+              <div className="mt-5 rounded-2xl border border-[#d9e6e1] bg-[#f7faf8] p-4">
+                <div className="flex items-start gap-3">
+                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#e8f2ee] text-[#285b55]">
+                    <Fingerprint size={17} />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-xs font-black text-[#243b31]">Ithute Central Authentication</p>
+                    <p className="mt-1 text-[10px] leading-5 text-[#718078]">
+                      Optional account hardening. If you permanently enable it in Security, every device will be required to use Central Authentication.
+                    </p>
+                    <a
+                      href={`${API}/auth/ithute/login`}
+                      className="mt-3 inline-flex items-center gap-2 text-[11px] font-extrabold text-[#285b55] hover:text-[#123a38]"
+                    >
+                      Sign in with Central Authentication <ArrowRight size={13} />
+                    </a>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             <div className="mt-6 border-t border-[#e5eae7] pt-5">
               <div className="flex items-center justify-center gap-2 text-[10px] font-semibold text-[#87938d]"><BadgeCheck size={13} className="text-[#4f7d72]" /> HttpOnly cookies · rotating sessions · MFA capable</div>

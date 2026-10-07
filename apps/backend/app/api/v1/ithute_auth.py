@@ -11,14 +11,14 @@ import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import central_user_from_claims, get_current_local_user, get_current_user
 from app.core.config import settings
 from app.core.security import verify_password
 from app.db.session import get_db
-from app.models import AuditLog, User
+from app.models import AuditLog, User, UserSession
 from app.services.ithute_auth import (
     IthuteAuthDisabled,
     IthuteAuthUnavailable,
@@ -32,6 +32,7 @@ _SSO_STATE_COOKIE = "mdns_ithute_oauth_state"
 _SSO_VERIFIER_COOKIE = "mdns_ithute_oauth_verifier"
 _SSO_NONCE_COOKIE = "mdns_ithute_oauth_nonce"
 _SSO_NEXT_COOKIE = "mdns_ithute_oauth_next"
+_SSO_ENROLL_COOKIE = "mdns_ithute_oauth_enroll"
 _SSO_TTL_SECONDS = 600
 
 
@@ -87,6 +88,51 @@ def _set_central_session_cookies(
     common = _cookie_options(request)
     response.set_cookie(settings.access_cookie_name, access_token, max_age=max(60, expires_in), **common)
     response.set_cookie(settings.refresh_cookie_name, refresh_token, max_age=30 * 86400, **common)
+
+
+def _central_enrollment_token(user: User) -> str:
+    now = datetime.now(timezone.utc)
+    return jwt.encode(
+        {
+            "sub": str(user.id),
+            "purpose": "central_auth_enrollment",
+            "iat": int(now.timestamp()),
+            "exp": int(now.timestamp()) + _SSO_TTL_SECONDS,
+        },
+        settings.secret_key,
+        algorithm="HS256",
+    )
+
+
+def _decode_central_enrollment_token(raw: str) -> UUID:
+    try:
+        payload = jwt.decode(
+            raw,
+            settings.secret_key,
+            algorithms=["HS256"],
+            options={"require": ["sub", "purpose", "iat", "exp"]},
+        )
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(status_code=400, detail="Central authentication enrollment is invalid or expired") from exc
+    if payload.get("purpose") != "central_auth_enrollment":
+        raise HTTPException(status_code=400, detail="Central authentication enrollment is invalid or expired")
+    return UUID(str(payload["sub"]))
+
+
+@router.get("/enroll")
+def central_enroll(
+    request: Request,
+    current: User = Depends(get_current_local_user),
+):
+    if current.central_auth_enforced:
+        return RedirectResponse(f"{settings.frontend_url.rstrip('/')}/security", status_code=303)
+    response = central_login(request, next="/security")
+    response.set_cookie(
+        _SSO_ENROLL_COOKIE,
+        _central_enrollment_token(current),
+        **{**_cookie_options(request), "max_age": _SSO_TTL_SECONDS},
+    )
+    return response
 
 
 @router.get("/login")
@@ -160,7 +206,55 @@ async def central_callback(
         claims = decode_ithute_access_token(access_token)
     except (IthuteAuthDisabled, IthuteAuthUnavailable, jwt.InvalidTokenError) as exc:
         raise HTTPException(status_code=401, detail="Invalid central sign-in session") from exc
-    central_user_from_claims(claims, db)
+
+    enrollment = request.cookies.get(_SSO_ENROLL_COOKIE) or ""
+    if enrollment:
+        local_user_id = _decode_central_enrollment_token(enrollment)
+        local_user = db.get(User, local_user_id)
+        if local_user is None or not local_user.is_active:
+            raise HTTPException(status_code=401, detail="Central authentication enrollment account is unavailable")
+
+        claim_email = str(claims.get("email") or "").strip().lower()
+        if not claim_email or claim_email != local_user.email.strip().lower():
+            raise HTTPException(
+                status_code=409,
+                detail="The Ithute Identity email must match the signed-in account before Central Authentication can be enabled.",
+            )
+
+        central_subject = UUID(str(claims["sub"]))
+        other = db.scalar(
+            select(User).where(
+                User.auth_user_id == central_subject,
+                User.id != local_user.id,
+            )
+        )
+        if other is not None:
+            raise HTTPException(status_code=409, detail="This Ithute Identity is already linked to another account")
+        if local_user.auth_user_id not in (None, central_subject):
+            raise HTTPException(status_code=409, detail="This account is already linked to another Ithute Identity")
+
+        now = datetime.now(timezone.utc)
+        local_user.auth_user_id = central_subject
+        local_user.central_auth_enforced = True
+        local_user.central_auth_enforced_at = local_user.central_auth_enforced_at or now
+        local_user.session_version += 1
+        db.execute(
+            update(UserSession)
+            .where(UserSession.user_id == local_user.id, UserSession.revoked_at.is_(None))
+            .values(revoked_at=now)
+        )
+        db.add(
+            AuditLog(
+                actor_user_id=local_user.id,
+                action="auth.ithute.enroll_enforce",
+                resource_type="user",
+                resource_id=str(local_user.id),
+                metadata_json='{"irreversible":true,"dual_proof":true}',
+            )
+        )
+        db.commit()
+    else:
+        central_user_from_claims(claims, db)
 
     response = RedirectResponse(f"{settings.frontend_url.rstrip('/')}{next_path}", status_code=303)
     _set_central_session_cookies(
@@ -170,7 +264,7 @@ async def central_callback(
         refresh_token=refresh_token,
         expires_in=int(payload.get("expires_in") or 600),
     )
-    for name in (_SSO_STATE_COOKIE, _SSO_VERIFIER_COOKIE, _SSO_NONCE_COOKIE, _SSO_NEXT_COOKIE):
+    for name in (_SSO_STATE_COOKIE, _SSO_VERIFIER_COOKIE, _SSO_NONCE_COOKIE, _SSO_NEXT_COOKIE, _SSO_ENROLL_COOKIE):
         response.delete_cookie(name, path="/")
     return response
 
@@ -230,6 +324,8 @@ def status_view(current: User = Depends(get_current_user)):
         "enabled": ithute_auth_enabled(),
         "linked": current.auth_user_id is not None,
         "auth_user_id": str(current.auth_user_id) if current.auth_user_id else None,
+        "enforced": current.central_auth_enforced,
+        "enforced_at": current.central_auth_enforced_at.isoformat() if current.central_auth_enforced_at else None,
     }
 
 
@@ -292,12 +388,69 @@ def link_account(
     }
 
 
+@router.post("/enforce")
+def enforce_central_auth(
+    payload: IthuteUnlinkRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_local_user),
+):
+    if current.central_auth_enforced:
+        return {
+            "enforced": True,
+            "enforced_at": current.central_auth_enforced_at.isoformat() if current.central_auth_enforced_at else None,
+            "message": "Central authentication is permanently enforced for this account.",
+        }
+    if current.auth_user_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "ITHUTE_ACCOUNT_NOT_LINKED",
+                "message": "Link this account to Ithute Identity before enforcing central authentication.",
+            },
+        )
+    if not verify_password(payload.current_password, current.password_hash):
+        raise HTTPException(status_code=400, detail="Current Mailbox DNS password is incorrect")
+
+    now = datetime.now(timezone.utc)
+    current.central_auth_enforced = True
+    current.central_auth_enforced_at = now
+    current.session_version += 1
+    db.execute(
+        update(UserSession)
+        .where(UserSession.user_id == current.id, UserSession.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+    db.add(
+        AuditLog(
+            actor_user_id=current.id,
+            action="auth.ithute.enforce",
+            resource_type="user",
+            resource_id=str(current.id),
+            metadata_json='{"irreversible":true}',
+        )
+    )
+    db.commit()
+    return {
+        "enforced": True,
+        "enforced_at": now.isoformat(),
+        "message": "Central authentication is now permanently enforced for this account.",
+    }
+
+
 @router.post("/unlink")
 def unlink_account(
     payload: IthuteUnlinkRequest,
     db: Session = Depends(get_db),
     current: User = Depends(get_current_local_user),
 ):
+    if current.central_auth_enforced:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "CENTRAL_AUTH_PERMANENTLY_ENFORCED",
+                "message": "Central authentication is permanently enforced for this account and cannot be disabled.",
+            },
+        )
     if not verify_password(payload.current_password, current.password_hash):
         raise HTTPException(status_code=400, detail="Current Mailbox DNS password is incorrect")
     if current.auth_user_id is None:

@@ -29,11 +29,19 @@ type AuthCapabilities = {
   local_security_controls_enabled: boolean;
 };
 
+type CentralAuthStatus = {
+  enabled: boolean;
+  linked: boolean;
+  enforced: boolean;
+  enforced_at?: string | null;
+};
+
 export default function SecurityPage() {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [localControls, setLocalControls] = useState(false);
+  const [centralStatus, setCentralStatus] = useState<CentralAuthStatus | null>(null);
   const [secret, setSecret] = useState("");
   const [uri, setUri] = useState("");
   const [code, setCode] = useState("");
@@ -42,9 +50,10 @@ export default function SecurityPage() {
   const [confirm, setConfirm] = useState("");
 
   async function load() {
-    const [meResponse, capabilityResponse] = await Promise.all([
+    const [meResponse, capabilityResponse, centralResponse] = await Promise.all([
       apiFetch("/auth/me", { cache: "no-store" }),
       fetch(`${API}/auth/capabilities`, { cache: "no-store" }),
+      apiFetch("/auth/ithute/status", { cache: "no-store" }),
     ]);
 
     if (meResponse.status === 401) {
@@ -56,7 +65,11 @@ export default function SecurityPage() {
     const capabilities: AuthCapabilities | null = capabilityResponse.ok
       ? await capabilityResponse.json()
       : null;
-    const localSecurityEnabled = Boolean(capabilities?.local_security_controls_enabled);
+    const central: CentralAuthStatus | null = centralResponse.ok
+      ? await centralResponse.json()
+      : null;
+    setCentralStatus(central);
+    const localSecurityEnabled = Boolean(capabilities?.local_security_controls_enabled) && !Boolean(central?.enforced);
     setLocalControls(localSecurityEnabled);
 
     if (!localSecurityEnabled) {
@@ -154,6 +167,50 @@ export default function SecurityPage() {
             </StatusBadge>
           }
         />
+
+        {centralStatus?.enabled ? (
+          <section className="surface-card p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="grid h-11 w-11 place-items-center rounded-xl bg-[#eef4f1] text-[var(--admin-pine)]">
+                  <ShieldCheck size={20} />
+                </div>
+                <div>
+                  <p className="text-sm font-black">Permanent Central Authentication</p>
+                  <p className="mt-1 max-w-2xl text-[11px] leading-5 text-[var(--admin-muted)]">
+                    This is an account-level backend policy. Once enabled, password login is blocked and every device must use Ithute Central Authentication. It cannot be switched off.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-pressed={Boolean(centralStatus.enforced)}
+                disabled={centralStatus.enforced}
+                onClick={() => {
+                  if (!centralStatus.enforced) window.location.assign(`${API}/auth/ithute/enroll`);
+                }}
+                className={`relative h-7 w-12 shrink-0 rounded-full transition ${centralStatus.enforced ? "cursor-not-allowed bg-emerald-600" : "bg-slate-300 hover:bg-slate-400"}`}
+                title={centralStatus.enforced ? "Central Authentication is permanently locked on" : "Permanently enable Central Authentication"}
+              >
+                <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${centralStatus.enforced ? "left-6" : "left-1"}`} />
+              </button>
+            </div>
+            {centralStatus.enforced ? (
+              <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-[11px] font-bold text-emerald-800">
+                Locked on permanently{centralStatus.enforced_at ? ` · enabled ${new Date(centralStatus.enforced_at).toLocaleString()}` : ""}. This state is stored on the server and follows the account to every device.
+              </div>
+            ) : (
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <a className="btn-primary" href={`${API}/auth/ithute/enroll`}>
+                  Enable permanently
+                </a>
+                <p className="text-[10px] leading-5 text-[var(--admin-muted)]">
+                  You will confirm your Ithute Identity before the backend locks this policy on.
+                </p>
+              </div>
+            )}
+          </section>
+        ) : null}
 
         {!localControls ? (
           <section className="surface-card p-5">
