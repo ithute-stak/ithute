@@ -46,7 +46,7 @@ def _require_local_auth_surface() -> None:
         raise HTTPException(status_code=404, detail="Local authentication is disabled")
 
 
-router = APIRouter(prefix="/auth", tags=["auth"], dependencies=[Depends(_require_local_auth_surface)])
+router = APIRouter(prefix="/auth", tags=["auth"])
 PASSWORD_RESET_EXPIRE_MINUTES = 30
 # Always perform an expensive password verification even when the email address
 # does not exist. This makes unknown-user responses less useful for timing based
@@ -133,6 +133,7 @@ def _require_verified_email(user: User) -> None:
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+    _require_local_auth_surface()
     _require_secure_auth_transport(request)
     email = str(payload.email).strip().lower()
     enforce_login_rate_limit(request, email)
@@ -175,6 +176,7 @@ def request_password_reset(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    _require_local_auth_surface()
     _require_secure_auth_transport(request, allow_bootstrap=False)
     _require_recovery_delivery()
     email = str(payload.email).strip().lower()
@@ -241,6 +243,7 @@ def complete_password_reset(
     response: Response,
     db: Session = Depends(get_db),
 ):
+    _require_local_auth_surface()
     _require_secure_auth_transport(request, allow_bootstrap=False)
     now = datetime.now(timezone.utc)
     token = db.scalar(
@@ -285,6 +288,7 @@ def complete_password_reset(
 
 @router.post("/refresh", response_model=TokenResponse)
 def refresh(request: Request, response: Response, db: Session = Depends(get_db)):
+    _require_local_auth_surface()
     _require_secure_auth_transport(request)
     raw = request.cookies.get(settings.refresh_cookie_name)
     if not raw:
@@ -326,6 +330,7 @@ def me(current: User = Depends(get_current_user)):
 
 @router.get("/sessions", response_model=list[SessionOut])
 def list_sessions(db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    _require_local_auth_surface()
     rows = db.scalars(select(UserSession).where(UserSession.user_id == current.id).order_by(UserSession.created_at.desc())).all()
     return [
         SessionOut(
@@ -342,6 +347,7 @@ def list_sessions(db: Session = Depends(get_db), current: User = Depends(get_cur
 
 @router.delete("/sessions/{session_id}", status_code=204)
 def revoke_session(session_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    _require_local_auth_surface()
     session = db.get(UserSession, session_id)
     if not session or session.user_id != current.id:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -353,6 +359,7 @@ def revoke_session(session_id: UUID, db: Session = Depends(get_db), current: Use
 
 @router.delete("/sessions", status_code=204)
 def revoke_all_sessions(response: Response, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    _require_local_auth_surface()
     _revoke_all_sessions(db, current.id)
     current.session_version += 1
     db.add(AuditLog(actor_user_id=current.id, action="auth.sessions.revoke_all", resource_type="user", resource_id=str(current.id)))
@@ -362,6 +369,7 @@ def revoke_all_sessions(response: Response, db: Session = Depends(get_db), curre
 
 @router.post("/mfa/setup", response_model=MfaSetupResponse)
 def mfa_setup(db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    _require_local_auth_surface()
     if current.mfa_enabled:
         raise HTTPException(status_code=409, detail="Disable existing MFA before starting a new setup")
     secret = generate_totp_secret()
@@ -373,6 +381,7 @@ def mfa_setup(db: Session = Depends(get_db), current: User = Depends(get_current
 
 @router.post("/mfa/enable", status_code=204)
 def mfa_enable(payload: MfaCodeRequest, response: Response, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    _require_local_auth_surface()
     if not current.mfa_secret:
         raise HTTPException(status_code=400, detail="MFA setup required")
     try:
@@ -391,6 +400,7 @@ def mfa_enable(payload: MfaCodeRequest, response: Response, db: Session = Depend
 
 @router.post("/mfa/disable", status_code=204)
 def mfa_disable(payload: MfaCodeRequest, response: Response, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    _require_local_auth_surface()
     if not current.mfa_enabled or not current.mfa_secret:
         raise HTTPException(status_code=400, detail="MFA is not enabled")
     try:
@@ -415,6 +425,7 @@ def change_password(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
+    _require_local_auth_surface()
     if not verify_password(payload.current_password, current.password_hash):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     if payload.current_password == payload.new_password:
