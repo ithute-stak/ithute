@@ -64,7 +64,7 @@ export default function ForgotPasswordPage() {
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[#123a38] text-sm font-black text-[#f0dd80]">MD</div>
-              <div><p className="text-sm font-black">Mailbox DNS</p><p className="text-[9px] font-black uppercase tracking-[.16em] text-[#89958e]">Account recovery</p></div>
+              <div><p className="text-sm font-black">Ithute Identity</p><p className="text-[9px] font-black uppercase tracking-[.16em] text-[#89958e]">Account recovery</p></div>
             </div>
             <ShieldCheck size={21} className="text-[#285b55]" />
           </div>
@@ -95,13 +95,13 @@ export default function ForgotPasswordPage() {
             <div className="py-8 text-center">
               <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-emerald-50 text-emerald-700"><Mail size={22} /></div>
               <h1 className="mt-5 text-[30px] font-black tracking-[-.04em]">Check your inbox</h1>
-              <p className="mx-auto mt-3 max-w-[390px] text-[12px] leading-6 text-[#748179]">If an active account matches <span className="font-black text-[#35463c]">{email}</span>, a one-time password recovery link has been sent. This response is deliberately the same for registered and unregistered addresses.</p>
+              <p className="mx-auto mt-3 max-w-[390px] text-[12px] leading-6 text-[#748179]">If an eligible account matches <span className="font-black text-[#35463c]">{email}</span>, a one-time verification link has been sent from <strong>auth@ithute.co.ls</strong>. This response is deliberately the same for registered and unregistered addresses.</p>
             </div>
           )}
 
           <div className="mt-6 border-t border-[#e5eae7] pt-5">
             <Link href="/login" className="inline-flex items-center gap-2 text-[11px] font-black text-[#285b55] hover:underline"><ArrowLeft size={14} /> Back to sign in</Link>
-            <p className="mt-4 text-[9px] leading-4 text-[#98a39d]">Recovery links are single-use. A successful password reset revokes every existing signed-in session for the account.</p>
+            <p className="mt-4 text-[9px] leading-4 text-[#98a39d]">Recovery links are single-use and expire after 30 minutes. A successful password reset revokes every existing local session. Accounts permanently protected by Central Authentication stay on Central Authentication.</p>
           </div>
         </section>
       </div>
