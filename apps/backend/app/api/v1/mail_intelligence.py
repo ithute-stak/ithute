@@ -175,6 +175,7 @@ def overview(tenant_id: uuid.UUID, db: Session = Depends(get_db), current: User 
         "legal_holds": db.scalar(select(func.count()).select_from(MailRetentionPolicy).where(MailRetentionPolicy.tenant_id == tenant_id, MailRetentionPolicy.legal_hold.is_(True))) or 0,
         "phishing_open": db.scalar(select(func.count()).select_from(PhishingFinding).where(PhishingFinding.tenant_id == tenant_id, PhishingFinding.resolved.is_(False))) or 0,
         "automations_enabled": db.scalar(select(func.count()).select_from(MailAutomationRule).where(MailAutomationRule.tenant_id == tenant_id, MailAutomationRule.enabled.is_(True))) or 0,
+        "trusted_senders": db.scalar(select(func.count()).select_from(TrustedSenderProfile).where(TrustedSenderProfile.tenant_id == tenant_id, TrustedSenderProfile.active.is_(True))) or 0,
         "latest_dmarc": ({"domain": latest.domain, "period_end": latest.period_end.isoformat(), "total_messages": latest.total_messages, "aligned_messages": latest.aligned_messages, "failed_messages": latest.failed_messages, "alignment_rate": round((latest.aligned_messages / latest.total_messages) * 100, 2) if latest.total_messages else 0} if latest else None),
     }
 
