@@ -114,6 +114,26 @@ class MailAutomationRule(Base):
 
 
 
+class OrganisationIdentityProfile(Base):
+    __tablename__ = "organisation_identity_profiles"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "canonical_name", name="uq_org_identity_tenant_name"),
+        Index("ix_org_identity_tenant_active", "tenant_id", "active"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    canonical_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    aliases_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    legitimate_domains_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    category: Mapped[str] = mapped_column(String(80), nullable=False, default="business")
+    criticality: Mapped[str] = mapped_column(String(24), nullable=False, default="normal")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class SenderReputationProfile(Base):
     __tablename__ = "sender_reputation_profiles"
     __table_args__ = (
