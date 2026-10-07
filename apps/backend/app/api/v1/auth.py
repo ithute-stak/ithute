@@ -264,7 +264,9 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
         contextual_signals=contextual_signals,
     )
 
-    if risk["recommended_action"] == "block":
+    adaptive_enforcement = settings.environment.lower() == "production"
+
+    if adaptive_enforcement and risk["recommended_action"] == "block":
         db.add(AuditLog(
             actor_user_id=user.id,
             action="auth.login.blocked",
@@ -310,7 +312,7 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
         )
 
     adaptive_verified = False
-    if risk["recommended_action"] == "step_up" and not mfa_verified:
+    if adaptive_enforcement and risk["recommended_action"] == "step_up" and not mfa_verified:
         if payload.step_up_challenge_id and payload.step_up_code:
             adaptive_verified = verify_adaptive_challenge(
                 user=user,
