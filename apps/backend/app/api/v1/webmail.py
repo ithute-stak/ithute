@@ -22,6 +22,7 @@ from app.services.mail_first_contact import (
 )
 from app.services.mail_intelligence import analyze_mail_message
 from app.services.mail_intelligence_learning import feature_snapshot, training_readiness
+from app.services.mail_identity_risk import publish_verified_mail_risk
 from app.services.mail_sender_behavior import observe_sender_behavior
 from app.services.mail_threat_model import predict
 from app.services.mail_threat_shadow import baseline_probabilities
@@ -745,13 +746,21 @@ def save_message_intelligence_verdict(
         )
         _automatic_rollback_models(db, tenant_id=mailbox.tenant_id)
         db.commit()
+        existing_confidence = float((existing.metadata_json or {}).get("label_confidence") or payload.confidence)
+        risk_published = publish_verified_mail_risk(
+            mailbox_address=address,
+            message_ref=message_ref,
+            label=existing_label,
+            confidence=existing_confidence,
+        )
         return {
             "saved": True,
             "finding_id": str(existing.id),
             "message_ref": message_ref,
             "label": existing_label,
-            "confidence": float((existing.metadata_json or {}).get("label_confidence") or payload.confidence),
+            "confidence": existing_confidence,
             "already_verified": True,
+            "identity_risk_published": risk_published,
         }
 
     snapshot = feature_snapshot(message_payload, intelligence)
@@ -785,6 +794,12 @@ def save_message_intelligence_verdict(
     _automatic_rollback_models(db, tenant_id=mailbox.tenant_id)
     db.commit()
     db.refresh(finding)
+    risk_published = publish_verified_mail_risk(
+        mailbox_address=address,
+        message_ref=message_ref,
+        label=payload.label,
+        confidence=payload.confidence,
+    )
     return {
         "saved": True,
         "finding_id": str(finding.id),
@@ -792,6 +807,7 @@ def save_message_intelligence_verdict(
         "label": payload.label,
         "confidence": payload.confidence,
         "already_verified": False,
+        "identity_risk_published": risk_published,
     }
 
 
