@@ -103,7 +103,7 @@ def main() -> None:
             lambda route: route.fulfill(status=200, content_type="application/json", body='{"status":"ok"}'),
         )
         page.goto(f"{BASE_URL}/login")
-        page.get_by_role("link", name="Sign in with Ithute").click()
+        page.get_by_role("link", name="Sign in with Central Authentication").click()
         page.wait_for_url(f"{BASE_URL}/dashboard")
 
         page.get_by_text("Control Centre", exact=False).first.wait_for()
