@@ -73,15 +73,26 @@ def parent_ds_status(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get
     selected = preferred_ds(ds_values)
     compatible = preferred_ds(ds_values, allowed_algorithms=OPENSRS_DNSSEC_ALGORITHMS)
     registrar = OpenSRSRegistrar()
+    chosen = compatible or selected
+    diagnostics = delegation_diagnostics(domain.ascii_name)
+    parent_records = []
+    for value in diagnostics.get("parent_ds") or []:
+        try:
+            parent_records.append(DSRecord.parse(value))
+        except (TypeError, ValueError):
+            continue
     result = {
         "provider": "opensrs",
         "configured": registrar.configured,
         "domain": domain.ascii_name,
-        "recommended": (compatible or selected).as_opensrs() if (compatible or selected) else None,
-        "recommended_text": (compatible or selected).text() if (compatible or selected) else None,
+        "recommended": chosen.as_opensrs() if chosen else None,
+        "recommended_text": chosen.text() if chosen else None,
         "registrar_compatible": compatible is not None,
         "auto_prepare_supported": True,
         "registrar_records": [],
+        "parent_records": [record.as_opensrs() for record in parent_records],
+        "parent_contains_recommended": bool(chosen and chosen in parent_records),
+        "parent_ds_present": bool(parent_records),
     }
     if registrar.configured:
         try:
