@@ -39,6 +39,7 @@ class User(Base):
     devices: Mapped[list["Device"]] = relationship(back_populates="user")
     recovery_codes: Mapped[list["MfaRecoveryCode"]] = relationship(back_populates="user")
     passkeys: Mapped[list["PasskeyCredential"]] = relationship(back_populates="user")
+    external_risk_signals: Mapped[list["ExternalRiskSignal"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class Application(Base):
@@ -167,6 +168,26 @@ class WebAuthnChallenge(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class ExternalRiskSignal(Base):
+    __tablename__ = "external_risk_signals"
+    __table_args__ = (UniqueConstraint("source_client_id", "source_ref", name="uq_external_risk_source_ref"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_client_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    source_ref: Mapped[str] = mapped_column(String(160), nullable=False)
+    signal_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False)
+    verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    risk_weight: Mapped[int] = mapped_column(Integer, nullable=False)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+
+    user: Mapped[User] = relationship(back_populates="external_risk_signals")
 
 
 class AuditEvent(Base):
