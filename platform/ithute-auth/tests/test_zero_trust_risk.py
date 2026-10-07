@@ -61,3 +61,57 @@ def test_privileged_password_auth_is_high_risk():
     assert result.score >= 70
     assert result.level == "high"
     assert "privileged_without_passkey" in result.reasons
+
+
+
+class ScalarRows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class RiskDb:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def scalars(self, _statement):
+        return ScalarRows(self.rows)
+
+
+def test_human_verified_phishing_exposure_raises_identity_risk():
+    signal = SimpleNamespace(
+        signal_type="mail.phishing.verified",
+        risk_weight=30,
+    )
+    user = _user(id="user-1")
+    result = assess_login_risk(
+        db=RiskDb([signal]),
+        user=user,
+        request=RequestStub(),
+        device=SimpleNamespace(trusted_at=object()),
+        auth_method="password",
+    )
+
+    assert result.score == 45
+    assert result.level == "medium"
+    assert "recent_verified_phishing_exposure" in result.reasons
+
+
+def test_external_risk_contribution_is_capped():
+    rows = [
+        SimpleNamespace(signal_type="mail.phishing.verified", risk_weight=30),
+        SimpleNamespace(signal_type="mail.bec.verified", risk_weight=90),
+    ]
+    result = assess_login_risk(
+        db=RiskDb(rows),
+        user=_user(id="user-1"),
+        request=RequestStub(),
+        device=SimpleNamespace(trusted_at=object()),
+        auth_method="passkey",
+    )
+
+    assert result.score == 40
+    assert result.level == "medium"
+    assert "recent_verified_bec_exposure" in result.reasons
