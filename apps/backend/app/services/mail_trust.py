@@ -190,7 +190,16 @@ def trusted_sender_evidence(
     system = ITHUTE_SYSTEM_SENDERS.get(sender)
     tenant = _tenant_registry_match(sender, sender_domain, registry_entries)
 
-    if tenant is not None:
+    if system is not None:
+        # First-party security identities are immutable and cannot be weakened by
+        # a tenant-defined profile for the same address or domain.
+        registry = {
+            **system,
+            "allowed_link_domains": set(system.get("allowed_link_domains") or set()),
+        }
+        registry_source = "ithute_system_registry"
+        required = {"spf": True, "dkim": True, "dmarc": True}
+    elif tenant is not None:
         registry = tenant
         registry_source = "tenant_registry"
         required = {
@@ -198,13 +207,6 @@ def trusted_sender_evidence(
             "dkim": bool(tenant["require_dkim"]),
             "dmarc": bool(tenant["require_dmarc"]),
         }
-    elif system is not None:
-        registry = {
-            **system,
-            "allowed_link_domains": set(system.get("allowed_link_domains") or set()),
-        }
-        registry_source = "ithute_system_registry"
-        required = {"spf": True, "dkim": True, "dmarc": True}
     else:
         registry = None
         registry_source = "none"
