@@ -2,6 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
+from app.api.deps import get_current_user
+
 from app.core.config import settings
 from app.core.security import create_access_token, hash_token
 from app.models import PasswordResetToken, User, UserSession
@@ -137,6 +139,19 @@ def test_protected_endpoint_rejects_missing_token(client):
     fresh = type(client)(client.app)
     response = fresh.get("/api/v1/tenants")
     assert response.status_code == 401
+
+
+def test_production_central_session_can_read_me_when_local_auth_is_disabled(client, platform_owner, monkeypatch):
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "legacy_local_auth_production_enabled", False)
+    client.app.dependency_overrides[get_current_user] = lambda: platform_owner
+    try:
+        response = client.get("/api/v1/auth/me")
+    finally:
+        client.app.dependency_overrides.pop(get_current_user, None)
+
+    assert response.status_code == 200
+    assert response.json()["email"] == platform_owner.email
 
 
 def test_production_disables_legacy_local_auth_surface_by_default(client, platform_owner, monkeypatch):
