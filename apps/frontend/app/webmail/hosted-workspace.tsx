@@ -1079,7 +1079,36 @@ export function HostedMailWorkspace() {
               </section>
             ) : null}
             <div className="mt-6 min-h-[220px]">
-              <div data-imail-message-body="true" data-imail-sender={addressOnly(selected.from)} className="whitespace-pre-wrap break-words leading-7 text-slate-800 dark:text-slate-100" style={{ fontSize }}>{selected.body_text || selected.snippet || ""}</div>
+              <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,.03)] dark:border-white/10 dark:bg-white/[.025]">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/70 px-4 py-2.5 text-[10px] text-slate-500 dark:border-white/10 dark:bg-white/[.025]">
+                  <span className="font-black uppercase tracking-[.08em]">Message</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {selected.render_contract?.kind ? <span className="rounded-full bg-white px-2 py-1 font-bold shadow-sm dark:bg-white/10">{selected.render_contract.kind.replaceAll("_", " ")}</span> : null}
+                    {selected.render_contract?.density === "long" ? <span className="rounded-full bg-amber-50 px-2 py-1 font-bold text-amber-700 dark:bg-amber-400/10 dark:text-amber-200">Long message</span> : null}
+                  </div>
+                </div>
+                <div
+                  data-imail-message-body="true"
+                  data-imail-sender={addressOnly(selected.from)}
+                  data-imail-render-kind={selected.render_contract?.kind || "plain"}
+                  className="imail-universal-body overflow-x-auto px-5 py-6 text-slate-800 dark:text-slate-100 sm:px-7"
+                  style={{ fontSize }}
+                >
+                  {selected.body_html ? (
+                    <div
+                      className="[&_a]:break-all [&_a]:font-semibold [&_a]:text-[#0b57d0] [&_a]:underline [&_blockquote]:my-4 [&_blockquote]:border-l-4 [&_blockquote]:border-slate-200 [&_blockquote]:pl-4 [&_blockquote]:text-slate-600 dark:[&_blockquote]:border-white/15 dark:[&_blockquote]:text-slate-300 [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 dark:[&_code]:bg-white/10 [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-black [&_h2]:mb-3 [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-black [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-bold [&_hr]:my-6 [&_hr]:border-slate-200 dark:[&_hr]:border-white/10 [&_li]:my-1 [&_ol]:my-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-3 [&_p]:leading-7 [&_pre]:my-4 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap [&_pre]:rounded-xl [&_pre]:bg-slate-950 [&_pre]:p-4 [&_pre]:text-slate-100 [&_table]:my-5 [&_table]:w-full [&_table]:min-w-[520px] [&_table]:border-collapse [&_td]:border [&_td]:border-slate-200 [&_td]:p-2.5 dark:[&_td]:border-white/10 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-50 [&_th]:p-2.5 [&_th]:text-left [&_th]:font-black dark:[&_th]:border-white/10 dark:[&_th]:bg-white/5 [&_ul]:my-4 [&_ul]:list-disc [&_ul]:pl-6"
+                      dangerouslySetInnerHTML={{ __html: selected.body_html }}
+                    />
+                  ) : (
+                    <div className="whitespace-pre-wrap break-words leading-7">{selected.body_text || selected.snippet || ""}</div>
+                  )}
+                </div>
+                {selected.render_contract ? (
+                  <div className="border-t border-slate-100 px-4 py-2 text-[9px] font-medium text-slate-400 dark:border-white/10">
+                    Safe renderer · {selected.render_contract.engines.orchestrator} orchestration · {selected.render_contract.engines.mime_structure} MIME · {selected.render_contract.engines.text_shape} text profile
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             {selected.attachments?.length ? (
@@ -1147,11 +1176,11 @@ export function HostedMailWorkspace() {
           {!visibleMessages.length ? <div className="grid min-h-[360px] place-items-center p-8 text-center"><div><span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-white text-slate-400 shadow-sm dark:bg-white/5"><Inbox size={24} /></span><p className="mt-4 text-sm font-black text-slate-700 dark:text-slate-200">No messages here</p><p className="mt-1 text-xs text-slate-500">{query ? "Try a different search." : "This mailbox view is currently empty."}</p></div></div> : visibleMessages.map((row) => {
             const checked = selectedUids.has(row.uid);
             return (
-              <div key={`${folder}-${row.uid}`} className={`group flex cursor-pointer items-center gap-2 border-b border-slate-200/80 px-2 transition hover:z-[1] hover:bg-white hover:shadow-sm dark:border-white/[.07] dark:hover:bg-white/[.045] ${row.seen ? "bg-[#f7f9f8] dark:bg-[#0e1514]" : "bg-white dark:bg-slate-900"} ${densityClass} ${selected?.uid === row.uid ? "border-l-[3px] border-l-[#0b57d0] bg-[#eef4ff] dark:bg-blue-400/[.06]" : "border-l-[3px] border-l-transparent"}`} onClick={() => void openMessage(row)}>
+              <div key={`${folder}-${row.uid}`} className={`group flex cursor-pointer items-start gap-2 border-b border-slate-200/80 px-2 transition hover:z-[1] hover:bg-white hover:shadow-sm dark:border-white/[.07] dark:hover:bg-white/[.045] ${row.seen ? "bg-[#f7f9f8] dark:bg-[#0e1514]" : "bg-white dark:bg-slate-900"} ${densityClass} ${selected?.uid === row.uid ? "border-l-[3px] border-l-[#0b57d0] bg-[#eef4ff] dark:bg-blue-400/[.06]" : "border-l-[3px] border-l-transparent"}`} onClick={() => void openMessage(row)}>
                 <label onClick={(event) => event.stopPropagation()} className="grid h-8 w-8 shrink-0 place-items-center rounded-full hover:bg-slate-100 dark:hover:bg-white/10" title="Select"><input type="checkbox" checked={checked} onChange={() => toggleSelection(row.uid)} className="h-4 w-4 accent-[#0b57d0]" /></label>
                 <button type="button" onClick={(event) => { event.stopPropagation(); void setRowFlags(row, { flagged: !row.flagged }); }} className={`grid h-8 w-8 shrink-0 place-items-center rounded-full transition hover:bg-slate-100 dark:hover:bg-white/10 ${row.flagged ? "text-amber-500" : "text-slate-300 group-hover:text-slate-500"}`}><Star size={16} fill={row.flagged ? "currentColor" : "none"} /></button>
-                <span className="hidden h-8 w-8 shrink-0 place-items-center rounded-full bg-[#eaf1fb] text-[10px] font-black text-[#174ea6] sm:grid dark:bg-blue-400/10 dark:text-blue-200">{initials(row.from)}</span>
-                <div className="min-w-0 flex-1 sm:grid sm:grid-cols-[minmax(120px,170px)_1fr_auto] sm:items-center sm:gap-3">
+                <span className="hidden h-8 w-8 shrink-0 place-items-center rounded-full bg-[#eaf1fb] text-[10px] font-black text-[#174ea6] md:grid dark:bg-blue-400/10 dark:text-blue-200">{initials(row.from)}</span>
+                <div className="min-w-0 flex-1 sm:grid sm:grid-cols-[minmax(96px,128px)_1fr_auto] sm:items-center sm:gap-3">
                   <div className={`truncate text-sm ${row.seen ? "font-medium text-slate-700 dark:text-slate-300" : "font-black text-slate-950 dark:text-white"}`}>{senderName(row.from)}</div>
                   <div className="min-w-0"><div className={`truncate text-sm ${row.seen ? "font-medium text-slate-700 dark:text-slate-300" : "font-bold text-slate-950 dark:text-white"}`}>{row.subject || "(no subject)"}</div>{preferences.showPreview ? <p className="mt-0.5 truncate text-[11px] text-slate-500">{row.snippet}</p> : null}</div>
                   <div className="mt-1 flex items-center gap-2 sm:mt-0 sm:justify-end">{row.attachments?.length ? <Paperclip size={13} className="text-slate-400" /> : null}<time className={`text-[10px] ${row.seen ? "font-medium text-slate-400" : "font-black text-[#174ea6] dark:text-blue-200"}`}>{shortDate(row.date)}</time></div>
