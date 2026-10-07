@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import redis
@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.security import hash_token
-from app.models import TrustedDevice, User
+from app.models import Mailbox, PhishingFinding, TrustedDevice, User
 from app.services.auth_security import request_client_ip
 
 DEVICE_COOKIE_NAME = "ithute_device_id"
@@ -198,12 +198,73 @@ def verify_adaptive_challenge(*, user: User, request: Request, challenge_id: str
         return False
 
 
+def recent_mail_threat_context(db: Session, *, user: User) -> dict[str, Any]:
+    """Return a privacy-minimized identity risk signal from verified mail threats.
+
+    Only immutable, high-confidence human verdicts for the account's own mailbox
+    are considered. Raw message bodies, subjects and senders are not returned to
+    the authentication engine.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+    rows = db.scalars(
+        select(PhishingFinding)
+        .join(Mailbox, Mailbox.id == PhishingFinding.mailbox_id)
+        .where(
+            Mailbox.address == str(user.email).strip().lower(),
+            PhishingFinding.finding_type == "mail_intelligence_training_label",
+            PhishingFinding.resolved.is_(True),
+            PhishingFinding.action_taken.in_(["phishing", "bec"]),
+            PhishingFinding.created_at >= cutoff,
+        )
+        .order_by(PhishingFinding.created_at.desc())
+        .limit(20)
+    ).all()
+
+    trusted = []
+    for row in rows:
+        metadata = row.metadata_json or {}
+        confidence = float(metadata.get("label_confidence") or 0.0)
+        label = str(metadata.get("verified_label") or row.action_taken or "").lower()
+        if confidence < 0.90 or label not in {"phishing", "bec"}:
+            continue
+        trusted.append({
+            "label": label,
+            "confidence": round(confidence, 3),
+            "created_at": row.created_at.isoformat(),
+        })
+
+    if not trusted:
+        return {
+            "active": False,
+            "weight": 0,
+            "signal": None,
+            "verified_threat_count": 0,
+            "window_hours": 48,
+        }
+
+    labels = {item["label"] for item in trusted}
+    # Deliberately bounded: confirmed threat exposure should amplify other
+    # suspicious login evidence, not lock an account by itself.
+    weight = 18 if "bec" in labels else 12
+    signal = "recent_verified_bec_exposure" if "bec" in labels else "recent_verified_phishing_exposure"
+    return {
+        "active": True,
+        "weight": weight,
+        "signal": signal,
+        "verified_threat_count": len(trusted),
+        "window_hours": 48,
+        "highest_confidence": max(item["confidence"] for item in trusted),
+        "labels": sorted(labels),
+    }
+
+
 def assess_login_risk(
     *,
     device: TrustedDevice | None,
     request: Request,
     is_new_device: bool,
     mfa_verified: bool,
+    contextual_signals: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     score = 0
     reasons: list[dict[str, Any]] = []
@@ -229,6 +290,19 @@ def assess_login_risk(
     if device is not None and device.first_user_agent and user_agent and device.first_user_agent != user_agent:
         score += 18
         reasons.append({"signal": "client_signature_changed", "weight": 18})
+
+    for contextual in contextual_signals or []:
+        weight = max(0, min(25, int(contextual.get("weight") or 0)))
+        signal = str(contextual.get("signal") or "").strip()
+        if not signal or weight <= 0:
+            continue
+        score += weight
+        reasons.append({
+            "signal": signal,
+            "weight": weight,
+            "source": str(contextual.get("source") or "context"),
+            "evidence_count": int(contextual.get("evidence_count") or 0),
+        })
 
     if mfa_verified:
         score = max(0, score - 15)
