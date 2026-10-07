@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import json
 import secrets
 from datetime import datetime, timezone
 from typing import Any
+
+import redis
 
 from fastapi import Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.security import hash_token
 from app.models import TrustedDevice, User
 from app.services.auth_security import request_client_ip
@@ -15,6 +19,8 @@ from app.services.auth_security import request_client_ip
 DEVICE_COOKIE_NAME = "ithute_device_id"
 DEVICE_COOKIE_MAX_AGE = 365 * 24 * 60 * 60
 RECOVERY_CODE_COUNT = 10
+ADAPTIVE_CHALLENGE_TTL_SECONDS = 600
+ADAPTIVE_CHALLENGE_MAX_ATTEMPTS = 5
 
 
 def new_device_token() -> str:
@@ -78,9 +84,110 @@ def resolve_or_create_device(
     return device, token, False
 
 
+
+def lookup_device(db: Session, *, user: User, request: Request) -> TrustedDevice | None:
+    token = current_device_token(request)
+    if not token:
+        return None
+    device = db.scalar(
+        select(TrustedDevice).where(
+            TrustedDevice.user_id == user.id,
+            TrustedDevice.token_hash == normalized_device_hash(token),
+        )
+    )
+    if device is None or device.revoked_at is not None:
+        return None
+    return device
+
+
+def _adaptive_redis() -> redis.Redis:
+    return redis.Redis.from_url(settings.redis_url, decode_responses=True)
+
+
+def _client_binding(request: Request) -> dict[str, str]:
+    return {
+        "ip": request_client_ip(request),
+        "user_agent_hash": hash_token(str(request.headers.get("user-agent") or "")),
+    }
+
+
+def issue_adaptive_challenge(*, user: User, request: Request, risk: dict[str, Any]) -> tuple[str, str, bool]:
+    binding = _client_binding(request)
+    active_key = f"ithute:adaptive:active:{user.id}:{binding['user_agent_hash']}"
+    try:
+        client = _adaptive_redis()
+        existing = client.get(active_key)
+        if existing:
+            return str(existing), "", False
+
+        challenge_id = secrets.token_urlsafe(32)
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        payload = {
+            "user_id": str(user.id),
+            "code_hash": hash_token(code),
+            "ip": binding["ip"],
+            "user_agent_hash": binding["user_agent_hash"],
+            "attempts": 0,
+            "risk_score": int(risk.get("score") or 0),
+            "risk_level": str(risk.get("level") or "unknown"),
+        }
+        key = f"ithute:adaptive:challenge:{challenge_id}"
+        pipe = client.pipeline()
+        pipe.setex(key, ADAPTIVE_CHALLENGE_TTL_SECONDS, json.dumps(payload, separators=(",", ":")))
+        pipe.setex(active_key, ADAPTIVE_CHALLENGE_TTL_SECONDS, challenge_id)
+        pipe.execute()
+        return challenge_id, code, True
+    except redis.RedisError as exc:
+        raise RuntimeError("Adaptive authentication challenge service is unavailable") from exc
+
+
+def verify_adaptive_challenge(*, user: User, request: Request, challenge_id: str, code: str) -> bool:
+    if not challenge_id or len(challenge_id) > 256:
+        return False
+    key = f"ithute:adaptive:challenge:{challenge_id}"
+    binding = _client_binding(request)
+    try:
+        client = _adaptive_redis()
+        raw = client.get(key)
+        if not raw:
+            return False
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            client.delete(key)
+            return False
+
+        if (
+            str(payload.get("user_id") or "") != str(user.id)
+            or str(payload.get("ip") or "") != binding["ip"]
+            or str(payload.get("user_agent_hash") or "") != binding["user_agent_hash"]
+        ):
+            return False
+
+        attempts = int(payload.get("attempts") or 0) + 1
+        if attempts > ADAPTIVE_CHALLENGE_MAX_ATTEMPTS:
+            client.delete(key)
+            return False
+
+        if not secrets.compare_digest(str(payload.get("code_hash") or ""), hash_token(str(code or "").strip())):
+            payload["attempts"] = attempts
+            ttl = client.ttl(key)
+            if ttl > 0:
+                client.setex(key, ttl, json.dumps(payload, separators=(",", ":")))
+            return False
+
+        active_key = f"ithute:adaptive:active:{user.id}:{binding['user_agent_hash']}"
+        pipe = client.pipeline()
+        pipe.delete(key)
+        pipe.delete(active_key)
+        pipe.execute()
+        return True
+    except (redis.RedisError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+
 def assess_login_risk(
     *,
-    device: TrustedDevice,
+    device: TrustedDevice | None,
     request: Request,
     is_new_device: bool,
     mfa_verified: bool,
@@ -90,14 +197,14 @@ def assess_login_risk(
     ip = request_client_ip(request)
     user_agent = str(request.headers.get("user-agent") or "")
 
-    if is_new_device:
+    if is_new_device or device is None:
         score += 35
         reasons.append({"signal": "new_device", "weight": 35})
     elif device.trusted_at is None:
         score += 12
         reasons.append({"signal": "device_not_explicitly_trusted", "weight": 12})
 
-    if device.first_ip_address and ip and device.first_ip_address != ip:
+    if device is not None and device.first_ip_address and ip and device.first_ip_address != ip:
         score += 12
         reasons.append({
             "signal": "network_changed",
@@ -106,7 +213,7 @@ def assess_login_risk(
             "current_ip": ip,
         })
 
-    if device.first_user_agent and user_agent and device.first_user_agent != user_agent:
+    if device is not None and device.first_user_agent and user_agent and device.first_user_agent != user_agent:
         score += 18
         reasons.append({"signal": "client_signature_changed", "weight": 18})
 
@@ -123,7 +230,7 @@ def assess_login_risk(
         "recommended_action": action,
         "signals": reasons,
         "new_device": is_new_device,
-        "trusted_device": device.trusted_at is not None and device.revoked_at is None,
+        "trusted_device": bool(device is not None and device.trusted_at is not None and device.revoked_at is None),
     }
 
 
