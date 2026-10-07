@@ -365,7 +365,6 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
                 resource_type="user",
                 resource_id=str(user.id),
                 metadata_json=json.dumps({
-                    "challenge_id": challenge_id,
                     "risk_score": risk["score"],
                     "risk_level": risk["level"],
                     "new_device": is_new_device,
