@@ -83,62 +83,161 @@
   display: none !important;
 }
 
-/* Shared Webmail loader. */
+/* Shared Webmail loader. The loader uses a native vector mark so the
+   boot screen never depends on an image asset that can fail to decode. */
 .imail-mail-loader {
+  position: relative;
   min-height: 100dvh;
   display: grid;
   place-items: center;
+  overflow: hidden;
   padding: 24px;
   background:
-    radial-gradient(circle at 18% 8%, rgba(12, 115, 87, .10), transparent 30%),
-    radial-gradient(circle at 84% 12%, rgba(227, 200, 95, .14), transparent 25%),
-    linear-gradient(180deg, #f8fbfa, #eff5f2);
-  color: #16362d;
+    radial-gradient(circle at 18% 12%, rgba(35, 134, 108, .30), transparent 30%),
+    radial-gradient(circle at 84% 10%, rgba(239, 215, 122, .34), transparent 27%),
+    radial-gradient(circle at 55% 78%, rgba(46, 111, 83, .24), transparent 34%),
+    linear-gradient(135deg, #0a3129 0%, #0e4b3f 46%, #163c31 100%);
+  color: #113b31;
+}
+
+.imail-mail-loader::before,
+.imail-mail-loader::after {
+  content: "";
+  position: absolute;
+  width: 520px;
+  height: 520px;
+  border: 1px solid rgba(239, 221, 136, .28);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.imail-mail-loader::before {
+  top: -265px;
+  right: -120px;
+}
+
+.imail-mail-loader::after {
+  bottom: -320px;
+  left: -145px;
+  border-color: rgba(184, 225, 209, .23);
+}
+
+.imail-mail-loader-orb {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(10px);
+  pointer-events: none;
+}
+
+.imail-mail-loader-orb-one {
+  width: 340px;
+  height: 340px;
+  left: -150px;
+  top: 36%;
+  background: rgba(103, 183, 145, .14);
+}
+
+.imail-mail-loader-orb-two {
+  width: 300px;
+  height: 300px;
+  right: -90px;
+  bottom: -80px;
+  background: rgba(219, 199, 102, .12);
 }
 
 .imail-mail-loader-card {
-  width: min(430px, 100%);
+  position: relative;
+  z-index: 1;
+  width: min(440px, 100%);
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 34px 30px;
-  border: 1px solid #d9e6e0;
-  border-radius: 28px;
-  background: rgba(255,255,255,.96);
-  box-shadow: 0 28px 70px rgba(17, 59, 46, .13);
+  padding: 42px 34px 38px;
+  border: 1px solid rgba(255,255,255,.66);
+  border-radius: 30px;
+  background: rgba(255,255,255,.94);
+  box-shadow: 0 34px 100px rgba(2, 24, 19, .30);
+  backdrop-filter: blur(22px);
   text-align: center;
 }
 
-.imail-mail-loader-logo {
-  width: 232px;
-  height: 102px;
-  background: #fff var(--imail-logo-image) center / contain no-repeat;
+.imail-mail-loader-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.imail-mail-loader-mark {
+  position: relative;
+  display: grid;
+  width: 62px;
+  height: 62px;
+  place-items: center;
+  border-radius: 19px;
+  background: linear-gradient(145deg, #0a6f57, #084b3d);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 12px 28px rgba(8,75,61,.20);
+}
+
+.imail-mail-loader-mark-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 15px;
+  height: 15px;
+  border: 3px solid #fff;
+  border-radius: 999px;
+  background: #e6b72c;
+}
+
+.imail-mail-loader-wordmark {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1;
+}
+
+.imail-mail-loader-wordmark strong {
+  color: #113b31;
+  font-size: 25px;
+  font-weight: 900;
+  letter-spacing: -.045em;
+}
+
+.imail-mail-loader-wordmark span {
+  margin-top: 7px;
+  color: #819189;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .22em;
+  text-transform: uppercase;
 }
 
 .imail-mail-loader-ring {
-  position: relative;
-  width: 42px;
-  height: 42px;
-  margin-top: 18px;
-  border: 3px solid #dceae4;
+  width: 46px;
+  height: 46px;
+  margin-top: 30px;
+  border: 4px solid #dce9e3;
   border-top-color: #08765a;
-  border-right-color: #d3ad37;
+  border-right-color: #d5ae37;
   border-radius: 999px;
   animation: imail-loader-spin .88s linear infinite;
 }
 
 .imail-mail-loader-title {
-  margin: 18px 0 0;
-  font-size: 18px;
+  margin: 22px 0 0;
+  color: #133a31;
+  font-size: 24px;
   font-weight: 900;
-  letter-spacing: -.02em;
+  letter-spacing: -.035em;
 }
 
 .imail-mail-loader-detail {
-  margin: 6px 0 0;
-  max-width: 320px;
+  margin: 8px 0 0;
+  max-width: 330px;
   color: #6c7f77;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1.65;
 }
@@ -146,24 +245,52 @@
 .imail-mail-loader[data-compact="true"] {
   min-height: auto;
   display: inline-grid;
+  overflow: visible;
   padding: 0;
   background: transparent;
 }
 
+.imail-mail-loader[data-compact="true"]::before,
+.imail-mail-loader[data-compact="true"]::after,
+.imail-mail-loader[data-compact="true"] .imail-mail-loader-orb {
+  display: none;
+}
+
 .imail-mail-loader[data-compact="true"] .imail-mail-loader-card {
   width: auto;
-  min-width: 240px;
+  min-width: 250px;
   flex-direction: row;
   gap: 12px;
   padding: 12px 14px;
+  border-color: #d9e6e0;
   border-radius: 16px;
+  box-shadow: 0 12px 30px rgba(17,59,46,.12);
   text-align: left;
 }
 
-.imail-mail-loader[data-compact="true"] .imail-mail-loader-logo {
-  width: 82px;
-  height: 38px;
-  flex: 0 0 82px;
+.imail-mail-loader[data-compact="true"] .imail-mail-loader-brand {
+  gap: 7px;
+}
+
+.imail-mail-loader[data-compact="true"] .imail-mail-loader-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+}
+
+.imail-mail-loader[data-compact="true"] .imail-mail-loader-mark svg {
+  width: 18px;
+  height: 18px;
+}
+
+.imail-mail-loader[data-compact="true"] .imail-mail-loader-mark-dot {
+  width: 9px;
+  height: 9px;
+  border-width: 2px;
+}
+
+.imail-mail-loader[data-compact="true"] .imail-mail-loader-wordmark {
+  display: none;
 }
 
 .imail-mail-loader[data-compact="true"] .imail-mail-loader-ring {
@@ -207,8 +334,9 @@
 
 @media (max-width: 639.98px) {
   .imail-mail-loader { padding: 18px; }
-  .imail-mail-loader-card { padding: 28px 22px; border-radius: 24px; }
-  .imail-mail-loader-logo { width: 210px; height: 92px; }
+  .imail-mail-loader-card { padding: 34px 24px 30px; border-radius: 26px; }
+  .imail-mail-loader-mark { width: 56px; height: 56px; border-radius: 17px; }
+  .imail-mail-loader-title { font-size: 22px; }
 
   .imail-login-hero .imail-brand-mark,
   .imail-login-mobile-brand .imail-brand-mark {
