@@ -203,3 +203,106 @@ def test_attachment_metadata_includes_engine_routed_sha256(monkeypatch):
             "profile_engine": "cpp",
         }
     ]
+
+
+
+def test_structured_html_message_gets_safe_universal_render_contract(monkeypatch):
+    raw = (
+        b"From: sender@example.com\r\n"
+        b"To: person@example.com\r\n"
+        b"Subject: Receipt\r\n"
+        b"MIME-Version: 1.0\r\n"
+        b"Content-Type: multipart/alternative; boundary=x\r\n"
+        b"\r\n"
+        b"--x\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nPaid M100.00\r\n"
+        b"--x\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"
+        b"<style>body{position:fixed}</style><script>alert(1)</script>"
+        b"<h1>Receipt</h1><table><tr><td>Paid M100.00</td></tr></table>"
+        b"<img src='https://tracker.example/pixel.png'>\r\n--x--\r\n"
+    )
+
+    real_execute = webmail.execute_binary
+
+    def fake_execute(operation, value):
+        if operation == "mail.mime_scan":
+            return real_execute(operation, value)
+        if operation == "native.blob_profile":
+            return SimpleNamespace(
+                value=SimpleNamespace(
+                    fnv1a64=1,
+                    nul_bytes=0,
+                    control_bytes=0,
+                    high_bytes=0,
+                ),
+                engine="cpp",
+            )
+        return real_execute(operation, value)
+
+    monkeypatch.setattr(webmail, "execute_binary", fake_execute)
+    monkeypatch.setattr(
+        webmail,
+        "execute_mail_render_plan",
+        lambda metrics: SimpleNamespace(
+            engine="go",
+            value={
+                "engine": "go",
+                "layout": "transactional",
+                "reader_width": "wide",
+                "horizontal_fit": "scroll_tables",
+                "density": "compact",
+                "collapse_quotes": False,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        webmail,
+        "execute_mail_structured_profile",
+        lambda metrics: SimpleNamespace(
+            engine="java",
+            value={
+                "engine": "java",
+                "semantic_type": "transactional",
+                "collapse_quoted_history": False,
+                "preserve_semantic_tables": True,
+                "prefer_readable_width": False,
+                "standards_profile": "email-content-v1",
+            },
+        ),
+    )
+
+    row = webmail._message_json("99", raw, b"", include_body=True)
+
+    assert "<script" not in row["body_html"].lower()
+    assert "<style" not in row["body_html"].lower()
+    assert "<img" not in row["body_html"].lower()
+    assert "<table" in row["body_html"].lower()
+    assert row["render_contract"]["kind"] == "transactional_table"
+    assert row["render_contract"]["engines"]["layout_plan"] == "go"
+    assert row["render_contract"]["engines"]["structured_profile"] == "java"
+    assert row["render_contract"]["engines"]["text_shape"] == "cpp"
+
+
+def test_plain_message_render_contract_falls_back_without_html(monkeypatch):
+    raw = (
+        b"From: sender@example.com\r\n"
+        b"To: person@example.com\r\n"
+        b"Subject: Plain\r\n"
+        b"\r\n"
+        b"Hello there"
+    )
+    monkeypatch.setattr(
+        webmail,
+        "execute_mail_render_plan",
+        lambda metrics: SimpleNamespace(engine="python-fallback", value={"layout": "document", "density": "compact"}),
+    )
+    monkeypatch.setattr(
+        webmail,
+        "execute_mail_structured_profile",
+        lambda metrics: SimpleNamespace(engine="python-fallback", value={"semantic_type": "message"}),
+    )
+
+    row = webmail._message_json("100", raw, b"", include_body=True)
+
+    assert row["body_html"] == ""
+    assert row["render_contract"]["kind"] == "plain"
+    assert row["render_contract"]["has_plain"] is True
