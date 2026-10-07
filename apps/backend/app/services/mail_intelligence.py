@@ -169,7 +169,12 @@ def _intent(text: str) -> dict[str, Any]:
     }
 
 
-def analyze_mail_message(message: dict[str, Any], *, mailbox_address: str = "") -> dict[str, Any]:
+def analyze_mail_message(
+    message: dict[str, Any],
+    *,
+    mailbox_address: str = "",
+    trusted_sender_registry: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     subject = str(message.get("subject") or "")
     body = str(message.get("body_text") or "")
     text = f"{subject}\n{body}".lower()
@@ -180,7 +185,7 @@ def analyze_mail_message(message: dict[str, Any], *, mailbox_address: str = "") 
     reply_domain = _domain(reply_addresses[0]) if reply_addresses else sender_domain
     authentication_results = _lower(message.get("authentication_results"))
     received_spf = _lower(message.get("received_spf"))
-    trust = trusted_sender_evidence(message)
+    trust = trusted_sender_evidence(message, registry_entries=trusted_sender_registry)
 
     risk_score = 0
     bec_score = 0
