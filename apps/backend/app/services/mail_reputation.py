@@ -130,7 +130,9 @@ def _recent_refs(profile: SenderReputationProfile | DomainIntelligenceProfile) -
 
 
 def _set_recent_refs(profile: SenderReputationProfile | DomainIntelligenceProfile, refs: list[str], score_evidence: dict[str, Any]) -> None:
+    existing = profile.evidence_json if isinstance(profile.evidence_json, dict) else {}
     profile.evidence_json = {
+        **existing,
         **score_evidence,
         "recent_message_refs": refs[-MAX_RECENT_MESSAGE_REFS:],
         "raw_message_content_stored": False,
@@ -210,7 +212,7 @@ def observe_reputation(
     message: dict[str, Any],
     intelligence: dict[str, Any],
 ) -> dict[str, Any]:
-    _sender, domain, sender_hash = sender_identity(message)
+    _sender, domain, sender_hash = sender_identity(message, tenant_id=tenant_id)
     if not sender_hash or not domain:
         return reputation_context(db, tenant_id=tenant_id, message=message)
 
@@ -301,7 +303,7 @@ def record_verified_verdict(
     normalized = str(label or "").lower()
     if normalized not in {"legitimate", "phishing", "bec"}:
         return
-    _sender, domain, sender_hash = sender_identity(message)
+    _sender, domain, sender_hash = sender_identity(message, tenant_id=tenant_id)
     if not sender_hash or not domain:
         return
 

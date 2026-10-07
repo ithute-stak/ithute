@@ -107,6 +107,17 @@ export default function MailIntelligencePage() {
     } catch { setError("Unable to remove trusted sender profile."); }
   }
 
+  async function refreshDomain(domain: string) {
+    try {
+      await apiMutation(`/mail-intelligence/tenants/${tenantId}/reputation/domains/${encodeURIComponent(domain)}/refresh`, {
+        method: "POST",
+        credentials: "include",
+      });
+      setNotice(`Domain intelligence refreshed for ${domain}.`);
+      await load();
+    } catch { setError(`Unable to refresh domain intelligence for ${domain}.`); }
+  }
+
   async function enrichDomain(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = new FormData(event.currentTarget);
     const domain = String(form.get("domain") || "").trim();
@@ -189,8 +200,8 @@ export default function MailIntelligencePage() {
         </form>
         <div className="mt-4 space-y-2">
           {domainReputation.slice(0,12).map(item => <div key={item.id} className="rounded-xl border border-[var(--admin-line)] p-3 text-[10px]">
-            <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-black">{item.domain}</p><p className="mt-1 text-[var(--admin-muted)]">{item.identity_status.replaceAll("_", " ")}{item.domain_age_days != null ? ` · ${item.domain_age_days} days old` : ""}</p></div><span className={`rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${item.score < 40 ? "bg-red-50 text-red-700" : item.score >= 70 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{item.state} · {item.score}/100</span></div>
-            <p className="mt-2 text-[9px] text-[var(--admin-muted)]">{item.observations} observations · {Math.round(item.confidence * 100)}% confidence · {item.enrichment_source || "behavior-only evidence"}</p>
+            <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-black">{item.domain}</p><p className="mt-1 text-[var(--admin-muted)]">{item.identity_status.replaceAll("_", " ")}{item.domain_age_days != null ? ` · ${item.domain_age_days} days old` : ""}</p></div><div className="flex items-center gap-2"><button type="button" onClick={() => void refreshDomain(item.domain)} className="rounded-lg border border-[var(--admin-line)] px-2.5 py-1 text-[9px] font-black uppercase hover:bg-[#f7faf8]">Refresh</button><span className={`rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${item.score < 40 ? "bg-red-50 text-red-700" : item.score >= 70 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{item.state} · {item.score}/100</span></div></div>
+            <p className="mt-2 text-[9px] text-[var(--admin-muted)]">{item.observations} observations · {Math.round(item.confidence * 100)}% confidence · {item.enrichment_source || "behavior-only evidence"}{item.enrichment_checked_at ? ` · checked ${new Date(item.enrichment_checked_at).toLocaleString()}` : ""}</p>
           </div>)}
           {!domainReputation.length ? <div className="rounded-xl border border-dashed border-[var(--admin-line)] p-4 text-[10px] text-[var(--admin-muted)]">Domain profiles will appear automatically as Ithute observes external senders.</div> : null}
         </div>

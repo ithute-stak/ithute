@@ -12,8 +12,10 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_tenant_permission
 from app.db.session import get_db
+from app.core.config import settings
 from app.services.mail_intelligence_learning import training_readiness
 from app.services.mail_reputation import refresh_domain_profile, reputation_profile_payload
+from app.services.domain_intelligence_enrichment import apply_automatic_enrichment
 from app.services.mail_threat_model import ALGORITHM, train_and_evaluate
 from app.services.mail_threat_shadow import shadow_policy, shadow_validation
 from app.services.mail_threat_canary import canary_policy, canary_validation, deterministic_canary_member
@@ -293,6 +295,37 @@ def domain_reputation_profiles(
         .limit(limit)
     ).all()
     return [reputation_profile_payload(item) for item in rows]
+
+
+@router.post("/tenants/{tenant_id}/reputation/domains/{domain}/refresh")
+def refresh_domain_intelligence(
+    tenant_id: uuid.UUID,
+    domain: str,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require(tenant_id, "mail.manage", db, current)
+    normalized = _normalize_domain(domain)
+    item = db.scalar(
+        select(DomainIntelligenceProfile).where(
+            DomainIntelligenceProfile.tenant_id == tenant_id,
+            DomainIntelligenceProfile.domain == normalized,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Domain intelligence profile not found")
+    try:
+        apply_automatic_enrichment(
+            db,
+            item,
+            timeout_seconds=settings.domain_intelligence_enrichment_timeout_seconds,
+        )
+        db.commit()
+        db.refresh(item)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Automatic domain intelligence refresh failed") from exc
+    return reputation_profile_payload(item)
 
 
 @router.post("/tenants/{tenant_id}/reputation/domains/{domain}/enrichment")
