@@ -43,7 +43,7 @@ from app.services.ithute_auth import ithute_auth_enabled
 from app.services.signup_security import send_system_email
 
 def _require_local_auth_surface() -> None:
-    if settings.environment.lower() == "production" and not settings.legacy_local_auth_production_enabled:
+    if not settings.local_auth_enabled:
         raise HTTPException(status_code=404, detail="Local authentication is disabled")
 
 
@@ -63,6 +63,8 @@ def _user_payload(user: User) -> dict:
         "is_platform_owner": user.is_platform_owner,
         "mfa_enabled": user.mfa_enabled,
         "email_verified": user.email_verified_at is not None,
+        "central_auth_enforced": user.central_auth_enforced,
+        "central_auth_enforced_at": user.central_auth_enforced_at.isoformat() if user.central_auth_enforced_at else None,
     }
 
 
@@ -134,7 +136,7 @@ def _require_verified_email(user: User) -> None:
 
 @router.get("/capabilities")
 def auth_capabilities():
-    local_enabled = settings.environment.lower() != "production" or settings.legacy_local_auth_production_enabled
+    local_enabled = settings.local_auth_enabled
     return {
         "local_auth_enabled": local_enabled,
         "central_auth_enabled": ithute_auth_enabled(),
@@ -157,6 +159,14 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     _require_verified_email(user)
+    if user.central_auth_enforced:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "CENTRAL_AUTH_REQUIRED",
+                "message": "This account requires Ithute Central Authentication.",
+            },
+        )
     if user.mfa_enabled:
         if not payload.mfa_code:
             raise HTTPException(status_code=401, detail="MFA code required")
