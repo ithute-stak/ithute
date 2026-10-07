@@ -141,6 +141,19 @@ def issue_adaptive_challenge(*, user: User, request: Request, risk: dict[str, An
         raise RuntimeError("Adaptive authentication challenge service is unavailable") from exc
 
 
+def cancel_adaptive_challenge(*, user: User, request: Request, challenge_id: str) -> None:
+    binding = _client_binding(request)
+    active_key = f"ithute:adaptive:active:{user.id}:{hash_token(binding['ip'])}:{binding['user_agent_hash']}"
+    try:
+        client = _adaptive_redis()
+        pipe = client.pipeline()
+        pipe.delete(f"ithute:adaptive:challenge:{challenge_id}")
+        pipe.delete(active_key)
+        pipe.execute()
+    except redis.RedisError:
+        return
+
+
 def verify_adaptive_challenge(*, user: User, request: Request, challenge_id: str, code: str) -> bool:
     if not challenge_id or len(challenge_id) > 256:
         return False
