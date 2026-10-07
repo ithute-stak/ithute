@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -16,7 +16,7 @@ from app.services.mail_intelligence_learning import training_readiness
 from app.services.mail_threat_model import ALGORITHM, train_and_evaluate
 from app.services.mail_threat_shadow import shadow_policy, shadow_validation
 from app.services.mail_threat_canary import canary_policy, canary_validation, deterministic_canary_member
-from app.models import DmarcAggregateReport, MailAutomationRule, MailRetentionPolicy, MailThreatModelVersion, MailThreatShadowPrediction, PhishingFinding, User
+from app.models import DmarcAggregateReport, MailAutomationRule, MailRetentionPolicy, MailThreatModelVersion, MailThreatShadowPrediction, PhishingFinding, TrustedSenderProfile, User
 
 router = APIRouter(prefix="/mail-intelligence", tags=["mail-intelligence"])
 
@@ -50,6 +50,18 @@ class PhishingFindingIn(BaseModel):
     action_taken: str | None = Field(default=None, max_length=120)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+class TrustedSenderProfileIn(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    category: str = Field(default="business_partner", min_length=2, max_length=80, pattern=r"^[a-z0-9][a-z0-9_.-]{1,79}$")
+    sender_addresses: list[str] = Field(default_factory=list, max_length=100)
+    sender_domains: list[str] = Field(default_factory=list, max_length=100)
+    allowed_link_domains: list[str] = Field(default_factory=list, max_length=100)
+    require_spf: bool = True
+    require_dkim: bool = True
+    require_dmarc: bool = True
+    active: bool = True
+
+
 class AutomationRuleIn(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     enabled: bool = True
@@ -59,6 +71,71 @@ class AutomationRuleIn(BaseModel):
 
 def _require(tenant_id: uuid.UUID, permission: str, db: Session, current: User) -> None:
     require_tenant_permission(tenant_id, permission, db, current)
+
+
+def _normalize_domain(value: str) -> str:
+    text = str(value or "").strip().lower().rstrip(".")
+    if not text or len(text) > 253 or "@" in text or "://" in text:
+        raise HTTPException(status_code=422, detail=f"Invalid domain: {value}")
+    labels = text.split(".")
+    if len(labels) < 2 or any(
+        not label
+        or len(label) > 63
+        or label.startswith("-")
+        or label.endswith("-")
+        or not all(ch.isalnum() or ch == "-" for ch in label)
+        for label in labels
+    ):
+        raise HTTPException(status_code=422, detail=f"Invalid domain: {value}")
+    return text
+
+
+def _normalize_sender_address(value: str) -> str:
+    text = str(value or "").strip().lower()
+    if len(text) > 320 or text.count("@") != 1:
+        raise HTTPException(status_code=422, detail=f"Invalid sender address: {value}")
+    local, domain = text.rsplit("@", 1)
+    if not local or len(local) > 64:
+        raise HTTPException(status_code=422, detail=f"Invalid sender address: {value}")
+    return f"{local}@{_normalize_domain(domain)}"
+
+
+def _trusted_sender_payload(item: TrustedSenderProfile) -> dict[str, Any]:
+    return {
+        "id": str(item.id),
+        "name": item.name,
+        "category": item.category,
+        "sender_addresses": item.sender_addresses_json or [],
+        "sender_domains": item.sender_domains_json or [],
+        "allowed_link_domains": item.allowed_link_domains_json or [],
+        "require_spf": item.require_spf,
+        "require_dkim": item.require_dkim,
+        "require_dmarc": item.require_dmarc,
+        "active": item.active,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def _trusted_sender_values(payload: TrustedSenderProfileIn) -> dict[str, Any]:
+    addresses = sorted({_normalize_sender_address(item) for item in payload.sender_addresses})
+    domains = sorted({_normalize_domain(item) for item in payload.sender_domains})
+    links = sorted({_normalize_domain(item) for item in payload.allowed_link_domains})
+    if not addresses and not domains:
+        raise HTTPException(status_code=422, detail="Add at least one sender address or sender domain")
+    if not (payload.require_spf or payload.require_dkim or payload.require_dmarc):
+        raise HTTPException(status_code=422, detail="At least one authentication mechanism must be required")
+    return {
+        "name": payload.name.strip(),
+        "category": payload.category.strip().lower(),
+        "sender_addresses_json": addresses,
+        "sender_domains_json": domains,
+        "allowed_link_domains_json": links,
+        "require_spf": payload.require_spf,
+        "require_dkim": payload.require_dkim,
+        "require_dmarc": payload.require_dmarc,
+        "active": payload.active,
+    }
 
 
 def _canary_evidence_rows(db: Session, model: MailThreatModelVersion) -> list[dict[str, Any]]:
@@ -98,8 +175,82 @@ def overview(tenant_id: uuid.UUID, db: Session = Depends(get_db), current: User 
         "legal_holds": db.scalar(select(func.count()).select_from(MailRetentionPolicy).where(MailRetentionPolicy.tenant_id == tenant_id, MailRetentionPolicy.legal_hold.is_(True))) or 0,
         "phishing_open": db.scalar(select(func.count()).select_from(PhishingFinding).where(PhishingFinding.tenant_id == tenant_id, PhishingFinding.resolved.is_(False))) or 0,
         "automations_enabled": db.scalar(select(func.count()).select_from(MailAutomationRule).where(MailAutomationRule.tenant_id == tenant_id, MailAutomationRule.enabled.is_(True))) or 0,
+        "trusted_senders": db.scalar(select(func.count()).select_from(TrustedSenderProfile).where(TrustedSenderProfile.tenant_id == tenant_id, TrustedSenderProfile.active.is_(True))) or 0,
         "latest_dmarc": ({"domain": latest.domain, "period_end": latest.period_end.isoformat(), "total_messages": latest.total_messages, "aligned_messages": latest.aligned_messages, "failed_messages": latest.failed_messages, "alignment_rate": round((latest.aligned_messages / latest.total_messages) * 100, 2) if latest.total_messages else 0} if latest else None),
     }
+
+@router.get("/tenants/{tenant_id}/trusted-senders")
+def trusted_senders(
+    tenant_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    _require(tenant_id, "mail.read", db, current)
+    rows = db.scalars(
+        select(TrustedSenderProfile)
+        .where(TrustedSenderProfile.tenant_id == tenant_id)
+        .order_by(TrustedSenderProfile.active.desc(), TrustedSenderProfile.name.asc())
+    ).all()
+    return [_trusted_sender_payload(item) for item in rows]
+
+
+@router.post("/tenants/{tenant_id}/trusted-senders", status_code=201)
+def create_trusted_sender(
+    tenant_id: uuid.UUID,
+    payload: TrustedSenderProfileIn,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require(tenant_id, "mail.manage", db, current)
+    item = TrustedSenderProfile(tenant_id=tenant_id, created_by=current.id, **_trusted_sender_values(payload))
+    db.add(item)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Trusted sender profile name already exists") from exc
+    db.refresh(item)
+    return _trusted_sender_payload(item)
+
+
+@router.put("/tenants/{tenant_id}/trusted-senders/{profile_id}")
+def update_trusted_sender(
+    tenant_id: uuid.UUID,
+    profile_id: uuid.UUID,
+    payload: TrustedSenderProfileIn,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require(tenant_id, "mail.manage", db, current)
+    item = db.get(TrustedSenderProfile, profile_id)
+    if item is None or item.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Trusted sender profile not found")
+    for key, value in _trusted_sender_values(payload).items():
+        setattr(item, key, value)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Trusted sender profile name already exists") from exc
+    db.refresh(item)
+    return _trusted_sender_payload(item)
+
+
+@router.delete("/tenants/{tenant_id}/trusted-senders/{profile_id}", status_code=204)
+def delete_trusted_sender(
+    tenant_id: uuid.UUID,
+    profile_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    _require(tenant_id, "mail.manage", db, current)
+    item = db.get(TrustedSenderProfile, profile_id)
+    if item is None or item.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Trusted sender profile not found")
+    db.delete(item)
+    db.commit()
+    return Response(status_code=204)
+
 
 @router.get("/tenants/{tenant_id}/retention")
 def list_retention(tenant_id: uuid.UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)) -> list[dict[str, Any]]:

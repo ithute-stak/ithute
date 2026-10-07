@@ -94,7 +94,7 @@ def authentication_evidence(message: dict[str, Any]) -> dict[str, Any]:
 def inspect_urls(message: dict[str, Any], *, sender_domain: str = "", allowed_domains: set[str] | None = None) -> dict[str, Any]:
     text = f"{message.get('subject') or ''}\n{message.get('body_text') or ''}"
     urls = re.findall(r"https?://[^\s<>()\[\]\"']+", text, flags=re.IGNORECASE)
-    allowed = {registrable_hint(item) for item in (allowed_domains or set()) if item}
+    allowed = {str(item).lower().strip(".") for item in (allowed_domains or set()) if item}
     sender_root = registrable_hint(sender_domain)
     rows: list[dict[str, Any]] = []
     suspicious = 0
@@ -123,7 +123,8 @@ def inspect_urls(message: dict[str, Any], *, sender_domain: str = "", allowed_do
                 reasons.append("userinfo_in_url")
             if "xn--" in host:
                 reasons.append("punycode_hostname")
-            if allowed and root not in allowed:
+            trusted_allowed_domain = any(host == item or host.endswith(f".{item}") for item in allowed)
+            if allowed and not trusted_allowed_domain:
                 reasons.append("outside_trusted_sender_domains")
             elif not allowed and sender_root and root != sender_root:
                 reasons.append("different_from_sender_domain")
@@ -133,7 +134,7 @@ def inspect_urls(message: dict[str, Any], *, sender_domain: str = "", allowed_do
             "url": clean,
             "host": host,
             "registrable_domain": root,
-            "trusted_domain_match": bool(host and allowed and root in allowed),
+            "trusted_domain_match": bool(host and allowed and any(host == item or host.endswith(f".{item}") for item in allowed)),
             "reasons": reasons,
         })
 
@@ -144,24 +145,102 @@ def inspect_urls(message: dict[str, Any], *, sender_domain: str = "", allowed_do
     }
 
 
-def trusted_sender_evidence(message: dict[str, Any]) -> dict[str, Any]:
+def _normalize_registry_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": str(entry.get("name") or "").strip(),
+        "category": str(entry.get("category") or "business_partner").strip() or "business_partner",
+        "sender_addresses": {
+            str(item or "").strip().lower()
+            for item in (entry.get("sender_addresses") or [])
+            if str(item or "").strip()
+        },
+        "sender_domains": {
+            str(item or "").strip().lower().strip(".")
+            for item in (entry.get("sender_domains") or [])
+            if str(item or "").strip()
+        },
+        "allowed_link_domains": {
+            str(item or "").strip().lower().strip(".")
+            for item in (entry.get("allowed_link_domains") or [])
+            if str(item or "").strip()
+        },
+        "require_spf": bool(entry.get("require_spf", True)),
+        "require_dkim": bool(entry.get("require_dkim", True)),
+        "require_dmarc": bool(entry.get("require_dmarc", True)),
+        "source": str(entry.get("source") or "tenant_registry"),
+    }
+
+
+def _tenant_registry_match(sender: str, sender_domain: str, entries: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    for raw in entries or []:
+        entry = _normalize_registry_entry(raw)
+        if sender in entry["sender_addresses"] or any(
+            sender_domain == domain or sender_domain.endswith(f".{domain}")
+            for domain in entry["sender_domains"]
+        ):
+            return entry
+    return None
+
+
+def trusted_sender_evidence(
+    message: dict[str, Any],
+    *,
+    registry_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     auth = authentication_evidence(message)
     sender = auth["sender"]
-    registry = ITHUTE_SYSTEM_SENDERS.get(sender)
+    sender_domain = auth["sender_domain"]
+
+    system = ITHUTE_SYSTEM_SENDERS.get(sender)
+    tenant = _tenant_registry_match(sender, sender_domain, registry_entries)
+
+    if system is not None:
+        # First-party security identities are immutable and cannot be weakened by
+        # a tenant-defined profile for the same address or domain.
+        registry = {
+            **system,
+            "allowed_link_domains": set(system.get("allowed_link_domains") or set()),
+        }
+        registry_source = "ithute_system_registry"
+        required = {"spf": True, "dkim": True, "dmarc": True}
+    elif tenant is not None:
+        registry = tenant
+        registry_source = "tenant_registry"
+        required = {
+            "spf": bool(tenant["require_spf"]),
+            "dkim": bool(tenant["require_dkim"]),
+            "dmarc": bool(tenant["require_dmarc"]),
+        }
+    else:
+        registry = None
+        registry_source = "none"
+        required = {"spf": False, "dkim": False, "dmarc": False}
+
     allowed_domains = set(registry.get("allowed_link_domains") or set()) if registry else set()
-    urls = inspect_urls(message, sender_domain=auth["sender_domain"], allowed_domains=allowed_domains)
+    urls = inspect_urls(message, sender_domain=sender_domain, allowed_domains=allowed_domains)
+
+    required_failures = [
+        mechanism
+        for mechanism, is_required in required.items()
+        if is_required and auth.get(mechanism) in {"fail", "softfail", "permerror"}
+    ]
+    required_missing = [
+        mechanism
+        for mechanism, is_required in required.items()
+        if is_required and auth.get(mechanism) != "pass"
+    ]
 
     registry_match = registry is not None
     verified = bool(
         registry_match
-        and auth["authenticated"]
+        and not required_missing
         and urls["suspicious_count"] == 0
     )
 
-    if registry_match and auth["any_failure"]:
+    if registry_match and required_failures:
         state = "registry_sender_auth_failed"
     elif verified:
-        state = "verified_system_sender"
+        state = "verified_system_sender" if registry_source == "ithute_system_registry" else "verified_trusted_sender"
     elif registry_match:
         state = "registry_sender_unverified"
     else:
@@ -171,10 +250,15 @@ def trusted_sender_evidence(message: dict[str, Any]) -> dict[str, Any]:
         "state": state,
         "verified": verified,
         "registry_match": registry_match,
+        "registry_source": registry_source,
         "sender": sender,
         "display_name": str(registry.get("name") or "") if registry else "",
         "category": str(registry.get("category") or "") if registry else "",
         "authentication": auth,
+        "authentication_policy": {
+            "required": [name for name, enabled in required.items() if enabled],
+            "missing_or_failed": required_missing,
+        },
         "url_intelligence": urls,
         "security_path_present": any(
             str(item.get("url") or "").lower().find(path) >= 0
@@ -182,10 +266,12 @@ def trusted_sender_evidence(message: dict[str, Any]) -> dict[str, Any]:
             for path in SECURITY_PATH_HINTS
         ),
         "trust_reason": (
-            "registered sender + SPF/DKIM/DMARC pass + trusted links"
+            "registered sender + required authentication pass + trusted links"
             if verified
-            else "registry identity requires authenticated headers and trusted links"
+            else "registered sender failed required authentication"
+            if registry_match and required_failures
+            else "registered sender requires required authentication and trusted links"
             if registry_match
-            else "sender is not in the Ithute system-sender registry"
+            else "sender is not in the trusted sender registry"
         ),
     }

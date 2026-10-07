@@ -169,7 +169,12 @@ def _intent(text: str) -> dict[str, Any]:
     }
 
 
-def analyze_mail_message(message: dict[str, Any], *, mailbox_address: str = "") -> dict[str, Any]:
+def analyze_mail_message(
+    message: dict[str, Any],
+    *,
+    mailbox_address: str = "",
+    trusted_sender_registry: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     subject = str(message.get("subject") or "")
     body = str(message.get("body_text") or "")
     text = f"{subject}\n{body}".lower()
@@ -180,7 +185,7 @@ def analyze_mail_message(message: dict[str, Any], *, mailbox_address: str = "") 
     reply_domain = _domain(reply_addresses[0]) if reply_addresses else sender_domain
     authentication_results = _lower(message.get("authentication_results"))
     received_spf = _lower(message.get("received_spf"))
-    trust = trusted_sender_evidence(message)
+    trust = trusted_sender_evidence(message, registry_entries=trusted_sender_registry)
 
     risk_score = 0
     bec_score = 0
@@ -220,13 +225,14 @@ def analyze_mail_message(message: dict[str, Any], *, mailbox_address: str = "") 
             "evidence": auth_failures,
         })
 
-    if trust["registry_match"] and trust["authentication"]["any_failure"]:
+    required_auth_mismatch = list((trust.get("authentication_policy") or {}).get("missing_or_failed") or [])
+    if trust["registry_match"] and required_auth_mismatch:
         risk_score += 35
         bec_score += 12
         risk_signals.append({
             "signal": "registered_sender_authentication_mismatch",
             "weight": 35,
-            "evidence": [trust["sender"], trust["trust_reason"]],
+            "evidence": [trust["sender"], *required_auth_mismatch[:3]],
         })
 
     if reply_domain and sender_domain and _registrable_hint(reply_domain) != _registrable_hint(sender_domain):
