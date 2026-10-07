@@ -118,6 +118,10 @@ def main() -> None:
         state["needs_refresh"] = True
         page.goto(f"{BASE_URL}/security")
         page.get_by_text("Managed by Ithute central authentication").wait_for()
+        for _ in range(50):
+            if state["refresh_calls"] == 2:
+                break
+            page.wait_for_timeout(100)
         assert state["refresh_calls"] == 2, "security page must refresh an expired central session instead of redirecting to login"
         center = page.get_by_role("link", name="Open central security center")
         assert center.get_attribute("href") == f"{BASE_URL}/api/v1/auth/ithute/account"
