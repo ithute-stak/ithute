@@ -1,0 +1,84 @@
+name: Auth Browser E2E
+
+on:
+  pull_request:
+    paths:
+      - "apps/frontend/**"
+      - "apps/backend/app/api/v1/auth.py"
+      - "apps/backend/app/api/v1/ithute_auth.py"
+      - "apps/backend/app/services/ithute_auth.py"
+      - ".github/workflows/auth-browser-e2e.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/frontend/**"
+      - "apps/backend/app/api/v1/auth.py"
+      - "apps/backend/app/api/v1/ithute_auth.py"
+      - "apps/backend/app/services/ithute_auth.py"
+      - ".github/workflows/auth-browser-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  central-auth-browser-flow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install frontend
+        run: npm ci
+
+      - name: Install Playwright
+        run: |
+          python -m pip install --disable-pip-version-check playwright==1.55.0
+          python -m playwright install --with-deps chromium
+
+      - name: Start frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:3000/api/v1
+        run: |
+          npm run dev -- -p 3000 > /tmp/ithute-auth-e2e-next.log 2>&1 &
+          echo $! > /tmp/ithute-auth-e2e-next.pid
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/login >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/ithute-auth-e2e-next.log
+          exit 1
+
+      - name: Run central auth browser regression
+        run: python e2e/auth_flow.py
+
+      - name: Preserve frontend diagnostics
+        if: always()
+        run: cat /tmp/ithute-auth-e2e-next.log || true
+
+      - name: Stop frontend
+        if: always()
+        run: |
+          if [ -f /tmp/ithute-auth-e2e-next.pid ]; then
+            kill "$(cat /tmp/ithute-auth-e2e-next.pid)" 2>/dev/null || true
+          fi
