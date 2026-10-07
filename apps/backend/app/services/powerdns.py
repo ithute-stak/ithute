@@ -171,6 +171,38 @@ class PowerDNSClient:
         data = self._request("GET", f"/servers/{self.server_id}/zones/{self._zone_id(name)}/cryptokeys").data
         return data if isinstance(data, list) else []
 
+    def create_cryptokey(
+        self,
+        name: str,
+        *,
+        keytype: str = "ksk",
+        algorithm: str = "rsasha256",
+        bits: int = 2048,
+        active: bool = True,
+        published: bool = True,
+    ) -> dict:
+        if keytype not in {"ksk", "zsk", "csk"}:
+            raise ValueError("DNSSEC keytype must be ksk, zsk or csk")
+        if not algorithm.strip():
+            raise ValueError("DNSSEC algorithm must be non-empty")
+        if not 1024 <= bits <= 8192:
+            raise ValueError("DNSSEC key size must be between 1024 and 8192 bits")
+        payload = {
+            "keytype": keytype,
+            "active": active,
+            "published": published,
+            "algorithm": algorithm,
+            "bits": bits,
+        }
+        data = self._request(
+            "POST",
+            f"/servers/{self.server_id}/zones/{self._zone_id(name)}/cryptokeys",
+            payload,
+            ok=(201,),
+        ).data
+        return data if isinstance(data, dict) else {}
+
+
     def rectify_zone(self, name: str) -> None:
         self._request("PUT", f"/servers/{self.server_id}/zones/{self._zone_id(name)}/rectify", ok=(200,))
 
