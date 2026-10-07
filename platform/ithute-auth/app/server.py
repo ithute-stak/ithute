@@ -6,6 +6,7 @@ from .main import app
 from .platform_admin_authorize import router as platform_admin_authorize_router
 from .service_client_admin import router as service_client_admin_router
 from .service_token_api import router as service_token_router
+from .risk_signals import router as risk_signal_router
 
 
 # Privileged console authorization deliberately bypasses the normal reusable
@@ -34,3 +35,6 @@ app.include_router(identity_invitation_reconciliation_router)
 app.include_router(identity_invitation_platform_router)
 app.include_router(identity_invitation_public_router)
 app.include_router(identity_invitation_portal_router)
+
+# Authenticated platform security evidence enters through a dedicated managed-service scope.
+app.include_router(risk_signal_router)
