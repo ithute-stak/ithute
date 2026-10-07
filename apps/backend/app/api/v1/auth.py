@@ -718,6 +718,8 @@ def passkey_register_verify(
     _require_local_auth_surface()
     if current.central_auth_enforced:
         raise HTTPException(status_code=409, detail="Passkeys for this account are managed by Ithute Central Authentication")
+    if not verify_password(payload.current_password, current.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
     try:
         item = verify_passkey_registration(
             db,
