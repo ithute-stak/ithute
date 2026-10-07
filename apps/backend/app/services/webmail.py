@@ -13,6 +13,7 @@ from email.utils import format_datetime, formataddr, make_msgid
 from html import unescape
 from re import sub
 
+import bleach
 import redis
 
 from app.core.config import settings
@@ -265,6 +266,85 @@ def _part_text(part) -> str:
     return _decode_payload(value, part.get_content_charset())
 
 
+INCOMING_HTML_TAGS = [
+    "p", "br", "div", "span", "strong", "b", "em", "i", "u", "s",
+    "ul", "ol", "li", "blockquote", "a", "code", "pre", "hr",
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    "table", "thead", "tbody", "tfoot", "tr", "th", "td",
+]
+INCOMING_HTML_ATTRS = {
+    "a": ["href", "title"],
+    "table": ["role"],
+    "th": ["colspan", "rowspan", "scope"],
+    "td": ["colspan", "rowspan"],
+}
+
+
+def _html_body(message) -> str:
+    parts = message.walk() if message.is_multipart() else [message]
+    for part in parts:
+        if part.get_content_type() != "text/html" or part.get_content_disposition() == "attachment":
+            continue
+        raw_html = _part_text(part)
+        if not raw_html:
+            continue
+        # Incoming HTML is never trusted as a web page. Strip scripts, style,
+        # forms, remote media and layout-control attributes. The frontend owns
+        # typography, width and spacing so wildly different newsletters,
+        # receipts and security messages render consistently.
+        return bleach.clean(
+            raw_html,
+            tags=INCOMING_HTML_TAGS,
+            attributes=INCOMING_HTML_ATTRS,
+            protocols=["http", "https", "mailto"],
+            strip=True,
+            strip_comments=True,
+        )[:1_000_000]
+    return ""
+
+
+def _render_contract(body_text: str, body_html: str, attachments: list[dict], scan: MimeScan, raw: bytes) -> dict:
+    normalized_text = body_text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = normalized_text.split("\n") if normalized_text else []
+    longest_line = max((len(line) for line in lines), default=0)
+    html_lower = body_html.lower()
+    link_count = html_lower.count("<a ") + normalized_text.lower().count("http://") + normalized_text.lower().count("https://")
+    table_count = html_lower.count("<table")
+    heading_count = sum(html_lower.count(f"<h{level}") for level in range(1, 7))
+    quote_count = html_lower.count("<blockquote") + sum(1 for line in lines if line.lstrip().startswith(">"))
+    cpp_profile = execute_binary("native.blob_profile", normalized_text.encode("utf-8", errors="replace"))
+    if body_html:
+        kind = "structured_html"
+    elif longest_line > 220 or (lines and len(lines) <= 3 and len(normalized_text) > 800):
+        kind = "longform_plain"
+    else:
+        kind = "plain"
+    if table_count:
+        kind = "transactional_table"
+    density = "compact" if len(normalized_text) < 800 else "comfortable" if len(normalized_text) < 6000 else "long"
+    return {
+        "version": 1,
+        "kind": kind,
+        "density": density,
+        "has_html": bool(body_html),
+        "has_plain": bool(body_text.strip()),
+        "character_count": len(normalized_text),
+        "line_count": len(lines),
+        "longest_line": longest_line,
+        "table_count": table_count,
+        "heading_count": heading_count,
+        "quote_count": quote_count,
+        "link_count": link_count,
+        "attachment_count": len(attachments),
+        "engines": {
+            "mime_structure": "rust" if scan.bytes == len(raw) else "python",
+            "text_shape": cpp_profile.engine,
+            "orchestrator": "python",
+        },
+        "safe_html_policy": "semantic-tags-no-style-no-script-no-form-no-remote-media",
+    }
+
+
 def _plain_body(message) -> str:
     if message.is_multipart():
         for part in message.walk():
@@ -335,6 +415,8 @@ def _message_json(uid: str, raw: bytes, meta: bytes | str = b"", include_body: b
             scan_engine,
             scan.nul_bytes,
         )
+    attachments = _attachments(parsed, scan)
+    safe_html = _html_body(parsed) if include_body else ""
     row = {
         "uid": uid,
         "message_id": _decode(parsed.get("Message-ID")),
@@ -355,10 +437,12 @@ def _message_json(uid: str, raw: bytes, meta: bytes | str = b"", include_body: b
         "answered": "\\Answered" in meta_text,
         "draft": "\\Draft" in meta_text,
         "snippet": normalized[:240],
-        "attachments": _attachments(parsed, scan),
+        "attachments": attachments,
     }
     if include_body:
         row["body_text"] = body
+        row["body_html"] = safe_html
+        row["render_contract"] = _render_contract(body, safe_html, attachments, scan, raw)
     return row
 
 
