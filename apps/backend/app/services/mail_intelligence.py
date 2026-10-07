@@ -174,6 +174,7 @@ def analyze_mail_message(
     *,
     mailbox_address: str = "",
     trusted_sender_registry: list[dict[str, Any]] | None = None,
+    reputation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     subject = str(message.get("subject") or "")
     body = str(message.get("body_text") or "")
@@ -295,6 +296,32 @@ def analyze_mail_message(
         risk_score = max(0, risk_score - trust_credit)
         bec_score = max(0, bec_score - 12)
 
+    reputation_context = reputation if isinstance(reputation, dict) else {}
+    reputation_adjustment = int(reputation_context.get("risk_adjustment") or 0)
+    hard_failure_signals = {
+        "mail_authentication_failure",
+        "registered_sender_authentication_mismatch",
+        "reply_to_domain_mismatch",
+        "risky_attachment_type",
+    }
+    current_signal_names = {str(item.get("signal") or "") for item in risk_signals}
+    unapproved_links = int(((trust.get("url_intelligence") or {}).get("suspicious_count") or 0)) > 0
+    applied_reputation_adjustment = reputation_adjustment
+    if reputation_adjustment < 0 and (current_signal_names & hard_failure_signals or unapproved_links):
+        applied_reputation_adjustment = 0
+    if applied_reputation_adjustment:
+        risk_score = max(0, min(100, risk_score + applied_reputation_adjustment))
+        if applied_reputation_adjustment > 0:
+            bec_score = min(100, bec_score + max(3, applied_reputation_adjustment // 2))
+        risk_signals.append({
+            "signal": "sender_reputation_risk" if applied_reputation_adjustment > 0 else "sender_reputation_credit",
+            "weight": applied_reputation_adjustment,
+            "evidence": [
+                f"combined_score={int(reputation_context.get('combined_score') or 50)}",
+                f"confidence={float(reputation_context.get('confidence') or 0.0):.3f}",
+            ],
+        })
+
     phishing_probability = min(0.99, max(0.003 if trust["verified"] else 0.01, risk_score / 100.0))
     bec_probability = min(0.99, max(0.003 if trust["verified"] else 0.01, bec_score / 100.0))
 
@@ -354,6 +381,13 @@ def analyze_mail_message(
                 "final_phishing_score": round(phishing_probability * 100, 1),
                 "rule": "trust credit requires registry + SPF/DKIM/DMARC pass + trusted link domains",
             },
+        },
+        "reputation": {
+            **reputation_context,
+            "requested_risk_adjustment": reputation_adjustment,
+            "applied_risk_adjustment": applied_reputation_adjustment,
+            "negative_credit_suppressed": bool(reputation_adjustment < 0 and applied_reputation_adjustment == 0),
+            "rule": "strong reputation may reduce only generic risk; current hard failures always win",
         },
         "security": {
             "phishing_probability": round(phishing_probability, 3),
