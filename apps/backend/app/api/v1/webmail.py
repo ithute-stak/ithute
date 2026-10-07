@@ -600,6 +600,19 @@ def get_message(
         intelligence = analyze_mail_message(payload, mailbox_address=address)
         behavior = observe_sender_behavior(address, payload)
         if behavior is not None:
+            if bool((intelligence.get("trust") or {}).get("verified")):
+                retained = [
+                    signal for signal in (behavior.get("signals") or [])
+                    if signal.get("signal") != "first_seen_sender"
+                ]
+                score = min(100, sum(int(signal.get("weight") or 0) for signal in retained))
+                behavior = {
+                    **behavior,
+                    "score": score,
+                    "state": "high" if score >= 50 else "elevated" if score >= 25 else "watch" if score >= 12 else "stable",
+                    "signals": retained,
+                    "trusted_identity_context": True,
+                }
             intelligence["behavior"] = behavior
         payload["intelligence"] = intelligence
         mailbox = db.scalar(
