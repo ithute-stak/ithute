@@ -117,6 +117,12 @@ echo "[Ithute] Fetching exact deployment helper deploy-production-manual.sh@$MAI
 curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL   "$REPO_RAW/$MAIN_SHA/scripts/deploy-production-manual.sh"   -o "$EXACT_HELPER"
 test -s "$EXACT_HELPER" || { echo "Approved deployment helper is empty." >&2; exit 1; }
 bash -n "$EXACT_HELPER"
+for required_image in ithute-web ithute-app-api ithute-go-worker ithute-java-worker ithute-auth ithute-push ithute-realtime; do
+  grep -Fq "$required_image" "$EXACT_HELPER" || {
+    echo "Refusing deployment: exact helper for $MAIN_SHA does not include required image $required_image." >&2
+    exit 1
+  }
+done
 chmod 700 "$EXACT_HELPER"
 
 # Keep the installed helper current for direct/manual use as well, but execute
