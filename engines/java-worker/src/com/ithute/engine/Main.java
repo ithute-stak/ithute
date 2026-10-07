@@ -39,7 +39,7 @@ public final class Main {
                 "service", "ithute-java-worker",
                 "engine", "java",
                 "version", "0.2.0",
-                "capabilities", List.of("health", "dmarc-aggregate-xml", "enterprise-xml-inspect", "hardware-incident-workflow")
+                "capabilities", List.of("health", "dmarc-aggregate-xml", "enterprise-xml-inspect", "hardware-incident-workflow", "mail-structured-content-profile")
             )));
         });
         server.createContext("/v1/capabilities", exchange -> {
@@ -51,7 +51,7 @@ public final class Main {
                 "service", "ithute-java-worker",
                 "engine", "java",
                 "version", "0.2.0",
-                "capabilities", List.of("dmarc-aggregate-xml", "enterprise-xml-inspect", "hardware-incident-workflow")
+                "capabilities", List.of("dmarc-aggregate-xml", "enterprise-xml-inspect", "hardware-incident-workflow", "mail-structured-content-profile")
             )));
         });
         server.createContext("/v1/dmarc/parse", exchange -> {
@@ -68,6 +68,26 @@ public final class Main {
             } catch (Exception exc) {
                 write(exchange, 422, json(Map.of(
                     "error", "invalid_dmarc_report",
+                    "detail", exc.getClass().getSimpleName()
+                )));
+            }
+        });
+
+        server.createContext("/v1/mail/render-profile", exchange -> {
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                write(exchange, 405, json(Map.of("error", "method_not_allowed")));
+                return;
+            }
+            try {
+                byte[] payload = readBounded(exchange.getRequestBody(), 8192);
+                Map<String, String> form = parseForm(payload);
+                Map<String, Object> result = classifyMailRenderProfile(form);
+                write(exchange, 200, json(result));
+            } catch (PayloadTooLargeException exc) {
+                write(exchange, 413, json(Map.of("error", "payload_too_large")));
+            } catch (Exception exc) {
+                write(exchange, 422, json(Map.of(
+                    "error", "invalid_mail_render_profile",
                     "detail", exc.getClass().getSimpleName()
                 )));
             }
@@ -157,6 +177,38 @@ public final class Main {
         }
         return values;
     }
+
+    private static Map<String, Object> classifyMailRenderProfile(Map<String, String> form) {
+        boolean hasHtml = Boolean.parseBoolean(form.getOrDefault("has_html", "false"));
+        int tables = intValue(form.getOrDefault("table_count", "0"), 0);
+        int links = intValue(form.getOrDefault("link_count", "0"), 0);
+        int attachments = intValue(form.getOrDefault("attachment_count", "0"), 0);
+        int characters = intValue(form.getOrDefault("characters", "0"), 0);
+        int headings = intValue(form.getOrDefault("heading_count", "0"), 0);
+        int quotes = intValue(form.getOrDefault("quote_count", "0"), 0);
+
+        String semanticType = "message";
+        if (tables > 0 && links > 0) semanticType = "transactional_or_newsletter";
+        else if (tables > 0) semanticType = "transactional";
+        else if (hasHtml && headings > 1) semanticType = "structured_document";
+        else if (!hasHtml && characters > 6000) semanticType = "longform_plain";
+        else if (attachments > 0 && characters < 1200) semanticType = "attachment_led";
+        else if (quotes >= 3) semanticType = "conversation_heavy";
+
+        boolean collapseQuotedHistory = quotes >= 3 || characters > 12000;
+        boolean preserveSemanticTables = tables > 0;
+        boolean preferReadableWidth = !preserveSemanticTables;
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("engine", "java");
+        result.put("semantic_type", semanticType);
+        result.put("collapse_quoted_history", collapseQuotedHistory);
+        result.put("preserve_semantic_tables", preserveSemanticTables);
+        result.put("prefer_readable_width", preferReadableWidth);
+        result.put("standards_profile", "email-content-v1");
+        return result;
+    }
+
 
     private static Map<String, Object> planHardwareIncident(Map<String, String> form) {
         String severity = lower(form.getOrDefault("severity", ""));

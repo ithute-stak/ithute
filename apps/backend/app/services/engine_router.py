@@ -38,6 +38,8 @@ PREFERRED_ENGINES: dict[str, str] = {
     "network.dns": "go",
     "network.origin": "go",
     "enterprise.xml": "java",
+    "mail.render_plan": "go",
+    "mail.structured_profile": "java",
     "hardware.incident_workflow": "java",
 }
 
@@ -91,6 +93,16 @@ def execute_origin_probe(payload: dict) -> EngineExecution:
     """Attempt an SSRF-policy-vetted origin HTTP/TLS probe in Go."""
     value, engine = engine_runtime.go_origin_probe(payload)
     return EngineExecution(operation="network.origin", engine=engine, value=value)
+
+
+def execute_mail_render_plan(metrics: dict) -> EngineExecution:
+    value, engine = engine_runtime.go_mail_render_plan(metrics)
+    return EngineExecution(operation="mail.render_plan", engine=engine, value=value)
+
+
+def execute_mail_structured_profile(metrics: dict) -> EngineExecution:
+    value, engine = engine_runtime.java_mail_render_profile(metrics)
+    return EngineExecution(operation="mail.structured_profile", engine=engine, value=value)
 
 
 def execute_enterprise_xml(xml_bytes: bytes) -> EngineExecution:

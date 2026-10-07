@@ -75,6 +75,14 @@ type MessageRow = {
   attachments: Attachment[];
   body_text?: string;
 };
+type MessageContent = {
+  body_html: string;
+  has_html: boolean;
+  remote_images_blocked: number;
+  remote_images_total: number;
+  remote_images_shown: boolean;
+};
+
 type SessionInfo = {
   authenticated: boolean;
   address: string;
@@ -183,6 +191,7 @@ export default function ExternalWebmailPage() {
   const [folder, setFolder] = useState("INBOX");
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [selected, setSelected] = useState<MessageRow | null>(null);
+  const [messageContent, setMessageContent] = useState<MessageContent | null>(null);
   const [query, setQuery] = useState("");
 
   const [composeOpen, setComposeOpen] = useState(false);
@@ -315,13 +324,24 @@ export default function ExternalWebmailPage() {
     setSession(null); setMessages([]); setFolders([]); setCounts([]); setSelected(null); setNotice("External mailbox disconnected");
   }
 
+  async function loadMessageContent(row: MessageRow, showImages = false) {
+    try {
+      const response = await external(`/messages/${row.uid}/content?folder=${encodeURIComponent(folder)}&show_images=${showImages ? "true" : "false"}`);
+      if (!response.ok) return;
+      setMessageContent(await response.json());
+    } catch {
+      // Safe text remains the universal fallback if rich content cannot load.
+    }
+  }
+
   async function openMessage(row: MessageRow) {
-    setSelected(row); setMessageLoading(true);
+    setSelected(row); setMessageContent(null); setMessageLoading(true);
     try {
       const response = await external(`/messages/${row.uid}?folder=${encodeURIComponent(folder)}`);
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Unable to open message");
       const full = await response.json();
       setSelected(full);
+      void loadMessageContent(full, false);
       setMessages((current) => current.map((item) => item.uid === row.uid ? { ...item, seen: true } : item));
       void loadFolders();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to open message"); }
@@ -526,7 +546,31 @@ export default function ExternalWebmailPage() {
           </div>
 
           <div className="mt-5"><MailPrivacyNote /></div>
-          <div className="mt-6 min-h-[220px]"><MailContent text={selected.body_text || selected.snippet || ""} openLinksNewTab={preferences.openLinksNewTab} fontScale={preferences.fontScale} /></div>
+          <div className="mt-6 min-h-[220px]">
+            <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,.03)] dark:border-white/10 dark:bg-white/[.025]">
+              {messageContent?.remote_images_blocked ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-[10px] text-amber-900 dark:border-amber-500/20 dark:bg-amber-400/10 dark:text-amber-100">
+                  <span className="font-bold">{messageContent.remote_images_blocked} remote image{messageContent.remote_images_blocked === 1 ? "" : "s"} blocked for privacy.</span>
+                  <button type="button" onClick={() => void loadMessageContent(selected, true)} className="rounded-lg bg-white px-2.5 py-1 font-black shadow-sm dark:bg-white/10">Show images</button>
+                </div>
+              ) : messageContent?.remote_images_shown ? (
+                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-2 text-[10px] text-slate-500 dark:border-white/10 dark:bg-white/5">
+                  <span>Remote images are visible for this message.</span>
+                  <button type="button" onClick={() => void loadMessageContent(selected, false)} className="font-black">Hide images</button>
+                </div>
+              ) : null}
+              <div className="overflow-x-auto px-5 py-6 sm:px-7">
+                {messageContent?.has_html && messageContent.body_html ? (
+                  <div
+                    className="[&_a]:break-all [&_a]:font-semibold [&_a]:text-emerald-700 [&_a]:underline dark:[&_a]:text-emerald-300 [&_blockquote]:my-4 [&_blockquote]:border-l-4 [&_blockquote]:border-slate-200 [&_blockquote]:pl-4 [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-black [&_h2]:mb-3 [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-black [&_li]:my-1 [&_ol]:my-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-3 [&_p]:leading-7 [&_pre]:my-4 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap [&_table]:my-5 [&_table]:w-full [&_table]:min-w-[520px] [&_td]:p-2.5 [&_th]:p-2.5 [&_th]:text-left [&_th]:font-black [&_ul]:my-4 [&_ul]:list-disc [&_ul]:pl-6"
+                    dangerouslySetInnerHTML={{ __html: messageContent.body_html }}
+                  />
+                ) : (
+                  <MailContent text={selected.body_text || selected.snippet || ""} openLinksNewTab={preferences.openLinksNewTab} fontScale={preferences.fontScale} />
+                )}
+              </div>
+            </div>
+          </div>
 
           {selected.attachments?.length ? <div className="mt-8 border-t border-slate-200 pt-5 dark:border-white/10"><p className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-[.12em] text-slate-500"><Paperclip size={14} /> {selected.attachments.length} attachment{selected.attachments.length === 1 ? "" : "s"}</p><div className="flex flex-wrap gap-2">{selected.attachments.map((item) => <a key={`${selected.uid}-${item.index}`} href={`${API}/webmail/external/messages/${selected.uid}/attachments/${item.index}?folder=${encodeURIComponent(folder)}`} className="group flex max-w-[300px] items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 transition hover:border-emerald-300 hover:bg-emerald-50 dark:border-white/10 dark:bg-white/[.035] dark:hover:bg-emerald-400/10"><span className="grid h-9 w-9 place-items-center rounded-lg bg-white text-slate-500 shadow-sm dark:bg-white/10"><FileText size={17} /></span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-bold text-slate-800 dark:text-slate-100">{item.filename}</span><span className="block text-[10px] text-slate-500">{humanBytes(item.size || 0)}</span></span><Download size={15} className="text-slate-400 group-hover:text-emerald-700" /></a>)}</div></div> : null}
 
@@ -545,10 +589,10 @@ export default function ExternalWebmailPage() {
       </div>
       <div className="flex h-11 shrink-0 items-center gap-2 border-y border-slate-200 bg-white px-3 dark:border-white/10 dark:bg-slate-900 sm:px-4"><div className="min-w-0 flex-1"><p className="truncate text-xs font-black uppercase tracking-[.12em] text-slate-600 dark:text-slate-300">{folder}</p><p className="text-[10px] font-medium text-slate-400">{messages.length} loaded message{messages.length === 1 ? "" : "s"}</p></div><button type="button" onClick={() => void refresh()} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="Refresh"><RefreshCw size={16} className={loading ? "animate-spin" : ""} /></button><button type="button" className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="More"><MoreVertical size={16} /></button></div>
       {loading && !messages.length ? <div className="grid flex-1 place-items-center p-6"><MailLoading compact label="Loading mail" detail={`Reading ${folder}`} /></div> : <div className="min-h-0 flex-1 overflow-y-auto">
-        {!messages.length ? <div className="grid min-h-[360px] place-items-center p-8 text-center"><div><span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-white text-slate-400 shadow-sm dark:bg-white/5"><Inbox size={24} /></span><p className="mt-4 text-sm font-black text-slate-700 dark:text-slate-200">No messages here</p><p className="mt-1 text-xs text-slate-500">{query ? "Try a different search." : "This folder is currently empty."}</p></div></div> : messages.map((row) => <article key={`${folder}-${row.uid}`} className={`group flex cursor-pointer items-center gap-2 border-b border-slate-200/80 px-2 transition hover:z-[1] hover:bg-white hover:shadow-sm dark:border-white/[.07] dark:hover:bg-white/[.045] ${row.seen ? "bg-[#f7f9f8] dark:bg-[#0e1514]" : "bg-white dark:bg-slate-900"} ${densityClass} ${selected?.uid === row.uid ? "border-l-[3px] border-l-emerald-700 bg-emerald-50/70 dark:bg-emerald-400/[.06]" : "border-l-[3px] border-l-transparent"}`} onClick={() => void openMessage(row)}>
+        {!messages.length ? <div className="grid min-h-[360px] place-items-center p-8 text-center"><div><span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-white text-slate-400 shadow-sm dark:bg-white/5"><Inbox size={24} /></span><p className="mt-4 text-sm font-black text-slate-700 dark:text-slate-200">No messages here</p><p className="mt-1 text-xs text-slate-500">{query ? "Try a different search." : "This folder is currently empty."}</p></div></div> : messages.map((row) => <article key={`${folder}-${row.uid}`} className={`group flex cursor-pointer items-start gap-2 border-b border-slate-200/80 px-2 transition hover:z-[1] hover:bg-white hover:shadow-sm dark:border-white/[.07] dark:hover:bg-white/[.045] ${row.seen ? "bg-[#f7f9f8] dark:bg-[#0e1514]" : "bg-white dark:bg-slate-900"} ${densityClass} ${selected?.uid === row.uid ? "border-l-[3px] border-l-emerald-700 bg-emerald-50/70 dark:bg-emerald-400/[.06]" : "border-l-[3px] border-l-transparent"}`} onClick={() => void openMessage(row)}>
           <button type="button" onClick={(event) => { event.stopPropagation(); void toggleStar(row); }} className={`grid h-8 w-8 shrink-0 place-items-center rounded-full transition hover:bg-slate-100 dark:hover:bg-white/10 ${row.flagged ? "text-amber-500" : "text-slate-300 group-hover:text-slate-500"}`}><Star size={16} fill={row.flagged ? "currentColor" : "none"} /></button>
-          <span className="hidden h-8 w-8 shrink-0 place-items-center rounded-full bg-emerald-100 text-[10px] font-black text-emerald-900 sm:grid dark:bg-emerald-400/10 dark:text-emerald-200">{initials(row.from)}</span>
-          <div className="min-w-0 flex-1 sm:grid sm:grid-cols-[minmax(120px,170px)_1fr_auto] sm:items-center sm:gap-3"><div className={`truncate text-sm ${row.seen ? "font-medium text-slate-700 dark:text-slate-300" : "font-black text-slate-950 dark:text-white"}`}>{senderName(row.from)}</div><div className="min-w-0"><div className={`truncate text-sm ${row.seen ? "font-medium text-slate-700 dark:text-slate-300" : "font-bold text-slate-950 dark:text-white"}`}>{row.subject || "(no subject)"}</div>{preferences.showPreview ? <p className="mt-0.5 truncate text-[11px] text-slate-500">{row.snippet}</p> : null}</div><div className="mt-1 flex items-center gap-2 sm:mt-0 sm:justify-end">{row.attachments?.length ? <Paperclip size={13} className="text-slate-400" /> : null}<time className={`text-[10px] ${row.seen ? "font-medium text-slate-400" : "font-black text-emerald-800 dark:text-emerald-300"}`}>{shortDate(row.date)}</time></div></div>
+          <span className="hidden h-8 w-8 shrink-0 place-items-center rounded-full bg-emerald-100 text-[10px] font-black text-emerald-900 md:grid dark:bg-emerald-400/10 dark:text-emerald-200">{initials(row.from)}</span>
+          <div className="min-w-0 flex-1 sm:grid sm:grid-cols-[minmax(96px,128px)_1fr_auto] sm:items-center sm:gap-3"><div className={`truncate text-sm ${row.seen ? "font-medium text-slate-700 dark:text-slate-300" : "font-black text-slate-950 dark:text-white"}`}>{senderName(row.from)}</div><div className="min-w-0"><div className={`truncate text-sm ${row.seen ? "font-medium text-slate-700 dark:text-slate-300" : "font-bold text-slate-950 dark:text-white"}`}>{row.subject || "(no subject)"}</div>{preferences.showPreview ? <p className="mt-0.5 truncate text-[11px] text-slate-500">{row.snippet}</p> : null}</div><div className="mt-1 flex items-center gap-2 sm:mt-0 sm:justify-end">{row.attachments?.length ? <Paperclip size={13} className="text-slate-400" /> : null}<time className={`text-[10px] ${row.seen ? "font-medium text-slate-400" : "font-black text-emerald-800 dark:text-emerald-300"}`}>{shortDate(row.date)}</time></div></div>
           <div className="hidden shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100 xl:flex"><button type="button" onClick={(event) => { event.stopPropagation(); void toggleSeen(row); }} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title={row.seen ? "Mark unread" : "Mark read"}><Mail size={15} /></button><button type="button" onClick={(event) => { event.stopPropagation(); void remove(row); }} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10" title="Delete"><Trash2 size={15} /></button></div>
         </article>)}
       </div>}

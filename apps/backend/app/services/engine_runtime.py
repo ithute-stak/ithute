@@ -360,6 +360,66 @@ def blob_profile(data: bytes) -> tuple[BlobProfile, str]:
         fnv1a64=int(output.fnv1a64),
     ), "cpp"
 
+def go_mail_render_plan(metrics: dict) -> tuple[dict, str]:
+    payload = {
+        "has_html": bool(metrics.get("has_html")),
+        "characters": max(0, int(metrics.get("characters") or 0)),
+        "lines": max(0, int(metrics.get("lines") or 0)),
+        "longest_line": max(0, int(metrics.get("longest_line") or 0)),
+        "table_count": max(0, int(metrics.get("table_count") or 0)),
+        "link_count": max(0, int(metrics.get("link_count") or 0)),
+        "attachment_count": max(0, int(metrics.get("attachment_count") or 0)),
+    }
+    fallback = {
+        "engine": "python-fallback",
+        "layout": "transactional" if payload["table_count"] else "longform_plain" if (not payload["has_html"] and payload["longest_line"] > 220) else "document",
+        "reader_width": "wide" if payload["table_count"] else "comfortable",
+        "horizontal_fit": "scroll_tables" if payload["table_count"] else "wrap",
+        "density": "compact" if payload["characters"] < 800 else "long" if payload["characters"] > 6000 else "comfortable",
+        "collapse_quotes": payload["characters"] > 12000,
+    }
+    try:
+        with httpx.Client(timeout=min(0.75, max(0.2, ENGINE_HTTP_TIMEOUT_SECONDS)), trust_env=False) as client:
+            response = client.post(f"{GO_WORKER_URL}/v1/mail/render-plan", json=payload)
+            response.raise_for_status()
+            body = response.json()
+        if not isinstance(body, dict) or body.get("engine") != "go":
+            raise ValueError("invalid Go mail render response")
+        return body, "go"
+    except (httpx.HTTPError, ValueError, TypeError):
+        return fallback, "python-fallback"
+
+
+def java_mail_render_profile(metrics: dict) -> tuple[dict, str]:
+    form = {
+        "has_html": str(bool(metrics.get("has_html"))).lower(),
+        "table_count": str(max(0, int(metrics.get("table_count") or 0))),
+        "link_count": str(max(0, int(metrics.get("link_count") or 0))),
+        "attachment_count": str(max(0, int(metrics.get("attachment_count") or 0))),
+        "characters": str(max(0, int(metrics.get("characters") or 0))),
+        "heading_count": str(max(0, int(metrics.get("heading_count") or 0))),
+        "quote_count": str(max(0, int(metrics.get("quote_count") or 0))),
+    }
+    fallback = {
+        "engine": "python-fallback",
+        "semantic_type": "transactional" if int(form["table_count"]) else "longform_plain" if (form["has_html"] == "false" and int(form["characters"]) > 6000) else "message",
+        "collapse_quoted_history": int(form["quote_count"]) >= 3 or int(form["characters"]) > 12000,
+        "preserve_semantic_tables": int(form["table_count"]) > 0,
+        "prefer_readable_width": int(form["table_count"]) == 0,
+        "standards_profile": "email-content-v1",
+    }
+    try:
+        with httpx.Client(timeout=min(0.75, max(0.2, ENGINE_HTTP_TIMEOUT_SECONDS)), trust_env=False) as client:
+            response = client.post(f"{JAVA_WORKER_URL}/v1/mail/render-profile", data=form)
+            response.raise_for_status()
+            body = response.json()
+        if not isinstance(body, dict) or body.get("engine") != "java":
+            raise ValueError("invalid Java mail render response")
+        return body, "java"
+    except (httpx.HTTPError, ValueError, TypeError):
+        return fallback, "python-fallback"
+
+
 def go_worker_status() -> dict:
     try:
         with httpx.Client(timeout=ENGINE_HTTP_TIMEOUT_SECONDS, trust_env=False) as client:
