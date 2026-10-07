@@ -75,6 +75,14 @@ type MessageRow = {
   attachments: Attachment[];
   body_text?: string;
 };
+type MessageContent = {
+  body_html: string;
+  has_html: boolean;
+  remote_images_blocked: number;
+  remote_images_total: number;
+  remote_images_shown: boolean;
+};
+
 type SessionInfo = {
   authenticated: boolean;
   address: string;
@@ -183,6 +191,7 @@ export default function ExternalWebmailPage() {
   const [folder, setFolder] = useState("INBOX");
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [selected, setSelected] = useState<MessageRow | null>(null);
+  const [messageContent, setMessageContent] = useState<MessageContent | null>(null);
   const [query, setQuery] = useState("");
 
   const [composeOpen, setComposeOpen] = useState(false);
@@ -315,13 +324,24 @@ export default function ExternalWebmailPage() {
     setSession(null); setMessages([]); setFolders([]); setCounts([]); setSelected(null); setNotice("External mailbox disconnected");
   }
 
+  async function loadMessageContent(row: MessageRow, showImages = false) {
+    try {
+      const response = await external(`/messages/${row.uid}/content?folder=${encodeURIComponent(folder)}&show_images=${showImages ? "true" : "false"}`);
+      if (!response.ok) return;
+      setMessageContent(await response.json());
+    } catch {
+      // Safe text remains the universal fallback if rich content cannot load.
+    }
+  }
+
   async function openMessage(row: MessageRow) {
-    setSelected(row); setMessageLoading(true);
+    setSelected(row); setMessageContent(null); setMessageLoading(true);
     try {
       const response = await external(`/messages/${row.uid}?folder=${encodeURIComponent(folder)}`);
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Unable to open message");
       const full = await response.json();
       setSelected(full);
+      void loadMessageContent(full, false);
       setMessages((current) => current.map((item) => item.uid === row.uid ? { ...item, seen: true } : item));
       void loadFolders();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to open message"); }
@@ -526,7 +546,31 @@ export default function ExternalWebmailPage() {
           </div>
 
           <div className="mt-5"><MailPrivacyNote /></div>
-          <div className="mt-6 min-h-[220px]"><MailContent text={selected.body_text || selected.snippet || ""} openLinksNewTab={preferences.openLinksNewTab} fontScale={preferences.fontScale} /></div>
+          <div className="mt-6 min-h-[220px]">
+            <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,.03)] dark:border-white/10 dark:bg-white/[.025]">
+              {messageContent?.remote_images_blocked ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-[10px] text-amber-900 dark:border-amber-500/20 dark:bg-amber-400/10 dark:text-amber-100">
+                  <span className="font-bold">{messageContent.remote_images_blocked} remote image{messageContent.remote_images_blocked === 1 ? "" : "s"} blocked for privacy.</span>
+                  <button type="button" onClick={() => void loadMessageContent(selected, true)} className="rounded-lg bg-white px-2.5 py-1 font-black shadow-sm dark:bg-white/10">Show images</button>
+                </div>
+              ) : messageContent?.remote_images_shown ? (
+                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-2 text-[10px] text-slate-500 dark:border-white/10 dark:bg-white/5">
+                  <span>Remote images are visible for this message.</span>
+                  <button type="button" onClick={() => void loadMessageContent(selected, false)} className="font-black">Hide images</button>
+                </div>
+              ) : null}
+              <div className="overflow-x-auto px-5 py-6 sm:px-7">
+                {messageContent?.has_html && messageContent.body_html ? (
+                  <div
+                    className="[&_a]:break-all [&_a]:font-semibold [&_a]:text-emerald-700 [&_a]:underline dark:[&_a]:text-emerald-300 [&_blockquote]:my-4 [&_blockquote]:border-l-4 [&_blockquote]:border-slate-200 [&_blockquote]:pl-4 [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-black [&_h2]:mb-3 [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-black [&_li]:my-1 [&_ol]:my-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-3 [&_p]:leading-7 [&_pre]:my-4 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap [&_table]:my-5 [&_table]:w-full [&_table]:min-w-[520px] [&_td]:p-2.5 [&_th]:p-2.5 [&_th]:text-left [&_th]:font-black [&_ul]:my-4 [&_ul]:list-disc [&_ul]:pl-6"
+                    dangerouslySetInnerHTML={{ __html: messageContent.body_html }}
+                  />
+                ) : (
+                  <MailContent text={selected.body_text || selected.snippet || ""} openLinksNewTab={preferences.openLinksNewTab} fontScale={preferences.fontScale} />
+                )}
+              </div>
+            </div>
+          </div>
 
           {selected.attachments?.length ? <div className="mt-8 border-t border-slate-200 pt-5 dark:border-white/10"><p className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-[.12em] text-slate-500"><Paperclip size={14} /> {selected.attachments.length} attachment{selected.attachments.length === 1 ? "" : "s"}</p><div className="flex flex-wrap gap-2">{selected.attachments.map((item) => <a key={`${selected.uid}-${item.index}`} href={`${API}/webmail/external/messages/${selected.uid}/attachments/${item.index}?folder=${encodeURIComponent(folder)}`} className="group flex max-w-[300px] items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 transition hover:border-emerald-300 hover:bg-emerald-50 dark:border-white/10 dark:bg-white/[.035] dark:hover:bg-emerald-400/10"><span className="grid h-9 w-9 place-items-center rounded-lg bg-white text-slate-500 shadow-sm dark:bg-white/10"><FileText size={17} /></span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-bold text-slate-800 dark:text-slate-100">{item.filename}</span><span className="block text-[10px] text-slate-500">{humanBytes(item.size || 0)}</span></span><Download size={15} className="text-slate-400 group-hover:text-emerald-700" /></a>)}</div></div> : null}
 
