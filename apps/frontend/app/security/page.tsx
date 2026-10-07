@@ -2,10 +2,11 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Activity, ExternalLink, KeyRound, Laptop, LockKeyhole, ShieldCheck, Smartphone, Trash2 } from "lucide-react";
+import { Activity, ExternalLink, Fingerprint, KeyRound, Laptop, LockKeyhole, ShieldCheck, Smartphone, Trash2 } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
 import { ConfirmDialog, EmptyState, PageHeader, StatusBadge, Toast } from "@/components/ui-kit";
 import { apiFetch } from "@/lib/platform-api";
+import { registrationCredentialToJSON, registrationOptionsFromJSON } from "@/lib/passkeys";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
 
@@ -32,6 +33,16 @@ type TrustedDevice = {
   last_ip_address?: string | null;
   first_user_agent?: string | null;
   trusted: boolean;
+  revoked: boolean;
+};
+
+type Passkey = {
+  id: string;
+  name: string;
+  created_at: string;
+  last_used_at?: string | null;
+  device_type?: string | null;
+  backed_up: boolean;
   revoked: boolean;
 };
 
@@ -68,6 +79,9 @@ export default function SecurityPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [devices, setDevices] = useState<TrustedDevice[]>([]);
   const [events, setEvents] = useState<SecurityEvent[]>([]);
+  const [passkeys, setPasskeys] = useState<Passkey[]>([]);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
+  const [passkeyPassword, setPasskeyPassword] = useState("");
   const [recoveryRemaining, setRecoveryRemaining] = useState(0);
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
   const [localControls, setLocalControls] = useState(false);
@@ -106,24 +120,84 @@ export default function SecurityPage() {
       setSessions([]);
       setDevices([]);
       setEvents([]);
+      setPasskeys([]);
       return;
     }
 
-    const [sessionResponse, deviceResponse, recoveryResponse, eventResponse] = await Promise.all([
+    const [sessionResponse, deviceResponse, recoveryResponse, eventResponse, passkeyResponse] = await Promise.all([
       apiFetch("/auth/sessions", { cache: "no-store" }),
       apiFetch("/auth/devices", { cache: "no-store" }),
       apiFetch("/auth/recovery-codes", { cache: "no-store" }),
       apiFetch("/auth/security-events", { cache: "no-store" }),
+      apiFetch("/auth/passkeys", { cache: "no-store" }),
     ]);
     if (sessionResponse.ok) setSessions(await sessionResponse.json());
     if (deviceResponse.ok) setDevices(await deviceResponse.json());
     if (recoveryResponse.ok) setRecoveryRemaining(Number((await recoveryResponse.json()).remaining || 0));
     if (eventResponse.ok) setEvents(await eventResponse.json());
+    if (passkeyResponse.ok) setPasskeys(await passkeyResponse.json());
   }
 
   useEffect(() => {
     void load();
   }, []);
+
+  async function addPasskey() {
+    setToast("");
+    if (!window.PublicKeyCredential || !navigator.credentials) {
+      setToast("This browser does not support passkeys.");
+      return;
+    }
+    setPasskeyBusy(true);
+    try {
+      const optionsResponse = await apiFetch("/auth/passkeys/register/options", { method: "POST" });
+      if (!optionsResponse.ok) {
+        const body = await optionsResponse.json().catch(() => ({}));
+        throw new Error(String(body.detail || "Unable to start passkey registration"));
+      }
+      const payload = await optionsResponse.json();
+      const credential = await navigator.credentials.create({
+        publicKey: registrationOptionsFromJSON(payload.publicKey),
+      }) as PublicKeyCredential | null;
+      if (!credential) throw new Error("No passkey was created.");
+
+      const response = await apiFetch("/auth/passkeys/register/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          flow_id: payload.flow_id,
+          name: "Passkey",
+          current_password: passkeyPassword,
+          credential: registrationCredentialToJSON(credential),
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(String(body.detail || "Unable to verify the passkey"));
+      }
+      setPasskeyPassword("");
+      setToast("Passkey added. You can now sign in without your password on supported devices.");
+      await load();
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === "NotAllowedError") {
+        setToast("Passkey setup was cancelled or timed out.");
+      } else {
+        setToast(cause instanceof Error ? cause.message : "Unable to add passkey");
+      }
+    } finally {
+      setPasskeyBusy(false);
+    }
+  }
+
+  async function revokePasskey(id: string) {
+    const response = await apiFetch(`/auth/passkeys/${id}`, { method: "DELETE" });
+    if (response.ok) {
+      setToast("Passkey revoked");
+      await load();
+    } else {
+      setToast("Unable to revoke passkey");
+    }
+  }
 
   async function setupMfa() {
     const response = await apiFetch("/auth/mfa/setup", { method: "POST" });
@@ -364,6 +438,51 @@ export default function SecurityPage() {
               </form>
             </section>
 
+
+            <section className="surface-card p-4 sm:p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#eef4f1] text-[var(--admin-pine)]"><Fingerprint size={18} /></div>
+                  <div>
+                    <p className="text-sm font-black">Passkeys</p>
+                    <p className="mt-1 max-w-2xl text-[10px] leading-5 text-[var(--admin-muted)]">Phishing-resistant sign-in using your device biometrics, PIN or security key. Biometric data stays on your device.</p>
+                  </div>
+                </div>
+                <div className="w-full sm:w-auto">
+                  <label className="label">Confirm current password</label>
+                  <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+                    <input
+                      className="input min-w-[220px]"
+                      type="password"
+                      value={passkeyPassword}
+                      onChange={(event) => setPasskeyPassword(event.target.value)}
+                      autoComplete="current-password"
+                      placeholder="Required to add a passkey"
+                    />
+                    <button className="btn-primary" disabled={passkeyBusy || passkeyPassword.length < 8} onClick={() => void addPasskey()}>
+                      <Fingerprint size={14} />
+                      {passkeyBusy ? "Waiting for device…" : "Add passkey"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 space-y-2">
+                {passkeys.length ? passkeys.map((passkey) => (
+                  <div key={passkey.id} className="flex flex-col gap-3 rounded-xl border border-[var(--admin-line)] p-4 md:flex-row md:items-center">
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#f3f6f4] text-[var(--admin-pine)]"><Fingerprint size={17} /></div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-[11px] font-black">{passkey.name}</p>
+                        <StatusBadge state={passkey.revoked ? "neutral" : "good"}>{passkey.revoked ? "Revoked" : "Active"}</StatusBadge>
+                        {passkey.backed_up ? <StatusBadge state="good">Synced</StatusBadge> : null}
+                      </div>
+                      <p className="mt-1 text-[9px] text-[var(--admin-muted)]">Added {new Date(passkey.created_at).toLocaleString()}{passkey.last_used_at ? ` · last used ${new Date(passkey.last_used_at).toLocaleString()}` : ""}{passkey.device_type ? ` · ${passkey.device_type.replaceAll("_", " ")}` : ""}</p>
+                    </div>
+                    {!passkey.revoked ? <button className="btn-danger" onClick={() => void revokePasskey(passkey.id)}>Revoke</button> : null}
+                  </div>
+                )) : <EmptyState title="No passkeys yet" description="Add a passkey to get phishing-resistant passwordless sign-in." />}
+              </div>
+            </section>
 
             <section className="grid gap-4 xl:grid-cols-2">
               <div className="surface-card p-4 sm:p-5">

@@ -1,4 +1,5 @@
 import enum
+import sqlalchemy as sa
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint, func
@@ -73,6 +74,7 @@ class User(Base):
     sessions: Mapped[list["UserSession"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     trusted_devices: Mapped[list["TrustedDevice"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     recovery_codes: Mapped[list["RecoveryCode"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    passkeys: Mapped[list["PasskeyCredential"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class TenantMembership(Base):
@@ -113,6 +115,23 @@ class RecoveryCode(Base):
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     user: Mapped[User] = relationship(back_populates="recovery_codes")
+
+
+class PasskeyCredential(Base):
+    __tablename__ = "passkey_credentials"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    credential_id: Mapped[str] = mapped_column(String(1024), unique=True, index=True, nullable=False)
+    public_key: Mapped[bytes] = mapped_column(sa.LargeBinary(), nullable=False)
+    sign_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    name: Mapped[str] = mapped_column(String(120), default="Passkey", server_default="Passkey", nullable=False)
+    transports_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]", nullable=False)
+    device_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    backed_up: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    user: Mapped[User] = relationship(back_populates="passkeys")
 
 
 class UserSession(Base):

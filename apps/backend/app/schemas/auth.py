@@ -85,3 +85,25 @@ class SecurityEventOut(BaseModel):
     resource_id: str | None = None
     created_at: str
     metadata: dict = Field(default_factory=dict)
+
+
+class PasskeyRegistrationRequest(BaseModel):
+    flow_id: str = Field(min_length=20, max_length=256)
+    credential: dict
+    name: str = Field(default="Passkey", min_length=1, max_length=120)
+    current_password: str = Field(min_length=8, max_length=256)
+
+
+class PasskeyAuthenticationRequest(BaseModel):
+    flow_id: str = Field(min_length=20, max_length=256)
+    credential: dict
+
+
+class PasskeyOut(BaseModel):
+    id: str
+    name: str
+    created_at: str
+    last_used_at: str | None = None
+    device_type: str | None = None
+    backed_up: bool = False
+    revoked: bool = False

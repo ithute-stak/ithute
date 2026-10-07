@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { authenticationCredentialToJSON, authenticationOptionsFromJSON } from "@/lib/passkeys";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8006/api/v1";
 
@@ -36,6 +37,7 @@ export default function Login() {
   const [capsLock, setCapsLock] = useState(false);
   const [localAuthEnabled, setLocalAuthEnabled] = useState(true);
   const [centralAuthEnabled, setCentralAuthEnabled] = useState(true);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
 
   useEffect(() => {
     void fetch(`${API}/auth/capabilities`, { cache: "no-store" })
@@ -50,6 +52,56 @@ export default function Login() {
 
   function detectCapsLock(event: KeyboardEvent<HTMLInputElement>) {
     setCapsLock(event.getModifierState("CapsLock"));
+  }
+
+  async function signInWithPasskey() {
+    setError("");
+    if (!window.PublicKeyCredential || !navigator.credentials) {
+      setError("This browser does not support passkeys.");
+      return;
+    }
+    setPasskeyLoading(true);
+    try {
+      const optionsResponse = await fetch(`${API}/auth/passkeys/auth/options`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!optionsResponse.ok) throw new Error("Passkey sign-in is temporarily unavailable.");
+      const optionsPayload = await optionsResponse.json();
+      const credential = await navigator.credentials.get({
+        publicKey: authenticationOptionsFromJSON(optionsPayload.publicKey),
+      }) as PublicKeyCredential | null;
+      if (!credential) throw new Error("No passkey was selected.");
+
+      const response = await fetch(`${API}/auth/passkeys/auth/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          flow_id: optionsPayload.flow_id,
+          credential: authenticationCredentialToJSON(credential),
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const structured = typeof body.detail === "object" && body.detail ? body.detail : null;
+        if (structured?.code === "CENTRAL_AUTH_REQUIRED") {
+          window.location.assign(`${API}/auth/ithute/login`);
+          return;
+        }
+        throw new Error(String(structured?.message || body.detail || "Passkey sign-in could not be verified."));
+      }
+      router.replace("/dashboard");
+      router.refresh();
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === "NotAllowedError") {
+        setError("Passkey sign-in was cancelled or timed out.");
+      } else {
+        setError(cause instanceof Error ? cause.message : "Passkey sign-in failed.");
+      }
+    } finally {
+      setPasskeyLoading(false);
+    }
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -236,6 +288,26 @@ export default function Login() {
                 This deployment uses Ithute central authentication. Local password sign-in is disabled.
               </div>
             )}
+
+            {!mfaRequired && localAuthEnabled ? (
+              <div className="mt-5">
+                <div className="flex items-center gap-3">
+                  <span className="h-px flex-1 bg-[#e1e8e4]" />
+                  <span className="text-[9px] font-black uppercase tracking-[.14em] text-[#8b9891]">or</span>
+                  <span className="h-px flex-1 bg-[#e1e8e4]" />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void signInWithPasskey()}
+                  disabled={passkeyLoading}
+                  className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-[#cfdcd6] bg-white px-4 text-sm font-extrabold text-[#21463d] shadow-sm transition hover:-translate-y-0.5 hover:border-[#8fb9aa] hover:bg-[#f5faf7] disabled:cursor-wait disabled:opacity-60"
+                >
+                  <Fingerprint size={17} />
+                  {passkeyLoading ? "Waiting for passkey…" : "Sign in with a passkey"}
+                </button>
+                <p className="mt-2 text-center text-[9px] leading-4 text-[#819088]">Uses your device biometrics, PIN or security key. Your biometric data never leaves your device.</p>
+              </div>
+            ) : null}
 
             {!mfaRequired && centralAuthEnabled ? (
               <div className="mt-5 rounded-2xl border border-[#d9e6e1] bg-[#f7faf8] p-4">
