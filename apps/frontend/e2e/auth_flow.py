@@ -112,7 +112,12 @@ def main() -> None:
         page.wait_for_url(f"{BASE_URL}/dashboard")
 
         page.get_by_text("Control Centre", exact=False).first.wait_for()
+        for _ in range(50):
+            if state["refresh_calls"] == 1:
+                break
+            page.wait_for_timeout(100)
         assert state["refresh_calls"] == 1, "dashboard must refresh an expired central session exactly once"
+        page.wait_for_timeout(200)
         assert page.url.endswith("/dashboard"), "successful central refresh must not bounce back to login"
 
         page.goto(f"{BASE_URL}/security")
