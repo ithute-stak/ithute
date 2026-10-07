@@ -1,19 +1,21 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Bot, FileLock2, RefreshCw, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
+import { Bot, FileLock2, RefreshCw, ShieldAlert, ShieldCheck, Trash2, Gauge, Globe2 } from "lucide-react";
 import { ControlShell } from "@/components/control-shell";
 import { apiJson, apiMutation } from "@/lib/platform-api";
 
 type Me = { email?: string; is_platform_owner: boolean };
 type Membership = { tenant_id: string; tenant_name: string; status: string };
 type Tenant = { id: string; name: string; status: string };
-type Overview = { retention_policies: number; legal_holds: number; phishing_open: number; automations_enabled: number; trusted_senders: number; latest_dmarc?: { domain: string; alignment_rate: number; total_messages: number; failed_messages: number } | null };
+type Overview = { retention_policies: number; legal_holds: number; phishing_open: number; automations_enabled: number; trusted_senders: number; sender_reputation_profiles: number; domain_intelligence_profiles: number; latest_dmarc?: { domain: string; alignment_rate: number; total_messages: number; failed_messages: number } | null };
 type Retention = { id: string; name: string; retention_days: number; legal_hold: boolean; immutable_archive: boolean; mailbox_scope: string[] };
 type Dmarc = { id: string; domain: string; reporter?: string | null; period_end: string; total_messages: number; aligned_messages: number; failed_messages: number; alignment_rate: number };
 type Finding = { id: string; severity: string; finding_type: string; sender?: string | null; subject?: string | null; resolved: boolean; created_at: string };
 type Automation = { id: string; name: string; enabled: boolean; trigger_event: string; run_count: number; last_error?: string | null };
 type TrustedSender = { id: string; name: string; category: string; sender_addresses: string[]; sender_domains: string[]; allowed_link_domains: string[]; require_spf: boolean; require_dkim: boolean; require_dmarc: boolean; active: boolean };
+type SenderReputation = { id: string; kind: "sender"; sender_domain: string; score: number; state: string; confidence: number; observations: number; authenticated_messages: number; authentication_failures: number; suspicious_link_messages: number; verified_legitimate: number; verified_phishing: number; verified_bec: number; registry_verified_messages: number; last_seen_at: string };
+type DomainReputation = { id: string; kind: "domain"; domain: string; score: number; state: string; confidence: number; observations: number; authenticated_messages: number; authentication_failures: number; suspicious_link_messages: number; verified_legitimate: number; verified_phishing: number; verified_bec: number; trusted_registry_matches: number; domain_age_days?: number | null; identity_status: string; enrichment_source?: string | null; enrichment_checked_at?: string | null; last_seen_at: string };
 
 export default function MailIntelligencePage() {
   const [me, setMe] = useState<Me | null>(null);
@@ -25,6 +27,8 @@ export default function MailIntelligencePage() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [trustedSenders, setTrustedSenders] = useState<TrustedSender[]>([]);
+  const [senderReputation, setSenderReputation] = useState<SenderReputation[]>([]);
+  const [domainReputation, setDomainReputation] = useState<DomainReputation[]>([]);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -47,14 +51,16 @@ export default function MailIntelligencePage() {
     if (!tenantId) { setLoading(false); return; }
     setLoading(true); setError("");
     try {
-      const [o, r, d, p, a, t] = await Promise.all([
+      const [o, r, d, p, a, t, sr, dr] = await Promise.all([
         apiJson<Overview>(`/mail-intelligence/tenants/${tenantId}/overview`, { ttlMs: 0, force: true }),
         apiJson<Retention[]>(`/mail-intelligence/tenants/${tenantId}/retention`, { ttlMs: 0, force: true }),
         apiJson<Dmarc[]>(`/mail-intelligence/tenants/${tenantId}/dmarc?limit=30`, { ttlMs: 0, force: true }),
         apiJson<Finding[]>(`/mail-intelligence/tenants/${tenantId}/phishing?limit=50`, { ttlMs: 0, force: true }),
         apiJson<Automation[]>(`/mail-intelligence/tenants/${tenantId}/automations`, { ttlMs: 0, force: true }),
         apiJson<TrustedSender[]>(`/mail-intelligence/tenants/${tenantId}/trusted-senders`, { ttlMs: 0, force: true }),
-      ]); setOverview(o); setRetention(r); setDmarc(d); setFindings(p); setAutomations(a); setTrustedSenders(t);
+        apiJson<SenderReputation[]>(`/mail-intelligence/tenants/${tenantId}/reputation/senders?limit=100`, { ttlMs: 0, force: true }),
+        apiJson<DomainReputation[]>(`/mail-intelligence/tenants/${tenantId}/reputation/domains?limit=100`, { ttlMs: 0, force: true }),
+      ]); setOverview(o); setRetention(r); setDmarc(d); setFindings(p); setAutomations(a); setTrustedSenders(t); setSenderReputation(sr); setDomainReputation(dr);
     } catch { setError("Unable to load mail intelligence data for this organization."); }
     finally { setLoading(false); }
   }, [tenantId]);
@@ -101,6 +107,26 @@ export default function MailIntelligencePage() {
     } catch { setError("Unable to remove trusted sender profile."); }
   }
 
+  async function enrichDomain(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); const form = new FormData(event.currentTarget);
+    const domain = String(form.get("domain") || "").trim();
+    if (!domain) return;
+    try {
+      await apiMutation(`/mail-intelligence/tenants/${tenantId}/reputation/domains/${encodeURIComponent(domain)}/enrichment`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          domain_age_days: form.get("domain_age_days") ? Number(form.get("domain_age_days")) : null,
+          identity_status: form.get("identity_status") || "unverified",
+          source: form.get("source") || "manual_operator_evidence",
+        }),
+      });
+      setNotice("Domain intelligence evidence saved and reputation recalculated.");
+      event.currentTarget.reset(); await load();
+    } catch { setError("Unable to save domain intelligence evidence."); }
+  }
+
   async function createAutomation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = new FormData(event.currentTarget);
     try {
@@ -111,7 +137,7 @@ export default function MailIntelligencePage() {
 
   return <ControlShell title="Mail Intelligence" subtitle="Retention, DMARC, phishing findings and cross-product automation" userEmail={me?.email}><div className="space-y-5">
     <section className="surface-card p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[9px] font-black uppercase tracking-[.14em] text-[var(--admin-muted)]">Enterprise mail controls</p><h1 className="mt-2 text-2xl font-black">Mail Intelligence</h1><p className="mt-2 text-[11px] text-[var(--admin-muted)]">Policy and analytics metadata stays tenant-scoped in Mailbox. Message bodies are not copied into the Ithute platform registry.</p></div><div className="flex gap-2"><select className="input min-w-[220px]" value={tenantId} onChange={e => setTenantId(e.target.value)}>{contexts.map(row => <option key={row.tenant_id} value={row.tenant_id}>{row.tenant_name}</option>)}</select><button className="btn-secondary" onClick={() => void load()}><RefreshCw size={14} className={loading ? "animate-spin" : ""} /></button></div></div>{notice ? <div className="mt-3 rounded-xl bg-emerald-50 p-3 text-[10px] font-bold text-emerald-700">{notice}</div> : null}{error ? <div className="mt-3 rounded-xl bg-red-50 p-3 text-[10px] font-bold text-red-700">{error}</div> : null}</section>
-    {overview ? <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">{[["Retention policies", overview.retention_policies],["Legal holds",overview.legal_holds],["Open phishing",overview.phishing_open],["Trusted senders",overview.trusted_senders],["Automations",overview.automations_enabled],["DMARC alignment",overview.latest_dmarc ? `${overview.latest_dmarc.alignment_rate}%` : "—"]].map(([label,value]) => <div key={String(label)} className="surface-card p-4"><p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">{label}</p><p className="mt-2 text-2xl font-black">{value}</p></div>)}</section> : null}
+    {overview ? <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-8">{[["Retention policies", overview.retention_policies],["Legal holds",overview.legal_holds],["Open phishing",overview.phishing_open],["Trusted senders",overview.trusted_senders],["Sender reputation",overview.sender_reputation_profiles],["Domain intelligence",overview.domain_intelligence_profiles],["Automations",overview.automations_enabled],["DMARC alignment",overview.latest_dmarc ? `${overview.latest_dmarc.alignment_rate}%` : "—"]].map(([label,value]) => <div key={String(label)} className="surface-card p-4"><p className="text-[9px] font-black uppercase text-[var(--admin-muted)]">{label}</p><p className="mt-2 text-2xl font-black">{value}</p></div>)}</section> : null}
     <section className="surface-card p-5">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div><div className="flex items-center gap-2"><ShieldCheck size={16}/><h2 className="text-sm font-black">Trusted Sender Registry</h2></div><p className="mt-2 max-w-3xl text-[10px] leading-5 text-[var(--admin-muted)]">Register banks, suppliers, government agencies and business partners. A registry match is never a blind allowlist: Ithute still requires the selected SPF/DKIM/DMARC checks and approved link domains before granting trust credit.</p></div>
@@ -137,6 +163,37 @@ export default function MailIntelligencePage() {
           <div className="mt-3 flex flex-wrap gap-2">{[["SPF",item.require_spf],["DKIM",item.require_dkim],["DMARC",item.require_dmarc]].map(([label,on]) => <span key={String(label)} className={`rounded-full px-2 py-1 text-[9px] font-black ${on ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{label} {on ? "required" : "optional"}</span>)}</div>
         </div>)}
         {!trustedSenders.length ? <div className="rounded-2xl border border-dashed border-[var(--admin-line)] p-5 text-[10px] text-[var(--admin-muted)]">No tenant-specific trusted senders yet. Ithute first-party security identities remain protected by the immutable system registry.</div> : null}
+      </div>
+    </section>
+    <section className="grid gap-4 xl:grid-cols-2">
+      <div className="surface-card p-5">
+        <div className="flex items-center gap-2"><Gauge size={16}/><h2 className="text-sm font-black">Sender reputation</h2></div>
+        <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">Durable reputation learned from authentication consistency, suspicious links, trusted-registry verification and immutable human verdicts. Clear sender addresses are not stored in this profile.</p>
+        <div className="mt-4 space-y-2">
+          {senderReputation.slice(0,12).map(item => <div key={item.id} className="rounded-xl border border-[var(--admin-line)] p-3 text-[10px]">
+            <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-black">{item.sender_domain}</p><p className="mt-1 text-[var(--admin-muted)]">{item.observations} observations · confidence {Math.round(item.confidence * 100)}%</p></div><span className={`rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${item.score < 40 ? "bg-red-50 text-red-700" : item.score >= 70 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{item.state} · {item.score}/100</span></div>
+            <div className="mt-2 grid grid-cols-3 gap-2 text-center"><div className="rounded-lg bg-[#f7faf8] p-2"><p className="font-black">{item.authentication_failures}</p><p className="text-[8px] uppercase text-[var(--admin-muted)]">Auth failures</p></div><div className="rounded-lg bg-[#f7faf8] p-2"><p className="font-black">{item.suspicious_link_messages}</p><p className="text-[8px] uppercase text-[var(--admin-muted)]">Bad links</p></div><div className="rounded-lg bg-[#f7faf8] p-2"><p className="font-black">{item.verified_phishing + item.verified_bec}</p><p className="text-[8px] uppercase text-[var(--admin-muted)]">Verified threats</p></div></div>
+          </div>)}
+          {!senderReputation.length ? <div className="rounded-xl border border-dashed border-[var(--admin-line)] p-4 text-[10px] text-[var(--admin-muted)]">Reputation profiles will appear as mail is opened and verified verdicts accumulate.</div> : null}
+        </div>
+      </div>
+      <div className="surface-card p-5">
+        <div className="flex items-center gap-2"><Globe2 size={16}/><h2 className="text-sm font-black">Domain intelligence</h2></div>
+        <p className="mt-2 text-[10px] leading-5 text-[var(--admin-muted)]">Combine observed mail behavior with verified domain-age and identity evidence. Enrichment never overrides a current authentication or spoofing failure.</p>
+        <form onSubmit={enrichDomain} className="mt-4 grid gap-2 sm:grid-cols-2">
+          <input className="input" name="domain" placeholder="partner.co.ls" required/>
+          <input className="input" name="domain_age_days" type="number" min="0" placeholder="Domain age in days"/>
+          <select className="input" name="identity_status" defaultValue="unverified"><option value="unverified">Unverified</option><option value="verified">Verified</option><option value="known_business">Known business</option><option value="known_government">Known government</option><option value="known_bank">Known bank</option><option value="suspicious">Suspicious</option><option value="disposable">Disposable</option><option value="impersonation">Impersonation</option></select>
+          <input className="input" name="source" placeholder="Evidence source" defaultValue="manual_operator_evidence" required/>
+          <button className="btn-primary sm:col-span-2">Save domain evidence</button>
+        </form>
+        <div className="mt-4 space-y-2">
+          {domainReputation.slice(0,12).map(item => <div key={item.id} className="rounded-xl border border-[var(--admin-line)] p-3 text-[10px]">
+            <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-black">{item.domain}</p><p className="mt-1 text-[var(--admin-muted)]">{item.identity_status.replaceAll("_", " ")}{item.domain_age_days != null ? ` · ${item.domain_age_days} days old` : ""}</p></div><span className={`rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${item.score < 40 ? "bg-red-50 text-red-700" : item.score >= 70 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{item.state} · {item.score}/100</span></div>
+            <p className="mt-2 text-[9px] text-[var(--admin-muted)]">{item.observations} observations · {Math.round(item.confidence * 100)}% confidence · {item.enrichment_source || "behavior-only evidence"}</p>
+          </div>)}
+          {!domainReputation.length ? <div className="rounded-xl border border-dashed border-[var(--admin-line)] p-4 text-[10px] text-[var(--admin-muted)]">Domain profiles will appear automatically as Ithute observes external senders.</div> : null}
+        </div>
       </div>
     </section>
     <section className="grid gap-4 xl:grid-cols-2"><div className="surface-card p-5"><div className="flex items-center gap-2"><FileLock2 size={16}/><h2 className="text-sm font-black">Retention & legal hold</h2></div><form onSubmit={createRetention} className="mt-4 grid gap-2 sm:grid-cols-[1fr_150px_auto]"><input className="input" name="name" placeholder="Policy name" required/><input className="input" name="retention_days" type="number" min="1" defaultValue="2555"/><button className="btn-primary">Create</button><label className="flex items-center gap-2 text-[10px] sm:col-span-3"><input name="legal_hold" type="checkbox"/>Enable legal hold immediately</label></form><div className="mt-4 space-y-2">{retention.map(item => <div key={item.id} className="rounded-xl border border-[var(--admin-line)] p-3 text-[10px]"><div className="flex justify-between gap-3"><span className="font-black">{item.name}</span><span>{item.retention_days} days</span></div><p className="mt-1 text-[var(--admin-muted)]">Legal hold {item.legal_hold ? "on" : "off"} · immutable archive {item.immutable_archive ? "on" : "off"}</p></div>)}</div></div>
