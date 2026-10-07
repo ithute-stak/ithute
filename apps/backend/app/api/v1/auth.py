@@ -208,6 +208,34 @@ def request_password_reset(
     if user is None or not user.is_active:
         return {"accepted": True}
 
+    # Central-auth hardened accounts must never be able to reopen the local
+    # password path through recovery. The HTTP response remains generic to
+    # avoid account-state enumeration.
+    if user.central_auth_enforced:
+        try:
+            send_system_email(
+                user.email,
+                "Ithute account recovery notice",
+                "A password reset was requested for your Ithute account.\n\n"
+                "This account is protected by permanent Ithute Central Authentication, "
+                "so local password recovery is disabled. Sign in with Central Authentication "
+                "or use the central security centre for account recovery.\n\n"
+                "If you did not request this, no action is required.",
+                "<html><body style=\"font-family:Arial,sans-serif;color:#173228\">"
+                "<div style=\"max-width:560px;margin:auto;padding:28px\">"
+                "<h2 style=\"margin:0 0 12px\">Ithute account recovery notice</h2>"
+                "<p>A password reset was requested for your Ithute account.</p>"
+                "<p><strong>This account is protected by permanent Ithute Central Authentication.</strong> "
+                "Local password recovery is disabled.</p>"
+                "<p>Sign in with Central Authentication or open the central security centre for recovery.</p>"
+                "<p style=\"color:#6f8178\">If you did not request this, no action is required.</p>"
+                "</div></body></html>",
+            )
+        except RuntimeError as exc:
+            if settings.environment.lower() == "production":
+                raise HTTPException(status_code=503, detail="Account recovery is temporarily unavailable") from exc
+        return {"accepted": True}
+
     now = datetime.now(timezone.utc)
     existing = db.scalars(
         select(PasswordResetToken).where(
@@ -241,11 +269,24 @@ def request_password_reset(
     try:
         send_system_email(
             user.email,
-            "Reset your Mailbox DNS password",
-            "A password reset was requested for your Mailbox DNS account.\n\n"
-            f"Open this one-time link to choose a new password:\n{reset_url}\n\n"
-            f"The link expires in {PASSWORD_RESET_EXPIRE_MINUTES} minutes. "
+            "Reset your Ithute password",
+            "A password reset was requested for your Ithute account.\n\n"
+            f"Open this one-time verification link to choose a new password:\n{reset_url}\n\n"
+            f"The link expires in {PASSWORD_RESET_EXPIRE_MINUTES} minutes and can only be used once. "
             "If you did not request this reset, you can ignore this message.",
+            "<html><body style=\"margin:0;background:#f4f7f6;font-family:Arial,sans-serif;color:#173228\">"
+            "<div style=\"max-width:600px;margin:0 auto;padding:32px 18px\">"
+            "<div style=\"background:#ffffff;border:1px solid #dfe8e4;border-radius:18px;padding:30px\">"
+            "<div style=\"font-size:13px;font-weight:700;color:#285b55;margin-bottom:18px\">Ithute Identity &amp; Account Security</div>"
+            "<h2 style=\"font-size:26px;margin:0 0 12px\">Reset your password</h2>"
+            "<p style=\"font-size:15px;line-height:1.6\">We received a request to reset the password for your Ithute account.</p>"
+            f"<p style=\"margin:26px 0\"><a href=\"{reset_url}\" style=\"display:inline-block;background:#123a38;color:#ffffff;text-decoration:none;padding:13px 20px;border-radius:10px;font-weight:700\">Verify and reset password</a></p>"
+            f"<p style=\"font-size:13px;line-height:1.6;color:#65766e\">This one-time link expires in {PASSWORD_RESET_EXPIRE_MINUTES} minutes. "
+            "For your protection, completing the reset signs out existing local sessions.</p>"
+            "<p style=\"font-size:13px;line-height:1.6;color:#65766e\">If you did not request this reset, you can ignore this email.</p>"
+            "<hr style=\"border:none;border-top:1px solid #e5ece8;margin:24px 0\">"
+            "<p style=\"font-size:12px;color:#8a9791\">Sent by auth@ithute.co.ls · Ithute account security</p>"
+            "</div></div></body></html>",
         )
     except RuntimeError as exc:
         if settings.environment.lower() == "production":
