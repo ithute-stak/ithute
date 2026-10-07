@@ -13,6 +13,12 @@ class RegistrarError(RuntimeError):
     pass
 
 
+# OpenSRS currently documents these DNSSEC algorithms for set_dnssec_info.
+# Fail closed rather than submitting an algorithm the registrar may reject.
+OPENSRS_DNSSEC_ALGORITHMS = {5, 6, 7, 8, 10, 253, 254}
+OPENSRS_DIGEST_TYPES = {1, 2, 3, 4}
+
+
 @dataclass(frozen=True)
 class DSRecord:
     key_tag: int
@@ -184,6 +190,13 @@ class OpenSRSRegistrar:
         return records
 
     def set_dnssec(self, domain: str, records: list[DSRecord]) -> None:
+        unsupported = [record for record in records if record.algorithm not in OPENSRS_DNSSEC_ALGORITHMS or record.digest_type not in OPENSRS_DIGEST_TYPES]
+        if unsupported:
+            record = unsupported[0]
+            raise RegistrarError(
+                f"OpenSRS does not advertise support for DNSSEC algorithm {record.algorithm} "
+                f"with digest type {record.digest_type}. Do not publish an incompatible DS record."
+            )
         self._request("set_dnssec_info", {"domain": domain, "dnssec": [record.as_opensrs() for record in records]})
 
     def publish(self, domain: str, record: DSRecord) -> list[DSRecord]:
