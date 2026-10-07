@@ -122,6 +122,11 @@ class Settings(BaseSettings):
     powerdns_default_ttl: int = 3600
 
     external_provider_timeout_seconds: float = 20.0
+    domain_intelligence_enrichment_enabled: bool = True
+    domain_intelligence_enrichment_poll_seconds: int = 60
+    domain_intelligence_enrichment_stale_seconds: int = 86400
+    domain_intelligence_enrichment_timeout_seconds: float = 5.0
+    domain_intelligence_enrichment_batch_size: int = 20
 
     hardware_notification_email_enabled: bool = True
     hardware_notification_push_enabled: bool = False
