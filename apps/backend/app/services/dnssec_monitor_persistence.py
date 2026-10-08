@@ -45,18 +45,21 @@ def record_dnssec_observation(db: Session, *, tenant_id: UUID, domain_id: UUID,
     state.last_checked_at = now
     state.updated_at = now
 
-    if "recovered" in events:
-        incident = db.execute(
+    # Recovery also closes a preceding open incident when a different failure
+    # was pending confirmation at the time the DNSSEC answer became healthy.
+    if observation.get("severity") == "healthy":
+        unresolved = db.execute(
             select(DnssecIncidentHistory).where(
                 DnssecIncidentHistory.tenant_id == tenant_id,
                 DnssecIncidentHistory.domain_id == domain_id,
-                DnssecIncidentHistory.code == previous.code,
                 DnssecIncidentHistory.status.in_(("open", "acknowledged")),
-            ).order_by(DnssecIncidentHistory.opened_at.desc()).with_for_update()
-        ).scalars().first()
-        if incident is not None:
+            ).with_for_update()
+        ).scalars().all()
+        for incident in unresolved:
             incident.status = "recovered"
             incident.recovered_at = now
+        if unresolved and "recovered" not in events:
+            events.append("recovered")
 
     # A new confirmed failure supersedes an older open incident for this
     # domain. Keep the old incident active while the new failure is pending.
