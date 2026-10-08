@@ -20,6 +20,7 @@ from app.models.mail import DistributionGroup, DistributionGroupMember, MailAlia
 from app.models.platform_mail import PlatformMailDomainGrant, PlatformMailboxBinding, PlatformMailOutboundDelivery
 from app.models.deliverability import DkimKey
 from app.models.domain_health import DomainHealthMonitorState
+from app.models.dnssec_incident_history import DnssecMonitorState, DnssecIncidentHistory
 from app.models.security_governance import SecurityApprovalRequest
 from app.models.billing import (
     BillingInvoice,
