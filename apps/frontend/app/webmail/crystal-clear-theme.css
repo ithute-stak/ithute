@@ -1,0 +1,84 @@
+/* Final, scoped visual contract for the hosted iMail workspace.
+   Loaded after legacy theme skins so light/dark are unambiguous. */
+html[data-imail-theme="light"] .imail-hosted-workspace,
+html[data-imail-theme="ithute"] .imail-hosted-workspace {
+  --imail-clear-text: #172536;
+  --imail-clear-muted: #536579;
+  --imail-clear-border: #d7e0e9;
+  --imail-clear-surface: #ffffff;
+  --imail-clear-accent: #174ea6;
+  color: var(--imail-clear-text) !important;
+  background: #f4f7fa !important;
+}
+html[data-imail-theme="dark"] .imail-hosted-workspace {
+  --imail-clear-text: #ecf2f8;
+  --imail-clear-muted: #bac8d8;
+  --imail-clear-border: #334457;
+  --imail-clear-surface: #172332;
+  --imail-clear-accent: #93bcff;
+  color: var(--imail-clear-text) !important;
+  background: #0e1722 !important;
+}
+.imail-route-webmail .imail-hosted-workspace > header {
+  background: var(--imail-clear-surface) !important;
+  color: var(--imail-clear-text) !important;
+  border-color: var(--imail-clear-border) !important;
+}
+.imail-route-webmail .imail-hosted-workspace > div.flex > aside > div {
+  background: var(--imail-clear-surface) !important;
+  border-color: var(--imail-clear-border) !important;
+}
+.imail-route-webmail .imail-hosted-workspace nav button {
+  min-height: 38px;
+}
+.imail-route-webmail .imail-hosted-workspace nav button:not([class*="bg-[#eaf1fb]"]) {
+  color: var(--imail-clear-text) !important;
+}
+.imail-route-webmail .imail-hosted-workspace .imail-message-reader {
+  color: var(--imail-clear-text) !important;
+  background: var(--imail-clear-surface) !important;
+}
+.imail-route-webmail .imail-hosted-workspace .imail-message-reader h1 {
+  color: var(--imail-clear-text) !important;
+  font-size: clamp(1.2rem, 1.65vw, 1.65rem);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.imail-route-webmail .imail-hosted-workspace .imail-universal-body {
+  color: var(--imail-clear-text) !important;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.imail-route-webmail .imail-hosted-workspace .imail-universal-body img,
+.imail-route-webmail .imail-hosted-workspace .imail-universal-body iframe,
+.imail-route-webmail .imail-hosted-workspace .imail-universal-body table {
+  max-width: 100% !important;
+}
+.imail-route-webmail .imail-hosted-workspace .imail-universal-body :is(p, li, div) {
+  overflow-wrap: anywhere;
+}
+.imail-route-webmail .imail-hosted-workspace .imail-universal-body :is(a, button) {
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.imail-route-webmail .imail-hosted-workspace .imail-message-reader :is(summary, time),
+.imail-route-webmail .imail-hosted-workspace .imail-message-reader .text-slate-500 {
+  color: var(--imail-clear-muted) !important;
+}
+.imail-route-webmail .imail-hosted-workspace button:focus-visible,
+.imail-route-webmail .imail-hosted-workspace input:focus-visible,
+.imail-route-webmail .imail-hosted-workspace select:focus-visible,
+.imail-route-webmail .imail-hosted-workspace summary:focus-visible {
+  outline: 2px solid var(--imail-clear-accent) !important;
+  outline-offset: 2px;
+}
+@media (max-width: 1280px) {
+  .imail-route-webmail .imail-hosted-workspace .imail-universal-body {
+    padding-inline: 16px !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .imail-route-webmail .imail-hosted-workspace * {
+    scroll-behavior: auto !important;
+  }
+}
