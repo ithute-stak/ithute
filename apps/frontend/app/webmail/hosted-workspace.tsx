@@ -273,6 +273,14 @@ function participantsOverlap(left: MessageRow, right: MessageRow) {
   return false;
 }
 
+function subjectFallbackEligible(left: MessageRow, right: MessageRow) {
+  if (!participantsOverlap(left, right)) return false;
+  const leftTime = new Date(left.date || 0).getTime();
+  const rightTime = new Date(right.date || 0).getTime();
+  if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) return false;
+  return Math.abs(leftTime - rightTime) <= 14 * 24 * 60 * 60 * 1000;
+}
+
 function threadGroups(rows: MessageRow[]): ThreadGroup[] {
   const parent = rows.map((_, index) => index);
   const find = (index: number): number => {
@@ -306,7 +314,7 @@ function threadGroups(rows: MessageRow[]): ThreadGroup[] {
     if (!key || key === "(no subject)") return;
     const candidates = bySubject.get(key) || [];
     for (const other of candidates) {
-      if (participantsOverlap(row, rows[other])) union(index, other);
+      if (subjectFallbackEligible(row, rows[other])) union(index, other);
     }
     candidates.push(index);
     bySubject.set(key, candidates);
@@ -1372,7 +1380,7 @@ export function HostedMailWorkspace() {
         ) : (
           <div className="min-w-0 flex-1"><p className="truncate text-xs font-black uppercase tracking-[.12em] text-slate-600 dark:text-slate-300">{inboxView === "primary" ? folder : inboxView}</p><p className="text-[10px] font-medium text-slate-400">{threadedView ? `${displayedThreads.length} conversation${displayedThreads.length === 1 ? "" : "s"} · ${visibleMessages.length} message${visibleMessages.length === 1 ? "" : "s"}` : `${visibleMessages.length} loaded message${visibleMessages.length === 1 ? "" : "s"}`}</p></div>
         )}
-        <button type="button" onClick={() => setThreadedView((value) => !value)} className={`hidden h-8 items-center gap-1.5 rounded-lg px-2.5 text-[10px] font-black uppercase tracking-[.05em] sm:flex ${threadedView ? "bg-[#eaf1fb] text-[#174ea6] dark:bg-blue-400/10 dark:text-blue-200" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10"}`} title={threadedView ? "Show individual messages" : "Group related messages into conversations"}><Mail size={14} />{threadedView ? "Threads" : "Messages"}</button>
+        <button type="button" onClick={() => setThreadedView((value) => !value)} className={`flex h-8 items-center gap-1.5 rounded-lg px-2 text-[10px] font-black uppercase tracking-[.05em] ${threadedView ? "bg-[#eaf1fb] text-[#174ea6] dark:bg-blue-400/10 dark:text-blue-200" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10"}`} title={threadedView ? "Show individual messages" : "Group related messages into conversations"}><Mail size={14} /><span className="hidden sm:inline">{threadedView ? "Threads" : "Messages"}</span></button>
         <button type="button" onClick={() => void refresh()} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="Refresh"><RefreshCw size={16} className={loading ? "animate-spin" : ""} /></button>
         <button type="button" onClick={() => setFilterOpen((value) => !value)} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="More"><MoreVertical size={16} /></button>
         <div className="hidden items-center gap-0.5 text-[10px] text-slate-500 xl:flex"><span className="mr-1">{pageStart}-{pageEnd} of {total}</span><button disabled={offset === 0 || loading} onClick={() => void loadMessages(folder, query, Math.max(0, offset - PAGE_SIZE))} className="grid h-8 w-8 place-items-center rounded-full hover:bg-slate-100 disabled:opacity-30"><ChevronLeft size={15} /></button><button disabled={offset + PAGE_SIZE >= total || loading} onClick={() => void loadMessages(folder, query, offset + PAGE_SIZE)} className="grid h-8 w-8 place-items-center rounded-full hover:bg-slate-100 disabled:opacity-30"><ChevronRight size={15} /></button></div>
