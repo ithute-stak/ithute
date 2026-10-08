@@ -20,6 +20,12 @@ export function WebmailNextNav() {
 
   useEffect(() => setOpen(false), [pathname]);
   useEffect(() => {
+    if (!open) return;
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("keydown", escape);
+    return () => document.removeEventListener("keydown", escape);
+  }, [open]);
+  useEffect(() => {
     const close = (event: MouseEvent) => {
       if (root.current && !root.current.contains(event.target as Node)) setOpen(false);
     };
@@ -30,9 +36,9 @@ export function WebmailNextNav() {
   if (pathname === "/webmail/login") return null;
 
   return (
-    <div ref={root} className="fixed bottom-20 right-4 z-[58] sm:bottom-6 sm:right-6">
+    <div ref={root} className="fixed bottom-4 right-4 z-[58] sm:bottom-5 sm:right-5">
       {open ? (
-        <div className="mb-3 w-[min(360px,calc(100vw-32px))] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_22px_70px_rgba(15,23,42,.22)] dark:border-white/10 dark:bg-[#111820]">
+        <div role="dialog" aria-label="iMail navigation" aria-modal="false" className="fixed bottom-20 right-4 max-h-[min(70vh,520px)] w-[min(360px,calc(100vw-32px))] overflow-y-auto rounded-2xl border border-slate-300 bg-white shadow-[0_22px_70px_rgba(15,23,42,.24)] dark:border-white/20 dark:bg-[#111820] sm:right-5">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-white/10">
             <div className="flex items-center gap-2"><span className="grid h-8 w-8 place-items-center rounded-xl bg-[#0c6f55] text-[11px] font-black text-white">iM</span><div><p className="text-sm font-black text-slate-900 dark:text-white">iMail Hub</p><p className="text-[10px] text-slate-500">One workspace for every mailbox</p></div></div>
             <button type="button" onClick={() => setOpen(false)} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" aria-label="Close iMail Hub"><X size={15} /></button>
@@ -45,7 +51,7 @@ export function WebmailNextNav() {
           </div>
         </div>
       ) : null}
-      <button type="button" onClick={() => setOpen((value) => !value)} className="inline-flex h-12 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-black text-slate-700 shadow-[0_14px_38px_rgba(15,23,42,.18)] transition hover:-translate-y-0.5 hover:border-blue-200 hover:text-blue-700 dark:border-white/10 dark:bg-[#141b20] dark:text-slate-200" aria-expanded={open} aria-label="Open iMail Hub"><span className="grid h-7 w-7 place-items-center rounded-full bg-[#0c6f55] text-[9px] font-black text-white">iM</span><span className="hidden sm:inline">iMail Hub</span><ChevronDown size={14} className={open ? "rotate-180 transition" : "transition"} /></button>
+      <button type="button" onClick={() => setOpen((value) => !value)} className="inline-flex h-10 items-center gap-1.5 rounded-full border border-slate-300 bg-white px-2.5 text-xs font-bold text-slate-800 shadow-md transition hover:border-blue-300 hover:text-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 dark:border-white/20 dark:bg-[#141b20] dark:text-slate-100" aria-expanded={open} aria-label="Open iMail Hub"><span className="grid h-7 w-7 place-items-center rounded-full bg-[#0c6f55] text-[9px] font-black text-white">iM</span><span className="hidden xl:inline">iMail Hub</span><ChevronDown size={14} className={open ? "rotate-180 transition" : "transition"} /></button>
     </div>
   );
 }
