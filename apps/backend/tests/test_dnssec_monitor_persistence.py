@@ -36,3 +36,13 @@ def test_persistence_requires_external_transaction_commit():
     source = inspect.getsource(record_dnssec_observation)
     assert "db.commit(" not in source
     assert "with_for_update()" in source
+
+
+def test_recovery_and_supersession_are_transactional():
+    import inspect
+    source = inspect.getsource(record_dnssec_observation)
+    assert 'observation.get("severity") == "healthy"' in source
+    assert 'incident.status = "recovered"' in source
+    assert 'incident.status = "superseded"' in source
+    assert 'db.flush()' in source
+    assert 'db.commit(' not in source
