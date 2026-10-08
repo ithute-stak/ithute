@@ -34,3 +34,13 @@ def test_unsigned_zone_and_unmatched_parent_cannot_be_healthy():
     assert state(data, "signing") == "pending"
     assert state(data, "parent") == "pending"
     assert classify_dnssec_observation(data, {"state": "validated"})["severity"] != "healthy"
+
+
+
+def test_multiple_zone_ds_records_accept_matching_secondary_key():
+    secondary = "51000 8 2 " + "B" * 64
+    data = build_dnssec_monitor_readiness(
+        {"dnssec": True}, [{"ds": [DS, secondary]}],
+        {"ready": True, "parent_ds": [secondary], "parent_ds_error": None},
+    )
+    assert state(data, "parent") == "complete"
