@@ -60,12 +60,12 @@ def record_dnssec_observation(db: Session, *, tenant_id: UUID, domain_id: UUID,
 
     # A new confirmed failure supersedes an older open incident for this
     # domain. Keep the old incident active while the new failure is pending.
-    if "opened" in events and previous.code and previous.code != next_state.code:
+    if "opened" in events:
         stale = db.execute(
             select(DnssecIncidentHistory).where(
                 DnssecIncidentHistory.tenant_id == tenant_id,
                 DnssecIncidentHistory.domain_id == domain_id,
-                DnssecIncidentHistory.code == previous.code,
+                DnssecIncidentHistory.code != next_state.code,
                 DnssecIncidentHistory.status.in_(("open", "acknowledged")),
             ).with_for_update()
         ).scalars().all()
