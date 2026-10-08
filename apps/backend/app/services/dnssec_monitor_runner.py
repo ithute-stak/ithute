@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.domains import Domain, DomainDnsMode, DomainStatus
 from app.services.dns_phase5 import delegation_diagnostics
 from app.services.powerdns import PowerDNSClient
-from app.services.registrar_dnssec import DSRecord, preferred_ds
+from app.services.registrar_dnssec import DSRecord
 from app.services.dnssec_resolver_validation import validating_resolver_check
 from app.services.dnssec_incidents import classify_dnssec_observation
 from app.services.dnssec_monitor_persistence import record_dnssec_observation
@@ -23,7 +23,12 @@ _LOCK_KEY = 912003407
 
 def build_dnssec_monitor_readiness(zone: dict, keys: list[dict], info: dict) -> dict:
     candidates = [ds for key in keys for ds in (key.get("ds") or [])]
-    preferred = preferred_ds(candidates)
+    expected = []
+    for value in candidates:
+        try:
+            expected.append(DSRecord.parse(value))
+        except (TypeError, ValueError):
+            continue
     observed = []
     for value in info.get("parent_ds") or []:
         try:
@@ -32,7 +37,7 @@ def build_dnssec_monitor_readiness(zone: dict, keys: list[dict], info: dict) -> 
             continue
     parent_error = info.get("parent_ds_error")
     lookup_failed = bool(parent_error and parent_error not in {"NoAnswer", "NXDOMAIN"} and not observed)
-    parent_matched = bool(preferred and preferred in observed)
+    parent_matched = any(record in observed for record in expected)
     readiness = {"steps": [
         {"key": "delegation", "state": "complete" if info.get("ready") else "blocked" if info.get("delegation_error") else "pending"},
         {"key": "signing", "state": "complete" if zone.get("dnssec") else "pending"},
