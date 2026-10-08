@@ -355,6 +355,7 @@ export function HostedMailWorkspace() {
   const [mobileFolders, setMobileFolders] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [threadedView, setThreadedView] = useState(true);
+  const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set());
   const [onlyUnread, setOnlyUnread] = useState(false);
   const [onlyAttachments, setOnlyAttachments] = useState(false);
 
@@ -736,6 +737,44 @@ export function HostedMailWorkspace() {
     setSelectedUids(new Set());
     setNotice(`Moved ${size} message${size === 1 ? "" : "s"}`);
     await Promise.all([loadCounts(), loadMessages(folder, query, offset)]);
+  }
+
+  function toggleThreadSelection(thread: ThreadGroup) {
+    setSelectedUids((current) => {
+      const next = new Set(current);
+      const allSelected = thread.messages.every((row) => next.has(row.uid));
+      for (const row of thread.messages) {
+        if (allSelected) next.delete(row.uid);
+        else next.add(row.uid);
+      }
+      return next;
+    });
+  }
+
+  async function setThreadFlags(thread: ThreadGroup, payload: { seen?: boolean; flagged?: boolean }) {
+    await Promise.all(
+      thread.messages.map((row) =>
+        webmail(`/messages/${row.uid}/flags?folder=${encodeURIComponent(folder)}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        }),
+      ),
+    );
+    setMessages((items) =>
+      items.map((item) =>
+        thread.messages.some((row) => row.uid === item.uid) ? { ...item, ...payload } : item,
+      ),
+    );
+    if (payload.seen !== undefined) void loadCounts();
+  }
+
+  function toggleThreadExpanded(key: string) {
+    setExpandedThreads((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }
 
   async function bulkDelete() {
