@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.models.domains import Domain, DomainDnsMode, DomainStatus
 from app.services.dns_phase5 import delegation_diagnostics
+from app.services.powerdns import PowerDNSClient
+from app.services.registrar_dnssec import DSRecord, preferred_ds
 from app.services.dnssec_resolver_validation import validating_resolver_check
 from app.services.dnssec_incidents import classify_dnssec_observation
 from app.services.dnssec_monitor_persistence import record_dnssec_observation
@@ -41,13 +43,26 @@ def run_dnssec_monitor(db: Session, *, limit: int = 100) -> dict:
         try:
             info = delegation_diagnostics(domain.ascii_name)
             resolver = validating_resolver_check(domain.ascii_name)
-            # A validating answer alone cannot establish the local authoritative
-            # signing state or exact parent DS match. Defer to unknown until
-            # those checks are independently available to this worker.
+            # Read the authoritative zone and KSKs before classifying health.
+            # Never use a resolver AD flag to override missing local evidence.
+            pdns = PowerDNSClient()
+            zone = pdns.get_zone(domain.ascii_name)
+            keys = pdns.list_cryptokeys(domain.ascii_name)
+            candidates = [ds for key in keys for ds in (key.get("ds") or [])]
+            preferred = preferred_ds(candidates)
+            observed = []
+            for value in info.get("parent_ds") or []:
+                try:
+                    observed.append(DSRecord.parse(value))
+                except (TypeError, ValueError):
+                    continue
+            parent_error = info.get("parent_ds_error")
+            lookup_failed = bool(parent_error and parent_error not in {"NoAnswer", "NXDOMAIN"} and not observed)
+            parent_matched = bool(preferred and preferred in observed)
             readiness = {"steps": [
                 {"key": "delegation", "state": "complete" if info.get("ready") else "blocked" if info.get("delegation_error") else "pending"},
-                {"key": "signing", "state": "unknown"},
-                {"key": "parent", "state": "unknown"},
+                {"key": "signing", "state": "complete" if zone.get("dnssec") else "pending"},
+                {"key": "parent", "state": "blocked" if lookup_failed else "complete" if parent_matched else "pending"},
             ]}
             observation = classify_dnssec_observation(readiness, resolver)
             with db.begin_nested():
