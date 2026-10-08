@@ -1413,22 +1413,22 @@ export function HostedMailWorkspace() {
                   data-imail-message-body="true"
                   data-imail-sender={addressOnly(selected.from)}
                   data-imail-render-kind={selected.render_contract?.kind || "plain"}
-                  className="imail-universal-body overflow-x-auto px-5 py-6 text-slate-800 dark:text-slate-100 sm:px-7"
+                  className="imail-universal-body overflow-x-auto px-4 py-5 text-slate-800 dark:text-slate-100 sm:px-6 sm:py-7"
                   style={{ fontSize }}
                 >
                   {selected.body_html ? (
                     <>
                       <div
-                        className="[&_a]:break-all [&_a]:font-semibold [&_a]:text-[#0b57d0] [&_a]:underline [&_blockquote]:my-4 [&_blockquote]:border-l-4 [&_blockquote]:border-slate-200 [&_blockquote]:pl-4 [&_blockquote]:text-slate-600 dark:[&_blockquote]:border-white/15 dark:[&_blockquote]:text-slate-300 [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 dark:[&_code]:bg-white/10 [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-black [&_h2]:mb-3 [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-black [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-bold [&_hr]:my-6 [&_hr]:border-slate-200 dark:[&_hr]:border-white/10 [&_li]:my-1 [&_ol]:my-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-3 [&_p]:leading-7 [&_pre]:my-4 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap [&_pre]:rounded-xl [&_pre]:bg-slate-950 [&_pre]:p-4 [&_pre]:text-slate-100 [&_table]:my-5 [&_table]:w-full [&_table]:min-w-[520px] [&_table]:border-collapse [&_td]:border [&_td]:border-slate-200 [&_td]:p-2.5 dark:[&_td]:border-white/10 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-50 [&_th]:p-2.5 [&_th]:text-left [&_th]:font-black dark:[&_th]:border-white/10 dark:[&_th]:bg-white/5 [&_ul]:my-4 [&_ul]:list-disc [&_ul]:pl-6"
+                        className="min-w-0 max-w-full break-words leading-relaxed [&_a]:break-all [&_a]:font-semibold [&_a]:text-[#0b57d0] [&_a]:underline [&_blockquote]:my-4 [&_blockquote]:border-l-4 [&_blockquote]:border-slate-200 [&_blockquote]:pl-4 [&_blockquote]:text-slate-600 dark:[&_blockquote]:border-white/15 dark:[&_blockquote]:text-slate-300 [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 dark:[&_code]:bg-white/10 [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-black [&_h2]:mb-3 [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-black [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-bold [&_hr]:my-6 [&_hr]:border-slate-200 dark:[&_hr]:border-white/10 [&_li]:my-1 [&_ol]:my-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-3 [&_p]:leading-7 [&_pre]:my-4 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap [&_pre]:rounded-xl [&_pre]:bg-slate-950 [&_pre]:p-4 [&_pre]:text-slate-100 [&_table]:my-5 [&_table]:w-full [&_table]:min-w-[520px] [&_table]:border-collapse [&_td]:border [&_td]:border-slate-200 [&_td]:p-2.5 dark:[&_td]:border-white/10 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-50 [&_th]:p-2.5 [&_th]:text-left [&_th]:font-black dark:[&_th]:border-white/10 dark:[&_th]:bg-white/5 [&_ul]:my-4 [&_ul]:list-disc [&_ul]:pl-6"
                         dangerouslySetInnerHTML={{ __html: selected.render_contract?.conversation?.main_html || selected.body_html }}
                       />
                       {selected.render_contract?.conversation?.quoted_html ? (
-                        <details className="mt-6 rounded-xl border border-slate-200 bg-slate-50/70 dark:border-white/10 dark:bg-white/[.025]">
-                          <summary className="cursor-pointer list-none px-4 py-3 text-[10px] font-black uppercase tracking-[.08em] text-slate-500 [&::-webkit-details-marker]:hidden">
+                        <details className="mt-6 overflow-hidden rounded-xl border border-slate-300 bg-slate-50/80 dark:border-white/20 dark:bg-white/[.04]">
+                          <summary className="cursor-pointer px-4 py-3 text-xs font-bold text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-white/5">
                             Show quoted history
                           </summary>
                           <div
-                            className="border-t border-slate-200 px-4 py-4 text-sm text-slate-600 dark:border-white/10 dark:text-slate-300 [&_a]:break-all [&_a]:underline [&_blockquote]:my-3 [&_blockquote]:border-l-4 [&_blockquote]:border-slate-200 [&_blockquote]:pl-4 dark:[&_blockquote]:border-white/15"
+                            className="max-w-full overflow-x-auto break-words border-t border-slate-200 px-4 py-4 text-sm leading-7 text-slate-700 dark:border-white/10 dark:text-slate-300 [&_a]:break-all [&_a]:underline [&_blockquote]:my-3 [&_blockquote]:border-l-4 [&_blockquote]:border-slate-200 [&_blockquote]:pl-4 dark:[&_blockquote]:border-white/15"
                             dangerouslySetInnerHTML={{ __html: selected.render_contract.conversation.quoted_html }}
                           />
                         </details>
