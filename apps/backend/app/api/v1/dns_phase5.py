@@ -9,6 +9,7 @@ from app.api.v1.dns import _managed_domain
 from app.db.session import get_db
 from app.models import User
 from app.services.dns_phase5 import delegation_diagnostics, dns_templates
+from app.services.dnssec_readiness import activation_readiness
 from app.services.domains import add_domain_event
 from app.services.powerdns import PowerDNSClient, PowerDNSError
 from app.services.registrar_dnssec import DSRecord, OPENSRS_DNSSEC_ALGORITHMS, OpenSRSRegistrar, RegistrarError, preferred_ds
@@ -100,6 +101,43 @@ def parent_ds_status(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get
         except RegistrarError as exc:
             result["provider_error"] = str(exc)
     return result
+
+
+@router.get("/dnssec/activation-readiness")
+def dnssec_activation_readiness(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    """Report DNSSEC activation steps without changing zone or registrar state."""
+    require_tenant_permission(tenant_id, "dns.read", db, current)
+    domain = _managed_domain(db, tenant_id, domain_id)
+    client = PowerDNSClient()
+    try:
+        zone = client.get_zone(domain.ascii_name)
+        keys = client.list_cryptokeys(domain.ascii_name)
+    except PowerDNSError as exc:
+        _pdns_error(exc)
+    ds_values = [value for key in keys for value in (key.get("ds") or [])]
+    preferred = preferred_ds(ds_values, allowed_algorithms=OPENSRS_DNSSEC_ALGORITHMS)
+    diagnostics = delegation_diagnostics(domain.ascii_name)
+    parent_records = []
+    for value in diagnostics.get("parent_ds") or []:
+        try:
+            parent_records.append(DSRecord.parse(value))
+        except (TypeError, ValueError):
+            continue
+    registrar = OpenSRSRegistrar()
+    registrar_error = None
+    if registrar.configured:
+        try:
+            registrar.get_dnssec(domain.ascii_name)
+        except RegistrarError as exc:
+            registrar_error = str(exc)
+    return activation_readiness(
+        signing=bool(zone.get("dnssec")),
+        delegation=diagnostics,
+        registrar_configured=registrar.configured,
+        recommended_ds=preferred.text() if preferred else None,
+        parent_contains_recommended=bool(preferred and preferred in parent_records),
+        registrar_error=registrar_error,
+    )
 
 
 @router.post("/parent-ds/publish")
