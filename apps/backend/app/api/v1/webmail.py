@@ -102,6 +102,7 @@ class WebmailSend(BaseModel):
     attachments: list[WebmailAttachment] = Field(default_factory=list, max_length=20)
     in_reply_to: str = Field(default="", max_length=998)
     references: str = Field(default="", max_length=4000)
+    request_read_receipt: bool = False
 
 
 class WebmailRichSend(BaseModel):
@@ -115,6 +116,7 @@ class WebmailRichSend(BaseModel):
     attachments: list[WebmailAttachment] = Field(default_factory=list, max_length=20)
     in_reply_to: str = Field(default="", max_length=998)
     references: str = Field(default="", max_length=4000)
+    request_read_receipt: bool = False
 
 
 class WebmailDraft(BaseModel):
@@ -1322,7 +1324,7 @@ def compose(
             hidden_recipients=bcc,
         )
         body_text = decorate_first_contact_text(payload.body_text, first_contact)
-        result = send_message(address, password, recipients, cc, bcc, payload.subject, body_text, [item.model_dump() for item in payload.attachments], payload.in_reply_to, payload.references)
+        result = send_message(address, password, recipients, cc, bcc, payload.subject, body_text, [item.model_dump() for item in payload.attachments], payload.in_reply_to, payload.references, payload.request_read_receipt)
         record_successful_send(db, mailbox=mailbox, recipients=[*recipients, *cc, *bcc])
         return {**result, "first_contact": first_contact.public_dict()}
     except ValueError as exc:
@@ -1361,6 +1363,7 @@ def compose_rich(
             [item.model_dump() for item in payload.attachments],
             payload.in_reply_to,
             payload.references,
+            payload.request_read_receipt,
         )
         record_successful_send(db, mailbox=mailbox, recipients=[*to, *cc, *bcc])
         return {**result, "first_contact": first_contact.public_dict()}
