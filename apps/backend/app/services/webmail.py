@@ -21,6 +21,7 @@ from app.core.security import decrypt_secret, encrypt_secret, hash_token
 from app.services.engine_router import execute_binary, execute_mail_render_plan, execute_mail_structured_profile
 from app.services.engine_runtime import MimeScan
 from app.services.metrics import MAIL_MIME_SCAN_BYTES, MAIL_MIME_SCAN_TOTAL
+from app.services.mailbox_events import publish_mailbox_change
 
 
 logger = logging.getLogger(__name__)
@@ -740,6 +741,7 @@ def set_flags(address: str, password: str, uid: str, folder: str, seen: bool | N
             if status != "OK":
                 raise WebmailError("Unable to update message flags")
         raw, meta = _fetch_raw(client, uid, mark_seen=False)
+        publish_mailbox_change(address, "flags_changed")
         try:
             return _message_json(uid, raw, meta)
         except Exception as exc:
@@ -763,6 +765,7 @@ def move_message(address: str, password: str, uid: str, folder: str, destination
         if status != "OK":
             raise WebmailError("Unable to remove source message")
         client.expunge()
+        publish_mailbox_change(address, "message_moved")
         return {"moved": True, "uid": uid, "from": folder, "to": destination}
     finally:
         _close_imap(client)
@@ -778,6 +781,7 @@ def delete_message(address: str, password: str, uid: str, folder: str) -> dict:
         if status != "OK":
             raise WebmailError("Unable to delete message")
         client.expunge()
+        publish_mailbox_change(address, "message_deleted")
         return {"deleted": True, "uid": uid, "folder": folder}
     finally:
         _close_imap(client)
@@ -800,6 +804,7 @@ def save_draft(address: str, password: str, to: list[str], cc: list[str], subjec
         status, _ = client.append("Drafts", "\\Draft", imaplib.Time2Internaldate(datetime.now().timestamp()), msg.as_bytes())
         if status != "OK":
             raise WebmailError("Unable to save draft")
+        publish_mailbox_change(address, "changed")
         return {"saved": True, "message_id": msg["Message-ID"], "folder": "Drafts"}
     finally:
         _close_imap(client)
@@ -887,4 +892,5 @@ def send_message(
             _close_imap(client)
     except Exception:
         pass
+    publish_mailbox_change(address, "changed")
     return {"sent": True, "message_id": msg["Message-ID"], "recipients": len(recipients), "attachments": len(attachments or [])}
