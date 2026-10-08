@@ -116,3 +116,21 @@ class ScheduledMail(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class MailReadReceiptEvidence(Base):
+    """Untrusted MDN evidence; never equate a row with recipient reading."""
+    __tablename__ = "mail_read_receipt_evidence"
+    __table_args__ = (
+        UniqueConstraint("mailbox_id", "evidence_key", name="uq_mail_mdn_mailbox_key"),
+        Index("ix_mail_mdn_message", "mailbox_id", "original_message_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    mailbox_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("mailboxes.id", ondelete="CASCADE"), nullable=False, index=True)
+    original_message_id: Mapped[str] = mapped_column(String(998), nullable=False)
+    recipient: Mapped[str] = mapped_column(String(320), nullable=False)
+    disposition: Mapped[str] = mapped_column(String(32), nullable=False)
+    evidence_status: Mapped[str] = mapped_column(String(48), nullable=False, default="unverified_read_claim")
+    evidence_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

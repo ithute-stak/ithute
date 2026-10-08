@@ -131,7 +131,7 @@ from app.models.mail_intelligence import (
     SenderReputationProfile,
     DomainIntelligenceProfile,
 )
-from app.models.webmail_next import ConnectedMailAccount, MailSnooze, ScheduledMail
+from app.models.webmail_next import ConnectedMailAccount, MailSnooze, ScheduledMail, MailReadReceiptEvidence
 from app.models.webmail_rules import MailboxRule
 from app.models.mail_relationship import MailRelationship
 
@@ -159,5 +159,5 @@ __all__ = [
     "IthuteSupportContext", "ProductOperationalStatus", "PlatformEventStatus", "SubscriptionGrantStatus",
     "DeploymentStatus", "BackupStatus", "SecuritySeverity",
     "MailRetentionPolicy", "DmarcAggregateReport", "PhishingFinding", "TrustedSenderProfile", "SenderReputationProfile", "DomainIntelligenceProfile", "MailAutomationRule", "MailThreatModelVersion", "MailThreatShadowPrediction",
-    "ConnectedMailAccount", "MailSnooze", "ScheduledMail", "MailboxRule", "MailRelationship",
+    "ConnectedMailAccount", "MailSnooze", "ScheduledMail", "MailReadReceiptEvidence", "MailboxRule", "MailRelationship",
 ]
