@@ -14,9 +14,6 @@ def classify_dnssec_observation(readiness: dict, resolver: dict) -> dict:
     delegation = steps.get("delegation", {}).get("state")
     signing = steps.get("signing", {}).get("state")
 
-    if state == "validated":
-        return {"severity": "healthy", "code": "DNSSEC_VALIDATED",
-                "summary": "Validating resolver reports an authenticated response.", "remediation": "none"}
     if state == "failure":
         return {"severity": "warning", "code": "DNS_RESOLVER_SERVFAIL",
                 "summary": "Validating resolver returned SERVFAIL; DNSSEC breakage is one possible cause.",
@@ -38,6 +35,14 @@ def classify_dnssec_observation(readiness: dict, resolver: dict) -> dict:
         return {"severity": "warning", "code": "DNSSEC_PARENT_DS_UNVERIFIED",
                 "summary": "The expected parent DS record has not been verified.",
                 "remediation": "review"}
+    if delegation != "complete":
+        return {"severity": "unknown", "code": "DNS_DELEGATION_UNVERIFIED",
+                "summary": "Delegation readiness is not yet confirmed.",
+                "remediation": "retry"}
+    if state == "validated":
+        return {"severity": "healthy", "code": "DNSSEC_VALIDATED",
+                "summary": "Validating resolver reports an authenticated response and other readiness checks agree.",
+                "remediation": "none"}
     if state == "unverified":
         return {"severity": "warning", "code": "DNSSEC_RESOLVER_UNVERIFIED",
                 "summary": "The validating resolver did not set the authenticated-data flag.",
