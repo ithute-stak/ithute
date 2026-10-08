@@ -15,14 +15,14 @@ def test_streams_are_account_scoped_and_address_is_not_exposed():
 def test_resume_cursor_rejects_malformed_input():
     assert _event_cursor("123-0") == "123-0"
     assert _event_cursor("$") == "$"
-    assert _event_cursor("123-0\\nmalicious") == "$"
+    assert _event_cursor("123-0\nmalicious") == "$"
     assert _event_cursor("bad") == "$"
 
 
 def test_sse_encodes_one_event_with_replay_id():
     result = _sse({"id": "123-0", "type": "mailbox.changed", "data": {"source": "test"}})
-    assert result.startswith("id: 123-0\\nevent: mailbox.changed\\ndata: ")
-    assert result.endswith("\\n\\n")
+    assert result.startswith("id: 123-0\nevent: mailbox.changed\ndata: ")
+    assert result.endswith("\n\n")
     assert '"source":"test"' in result
 
 
