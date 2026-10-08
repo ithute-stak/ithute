@@ -1104,12 +1104,54 @@ export function HostedMailWorkspace() {
                   style={{ fontSize }}
                 >
                   {selected.body_html ? (
-                    <div
-                      className="[&_a]:break-all [&_a]:font-semibold [&_a]:text-[#0b57d0] [&_a]:underline [&_blockquote]:my-4 [&_blockquote]:border-l-4 [&_blockquote]:border-slate-200 [&_blockquote]:pl-4 [&_blockquote]:text-slate-600 dark:[&_blockquote]:border-white/15 dark:[&_blockquote]:text-slate-300 [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 dark:[&_code]:bg-white/10 [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-black [&_h2]:mb-3 [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-black [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-bold [&_hr]:my-6 [&_hr]:border-slate-200 dark:[&_hr]:border-white/10 [&_li]:my-1 [&_ol]:my-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-3 [&_p]:leading-7 [&_pre]:my-4 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap [&_pre]:rounded-xl [&_pre]:bg-slate-950 [&_pre]:p-4 [&_pre]:text-slate-100 [&_table]:my-5 [&_table]:w-full [&_table]:min-w-[520px] [&_table]:border-collapse [&_td]:border [&_td]:border-slate-200 [&_td]:p-2.5 dark:[&_td]:border-white/10 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-50 [&_th]:p-2.5 [&_th]:text-left [&_th]:font-black dark:[&_th]:border-white/10 dark:[&_th]:bg-white/5 [&_ul]:my-4 [&_ul]:list-disc [&_ul]:pl-6"
-                      dangerouslySetInnerHTML={{ __html: selected.body_html }}
-                    />
+                    <>
+                      <div
+                        className="[&_a]:break-all [&_a]:font-semibold [&_a]:text-[#0b57d0] [&_a]:underline [&_blockquote]:my-4 [&_blockquote]:border-l-4 [&_blockquote]:border-slate-200 [&_blockquote]:pl-4 [&_blockquote]:text-slate-600 dark:[&_blockquote]:border-white/15 dark:[&_blockquote]:text-slate-300 [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 dark:[&_code]:bg-white/10 [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-black [&_h2]:mb-3 [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-black [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-bold [&_hr]:my-6 [&_hr]:border-slate-200 dark:[&_hr]:border-white/10 [&_li]:my-1 [&_ol]:my-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-3 [&_p]:leading-7 [&_pre]:my-4 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap [&_pre]:rounded-xl [&_pre]:bg-slate-950 [&_pre]:p-4 [&_pre]:text-slate-100 [&_table]:my-5 [&_table]:w-full [&_table]:min-w-[520px] [&_table]:border-collapse [&_td]:border [&_td]:border-slate-200 [&_td]:p-2.5 dark:[&_td]:border-white/10 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-50 [&_th]:p-2.5 [&_th]:text-left [&_th]:font-black dark:[&_th]:border-white/10 dark:[&_th]:bg-white/5 [&_ul]:my-4 [&_ul]:list-disc [&_ul]:pl-6"
+                        dangerouslySetInnerHTML={{ __html: selected.render_contract?.conversation?.main_html || selected.body_html }}
+                      />
+                      {selected.render_contract?.conversation?.quoted_html ? (
+                        <details className="mt-6 rounded-xl border border-slate-200 bg-slate-50/70 dark:border-white/10 dark:bg-white/[.025]">
+                          <summary className="cursor-pointer list-none px-4 py-3 text-[10px] font-black uppercase tracking-[.08em] text-slate-500 [&::-webkit-details-marker]:hidden">
+                            Show quoted history
+                          </summary>
+                          <div
+                            className="border-t border-slate-200 px-4 py-4 text-sm text-slate-600 dark:border-white/10 dark:text-slate-300 [&_a]:break-all [&_a]:underline [&_blockquote]:my-3 [&_blockquote]:border-l-4 [&_blockquote]:border-slate-200 [&_blockquote]:pl-4 dark:[&_blockquote]:border-white/15"
+                            dangerouslySetInnerHTML={{ __html: selected.render_contract.conversation.quoted_html }}
+                          />
+                        </details>
+                      ) : null}
+                    </>
                   ) : (
-                    <div className="whitespace-pre-wrap break-words leading-7">{selected.body_text || selected.snippet || ""}</div>
+                    <>
+                      <div className="whitespace-pre-wrap break-words leading-7">
+                        {selected.render_contract?.conversation?.main_text || selected.body_text || selected.snippet || ""}
+                      </div>
+                      {selected.render_contract?.conversation?.signature_text ? (
+                        <div className="mt-5 border-t border-slate-100 pt-4 text-sm text-slate-500 dark:border-white/10 dark:text-slate-400">
+                          <div className="whitespace-pre-wrap break-words">{selected.render_contract.conversation.signature_text}</div>
+                        </div>
+                      ) : null}
+                      {selected.render_contract?.conversation?.footer_text ? (
+                        <details className="mt-5 rounded-xl border border-slate-200 bg-slate-50/60 dark:border-white/10 dark:bg-white/[.025]">
+                          <summary className="cursor-pointer list-none px-4 py-3 text-[10px] font-black uppercase tracking-[.08em] text-slate-500 [&::-webkit-details-marker]:hidden">
+                            Show footer / legal text
+                          </summary>
+                          <div className="whitespace-pre-wrap break-words border-t border-slate-200 px-4 py-4 text-xs leading-6 text-slate-500 dark:border-white/10 dark:text-slate-400">
+                            {selected.render_contract.conversation.footer_text}
+                          </div>
+                        </details>
+                      ) : null}
+                      {selected.render_contract?.conversation?.quoted_text ? (
+                        <details className="mt-5 rounded-xl border border-slate-200 bg-slate-50/70 dark:border-white/10 dark:bg-white/[.025]">
+                          <summary className="cursor-pointer list-none px-4 py-3 text-[10px] font-black uppercase tracking-[.08em] text-slate-500 [&::-webkit-details-marker]:hidden">
+                            Show quoted history
+                          </summary>
+                          <div className="whitespace-pre-wrap break-words border-t border-slate-200 px-4 py-4 text-sm leading-6 text-slate-600 dark:border-white/10 dark:text-slate-300">
+                            {selected.render_contract.conversation.quoted_text}
+                          </div>
+                        </details>
+                      ) : null}
+                    </>
                   )}
                 </div>
                 {selected.render_contract ? (
