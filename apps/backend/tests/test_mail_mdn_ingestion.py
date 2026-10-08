@@ -31,3 +31,15 @@ def test_ingestion_does_not_promote_external_claim_to_confirmed():
         )
     assert save.call_count == 1
     assert save.call_args.kwargs["disposition"] == "displayed"
+
+
+def test_missing_authenticated_mailbox_never_persists_receipt():
+    db = MagicMock()
+    with patch("app.services.mail_mdn_ingestion.record_unverified_receipt") as save:
+        result = ingest_unverified_mdn(
+            db, mailbox_id=None, raw=b"anything",
+            sent_message_id="<sent@example.com>", sent_message_owned=True,
+            expected_recipient="r@example.com", reported_recipient="r@example.com",
+        )
+    assert result is None
+    save.assert_not_called()
