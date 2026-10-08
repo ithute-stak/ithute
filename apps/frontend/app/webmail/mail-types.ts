@@ -93,6 +93,7 @@ export type ComposeState = {
   bodyHtml: string;
   in_reply_to: string;
   references: string;
+  request_read_receipt?: boolean;
   attachments: { filename: string; content_type: string; content_b64: string }[];
 };
 
@@ -108,6 +109,7 @@ export const emptyCompose: ComposeState = {
   bodyHtml: "",
   in_reply_to: "",
   references: "",
+  request_read_receipt: false,
   attachments: [],
 };
 
