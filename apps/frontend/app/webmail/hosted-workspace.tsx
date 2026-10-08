@@ -642,6 +642,54 @@ export function HostedMailWorkspace() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  // Authenticated server-sent mailbox events trigger immediate lightweight reconciliation.
+  // The existing visible-tab poll remains a fallback when streaming is unavailable.
+  useEffect(() => {
+    if (!session?.authenticated || typeof EventSource === "undefined") return;
+    let active = true;
+    let debounce: number | undefined;
+    let pending = false;
+    const source = new EventSource(`${API}/webmail/events/stream`, { withCredentials: true });
+    const reconcile = async () => {
+      if (!active || pending || document.visibilityState !== "visible") return;
+      pending = true;
+      try {
+        const params = new URLSearchParams({ folder, limit: String(PAGE_SIZE), offset: String(offset) });
+        if (query.trim()) params.set("q", query.trim());
+        const response = await webmail(`/messages?${params}`);
+        if (!response.ok || !active) return;
+        const payload = await response.json();
+        if (!active) return;
+        const incoming = (payload.items || []) as MessageRow[];
+        setMessages(previous => previous.length === incoming.length && previous.every((row, index) =>
+          row.uid === incoming[index]?.uid && row.seen === incoming[index]?.seen &&
+          row.flagged === incoming[index]?.flagged && row.subject === incoming[index]?.subject &&
+          row.snippet === incoming[index]?.snippet && row.date === incoming[index]?.date
+        ) ? previous : incoming);
+        setTotal(Number(payload.total || 0));
+        void loadCounts();
+      } catch {
+        // Poll-based reconciliation remains active if live updates fail.
+      } finally {
+        pending = false;
+      }
+    };
+    const onChange = () => {
+      if (debounce !== undefined) window.clearTimeout(debounce);
+      debounce = window.setTimeout(() => void reconcile(), 300);
+    };
+    source.addEventListener("mailbox.changed", onChange);
+    source.addEventListener("flags_changed", onChange);
+    source.addEventListener("message_moved", onChange);
+    source.addEventListener("message_deleted", onChange);
+    source.addEventListener("changed", onChange);
+    return () => {
+      active = false;
+      if (debounce !== undefined) window.clearTimeout(debounce);
+      source.close();
+    };
+  }, [session?.authenticated, folder, query, offset, loadCounts]);
+
   // Reconcile the currently visible page without clearing selection or interrupting a reader.
   // Polling is a fallback transport until the mailbox server exposes authenticated
   // durable change events. Pause when hidden to avoid unnecessary network activity.
