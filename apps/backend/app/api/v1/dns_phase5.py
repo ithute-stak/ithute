@@ -11,6 +11,7 @@ from app.models import User
 from app.services.dns_phase5 import delegation_diagnostics, dns_templates
 from app.services.dnssec_readiness import activation_readiness
 from app.services.dnssec_resolver_validation import validating_resolver_check
+from app.services.dnssec_multi_resolver import multi_resolver_dnssec_check
 from app.services.domains import add_domain_event
 from app.services.powerdns import PowerDNSClient, PowerDNSError
 from app.services.registrar_dnssec import DSRecord, OPENSRS_DNSSEC_ALGORITHMS, OpenSRSRegistrar, RegistrarError, preferred_ds
@@ -102,6 +103,14 @@ def parent_ds_status(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get
         except RegistrarError as exc:
             result["provider_error"] = str(exc)
     return result
+
+
+@router.get("/dnssec/multi-resolver-validation")
+def dnssec_multi_resolver_validation(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    """Read-only independent recursive resolver observations."""
+    require_tenant_permission(tenant_id, "dns.read", db, current)
+    domain = _managed_domain(db, tenant_id, domain_id)
+    return multi_resolver_dnssec_check(domain.ascii_name)
 
 
 @router.get("/dnssec/resolver-validation")
