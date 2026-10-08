@@ -432,6 +432,7 @@ export function HostedMailWorkspace() {
     }
     let active = true;
     setReceiptEvidence(null);
+    setReceiptError(false);
     void webmail(`/read-receipts?message_id=${encodeURIComponent(selected.message_id)}`)
       .then(async (response) => { if (!response.ok) throw new Error("Receipt history unavailable"); return await response.json(); })
       .then((payload) => { if (active) setReceiptEvidence(payload?.items || []); })
