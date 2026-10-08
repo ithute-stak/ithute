@@ -237,6 +237,110 @@ function quoteForForward(row: MessageRow) {
   };
 }
 
+type ThreadGroup = {
+  key: string;
+  messages: MessageRow[];
+  latest: MessageRow;
+  unreadCount: number;
+  flagged: boolean;
+  attachmentCount: number;
+  senderLabels: string[];
+};
+
+function normalizedThreadSubject(row: MessageRow) {
+  if (row.thread?.subject_key) return row.thread.subject_key;
+  let subject = String(row.subject || "").trim().toLowerCase();
+  let previous = "";
+  while (subject && subject !== previous) {
+    previous = subject;
+    subject = subject.replace(/^(?:(?:re|fw|fwd)\s*:\s*)+/i, "").replace(/^\[(?:external|ext|spam|bulk)\]\s*/i, "").trim();
+  }
+  return subject;
+}
+
+function rowParticipants(row: MessageRow) {
+  const values = [row.from, row.to, row.cc]
+    .flatMap((value) => splitAddresses(String(value || "")))
+    .map((value) => addressOnly(value).toLowerCase())
+    .filter(Boolean);
+  return new Set(values);
+}
+
+function participantsOverlap(left: MessageRow, right: MessageRow) {
+  const a = rowParticipants(left);
+  const b = rowParticipants(right);
+  for (const value of a) if (b.has(value)) return true;
+  return false;
+}
+
+function threadGroups(rows: MessageRow[]): ThreadGroup[] {
+  const parent = rows.map((_, index) => index);
+  const find = (index: number): number => {
+    if (parent[index] !== index) parent[index] = find(parent[index]);
+    return parent[index];
+  };
+  const union = (left: number, right: number) => {
+    const a = find(left);
+    const b = find(right);
+    if (a !== b) parent[b] = a;
+  };
+
+  const tokenOwners = new Map<string, number[]>();
+  rows.forEach((row, index) => {
+    const tokens = [
+      ...(row.thread?.message_id_tokens || []),
+      ...(row.thread?.in_reply_to_tokens || []),
+      ...(row.thread?.reference_tokens || []),
+    ];
+    for (const token of new Set(tokens)) {
+      const owners = tokenOwners.get(token) || [];
+      for (const owner of owners) union(index, owner);
+      owners.push(index);
+      tokenOwners.set(token, owners);
+    }
+  });
+
+  const bySubject = new Map<string, number[]>();
+  rows.forEach((row, index) => {
+    const key = normalizedThreadSubject(row);
+    if (!key || key === "(no subject)") return;
+    const candidates = bySubject.get(key) || [];
+    for (const other of candidates) {
+      if (participantsOverlap(row, rows[other])) union(index, other);
+    }
+    candidates.push(index);
+    bySubject.set(key, candidates);
+  });
+
+  const grouped = new Map<number, MessageRow[]>();
+  rows.forEach((row, index) => {
+    const root = find(index);
+    const group = grouped.get(root) || [];
+    group.push(row);
+    grouped.set(root, group);
+  });
+
+  return Array.from(grouped.entries()).map(([root, messages]) => {
+    const ordered = [...messages].sort((a, b) => {
+      const left = new Date(a.date || 0).getTime();
+      const right = new Date(b.date || 0).getTime();
+      return right - left;
+    });
+    const latest = ordered[0];
+    const senders = Array.from(new Set(ordered.map((row) => senderName(row.from)).filter(Boolean))).slice(0, 3);
+    return {
+      key: latest.thread?.reference_tokens?.[0] || latest.thread?.in_reply_to_tokens?.[0] || latest.thread?.message_id_tokens?.[0] || `thread-${root}-${latest.uid}`,
+      messages: ordered,
+      latest,
+      unreadCount: ordered.filter((row) => !row.seen).length,
+      flagged: ordered.some((row) => row.flagged),
+      attachmentCount: ordered.reduce((sum, row) => sum + (row.attachments?.length || 0), 0),
+      senderLabels: senders,
+    };
+  }).sort((a, b) => new Date(b.latest.date || 0).getTime() - new Date(a.latest.date || 0).getTime());
+}
+
+
 export function HostedMailWorkspace() {
   const { preferences, setPreferences, resetPreferences, ready: preferencesReady } = useMailPreferences();
   const searchRef = useRef<HTMLInputElement>(null);
