@@ -102,6 +102,7 @@ class ScheduledMail(Base):
     body_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     body_html: Mapped[str] = mapped_column(Text, nullable=False, default="")
     attachments_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    request_read_receipt: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     # Hosted-mail scheduled sends need a transient encrypted mailbox secret so
     # delivery can continue after the browser session closes. It is erased as

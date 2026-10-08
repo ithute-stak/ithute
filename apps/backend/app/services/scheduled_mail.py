@@ -87,6 +87,7 @@ def _deliver(job_id: str) -> None:
                     row.body_text,
                     row.body_html,
                     attachments=list(row.attachments_json or []),
+                    request_read_receipt=bool(row.request_read_receipt),
                 )
             row.status = "sent"
             row.sent_at = datetime.now(timezone.utc)

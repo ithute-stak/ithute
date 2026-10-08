@@ -266,7 +266,7 @@ export function MailCompose({ address, compose, setCompose, loading, minimized, 
     try {
       const body = payload();
       const schedule = delaySeconds > 0 ? { delay_seconds: delaySeconds } : { scheduled_at: date?.toISOString() };
-      const response = await webmail("/scheduled", { method: "POST", body: JSON.stringify({ connected_account_id: sender?.type === "connected" ? sender.key : null, to: body.to, cc: body.cc, bcc: body.bcc, subject: body.subject, body_text: body.body_text, body_html: body.body_html, attachments: body.attachments, ...schedule }) });
+      const response = await webmail("/scheduled", { method: "POST", body: JSON.stringify({ connected_account_id: sender?.type === "connected" ? sender.key : null, to: body.to, cc: body.cc, bcc: body.bcc, subject: body.subject, body_text: body.body_text, body_html: body.body_html, attachments: body.attachments, request_read_receipt: sender?.type === "hosted" && Boolean(compose.request_read_receipt), ...schedule }) });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Unable to schedule message");
       const job = await response.json();
       await createFollowUp(String(job.id || ""));
@@ -319,11 +319,7 @@ export function MailCompose({ address, compose, setCompose, loading, minimized, 
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (compose.request_read_receipt) {
-      if (sender?.type !== "hosted") { setActionError("Read receipt requests currently require an Ithute-hosted sender."); return; }
-      onSend(event);
-      return;
-    }
+    if (compose.request_read_receipt && sender?.type !== "hosted") { setActionError("Read receipt requests currently require an Ithute-hosted sender."); return; }
     // Use a server-relative delay for Undo Send so client/server clock skew
     // can never make a normal Send look like an invalid scheduled message.
     void scheduleMessage(null, 20, 25);
@@ -367,7 +363,7 @@ export function MailCompose({ address, compose, setCompose, loading, minimized, 
               <div className="relative"><button type="button" onClick={() => setToolsOpen((value) => !value)} className="grid h-9 w-9 place-items-center rounded-md text-[#5f6368] hover:bg-[#edf2f8]" title="Templates and signatures"><FileText size={17} /></button>{toolsOpen ? <div className="absolute bottom-11 left-0 z-[100] w-80 max-h-[360px] overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-2xl"><p className="px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-400">Templates</p>{templates.map((item) => <button type="button" key={item.id} onClick={() => insertTemplate(item)} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50"><FileText size={14} />{item.name}</button>)}<button type="button" onClick={() => void saveTemplate()} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-[#174ea6] hover:bg-blue-50"><Save size={14} />Save current message as template</button><div className="my-2 border-t border-slate-100" /><p className="px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-400">Signature</p><select value={signatureKey} onChange={(event) => setSignatureKey(event.target.value)} className="mb-1 w-full rounded-lg border border-slate-200 px-2 py-2 text-sm"><option value="legacy">Mailbox default</option><option value="none">No signature</option>{signatures.map((item) => <option key={item.id} value={item.id}>{item.name}{item.is_default ? " · default" : ""}</option>)}</select><button type="button" onClick={() => void addSignature()} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-[#174ea6] hover:bg-blue-50"><Signature size={14} />Add signature</button></div> : null}</div>
               <label className="flex items-center gap-1.5 text-[11px] text-slate-600" title="Ask the recipient mail app for a read acknowledgment; recipients may decline"><input type="checkbox" checked={Boolean(compose.request_read_receipt)} disabled={sender?.type !== "hosted"} onChange={(event) => setCompose((current) => ({ ...current, request_read_receipt: event.target.checked }))} />Request read receipt</label>
               <select value={followUpDays} onChange={(event) => setFollowUpDays(Number(event.target.value))} title="Follow-up reminder" className="hidden h-9 rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-600 md:block"><option value={0}>No follow-up</option><option value={1}>Follow up: 1 day</option><option value={3}>Follow up: 3 days</option><option value={7}>Follow up: 7 days</option></select>
-              {compose.request_read_receipt ? <span className="text-[10px] text-amber-700" title="This request uses immediate sending; Undo Send is not available">Immediate send · no Undo Send · acknowledgment not guaranteed</span> : null}
+              {compose.request_read_receipt ? <span className="text-[10px] text-amber-700">Receipt request · acknowledgment not guaranteed</span> : null}
               <button type="button" onClick={onSaveDraft} className="hidden rounded-md px-3 py-2 text-xs font-medium text-[#5f6368] hover:bg-[#edf2f8] sm:block">Save draft</button>
               <span className="ml-1 hidden max-w-[190px] truncate text-[10px] text-[#80868b] xl:block">From {sender?.address || address}</span>
               <button type="button" onClick={onDiscard} className="ml-auto grid h-9 w-9 place-items-center rounded-md text-[#5f6368] hover:bg-[#edf2f8]" title="Discard"><Trash2 size={16} /></button>
