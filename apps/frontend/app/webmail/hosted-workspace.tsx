@@ -79,6 +79,35 @@ type BusinessContact = {
   company?: string;
 };
 type ConversationMessage = MessageRow & { folder?: string };
+type InboxSort = "newest" | "attention" | "unread" | "starred";
+
+function attentionScore(row: MessageRow): number {
+  // Display-only, explainable heuristics. Never treat these hints as security verdicts.
+  const subject = (row.subject || "").toLowerCase();
+  const sender = (row.from || "").toLowerCase();
+  const text = `${subject} ${row.snippet || ""}`.toLowerCase();
+  let score = row.seen ? 0 : 30;
+  if (row.flagged) score += 25;
+  if (/\\b(urgent|action required|response needed|deadline|overdue|past due)\\b/i.test(text)) score += 30;
+  if (/\\b(invoice|payment due|statement|receipt|approval|contract|verification)\\b/i.test(subject)) score += 12;
+  if (/\\b(newsletter|unsubscribe|promotion|sale|discount)\\b/i.test(text)) score -= 25;
+  if (/no-?reply|noreply/.test(sender)) score -= 8;
+  // A recent email wins ties, but cannot outrank a significantly more actionable email.
+  return score;
+}
+
+function sortInboxMessages(rows: MessageRow[], mode: InboxSort): MessageRow[] {
+  return [...rows].sort((a, b) => {
+    if (mode === "attention") {
+      const difference = attentionScore(b) - attentionScore(a);
+      if (difference) return difference;
+    }
+    if (mode === "unread" && a.seen !== b.seen) return a.seen ? 1 : -1;
+    if (mode === "starred" && a.flagged !== b.flagged) return a.flagged ? -1 : 1;
+    return (Date.parse(b.date || "") || 0) - (Date.parse(a.date || "") || 0);
+  });
+}
+
 type MailIntelligence = {
   model: string;
   trust?: {
@@ -363,6 +392,7 @@ export function HostedMailWorkspace() {
   const [mobileFolders, setMobileFolders] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [threadedView, setThreadedView] = useState(true);
+  const [inboxSort, setInboxSort] = useState<InboxSort>("newest");
   const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set());
   const [onlyUnread, setOnlyUnread] = useState(false);
   const [onlyAttachments, setOnlyAttachments] = useState(false);
@@ -956,10 +986,16 @@ export function HostedMailWorkspace() {
     return items;
   }, [inboxView, messages, onlyAttachments, onlyUnread]);
 
-  const groupedThreads = useMemo(() => threadGroups(visibleMessages), [visibleMessages]);
+  const sortedMessages = useMemo(() => sortInboxMessages(visibleMessages, inboxSort), [visibleMessages, inboxSort]);
+  const groupedThreads = useMemo(() => threadGroups(sortedMessages), [sortedMessages]);
   const displayedThreads = threadedView && folderKind(folder) !== "drafts"
-    ? groupedThreads
-    : visibleMessages.map((row, index) => ({
+    ? [...groupedThreads].sort((a, b) => {
+        if (inboxSort === "attention") return Math.max(...b.messages.map(attentionScore)) - Math.max(...a.messages.map(attentionScore)) || (Date.parse(b.latest.date || "") || 0) - (Date.parse(a.latest.date || "") || 0);
+        if (inboxSort === "unread") return b.unreadCount - a.unreadCount || (Date.parse(b.latest.date || "") || 0) - (Date.parse(a.latest.date || "") || 0);
+        if (inboxSort === "starred") return Number(b.flagged) - Number(a.flagged) || (Date.parse(b.latest.date || "") || 0) - (Date.parse(a.latest.date || "") || 0);
+        return 0;
+      })
+    : sortedMessages.map((row, index) => ({
         key: `message-${row.uid}-${index}`,
         messages: [row],
         latest: row,
@@ -1380,6 +1416,7 @@ export function HostedMailWorkspace() {
         ) : (
           <div className="min-w-0 flex-1"><p className="truncate text-xs font-black uppercase tracking-[.12em] text-slate-600 dark:text-slate-300">{inboxView === "primary" ? folder : inboxView}</p><p className="text-[10px] font-medium text-slate-400">{threadedView ? `${displayedThreads.length} conversation${displayedThreads.length === 1 ? "" : "s"} · ${visibleMessages.length} message${visibleMessages.length === 1 ? "" : "s"}` : `${visibleMessages.length} loaded message${visibleMessages.length === 1 ? "" : "s"}`}</p></div>
         )}
+        <label className="flex shrink-0 items-center gap-1 text-[10px] font-semibold text-slate-500"><span className="hidden lg:inline">Sort</span><select aria-label="Sort loaded inbox messages" value={inboxSort} onChange={(event) => setInboxSort(event.target.value as InboxSort)} className="max-w-[112px] rounded-lg border border-slate-200 bg-white px-1.5 py-1.5 text-[11px] text-slate-700 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"><option value="newest">Newest</option><option value="attention">Needs attention</option><option value="unread">Unread first</option><option value="starred">Starred first</option></select></label>
         <button type="button" onClick={() => setThreadedView((value) => !value)} className={`flex h-8 items-center gap-1.5 rounded-lg px-2 text-[10px] font-black uppercase tracking-[.05em] ${threadedView ? "bg-[#eaf1fb] text-[#174ea6] dark:bg-blue-400/10 dark:text-blue-200" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10"}`} title={threadedView ? "Show individual messages" : "Group related messages into conversations"}><Mail size={14} /><span className="hidden sm:inline">{threadedView ? "Threads" : "Messages"}</span></button>
         <button type="button" onClick={() => void refresh()} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="Refresh"><RefreshCw size={16} className={loading ? "animate-spin" : ""} /></button>
         <button type="button" onClick={() => setFilterOpen((value) => !value)} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="More"><MoreVertical size={16} /></button>
