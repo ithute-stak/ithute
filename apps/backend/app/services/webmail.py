@@ -495,13 +495,13 @@ def _attachments(message, scan: MimeScan | None = None) -> list[dict]:
 
 
 def _normalized_thread_subject(value: str) -> str:
-    text = " ".join(str(value or "").split()).strip()
+    text = " ".join(str(value or "").split()).strip().lower()
     previous = None
     while text and text != previous:
         previous = text
         text = sub(r"^(?:(?:re|fw|fwd)\s*:\s*)+", "", text, flags=0).strip()
         text = sub(r"^\[(?:external|ext|spam|bulk)\]\s*", "", text, flags=0).strip()
-    return text.lower()[:255]
+    return text[:255]
 
 
 def _message_id_tokens(value: str) -> list[str]:
