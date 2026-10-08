@@ -11,6 +11,7 @@ from app.models import User
 from app.services.dns_phase5 import delegation_diagnostics, dns_templates
 from app.services.dnssec_readiness import activation_readiness
 from app.services.dnssec_resolver_validation import validating_resolver_check
+from app.services.dnssec_multi_resolver import multi_resolver_dnssec_check
 from app.services.domains import add_domain_event
 from app.services.powerdns import PowerDNSClient, PowerDNSError
 from app.services.registrar_dnssec import DSRecord, OPENSRS_DNSSEC_ALGORITHMS, OpenSRSRegistrar, RegistrarError, preferred_ds
@@ -104,6 +105,14 @@ def parent_ds_status(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get
     return result
 
 
+@router.get("/dnssec/multi-resolver-validation")
+def dnssec_multi_resolver_validation(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    """Read-only independent recursive resolver observations."""
+    require_tenant_permission(tenant_id, "dns.read", db, current)
+    domain = _managed_domain(db, tenant_id, domain_id)
+    return multi_resolver_dnssec_check(domain.ascii_name)
+
+
 @router.get("/dnssec/resolver-validation")
 def dnssec_resolver_validation(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     """Read-only external resolver signal; AD is not local cryptographic verification."""
@@ -146,6 +155,8 @@ def dnssec_activation_readiness(tenant_id: UUID, domain_id: UUID, db: Session = 
         recommended_ds=preferred.text() if preferred else None,
         parent_contains_recommended=bool(preferred and preferred in parent_records),
         registrar_error=registrar_error,
+        available_ds=bool(ds_values),
+        registrar_algorithms=sorted(OPENSRS_DNSSEC_ALGORITHMS),
     )
 
 
