@@ -21,6 +21,26 @@ logger = logging.getLogger(__name__)
 _LOCK_KEY = 912003407
 
 
+def build_dnssec_monitor_readiness(zone: dict, keys: list[dict], info: dict) -> dict:
+    candidates = [ds for key in keys for ds in (key.get("ds") or [])]
+    preferred = preferred_ds(candidates)
+    observed = []
+    for value in info.get("parent_ds") or []:
+        try:
+            observed.append(DSRecord.parse(value))
+        except (TypeError, ValueError):
+            continue
+    parent_error = info.get("parent_ds_error")
+    lookup_failed = bool(parent_error and parent_error not in {"NoAnswer", "NXDOMAIN"} and not observed)
+    parent_matched = bool(preferred and preferred in observed)
+    readiness = {"steps": [
+        {"key": "delegation", "state": "complete" if info.get("ready") else "blocked" if info.get("delegation_error") else "pending"},
+        {"key": "signing", "state": "complete" if zone.get("dnssec") else "pending"},
+        {"key": "parent", "state": "blocked" if lookup_failed else "complete" if parent_matched else "pending"},
+    ]}
+    return readiness
+
+
 def run_dnssec_monitor(db: Session, *, limit: int = 100) -> dict:
     if limit < 1 or limit > 1000:
         raise ValueError("limit must be between 1 and 1000")
@@ -48,22 +68,7 @@ def run_dnssec_monitor(db: Session, *, limit: int = 100) -> dict:
             pdns = PowerDNSClient()
             zone = pdns.get_zone(domain.ascii_name)
             keys = pdns.list_cryptokeys(domain.ascii_name)
-            candidates = [ds for key in keys for ds in (key.get("ds") or [])]
-            preferred = preferred_ds(candidates)
-            observed = []
-            for value in info.get("parent_ds") or []:
-                try:
-                    observed.append(DSRecord.parse(value))
-                except (TypeError, ValueError):
-                    continue
-            parent_error = info.get("parent_ds_error")
-            lookup_failed = bool(parent_error and parent_error not in {"NoAnswer", "NXDOMAIN"} and not observed)
-            parent_matched = bool(preferred and preferred in observed)
-            readiness = {"steps": [
-                {"key": "delegation", "state": "complete" if info.get("ready") else "blocked" if info.get("delegation_error") else "pending"},
-                {"key": "signing", "state": "complete" if zone.get("dnssec") else "pending"},
-                {"key": "parent", "state": "blocked" if lookup_failed else "complete" if parent_matched else "pending"},
-            ]}
+            readiness = build_dnssec_monitor_readiness(zone, keys, info)
             observation = classify_dnssec_observation(readiness, resolver)
             with db.begin_nested():
                 record_dnssec_observation(
