@@ -33,3 +33,21 @@ def test_disabled_signing_with_parent_ds_needs_investigation():
     result = assessment(signing="pending", parent="complete", resolver="unverified")
     assert result["severity"] == "warning"
     assert result["remediation"] == "investigate"
+
+
+
+def test_authenticated_resolver_does_not_override_missing_parent_ds():
+    result = assessment(parent="pending", resolver="validated")
+    assert result["severity"] != "healthy"
+    assert result["code"] == "DNSSEC_PARENT_DS_UNVERIFIED"
+
+
+def test_authenticated_resolver_does_not_override_disabled_signing():
+    result = assessment(signing="pending", resolver="validated")
+    assert result["severity"] != "healthy"
+    assert result["code"] == "DNSSEC_SIGNING_DISABLED"
+
+
+def test_authenticated_resolver_does_not_override_inconclusive_delegation():
+    result = assessment(delegation="pending", resolver="validated")
+    assert result["severity"] == "unknown"
