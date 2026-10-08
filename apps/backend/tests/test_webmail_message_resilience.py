@@ -306,3 +306,75 @@ def test_plain_message_render_contract_falls_back_without_html(monkeypatch):
     assert row["body_html"] == ""
     assert row["render_contract"]["kind"] == "plain"
     assert row["render_contract"]["has_plain"] is True
+
+
+
+def test_conversation_segments_collapse_reply_history():
+    segments = webmail._conversation_segments(
+        "Thanks, that works.\n\nOn Tue, Alice wrote:\n> Previous message\n> More history",
+        "",
+    )
+
+    assert segments["main_text"] == "Thanks, that works."
+    assert "Previous message" in segments["quoted_text"]
+    assert segments["has_quoted_history"] is True
+
+
+def test_conversation_segments_separate_mobile_signature():
+    segments = webmail._conversation_segments(
+        "Approved.\n\nSent from my iPhone",
+        "",
+    )
+
+    assert segments["main_text"] == "Approved."
+    assert segments["signature_text"] == "Sent from my iPhone"
+    assert segments["has_signature"] is True
+
+
+def test_conversation_segments_deemphasize_footer():
+    segments = webmail._conversation_segments(
+        "Your monthly statement is ready.\n\nManage preferences or unsubscribe from these notices.",
+        "",
+    )
+
+    assert segments["main_text"] == "Your monthly statement is ready."
+    assert "unsubscribe" in segments["footer_text"].lower()
+    assert segments["has_footer"] is True
+
+
+def test_conversation_segments_split_safe_html_blockquote():
+    segments = webmail._conversation_segments(
+        "Current reply\nPrevious reply",
+        "<p>Current reply</p><blockquote><p>Previous reply</p></blockquote>",
+    )
+
+    assert segments["main_html"] == "<p>Current reply</p>"
+    assert segments["quoted_html"].startswith("<blockquote>")
+    assert segments["has_quoted_history"] is True
+
+
+def test_render_contract_contains_conversation_metadata(monkeypatch):
+    raw = (
+        b"From: sender@example.com\r\n"
+        b"To: person@example.com\r\n"
+        b"Subject: Re: Update\r\n"
+        b"\r\n"
+        b"Looks good.\n\nOn Tue, Alice wrote:\n> Earlier content"
+    )
+    monkeypatch.setattr(
+        webmail,
+        "execute_mail_render_plan",
+        lambda metrics: SimpleNamespace(engine="python-fallback", value={"layout": "document", "density": "compact"}),
+    )
+    monkeypatch.setattr(
+        webmail,
+        "execute_mail_structured_profile",
+        lambda metrics: SimpleNamespace(engine="python-fallback", value={"semantic_type": "conversation_heavy", "collapse_quoted_history": True}),
+    )
+
+    row = webmail._message_json("101", raw, b"", include_body=True)
+
+    conversation = row["render_contract"]["conversation"]
+    assert conversation["main_text"] == "Looks good."
+    assert conversation["has_quoted_history"] is True
+    assert conversation["collapse_quoted_history"] is True
