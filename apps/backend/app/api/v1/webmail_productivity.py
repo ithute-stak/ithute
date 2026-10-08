@@ -69,6 +69,7 @@ class ScheduleIn(BaseModel):
     attachments: list[ScheduledAttachment] = Field(default_factory=list, max_length=20)
     scheduled_at: datetime | None = None
     delay_seconds: int | None = Field(default=None, ge=16, le=300)
+    request_read_receipt: bool = False
 
 
 def _owner(token: str | None, db: Session) -> tuple[Mailbox, str]:
@@ -358,6 +359,7 @@ def schedule_message(payload: ScheduleIn, token: Annotated[str | None, Cookie(al
         body_text=payload.body_text,
         body_html=payload.body_html,
         attachments_json=attachments,
+        request_read_receipt=payload.request_read_receipt if account is None else False,
         auth_secret_encrypted=None if account else encrypt_secret(password),
         scheduled_at=scheduled_at,
         status="queued",
