@@ -4,7 +4,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-LATEST_MIGRATION_HEAD = "0100_mail_mdn_evidence"
+LATEST_MIGRATION_HEAD = "0101_dnssec_incidents"
 
 
 def test_alembic_has_one_consolidated_head():
