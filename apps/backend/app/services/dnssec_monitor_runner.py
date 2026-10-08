@@ -50,14 +50,15 @@ def run_dnssec_monitor(db: Session, *, limit: int = 100) -> dict:
                 {"key": "parent", "state": "unknown"},
             ]}
             observation = classify_dnssec_observation(readiness, resolver)
-            record_dnssec_observation(
-                db, tenant_id=domain.tenant_id, domain_id=domain.id,
-                observation=observation,
-            )
-            db.commit()
+            with db.begin_nested():
+                record_dnssec_observation(
+                    db, tenant_id=domain.tenant_id, domain_id=domain.id,
+                    observation=observation,
+                )
             checked += 1
         except Exception:
-            db.rollback()
             failures += 1
             logger.exception("DNSSEC monitoring failed for domain %s", domain.id)
+    # Hold the transaction-scoped advisory lock through the entire scan.
+    db.commit()
     return {"checked": checked, "failed": failures, "scanned": len(domains)}
