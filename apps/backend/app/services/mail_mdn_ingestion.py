@@ -12,6 +12,8 @@ def ingest_unverified_mdn(
     db, *, mailbox_id, raw: bytes, sent_message_id: str,
     sent_message_owned: bool, expected_recipient: str, reported_recipient: str,
 ):
+    if mailbox_id is None or not sent_message_owned or not sent_message_id or not expected_recipient or not reported_recipient:
+        return None
     receipt = attribute_receipt(
         raw=raw,
         expected_original_message_id=sent_message_id,
