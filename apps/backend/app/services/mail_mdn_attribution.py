@@ -1,6 +1,9 @@
 """Guardrails for interpreting untrusted message-disposition notifications."""
 from dataclasses import dataclass
 from email.utils import parseaddr
+import re
+
+_ADDRESS = re.compile(r"^[^\s<>@,;]+@[^\s<>@,;]+$")
 
 from app.services.mail_mdn import parse_mdn
 
@@ -30,10 +33,12 @@ def attribute_receipt(
     event = parse_mdn(raw)
     if not event or not authenticated_sent_owner:
         return None
-    if event["original_message_id"] != expected_original_message_id:
+    if not expected_original_message_id or event["original_message_id"] != expected_original_message_id:
         return None
     target = parseaddr(expected_recipient)[1].strip().casefold()
     reporter = parseaddr(reported_recipient)[1].strip().casefold()
+    if not _ADDRESS.fullmatch(expected_recipient.strip()) or not _ADDRESS.fullmatch(reported_recipient.strip()):
+        return None
     if not target or target != reporter:
         return None
     if event["disposition"] != "displayed":
