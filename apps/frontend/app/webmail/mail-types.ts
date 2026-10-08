@@ -25,6 +25,12 @@ export type MessageRow = {
   attachments: Attachment[];
   body_text?: string;
   body_html?: string;
+  thread?: {
+    message_id_tokens: string[];
+    in_reply_to_tokens: string[];
+    reference_tokens: string[];
+    subject_key: string;
+  };
   render_contract?: {
     version: number;
     kind: "plain" | "longform_plain" | "structured_html" | "transactional_table";
