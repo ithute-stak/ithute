@@ -479,6 +479,7 @@ def send_rich_message(
     attachments: list[dict] | None = None,
     in_reply_to: str = "",
     references: str = "",
+    request_read_receipt: bool = False,
 ) -> dict:
     msg = EmailMessage()
     msg["From"] = sender_header(address)
@@ -488,6 +489,8 @@ def send_rich_message(
     msg["Subject"] = subject
     msg["Date"] = format_datetime(datetime.now(timezone.utc))
     msg["Message-ID"] = make_msgid(domain=address.split("@", 1)[-1])
+    if request_read_receipt:
+        msg["Disposition-Notification-To"] = address
     if in_reply_to:
         msg["In-Reply-To"] = in_reply_to[:998]
     if references:
