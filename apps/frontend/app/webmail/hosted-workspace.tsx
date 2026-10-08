@@ -25,6 +25,8 @@ import {
   Search,
   Send,
   Settings2,
+  Sun,
+  Moon,
   ShieldAlert,
   Star,
   UsersRound,
@@ -1591,6 +1593,7 @@ export function HostedMailWorkspace() {
         <span className="ml-2 hidden rounded-full border border-blue-900/10 bg-[#eaf1fb] px-2.5 py-1 text-[10px] font-black uppercase tracking-[.1em] text-[#174ea6] sm:inline-flex">iMail</span>
         <div className="ml-auto flex items-center gap-0.5">
           <button type="button" onClick={() => void refresh()} className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="Refresh"><RefreshCw size={17} className={loading ? "animate-spin" : ""} /></button>
+          <button type="button" onClick={() => setPreferences((current) => ({ ...current, theme: resolvedTheme(current.theme) === "dark" ? "light" : "dark" }))} className="grid h-9 w-9 place-items-center rounded-full text-slate-600 transition hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 dark:text-slate-200 dark:hover:bg-white/10" title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"} aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button>
           <button type="button" onClick={() => setSettingsOpen(true)} className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="Settings"><Settings2 size={17} /></button>
           <button type="button" onClick={() => void logout()} className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10" title="Sign out"><LogOut size={17} /></button>
         </div>
