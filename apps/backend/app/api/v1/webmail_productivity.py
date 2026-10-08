@@ -417,7 +417,7 @@ def read_receipt_evidence(
 ):
     """List unverified evidence only; never imply a message has been read."""
     mailbox, _ = _owner(token, db)
-    if len(message_id) > 998 or not message_id.startswith("<") or not message_id.endswith(">"):
+    if len(message_id) > 998 or not message_id.startswith("<") or not message_id.endswith(">") or any(ch in message_id for ch in ("\\r", "\\n")):
         raise HTTPException(status_code=422, detail="Invalid Message-ID")
     rows = db.scalars(
         select(MailReadReceiptEvidence).where(
