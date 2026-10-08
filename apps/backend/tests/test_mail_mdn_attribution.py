@@ -47,3 +47,11 @@ def test_authenticated_receipt_classification():
     result = check(source_authenticated=True)
     assert result is not None
     assert result.status == "authenticated_read_acknowledgment"
+
+
+def test_rejects_display_name_input_not_bare_address():
+    assert check(reported_recipient="Alice <recipient@example.com>") is None
+
+
+def test_rejects_missing_message_id():
+    assert check(expected_original_message_id="") is None
