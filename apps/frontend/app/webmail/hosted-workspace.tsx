@@ -1016,6 +1016,7 @@ export function HostedMailWorkspace() {
           to: splitAddresses(compose.to), cc: splitAddresses(compose.cc), bcc: splitAddresses(compose.bcc), subject: compose.subject,
           body_text: compose.bodyText || stripHtml(compose.bodyHtml), body_html: compose.bodyHtml, signature_html: signatureHtml,
           attachments: compose.attachments, in_reply_to: compose.in_reply_to, references: compose.references,
+           request_read_receipt: Boolean(compose.request_read_receipt),
         }),
       });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Unable to send message");
