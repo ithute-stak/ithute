@@ -63,6 +63,18 @@ export type MessageRow = {
       prefer_readable_width?: boolean;
       standards_profile?: string;
     };
+    conversation?: {
+      has_quoted_history: boolean;
+      has_signature: boolean;
+      has_footer: boolean;
+      collapse_quoted_history: boolean;
+      main_text: string;
+      quoted_text: string;
+      signature_text: string;
+      footer_text: string;
+      main_html: string;
+      quoted_html: string;
+    };
   };
 };
 
