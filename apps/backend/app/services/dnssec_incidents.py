@@ -27,7 +27,7 @@ def classify_dnssec_observation(readiness: dict, resolver: dict) -> dict:
                 "summary": "Parent DS observations are inconclusive.",
                 "remediation": "retry"}
     if signing != "complete":
-        return {"severity": "warning" if parent == "complete" else "info",
+        return {"severity": "warning" if parent == "complete" else "unknown",
                 "code": "DNSSEC_SIGNING_DISABLED",
                 "summary": "Authoritative zone DNSSEC signing is not enabled.",
                 "remediation": "investigate" if parent == "complete" else "review"}
