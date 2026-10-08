@@ -237,6 +237,118 @@ function quoteForForward(row: MessageRow) {
   };
 }
 
+type ThreadGroup = {
+  key: string;
+  messages: MessageRow[];
+  latest: MessageRow;
+  unreadCount: number;
+  flagged: boolean;
+  attachmentCount: number;
+  senderLabels: string[];
+};
+
+function normalizedThreadSubject(row: MessageRow) {
+  if (row.thread?.subject_key) return row.thread.subject_key;
+  let subject = String(row.subject || "").trim().toLowerCase();
+  let previous = "";
+  while (subject && subject !== previous) {
+    previous = subject;
+    subject = subject.replace(/^(?:(?:re|fw|fwd)\s*:\s*)+/i, "").replace(/^\[(?:external|ext|spam|bulk)\]\s*/i, "").trim();
+  }
+  return subject;
+}
+
+function rowParticipants(row: MessageRow) {
+  const values = [row.from, row.to, row.cc]
+    .flatMap((value) => splitAddresses(String(value || "")))
+    .map((value) => addressOnly(value).toLowerCase())
+    .filter(Boolean);
+  return new Set(values);
+}
+
+function participantsOverlap(left: MessageRow, right: MessageRow) {
+  const a = rowParticipants(left);
+  const b = rowParticipants(right);
+  for (const value of a) if (b.has(value)) return true;
+  return false;
+}
+
+function subjectFallbackEligible(left: MessageRow, right: MessageRow) {
+  if (!participantsOverlap(left, right)) return false;
+  const leftTime = new Date(left.date || 0).getTime();
+  const rightTime = new Date(right.date || 0).getTime();
+  if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) return false;
+  return Math.abs(leftTime - rightTime) <= 14 * 24 * 60 * 60 * 1000;
+}
+
+function threadGroups(rows: MessageRow[]): ThreadGroup[] {
+  const parent = rows.map((_, index) => index);
+  const find = (index: number): number => {
+    if (parent[index] !== index) parent[index] = find(parent[index]);
+    return parent[index];
+  };
+  const union = (left: number, right: number) => {
+    const a = find(left);
+    const b = find(right);
+    if (a !== b) parent[b] = a;
+  };
+
+  const tokenOwners = new Map<string, number[]>();
+  rows.forEach((row, index) => {
+    const tokens = [
+      ...(row.thread?.message_id_tokens || []),
+      ...(row.thread?.in_reply_to_tokens || []),
+      ...(row.thread?.reference_tokens || []),
+    ];
+    for (const token of new Set(tokens)) {
+      const owners = tokenOwners.get(token) || [];
+      for (const owner of owners) union(index, owner);
+      owners.push(index);
+      tokenOwners.set(token, owners);
+    }
+  });
+
+  const bySubject = new Map<string, number[]>();
+  rows.forEach((row, index) => {
+    const key = normalizedThreadSubject(row);
+    if (!key || key === "(no subject)") return;
+    const candidates = bySubject.get(key) || [];
+    for (const other of candidates) {
+      if (subjectFallbackEligible(row, rows[other])) union(index, other);
+    }
+    candidates.push(index);
+    bySubject.set(key, candidates);
+  });
+
+  const grouped = new Map<number, MessageRow[]>();
+  rows.forEach((row, index) => {
+    const root = find(index);
+    const group = grouped.get(root) || [];
+    group.push(row);
+    grouped.set(root, group);
+  });
+
+  return Array.from(grouped.entries()).map(([root, messages]) => {
+    const ordered = [...messages].sort((a, b) => {
+      const left = new Date(a.date || 0).getTime();
+      const right = new Date(b.date || 0).getTime();
+      return right - left;
+    });
+    const latest = ordered[0];
+    const senders = Array.from(new Set(ordered.map((row) => senderName(row.from)).filter(Boolean))).slice(0, 3);
+    return {
+      key: latest.thread?.reference_tokens?.[0] || latest.thread?.in_reply_to_tokens?.[0] || latest.thread?.message_id_tokens?.[0] || `thread-${root}-${latest.uid}`,
+      messages: ordered,
+      latest,
+      unreadCount: ordered.filter((row) => !row.seen).length,
+      flagged: ordered.some((row) => row.flagged),
+      attachmentCount: ordered.reduce((sum, row) => sum + (row.attachments?.length || 0), 0),
+      senderLabels: senders,
+    };
+  }).sort((a, b) => new Date(b.latest.date || 0).getTime() - new Date(a.latest.date || 0).getTime());
+}
+
+
 export function HostedMailWorkspace() {
   const { preferences, setPreferences, resetPreferences, ready: preferencesReady } = useMailPreferences();
   const searchRef = useRef<HTMLInputElement>(null);
@@ -250,6 +362,8 @@ export function HostedMailWorkspace() {
   const [notice, setNotice] = useState("");
   const [mobileFolders, setMobileFolders] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [threadedView, setThreadedView] = useState(true);
+  const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set());
   const [onlyUnread, setOnlyUnread] = useState(false);
   const [onlyAttachments, setOnlyAttachments] = useState(false);
 
@@ -633,6 +747,44 @@ export function HostedMailWorkspace() {
     await Promise.all([loadCounts(), loadMessages(folder, query, offset)]);
   }
 
+  function toggleThreadSelection(thread: ThreadGroup) {
+    setSelectedUids((current) => {
+      const next = new Set(current);
+      const allSelected = thread.messages.every((row) => next.has(row.uid));
+      for (const row of thread.messages) {
+        if (allSelected) next.delete(row.uid);
+        else next.add(row.uid);
+      }
+      return next;
+    });
+  }
+
+  async function setThreadFlags(thread: ThreadGroup, payload: { seen?: boolean; flagged?: boolean }) {
+    await Promise.all(
+      thread.messages.map((row) =>
+        webmail(`/messages/${row.uid}/flags?folder=${encodeURIComponent(folder)}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        }),
+      ),
+    );
+    setMessages((items) =>
+      items.map((item) =>
+        thread.messages.some((row) => row.uid === item.uid) ? { ...item, ...payload } : item,
+      ),
+    );
+    if (payload.seen !== undefined) void loadCounts();
+  }
+
+  function toggleThreadExpanded(key: string) {
+    setExpandedThreads((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   async function bulkDelete() {
     if (!selectedUids.size) return;
     await Promise.all(Array.from(selectedUids).map((uid) => webmail(`/messages/${uid}?folder=${encodeURIComponent(folder)}`, { method: "DELETE" })));
@@ -803,6 +955,19 @@ export function HostedMailWorkspace() {
     if (onlyAttachments) items = items.filter((row) => row.attachments?.length);
     return items;
   }, [inboxView, messages, onlyAttachments, onlyUnread]);
+
+  const groupedThreads = useMemo(() => threadGroups(visibleMessages), [visibleMessages]);
+  const displayedThreads = threadedView && folderKind(folder) !== "drafts"
+    ? groupedThreads
+    : visibleMessages.map((row, index) => ({
+        key: `message-${row.uid}-${index}`,
+        messages: [row],
+        latest: row,
+        unreadCount: row.seen ? 0 : 1,
+        flagged: row.flagged,
+        attachmentCount: row.attachments?.length || 0,
+        senderLabels: [senderName(row.from)],
+      }));
 
   const contactGroups = useMemo(() => {
     const grouped = new Map<string, BusinessContact[]>();
@@ -1213,8 +1378,9 @@ export function HostedMailWorkspace() {
             <span className="truncate text-[10px] font-bold text-slate-500">{selectedUids.size} selected</span>
           </div>
         ) : (
-          <div className="min-w-0 flex-1"><p className="truncate text-xs font-black uppercase tracking-[.12em] text-slate-600 dark:text-slate-300">{inboxView === "primary" ? folder : inboxView}</p><p className="text-[10px] font-medium text-slate-400">{visibleMessages.length} loaded message{visibleMessages.length === 1 ? "" : "s"}</p></div>
+          <div className="min-w-0 flex-1"><p className="truncate text-xs font-black uppercase tracking-[.12em] text-slate-600 dark:text-slate-300">{inboxView === "primary" ? folder : inboxView}</p><p className="text-[10px] font-medium text-slate-400">{threadedView ? `${displayedThreads.length} conversation${displayedThreads.length === 1 ? "" : "s"} · ${visibleMessages.length} message${visibleMessages.length === 1 ? "" : "s"}` : `${visibleMessages.length} loaded message${visibleMessages.length === 1 ? "" : "s"}`}</p></div>
         )}
+        <button type="button" onClick={() => setThreadedView((value) => !value)} className={`flex h-8 items-center gap-1.5 rounded-lg px-2 text-[10px] font-black uppercase tracking-[.05em] ${threadedView ? "bg-[#eaf1fb] text-[#174ea6] dark:bg-blue-400/10 dark:text-blue-200" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10"}`} title={threadedView ? "Show individual messages" : "Group related messages into conversations"}><Mail size={14} /><span className="hidden sm:inline">{threadedView ? "Threads" : "Messages"}</span></button>
         <button type="button" onClick={() => void refresh()} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="Refresh"><RefreshCw size={16} className={loading ? "animate-spin" : ""} /></button>
         <button type="button" onClick={() => setFilterOpen((value) => !value)} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" title="More"><MoreVertical size={16} /></button>
         <div className="hidden items-center gap-0.5 text-[10px] text-slate-500 xl:flex"><span className="mr-1">{pageStart}-{pageEnd} of {total}</span><button disabled={offset === 0 || loading} onClick={() => void loadMessages(folder, query, Math.max(0, offset - PAGE_SIZE))} className="grid h-8 w-8 place-items-center rounded-full hover:bg-slate-100 disabled:opacity-30"><ChevronLeft size={15} /></button><button disabled={offset + PAGE_SIZE >= total || loading} onClick={() => void loadMessages(folder, query, offset + PAGE_SIZE)} className="grid h-8 w-8 place-items-center rounded-full hover:bg-slate-100 disabled:opacity-30"><ChevronRight size={15} /></button></div>
@@ -1224,19 +1390,41 @@ export function HostedMailWorkspace() {
       {loading && !messages.length ? <div className="grid flex-1 place-items-center p-6"><MailLoading compact label="Loading mail" detail={`Reading ${folder}`} /></div> : (
         <div className="min-h-0 flex-1 overflow-y-auto">
           {error ? <div className="m-3 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700"><span className="flex-1">{error}</span><button onClick={() => setError("")}><X size={14} /></button></div> : null}
-          {!visibleMessages.length ? <div className="grid min-h-[360px] place-items-center p-8 text-center"><div><span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-white text-slate-400 shadow-sm dark:bg-white/5"><Inbox size={24} /></span><p className="mt-4 text-sm font-black text-slate-700 dark:text-slate-200">No messages here</p><p className="mt-1 text-xs text-slate-500">{query ? "Try a different search." : "This mailbox view is currently empty."}</p></div></div> : visibleMessages.map((row) => {
-            const checked = selectedUids.has(row.uid);
+          {!visibleMessages.length ? <div className="grid min-h-[360px] place-items-center p-8 text-center"><div><span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-white text-slate-400 shadow-sm dark:bg-white/5"><Inbox size={24} /></span><p className="mt-4 text-sm font-black text-slate-700 dark:text-slate-200">No messages here</p><p className="mt-1 text-xs text-slate-500">{query ? "Try a different search." : "This mailbox view is currently empty."}</p></div></div> : displayedThreads.map((thread) => {
+            const row = thread.latest;
+            const threadSelected = thread.messages.every((item) => selectedUids.has(item.uid));
+            const expanded = expandedThreads.has(thread.key);
+            const unread = thread.unreadCount > 0;
+            const senderSummary = thread.senderLabels.join(", ");
             return (
-              <div key={`${folder}-${row.uid}`} className={`group flex cursor-pointer items-start gap-2 border-b border-slate-200/80 px-2 transition hover:z-[1] hover:bg-white hover:shadow-sm dark:border-white/[.07] dark:hover:bg-white/[.045] ${row.seen ? "bg-[#f7f9f8] dark:bg-[#0e1514]" : "bg-white dark:bg-slate-900"} ${densityClass} ${selected?.uid === row.uid ? "border-l-[3px] border-l-[#0b57d0] bg-[#eef4ff] dark:bg-blue-400/[.06]" : "border-l-[3px] border-l-transparent"}`} onClick={() => void openMessage(row)}>
-                <label onClick={(event) => event.stopPropagation()} className="grid h-8 w-8 shrink-0 place-items-center rounded-full hover:bg-slate-100 dark:hover:bg-white/10" title="Select"><input type="checkbox" checked={checked} onChange={() => toggleSelection(row.uid)} className="h-4 w-4 accent-[#0b57d0]" /></label>
-                <button type="button" onClick={(event) => { event.stopPropagation(); void setRowFlags(row, { flagged: !row.flagged }); }} className={`grid h-8 w-8 shrink-0 place-items-center rounded-full transition hover:bg-slate-100 dark:hover:bg-white/10 ${row.flagged ? "text-amber-500" : "text-slate-300 group-hover:text-slate-500"}`}><Star size={16} fill={row.flagged ? "currentColor" : "none"} /></button>
-                <span className="hidden h-8 w-8 shrink-0 place-items-center rounded-full bg-[#eaf1fb] text-[10px] font-black text-[#174ea6] md:grid dark:bg-blue-400/10 dark:text-blue-200">{initials(row.from)}</span>
-                <div className="min-w-0 flex-1 sm:grid sm:grid-cols-[minmax(96px,128px)_1fr_auto] sm:items-center sm:gap-3">
-                  <div className={`truncate text-sm ${row.seen ? "font-medium text-slate-700 dark:text-slate-300" : "font-black text-slate-950 dark:text-white"}`}>{senderName(row.from)}</div>
-                  <div className="min-w-0"><div className={`truncate text-sm ${row.seen ? "font-medium text-slate-700 dark:text-slate-300" : "font-bold text-slate-950 dark:text-white"}`}>{row.subject || "(no subject)"}</div>{preferences.showPreview ? <p className="mt-0.5 truncate text-[11px] text-slate-500">{row.snippet}</p> : null}</div>
-                  <div className="mt-1 flex items-center gap-2 sm:mt-0 sm:justify-end">{row.attachments?.length ? <Paperclip size={13} className="text-slate-400" /> : null}<time className={`text-[10px] ${row.seen ? "font-medium text-slate-400" : "font-black text-[#174ea6] dark:text-blue-200"}`}>{shortDate(row.date)}</time></div>
+              <div key={`${folder}-${thread.key}`} className="border-b border-slate-200/80 dark:border-white/[.07]">
+                <div className={`group flex cursor-pointer items-start gap-2 px-2 transition hover:z-[1] hover:bg-white hover:shadow-sm dark:hover:bg-white/[.045] ${unread ? "bg-white dark:bg-slate-900" : "bg-[#f7f9f8] dark:bg-[#0e1514]"} ${densityClass} ${thread.messages.some((item) => item.uid === selected?.uid) ? "border-l-[3px] border-l-[#0b57d0] bg-[#eef4ff] dark:bg-blue-400/[.06]" : "border-l-[3px] border-l-transparent"}`} onClick={() => void openMessage(row)}>
+                  <label onClick={(event) => event.stopPropagation()} className="grid h-8 w-8 shrink-0 place-items-center rounded-full hover:bg-slate-100 dark:hover:bg-white/10" title={thread.messages.length > 1 ? "Select conversation" : "Select message"}><input type="checkbox" checked={threadSelected} onChange={() => toggleThreadSelection(thread)} className="h-4 w-4 accent-[#0b57d0]" /></label>
+                  <button type="button" onClick={(event) => { event.stopPropagation(); void setThreadFlags(thread, { flagged: !thread.flagged }); }} className={`grid h-8 w-8 shrink-0 place-items-center rounded-full transition hover:bg-slate-100 dark:hover:bg-white/10 ${thread.flagged ? "text-amber-500" : "text-slate-300 group-hover:text-slate-500"}`} title={thread.flagged ? "Unstar conversation" : "Star conversation"}><Star size={16} fill={thread.flagged ? "currentColor" : "none"} /></button>
+                  <span className="hidden h-8 w-8 shrink-0 place-items-center rounded-full bg-[#eaf1fb] text-[10px] font-black text-[#174ea6] md:grid dark:bg-blue-400/10 dark:text-blue-200">{initials(row.from)}</span>
+                  <div className="min-w-0 flex-1 sm:grid sm:grid-cols-[minmax(96px,150px)_1fr_auto] sm:items-center sm:gap-3">
+                    <div className={`flex min-w-0 items-center gap-1.5 text-sm ${unread ? "font-black text-slate-950 dark:text-white" : "font-medium text-slate-700 dark:text-slate-300"}`}>
+                      <span className="truncate">{senderSummary}</span>
+                      {thread.messages.length > 1 ? <span className="shrink-0 rounded-full bg-slate-200/80 px-1.5 py-0.5 text-[9px] font-black text-slate-600 dark:bg-white/10 dark:text-slate-300">{thread.messages.length}</span> : null}
+                    </div>
+                    <div className="min-w-0"><div className={`flex min-w-0 items-center gap-2 truncate text-sm ${unread ? "font-bold text-slate-950 dark:text-white" : "font-medium text-slate-700 dark:text-slate-300"}`}><span className="truncate">{row.subject || "(no subject)"}</span>{thread.unreadCount > 0 && thread.messages.length > 1 ? <span className="shrink-0 text-[9px] font-black uppercase text-[#174ea6] dark:text-blue-200">{thread.unreadCount} unread</span> : null}</div>{preferences.showPreview ? <p className="mt-0.5 truncate text-[11px] text-slate-500">{row.snippet}</p> : null}</div>
+                    <div className="mt-1 flex items-center gap-2 sm:mt-0 sm:justify-end">{thread.attachmentCount ? <span className="flex items-center gap-1 text-[9px] font-bold text-slate-400"><Paperclip size={13} />{thread.attachmentCount > 1 ? thread.attachmentCount : ""}</span> : null}<time className={`text-[10px] ${unread ? "font-black text-[#174ea6] dark:text-blue-200" : "font-medium text-slate-400"}`}>{shortDate(row.date)}</time></div>
+                  </div>
+                  {thread.messages.length > 1 ? <button type="button" onClick={(event) => { event.stopPropagation(); toggleThreadExpanded(thread.key); }} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10" title={expanded ? "Collapse conversation" : "Expand conversation"}><ChevronRight size={15} className={`transition ${expanded ? "rotate-90" : ""}`} /></button> : null}
+                  <div className="hidden shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100 xl:flex"><button type="button" onClick={(event) => { event.stopPropagation(); void Promise.all(thread.messages.map((item) => moveRow(item, archiveFolder))); }} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100" title="Archive conversation"><Archive size={15} /></button><button type="button" onClick={(event) => { event.stopPropagation(); void Promise.all(thread.messages.map((item) => deleteRow(item))); }} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-red-50 hover:text-red-600" title="Delete conversation"><Trash2 size={15} /></button><button type="button" onClick={(event) => { event.stopPropagation(); void setThreadFlags(thread, { seen: unread }); }} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100" title={unread ? "Mark conversation read" : "Mark conversation unread"}><Mail size={15} /></button></div>
                 </div>
-                <div className="hidden shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100 xl:flex"><button type="button" onClick={(event) => { event.stopPropagation(); void moveRow(row, archiveFolder); }} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100" title="Archive"><Archive size={15} /></button><button type="button" onClick={(event) => { event.stopPropagation(); void deleteRow(row); }} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-red-50 hover:text-red-600" title="Delete"><Trash2 size={15} /></button><button type="button" onClick={(event) => { event.stopPropagation(); void setRowFlags(row, { seen: !row.seen }); }} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100" title={row.seen ? "Mark unread" : "Mark read"}><Mail size={15} /></button></div>
+                {expanded ? (
+                  <div className="bg-slate-50/70 pl-16 pr-3 dark:bg-white/[.02] sm:pl-24">
+                    {thread.messages.map((item, index) => (
+                      <button key={`${thread.key}-${item.uid}`} type="button" onClick={() => void openMessage(item)} className={`flex w-full items-start gap-3 border-t border-slate-200/70 py-2.5 text-left transition hover:bg-white/70 dark:border-white/[.06] dark:hover:bg-white/[.03] ${selected?.uid === item.uid ? "text-[#174ea6] dark:text-blue-200" : ""}`}>
+                        <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full bg-white text-[9px] font-black text-slate-500 shadow-sm dark:bg-white/10 dark:text-slate-300">{initials(item.from)}</span>
+                        <span className="min-w-0 flex-1"><span className={`block truncate text-xs ${item.seen ? "font-semibold text-slate-600 dark:text-slate-300" : "font-black text-slate-900 dark:text-white"}`}>{senderName(item.from)}{index === 0 ? " · latest" : ""}</span><span className="mt-0.5 block truncate text-[10px] text-slate-500">{item.snippet || item.subject}</span></span>
+                        {item.attachments?.length ? <Paperclip size={12} className="mt-1 shrink-0 text-slate-400" /> : null}
+                        <time className="mt-0.5 shrink-0 text-[9px] font-medium text-slate-400">{shortDate(item.date)}</time>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             );
           })}

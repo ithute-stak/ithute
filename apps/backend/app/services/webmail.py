@@ -494,6 +494,39 @@ def _attachments(message, scan: MimeScan | None = None) -> list[dict]:
     return rows
 
 
+def _normalized_thread_subject(value: str) -> str:
+    text = " ".join(str(value or "").split()).strip().lower()
+    previous = None
+    while text and text != previous:
+        previous = text
+        text = sub(r"^(?:(?:re|fw|fwd)\s*:\s*)+", "", text, flags=0).strip()
+        text = sub(r"^\[(?:external|ext|spam|bulk)\]\s*", "", text, flags=0).strip()
+    return text[:255]
+
+
+def _message_id_tokens(value: str) -> list[str]:
+    raw = str(value or "")
+    tokens = []
+    for match in __import__("re").findall(r"<[^>]{1,500}>", raw):
+        normalized = match.strip().lower()
+        if normalized not in tokens:
+            tokens.append(normalized)
+    return tokens[:100]
+
+
+def _thread_metadata(parsed) -> dict:
+    message_id = _decode(parsed.get("Message-ID"))
+    in_reply_to = _decode(parsed.get("In-Reply-To"))
+    references = _decode(parsed.get("References"))
+    subject = _decode(parsed.get("Subject")) or "(no subject)"
+    return {
+        "message_id_tokens": _message_id_tokens(message_id),
+        "in_reply_to_tokens": _message_id_tokens(in_reply_to),
+        "reference_tokens": _message_id_tokens(references),
+        "subject_key": _normalized_thread_subject(subject),
+    }
+
+
 def _message_json(uid: str, raw: bytes, meta: bytes | str = b"", include_body: bool = False) -> dict:
     scan_execution = execute_binary("mail.mime_scan", raw)
     scan = scan_execution.value
@@ -514,9 +547,11 @@ def _message_json(uid: str, raw: bytes, meta: bytes | str = b"", include_body: b
         )
     attachments = _attachments(parsed, scan)
     safe_html = _html_body(parsed) if include_body else ""
+    thread = _thread_metadata(parsed)
     row = {
         "uid": uid,
         "message_id": _decode(parsed.get("Message-ID")),
+        "thread": thread,
         "in_reply_to": _decode(parsed.get("In-Reply-To")),
         "references": _decode(parsed.get("References")),
         "from": _decode(parsed.get("From")),
