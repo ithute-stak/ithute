@@ -649,10 +649,13 @@ export function HostedMailWorkspace() {
     let active = true;
     let debounce: number | undefined;
     let pending = false;
+    let dirty = false;
     const source = new EventSource(`${API}/webmail/events/stream`, { withCredentials: true });
     const reconcile = async () => {
-      if (!active || pending || document.visibilityState !== "visible") return;
+      if (!active || document.visibilityState !== "visible") { dirty = true; return; }
+      if (pending) { dirty = true; return; }
       pending = true;
+      dirty = false;
       try {
         const params = new URLSearchParams({ folder, limit: String(PAGE_SIZE), offset: String(offset) });
         if (query.trim()) params.set("q", query.trim());
@@ -672,12 +675,21 @@ export function HostedMailWorkspace() {
         // Poll-based reconciliation remains active if live updates fail.
       } finally {
         pending = false;
+        if (active && dirty && document.visibilityState === "visible") {
+          dirty = false;
+          window.setTimeout(() => { if (active) void reconcile(); }, 0);
+        }
       }
     };
     const onChange = () => {
       if (debounce !== undefined) window.clearTimeout(debounce);
       debounce = window.setTimeout(() => void reconcile(), 300);
     };
+    // A newly established or re-established stream may have missed changes
+    // before its cursor was available; always reconcile on readiness.
+    source.addEventListener("ready", onChange);
+    const onVisible = () => { if (document.visibilityState === "visible") onChange(); };
+    document.addEventListener("visibilitychange", onVisible);
     source.addEventListener("mailbox.changed", onChange);
     source.addEventListener("flags_changed", onChange);
     source.addEventListener("message_moved", onChange);
@@ -686,6 +698,7 @@ export function HostedMailWorkspace() {
     return () => {
       active = false;
       if (debounce !== undefined) window.clearTimeout(debounce);
+      document.removeEventListener("visibilitychange", onVisible);
       source.close();
     };
   }, [session?.authenticated, folder, query, offset, loadCounts]);
