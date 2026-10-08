@@ -409,6 +409,7 @@ export function HostedMailWorkspace() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [selected, setSelected] = useState<MessageRow | null>(null);
   const [receiptEvidence, setReceiptEvidence] = useState<{recipient: string; disposition: string; evidence_status: string; received_at: string}[] | null>(null);
+  const [receiptError, setReceiptError] = useState(false);
   const [selectedUids, setSelectedUids] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [offset, setOffset] = useState(0);
@@ -432,9 +433,9 @@ export function HostedMailWorkspace() {
     let active = true;
     setReceiptEvidence(null);
     void webmail(`/read-receipts?message_id=${encodeURIComponent(selected.message_id)}`)
-      .then(async (response) => response.ok ? await response.json() : null)
+      .then(async (response) => { if (!response.ok) throw new Error("Receipt history unavailable"); return await response.json(); })
       .then((payload) => { if (active) setReceiptEvidence(payload?.items || []); })
-      .catch(() => { if (active) setReceiptEvidence(null); });
+      .catch(() => { if (active) { setReceiptError(true); setReceiptEvidence([]); } });
     return () => { active = false; };
   }, [selected?.message_id, folder]);
 
@@ -1209,7 +1210,7 @@ export function HostedMailWorkspace() {
             {/^[Ss]ent/.test(folder) && selected.message_id ? (
               <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 dark:border-white/10 dark:bg-white/5 dark:text-slate-300">
                 <p className="font-semibold">Read receipt evidence</p>
-                {receiptEvidence === null ? <p className="mt-1">Checking receipt history…</p> :
+                {receiptError ? <p className="mt-1">Receipt history is temporarily unavailable.</p> : receiptEvidence === null ? <p className="mt-1">Checking receipt history…</p> :
                   receiptEvidence.length === 0 ? <p className="mt-1">No read acknowledgment recorded. This does not mean the message was unread.</p> :
                   <ul className="mt-2 space-y-1">{receiptEvidence.map((item, index) => (
                     <li key={index}>{item.recipient} · {item.disposition} · Unverified external claim · {new Date(item.received_at).toLocaleString()}</li>
