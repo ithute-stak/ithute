@@ -378,3 +378,41 @@ def test_render_contract_contains_conversation_metadata(monkeypatch):
     assert conversation["main_text"] == "Looks good."
     assert conversation["has_quoted_history"] is True
     assert conversation["collapse_quoted_history"] is True
+
+
+
+def test_thread_metadata_normalizes_reply_and_forward_prefixes():
+    raw = (
+        b"Message-ID: <child@example.com>\r\n"
+        b"In-Reply-To: <parent@example.com>\r\n"
+        b"References: <root@example.com> <parent@example.com>\r\n"
+        b"From: Alice <alice@example.com>\r\n"
+        b"To: Bob <bob@example.com>\r\n"
+        b"Subject: Re: Fwd: [External] Quarterly Update\r\n"
+        b"\r\n"
+        b"Latest reply"
+    )
+
+    row = webmail._message_json("200", raw, b"", include_body=False)
+
+    assert row["thread"]["message_id_tokens"] == ["<child@example.com>"]
+    assert row["thread"]["in_reply_to_tokens"] == ["<parent@example.com>"]
+    assert row["thread"]["reference_tokens"] == ["<root@example.com>", "<parent@example.com>"]
+    assert row["thread"]["subject_key"] == "quarterly update"
+
+
+def test_thread_metadata_handles_missing_message_ids_safely():
+    raw = (
+        b"From: Alice <alice@example.com>\r\n"
+        b"To: Bob <bob@example.com>\r\n"
+        b"Subject: Re: Status\r\n"
+        b"\r\n"
+        b"Hello"
+    )
+
+    row = webmail._message_json("201", raw, b"", include_body=False)
+
+    assert row["thread"]["message_id_tokens"] == []
+    assert row["thread"]["in_reply_to_tokens"] == []
+    assert row["thread"]["reference_tokens"] == []
+    assert row["thread"]["subject_key"] == "status"
