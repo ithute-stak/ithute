@@ -146,6 +146,8 @@ def dnssec_activation_readiness(tenant_id: UUID, domain_id: UUID, db: Session = 
         recommended_ds=preferred.text() if preferred else None,
         parent_contains_recommended=bool(preferred and preferred in parent_records),
         registrar_error=registrar_error,
+        available_ds=bool(ds_values),
+        registrar_algorithms=sorted(OPENSRS_DNSSEC_ALGORITHMS),
     )
 
 
