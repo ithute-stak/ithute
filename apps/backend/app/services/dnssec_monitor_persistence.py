@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.domains import Domain
+from app.models.business import Notification
 from app.models.dnssec_incident_history import DnssecIncidentHistory, DnssecMonitorState
 from app.services.dnssec_monitor_state import MonitorState, transition
 
@@ -95,6 +96,23 @@ def record_dnssec_observation(db: Session, *, tenant_id: UUID, domain_id: UUID,
             ))
         else:
             events = []
+
+    # Notifications are persisted with the incident in the same transaction.
+    # Events only fire on transitions, so steady-state checks create no spam.
+    if "opened" in events:
+        db.add(Notification(
+            tenant_id=tenant_id, category="dnssec", severity="warning",
+            title=f"DNSSEC incident detected: {domain.ascii_name}",
+            message=(observation.get("summary") or next_state.code or "DNSSEC requires attention")[:1000],
+            action_url="/dns-security",
+        ))
+    if "recovered" in events:
+        db.add(Notification(
+            tenant_id=tenant_id, category="dnssec", severity="success",
+            title=f"DNSSEC incident recovered: {domain.ascii_name}",
+            message="Previously reported DNSSEC monitoring incidents have recovered.",
+            action_url="/dns-security",
+        ))
 
     db.flush()
     return {"status": next_state.status, "code": next_state.code,
