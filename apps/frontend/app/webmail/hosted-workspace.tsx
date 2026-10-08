@@ -408,6 +408,7 @@ export function HostedMailWorkspace() {
   const [folder, setFolder] = useState("INBOX");
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [selected, setSelected] = useState<MessageRow | null>(null);
+  const [receiptEvidence, setReceiptEvidence] = useState<{recipient: string; disposition: string; evidence_status: string; received_at: string}[] | null>(null);
   const [selectedUids, setSelectedUids] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [offset, setOffset] = useState(0);
@@ -422,6 +423,20 @@ export function HostedMailWorkspace() {
   const [composeMinimized, setComposeMinimized] = useState(false);
   const [composeExpanded, setComposeExpanded] = useState(false);
   const [showCcBcc, setShowCcBcc] = useState(false);
+
+  useEffect(() => {
+    if (!selected?.message_id || !/^sent/i.test(folder)) {
+      setReceiptEvidence(null);
+      return;
+    }
+    let active = true;
+    setReceiptEvidence(null);
+    void webmail(`/read-receipts?message_id=${encodeURIComponent(selected.message_id)}`)
+      .then(async (response) => response.ok ? await response.json() : null)
+      .then((payload) => { if (active) setReceiptEvidence(payload?.items || []); })
+      .catch(() => { if (active) setReceiptEvidence(null); });
+    return () => { active = false; };
+  }, [selected?.message_id, folder]);
 
   const theme = resolvedTheme(preferences.theme);
   const address = session?.address || "";
@@ -1191,6 +1206,17 @@ export function HostedMailWorkspace() {
               <time className="shrink-0 text-xs font-medium text-slate-500">{selected.date ? shortDate(selected.date) : ""}</time>
             </div>
 
+            {/^[Ss]ent/.test(folder) && selected.message_id ? (
+              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 dark:border-white/10 dark:bg-white/5 dark:text-slate-300">
+                <p className="font-semibold">Read receipt evidence</p>
+                {receiptEvidence === null ? <p className="mt-1">Checking receipt history…</p> :
+                  receiptEvidence.length === 0 ? <p className="mt-1">No read acknowledgment recorded. This does not mean the message was unread.</p> :
+                  <ul className="mt-2 space-y-1">{receiptEvidence.map((item, index) => (
+                    <li key={index}>{item.recipient} · {item.disposition} · Unverified external claim · {new Date(item.received_at).toLocaleString()}</li>
+                  ))}</ul>}
+                <p className="mt-2 text-[10px] text-slate-500">External receipts are not proof that the recipient read the message.</p>
+              </div>
+            ) : null}
             <div className="mt-5"><MailPrivacyNote /></div>
             {selectedIntelligence ? (
               <details className={`group mt-4 rounded-2xl border ${intelligenceTone}`}>
