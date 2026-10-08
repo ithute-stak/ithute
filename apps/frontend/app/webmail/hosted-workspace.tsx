@@ -390,6 +390,7 @@ export function HostedMailWorkspace() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [mobileFolders, setMobileFolders] = useState(false);
+  const [contactsExpanded, setContactsExpanded] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [threadedView, setThreadedView] = useState(true);
   const [inboxSort, setInboxSort] = useState<InboxSort>("newest");
@@ -1598,7 +1599,7 @@ export function HostedMailWorkspace() {
       <div className="flex h-[calc(100vh-4rem)] min-h-0">
         <aside className={`${mobileFolders ? "fixed inset-0 z-50 flex" : "hidden"} w-full bg-black/30 lg:static lg:flex lg:w-[244px] lg:shrink-0 lg:bg-transparent`}>
           <button aria-label="Close folders" className="absolute inset-0 lg:hidden" onClick={() => setMobileFolders(false)} />
-          <div className="relative flex h-full w-[84%] max-w-[286px] flex-col border-r border-slate-200 bg-[#f8fafd] p-2.5 dark:border-white/10 dark:bg-[#0e1514] lg:w-[244px] lg:max-w-none">
+          <div className="relative flex h-full w-[84%] max-w-[286px] flex-col border-r border-slate-200 bg-[#f8fafd] p-2.5 dark:border-white/10 dark:bg-[#0e1514] lg:w-[220px] lg:max-w-none xl:w-[244px]">
             <div className="mb-1 flex items-center justify-between px-2 lg:hidden"><span className="text-sm font-black">Folders</span><button type="button" onClick={() => setMobileFolders(false)} className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-slate-100"><X size={18} /></button></div>
             <button type="button" onClick={() => { startNew(); setMobileFolders(false); }} className="mb-3 flex h-12 w-full items-center gap-3 rounded-2xl bg-[#eaf1fb] px-4 text-sm font-black text-[#174ea6] shadow-sm transition hover:bg-[#dce8fb]" title="Compose"><PenLine size={18} /> Compose</button>
             <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto">
@@ -1611,11 +1612,11 @@ export function HostedMailWorkspace() {
               })}
 
               {businessContacts.length ? <div className="mt-4 border-t border-slate-200 pt-3 dark:border-white/10">
-                <div className="mb-1 flex items-center justify-between px-2">
-                  <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.12em] text-slate-500"><UsersRound size={13}/> Business contacts</span>
-                  <span className="text-[9px] font-bold text-slate-400">{businessContacts.filter((item) => item.online).length} online</span>
-                </div>
-                <div className="space-y-2">
+                <button type="button" aria-expanded={contactsExpanded} onClick={() => setContactsExpanded((open) => !open)} className="mb-1 flex w-full items-center justify-between rounded-lg px-2 py-2 text-left hover:bg-slate-100 dark:hover:bg-white/5">
+                  <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[.08em] text-slate-700 dark:text-slate-200"><UsersRound size={14}/> Business contacts <ChevronRight size={13} className={contactsExpanded ? "rotate-90" : ""}/></span>
+                  <span className="text-[10px] font-semibold text-slate-500">{businessContacts.filter((item) => item.online).length} online</span>
+                </button>
+                {contactsExpanded ? <div className="space-y-2">
                   {contactGroups.map(([domain, group]) => <div key={domain}>
                     <div className="flex items-center gap-1 px-2 py-1 text-[9px] font-black uppercase tracking-[.1em] text-slate-400"><Building2 size={10}/><span className="truncate">{domain}</span></div>
                     <div className="space-y-0.5">
@@ -1635,7 +1636,7 @@ export function HostedMailWorkspace() {
                       })}
                     </div>
                   </div>)}
-                </div>
+                </div> : null}
               </div> : null}
             </nav>
             <div className="mt-2 rounded-2xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-white/[.035]"><p className="truncate text-xs font-black text-slate-800 dark:text-white">{displayName || address}</p>{displayName ? <p className="mt-0.5 truncate text-[10px] font-medium text-slate-500">{address}</p> : null}<Link href="/webmail/settings" className="mt-2 inline-flex text-[10px] font-black text-[#174ea6] hover:underline">Full mailbox settings</Link></div>
@@ -1647,7 +1648,7 @@ export function HostedMailWorkspace() {
             <div className="flex h-full min-h-0">{selected ? reader : relationshipWorkspace || messageList}</div>
           ) : (
             <>
-              <div className={`hidden h-full min-h-0 lg:grid ${paneRight ? "grid-cols-[minmax(390px,46%)_1fr]" : paneBottom ? "grid-rows-[minmax(300px,48%)_1fr]" : "grid-cols-[minmax(390px,46%)_1fr]"}`}>{messageList}{selected ? reader : relationshipWorkspace || reader}</div>
+              <div className={`hidden h-full min-h-0 lg:grid ${paneRight ? "grid-cols-[minmax(300px,40%)_minmax(0,1fr)]" : paneBottom ? "grid-rows-[minmax(260px,42%)_minmax(0,1fr)]" : "grid-cols-[minmax(300px,40%)_minmax(0,1fr)]"}`}>{messageList}{selected ? reader : relationshipWorkspace || reader}</div>
               <div className="flex h-full min-h-0 lg:hidden">{selected ? reader : relationshipWorkspace || messageList}</div>
             </>
           )}
