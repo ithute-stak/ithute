@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.security import encrypt_secret, hash_token
 from app.db.session import get_db
-from app.models import ConnectedMailAccount, Mailbox, MailboxRule, MailboxStatus, ScheduledMail
+from app.models import ConnectedMailAccount, Mailbox, MailboxRule, MailboxStatus, ScheduledMail, MailReadReceiptEvidence
 from app.services.connected_mail import (
     ConnectedMailError,
     config_for_account,
@@ -407,3 +407,34 @@ def retry_scheduled(job_id: UUID, token: Annotated[str | None, Cookie(alias=HOST
 # replicas are safe: database row locks ensure only one process claims a due
 # message, and stale claims are recovered after 15 minutes.
 start_scheduled_mail_worker()
+
+
+@router.get("/read-receipts")
+def read_receipt_evidence(
+    message_id: str,
+    token: Annotated[str | None, Cookie(alias=HOSTED_COOKIE)] = None,
+    db: Session = Depends(get_db),
+):
+    """List unverified evidence only; never imply a message has been read."""
+    mailbox, _ = _owner(token, db)
+    if len(message_id) > 998 or not message_id.startswith("<") or not message_id.endswith(">"):
+        raise HTTPException(status_code=422, detail="Invalid Message-ID")
+    rows = db.scalars(
+        select(MailReadReceiptEvidence).where(
+            MailReadReceiptEvidence.mailbox_id == mailbox.id,
+            MailReadReceiptEvidence.original_message_id == message_id,
+        ).order_by(MailReadReceiptEvidence.received_at.desc()).limit(100)
+    ).all()
+    return {
+        "message_id": message_id,
+        "read_confirmed": False,
+        "items": [
+            {
+                "recipient": item.recipient,
+                "disposition": item.disposition,
+                "evidence_status": item.evidence_status,
+                "received_at": item.received_at.isoformat(),
+            }
+            for item in rows
+        ],
+    }
