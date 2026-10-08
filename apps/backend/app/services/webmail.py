@@ -303,6 +303,68 @@ def _html_body(message) -> str:
     return ""
 
 
+def _conversation_segments(body_text: str, body_html: str) -> dict:
+    text = body_text.replace("\r\n", "\n").replace("\r", "\n")
+    main_text = text
+    quoted_text = ""
+    signature_text = ""
+    footer_text = ""
+
+    quote_markers = (
+        "\n-----Original Message-----",
+        "\n---------- Forwarded message ----------",
+        "\nOn ",
+    )
+    quote_positions = [pos for marker in quote_markers if (pos := text.find(marker)) >= 0]
+    gt_lines = [idx for idx, line in enumerate(text.split("\n")) if line.lstrip().startswith(">")]
+    if gt_lines:
+        lines = text.split("\n")
+        char_pos = sum(len(line) + 1 for line in lines[:gt_lines[0]])
+        quote_positions.append(char_pos)
+    if quote_positions:
+        split_at = min(quote_positions)
+        main_text = text[:split_at].rstrip()
+        quoted_text = text[split_at:].strip()
+
+    signature_markers = ("\n-- \n", "\nSent from my iPhone", "\nSent from my Android", "\nGet Outlook for ")
+    sig_positions = [pos for marker in signature_markers if (pos := main_text.find(marker)) >= 0]
+    if sig_positions:
+        split_at = min(sig_positions)
+        signature_text = main_text[split_at:].strip()
+        main_text = main_text[:split_at].rstrip()
+
+    lower_main = main_text.lower()
+    footer_markers = ("unsubscribe", "privacy policy", "manage preferences", "confidentiality notice")
+    footer_candidates = [lower_main.rfind(marker) for marker in footer_markers if lower_main.rfind(marker) >= max(0, len(lower_main) - 1800)]
+    if footer_candidates:
+        split_at = min(footer_candidates)
+        line_start = main_text.rfind("\n", 0, split_at)
+        if line_start >= 0 and len(main_text) - line_start <= 2200:
+            footer_text = main_text[line_start:].strip()
+            main_text = main_text[:line_start].rstrip()
+
+    main_html = body_html
+    quoted_html = ""
+    if body_html:
+        lower_html = body_html.lower()
+        blockquote_at = lower_html.find("<blockquote")
+        if blockquote_at >= 0:
+            main_html = body_html[:blockquote_at].rstrip()
+            quoted_html = body_html[blockquote_at:].strip()
+
+    return {
+        "main_text": main_text,
+        "quoted_text": quoted_text,
+        "signature_text": signature_text,
+        "footer_text": footer_text,
+        "main_html": main_html,
+        "quoted_html": quoted_html,
+        "has_quoted_history": bool(quoted_text or quoted_html),
+        "has_signature": bool(signature_text),
+        "has_footer": bool(footer_text),
+    }
+
+
 def _render_contract(body_text: str, body_html: str, attachments: list[dict], scan: MimeScan, scan_engine: str, raw: bytes) -> dict:
     normalized_text = body_text.replace("\r\n", "\n").replace("\r", "\n")
     lines = normalized_text.split("\n") if normalized_text else []
@@ -312,6 +374,7 @@ def _render_contract(body_text: str, body_html: str, attachments: list[dict], sc
     table_count = html_lower.count("<table")
     heading_count = sum(html_lower.count(f"<h{level}") for level in range(1, 7))
     quote_count = html_lower.count("<blockquote") + sum(1 for line in lines if line.lstrip().startswith(">"))
+    segments = _conversation_segments(body_text, body_html)
     cpp_profile = execute_binary("native.blob_profile", normalized_text.encode("utf-8", errors="replace"))
     metrics = {
         "has_html": bool(body_html),
@@ -362,6 +425,18 @@ def _render_contract(body_text: str, body_html: str, attachments: list[dict], sc
             "orchestrator": "python",
         },
         "safe_html_policy": "semantic-tags-no-style-no-script-no-form-no-remote-media",
+        "conversation": {
+            "has_quoted_history": segments["has_quoted_history"],
+            "has_signature": segments["has_signature"],
+            "has_footer": segments["has_footer"],
+            "collapse_quoted_history": bool(java_profile.value.get("collapse_quoted_history")) or segments["has_quoted_history"],
+            "main_text": segments["main_text"],
+            "quoted_text": segments["quoted_text"],
+            "signature_text": segments["signature_text"],
+            "footer_text": segments["footer_text"],
+            "main_html": segments["main_html"],
+            "quoted_html": segments["quoted_html"],
+        },
         "layout_plan": go_plan.value,
         "structured_profile": java_profile.value,
     }
