@@ -354,6 +354,7 @@ export function HostedMailWorkspace() {
   const [notice, setNotice] = useState("");
   const [mobileFolders, setMobileFolders] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [threadedView, setThreadedView] = useState(true);
   const [onlyUnread, setOnlyUnread] = useState(false);
   const [onlyAttachments, setOnlyAttachments] = useState(false);
 
@@ -907,6 +908,19 @@ export function HostedMailWorkspace() {
     if (onlyAttachments) items = items.filter((row) => row.attachments?.length);
     return items;
   }, [inboxView, messages, onlyAttachments, onlyUnread]);
+
+  const groupedThreads = useMemo(() => threadGroups(visibleMessages), [visibleMessages]);
+  const displayedThreads = threadedView && folderKind(folder) !== "drafts"
+    ? groupedThreads
+    : visibleMessages.map((row, index) => ({
+        key: `message-${row.uid}-${index}`,
+        messages: [row],
+        latest: row,
+        unreadCount: row.seen ? 0 : 1,
+        flagged: row.flagged,
+        attachmentCount: row.attachments?.length || 0,
+        senderLabels: [senderName(row.from)],
+      }));
 
   const contactGroups = useMemo(() => {
     const grouped = new Map<string, BusinessContact[]>();
