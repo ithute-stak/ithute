@@ -116,6 +116,7 @@ class WebmailRichSend(BaseModel):
     attachments: list[WebmailAttachment] = Field(default_factory=list, max_length=20)
     in_reply_to: str = Field(default="", max_length=998)
     references: str = Field(default="", max_length=4000)
+    request_read_receipt: bool = False
 
 
 class WebmailDraft(BaseModel):
@@ -1362,6 +1363,7 @@ def compose_rich(
             [item.model_dump() for item in payload.attachments],
             payload.in_reply_to,
             payload.references,
+            payload.request_read_receipt,
         )
         record_successful_send(db, mailbox=mailbox, recipients=[*to, *cc, *bcc])
         return {**result, "first_contact": first_contact.public_dict()}
