@@ -82,3 +82,24 @@ html[data-imail-theme="dark"] .imail-hosted-workspace {
     scroll-behavior: auto !important;
   }
 }
+
+/* State colors must stay legible even when utility classes set pale backgrounds. */
+html[data-imail-theme="dark"] .imail-hosted-workspace nav button[class*="bg-[#eaf1fb]"] {
+  background: #203c57 !important;
+  color: #dceaff !important;
+}
+html[data-imail-theme="dark"] .imail-hosted-workspace nav button[class*="bg-[#eaf1fb]"] svg {
+  color: #c6dfff !important;
+}
+html[data-imail-theme="dark"] .imail-hosted-workspace input::placeholder {
+  color: #b8c7d6 !important;
+  opacity: 1;
+}
+html[data-imail-theme="light"] .imail-hosted-workspace input::placeholder,
+html[data-imail-theme="ithute"] .imail-hosted-workspace input::placeholder {
+  color: #596a7e !important;
+  opacity: 1;
+}
+html[data-imail-theme="dark"] .imail-hosted-workspace .imail-message-reader time {
+  color: #c6d2df !important;
+}
