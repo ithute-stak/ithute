@@ -612,6 +612,55 @@ export function HostedMailWorkspace() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  // Reconcile the currently visible page without clearing selection or interrupting a reader.
+  // Polling is a fallback transport until the mailbox server exposes authenticated
+  // durable change events. Pause when hidden to avoid unnecessary network activity.
+  useEffect(() => {
+    if (!session?.authenticated) return;
+    let cancelled = false;
+    let busy = false;
+    const reconcile = async () => {
+      if (cancelled || busy || document.visibilityState !== "visible") return;
+      busy = true;
+      try {
+        const params = new URLSearchParams({ folder, limit: String(PAGE_SIZE), offset: String(offset) });
+        if (query.trim()) params.set("q", query.trim());
+        const response = await webmail(`/messages?${params}`);
+        if (!response.ok || cancelled) return;
+        const payload = await response.json();
+        if (cancelled) return;
+        const incoming = (payload.items || []) as MessageRow[];
+        setMessages((previous) => {
+          if (previous.length === incoming.length && previous.every((row, index) =>
+            row.uid === incoming[index]?.uid &&
+            row.seen === incoming[index]?.seen &&
+            row.flagged === incoming[index]?.flagged &&
+            row.subject === incoming[index]?.subject &&
+            row.snippet === incoming[index]?.snippet &&
+            row.date === incoming[index]?.date
+          )) return previous;
+          return incoming;
+        });
+        setTotal(Number(payload.total || 0));
+        void loadCounts();
+      } catch {
+        // A transient sync failure must never block reading or editing mail.
+      } finally {
+        busy = false;
+      }
+    };
+    const interval = window.setInterval(() => void reconcile(), 30000);
+    const onVisible = () => { if (document.visibilityState === "visible") void reconcile(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [session?.authenticated, folder, query, offset, loadCounts]);
+
   useEffect(() => {
     const refreshContacts = () => void loadBusinessContacts();
     const timer = window.setInterval(refreshContacts, 45000);
