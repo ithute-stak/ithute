@@ -390,6 +390,7 @@ export function HostedMailWorkspace() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [mobileFolders, setMobileFolders] = useState(false);
+  const [contactsExpanded, setContactsExpanded] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [threadedView, setThreadedView] = useState(true);
   const [inboxSort, setInboxSort] = useState<InboxSort>("newest");
@@ -1546,17 +1547,17 @@ export function HostedMailWorkspace() {
             const senderSummary = thread.senderLabels.join(", ");
             return (
               <div key={`${folder}-${thread.key}`} className="border-b border-slate-200/80 dark:border-white/[.07]">
-                <div className={`group flex cursor-pointer items-start gap-2 px-2 transition hover:z-[1] hover:bg-white hover:shadow-sm dark:hover:bg-white/[.045] ${unread ? "bg-white dark:bg-slate-900" : "bg-[#f7f9f8] dark:bg-[#0e1514]"} ${densityClass} ${thread.messages.some((item) => item.uid === selected?.uid) ? "border-l-[3px] border-l-[#0b57d0] bg-[#eef4ff] dark:bg-blue-400/[.06]" : "border-l-[3px] border-l-transparent"}`} onClick={() => void openMessage(row)}>
+                <div className={`group flex cursor-pointer items-start gap-2 px-2 transition focus-within:ring-2 focus-within:ring-blue-400 hover:z-[1] hover:bg-white hover:shadow-sm dark:hover:bg-white/[.045] ${unread ? "bg-white dark:bg-slate-900" : "bg-[#f7f9f8] dark:bg-[#0e1514]"} ${densityClass} ${thread.messages.some((item) => item.uid === selected?.uid) ? "border-l-[3px] border-l-[#0b57d0] bg-[#eef4ff] dark:bg-blue-400/[.06]" : "border-l-[3px] border-l-transparent"}`} onClick={() => void openMessage(row)}>
                   <label onClick={(event) => event.stopPropagation()} className="grid h-8 w-8 shrink-0 place-items-center rounded-full hover:bg-slate-100 dark:hover:bg-white/10" title={thread.messages.length > 1 ? "Select conversation" : "Select message"}><input type="checkbox" checked={threadSelected} onChange={() => toggleThreadSelection(thread)} className="h-4 w-4 accent-[#0b57d0]" /></label>
-                  <button type="button" onClick={(event) => { event.stopPropagation(); void setThreadFlags(thread, { flagged: !thread.flagged }); }} className={`grid h-8 w-8 shrink-0 place-items-center rounded-full transition hover:bg-slate-100 dark:hover:bg-white/10 ${thread.flagged ? "text-amber-500" : "text-slate-300 group-hover:text-slate-500"}`} title={thread.flagged ? "Unstar conversation" : "Star conversation"}><Star size={16} fill={thread.flagged ? "currentColor" : "none"} /></button>
+                  <button type="button" onClick={(event) => { event.stopPropagation(); void setThreadFlags(thread, { flagged: !thread.flagged }); }} className={`grid h-8 w-8 shrink-0 place-items-center rounded-full transition hover:bg-slate-100 dark:hover:bg-white/10 ${thread.flagged ? "text-amber-500" : "text-slate-400 group-hover:text-slate-600"}`} title={thread.flagged ? "Unstar conversation" : "Star conversation"}><Star size={16} fill={thread.flagged ? "currentColor" : "none"} /></button>
                   <span className="hidden h-8 w-8 shrink-0 place-items-center rounded-full bg-[#eaf1fb] text-[10px] font-black text-[#174ea6] md:grid dark:bg-blue-400/10 dark:text-blue-200">{initials(row.from)}</span>
-                  <div className="min-w-0 flex-1 sm:grid sm:grid-cols-[minmax(96px,150px)_1fr_auto] sm:items-center sm:gap-3">
+                  <div className="min-w-0 flex-1 sm:grid sm:grid-cols-[minmax(100px,132px)_minmax(0,1fr)_auto] sm:items-center sm:gap-3">
                     <div className={`flex min-w-0 items-center gap-1.5 text-sm ${unread ? "font-black text-slate-950 dark:text-white" : "font-medium text-slate-700 dark:text-slate-300"}`}>
                       <span className="truncate">{senderSummary}</span>
                       {thread.messages.length > 1 ? <span className="shrink-0 rounded-full bg-slate-200/80 px-1.5 py-0.5 text-[9px] font-black text-slate-600 dark:bg-white/10 dark:text-slate-300">{thread.messages.length}</span> : null}
                     </div>
-                    <div className="min-w-0"><div className={`flex min-w-0 items-center gap-2 truncate text-sm ${unread ? "font-bold text-slate-950 dark:text-white" : "font-medium text-slate-700 dark:text-slate-300"}`}><span className="truncate">{row.subject || "(no subject)"}</span>{thread.unreadCount > 0 && thread.messages.length > 1 ? <span className="shrink-0 text-[9px] font-black uppercase text-[#174ea6] dark:text-blue-200">{thread.unreadCount} unread</span> : null}</div>{preferences.showPreview ? <p className="mt-0.5 truncate text-[11px] text-slate-500">{row.snippet}</p> : null}</div>
-                    <div className="mt-1 flex items-center gap-2 sm:mt-0 sm:justify-end">{thread.attachmentCount ? <span className="flex items-center gap-1 text-[9px] font-bold text-slate-400"><Paperclip size={13} />{thread.attachmentCount > 1 ? thread.attachmentCount : ""}</span> : null}<time className={`text-[10px] ${unread ? "font-black text-[#174ea6] dark:text-blue-200" : "font-medium text-slate-400"}`}>{shortDate(row.date)}</time></div>
+                    <div className="min-w-0"><div className={`flex min-w-0 items-center gap-2 truncate text-sm ${unread ? "font-bold text-slate-950 dark:text-white" : "font-medium text-slate-700 dark:text-slate-300"}`}><span className="truncate">{row.subject || "(no subject)"}</span>{thread.unreadCount > 0 && thread.messages.length > 1 ? <span className="shrink-0 text-[9px] font-black uppercase text-[#174ea6] dark:text-blue-200">{thread.unreadCount} unread</span> : null}</div>{preferences.showPreview ? <p className="mt-0.5 truncate text-xs leading-5 text-slate-600 dark:text-slate-400">{row.snippet}</p> : null}</div>
+                    <div className="mt-1 flex items-center gap-2 sm:mt-0 sm:justify-end">{thread.attachmentCount ? <span className="flex items-center gap-1 text-[9px] font-bold text-slate-400"><Paperclip size={13} />{thread.attachmentCount > 1 ? thread.attachmentCount : ""}</span> : null}<time className={`text-[11px] ${unread ? "font-black text-[#174ea6] dark:text-blue-200" : "font-medium text-slate-400"}`}>{shortDate(row.date)}</time></div>
                   </div>
                   {thread.messages.length > 1 ? <button type="button" onClick={(event) => { event.stopPropagation(); toggleThreadExpanded(thread.key); }} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10" title={expanded ? "Collapse conversation" : "Expand conversation"}><ChevronRight size={15} className={`transition ${expanded ? "rotate-90" : ""}`} /></button> : null}
                   <div className="hidden shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100 xl:flex"><button type="button" onClick={(event) => { event.stopPropagation(); void Promise.all(thread.messages.map((item) => moveRow(item, archiveFolder))); }} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100" title="Archive conversation"><Archive size={15} /></button><button type="button" onClick={(event) => { event.stopPropagation(); void Promise.all(thread.messages.map((item) => deleteRow(item))); }} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-red-50 hover:text-red-600" title="Delete conversation"><Trash2 size={15} /></button><button type="button" onClick={(event) => { event.stopPropagation(); void setThreadFlags(thread, { seen: unread }); }} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100" title={unread ? "Mark conversation read" : "Mark conversation unread"}><Mail size={15} /></button></div>
@@ -1598,7 +1599,7 @@ export function HostedMailWorkspace() {
       <div className="flex h-[calc(100vh-4rem)] min-h-0">
         <aside className={`${mobileFolders ? "fixed inset-0 z-50 flex" : "hidden"} w-full bg-black/30 lg:static lg:flex lg:w-[244px] lg:shrink-0 lg:bg-transparent`}>
           <button aria-label="Close folders" className="absolute inset-0 lg:hidden" onClick={() => setMobileFolders(false)} />
-          <div className="relative flex h-full w-[84%] max-w-[286px] flex-col border-r border-slate-200 bg-[#f8fafd] p-2.5 dark:border-white/10 dark:bg-[#0e1514] lg:w-[244px] lg:max-w-none">
+          <div className="relative flex h-full w-[84%] max-w-[286px] flex-col border-r border-slate-200 bg-[#f8fafd] p-2.5 dark:border-white/10 dark:bg-[#0e1514] lg:w-[220px] lg:max-w-none xl:w-[244px]">
             <div className="mb-1 flex items-center justify-between px-2 lg:hidden"><span className="text-sm font-black">Folders</span><button type="button" onClick={() => setMobileFolders(false)} className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-slate-100"><X size={18} /></button></div>
             <button type="button" onClick={() => { startNew(); setMobileFolders(false); }} className="mb-3 flex h-12 w-full items-center gap-3 rounded-2xl bg-[#eaf1fb] px-4 text-sm font-black text-[#174ea6] shadow-sm transition hover:bg-[#dce8fb]" title="Compose"><PenLine size={18} /> Compose</button>
             <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto">
@@ -1611,11 +1612,11 @@ export function HostedMailWorkspace() {
               })}
 
               {businessContacts.length ? <div className="mt-4 border-t border-slate-200 pt-3 dark:border-white/10">
-                <div className="mb-1 flex items-center justify-between px-2">
-                  <span className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.12em] text-slate-500"><UsersRound size={13}/> Business contacts</span>
-                  <span className="text-[9px] font-bold text-slate-400">{businessContacts.filter((item) => item.online).length} online</span>
-                </div>
-                <div className="space-y-2">
+                <button type="button" aria-expanded={contactsExpanded} onClick={() => setContactsExpanded((open) => !open)} className="mb-1 flex w-full items-center justify-between rounded-lg px-2 py-2 text-left hover:bg-slate-100 dark:hover:bg-white/5">
+                  <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[.08em] text-slate-700 dark:text-slate-200"><UsersRound size={14}/> Business contacts <ChevronRight size={13} className={contactsExpanded ? "rotate-90" : ""}/></span>
+                  <span className="text-[10px] font-semibold text-slate-500">{businessContacts.filter((item) => item.online).length} online</span>
+                </button>
+                {contactsExpanded ? <div className="space-y-2">
                   {contactGroups.map(([domain, group]) => <div key={domain}>
                     <div className="flex items-center gap-1 px-2 py-1 text-[9px] font-black uppercase tracking-[.1em] text-slate-400"><Building2 size={10}/><span className="truncate">{domain}</span></div>
                     <div className="space-y-0.5">
@@ -1635,7 +1636,7 @@ export function HostedMailWorkspace() {
                       })}
                     </div>
                   </div>)}
-                </div>
+                </div> : null}
               </div> : null}
             </nav>
             <div className="mt-2 rounded-2xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-white/[.035]"><p className="truncate text-xs font-black text-slate-800 dark:text-white">{displayName || address}</p>{displayName ? <p className="mt-0.5 truncate text-[10px] font-medium text-slate-500">{address}</p> : null}<Link href="/webmail/settings" className="mt-2 inline-flex text-[10px] font-black text-[#174ea6] hover:underline">Full mailbox settings</Link></div>
@@ -1647,7 +1648,7 @@ export function HostedMailWorkspace() {
             <div className="flex h-full min-h-0">{selected ? reader : relationshipWorkspace || messageList}</div>
           ) : (
             <>
-              <div className={`hidden h-full min-h-0 lg:grid ${paneRight ? "grid-cols-[minmax(390px,46%)_1fr]" : paneBottom ? "grid-rows-[minmax(300px,48%)_1fr]" : "grid-cols-[minmax(390px,46%)_1fr]"}`}>{messageList}{selected ? reader : relationshipWorkspace || reader}</div>
+              <div className={`hidden h-full min-h-0 lg:grid ${paneRight ? "grid-cols-[minmax(300px,40%)_minmax(0,1fr)]" : paneBottom ? "grid-rows-[minmax(260px,42%)_minmax(0,1fr)]" : "grid-cols-[minmax(300px,40%)_minmax(0,1fr)]"}`}>{messageList}{selected ? reader : relationshipWorkspace || reader}</div>
               <div className="flex h-full min-h-0 lg:hidden">{selected ? reader : relationshipWorkspace || messageList}</div>
             </>
           )}

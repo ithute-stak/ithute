@@ -87,7 +87,7 @@ export function MailPrivacyNote({ mode }: { mode?: "external" | "hosted" } = {})
     : "iMail reads external messages as safe text. Links are detected and made clickable without executing remote email code or tracking images.";
 
   return (
-    <div className="flex items-start gap-2 rounded-xl border border-emerald-900/10 bg-emerald-50/70 px-3 py-2.5 text-[11px] leading-5 text-emerald-950 dark:border-emerald-400/10 dark:bg-emerald-400/[.06] dark:text-emerald-100">
+    <div className="flex items-start gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2.5 text-xs font-medium leading-5 text-emerald-950 dark:border-emerald-500/40 dark:bg-emerald-950/50 dark:text-emerald-100">
       <ShieldCheck size={15} className="mt-0.5 shrink-0" />
       <span>{copy}</span>
       <ExternalLink size={13} className="mt-1 shrink-0 opacity-50" />
