@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import delete, select
 
 from app.models.domains import Domain
+from app.models.business import Notification
 from app.models.dnssec_incident_history import DnssecIncidentHistory, DnssecMonitorState
 from app.services.dnssec_monitor_persistence import record_dnssec_observation
 
@@ -27,6 +28,7 @@ def managed_domain(db, tenant_admin):
         yield tenant, domain
     finally:
         db.rollback()
+        db.execute(delete(Notification).where(Notification.tenant_id == tenant.id, Notification.category == "dnssec"))
         db.execute(delete(DnssecIncidentHistory).where(DnssecIncidentHistory.domain_id == domain.id))
         db.execute(delete(DnssecMonitorState).where(DnssecMonitorState.domain_id == domain.id))
         db.execute(delete(Domain).where(Domain.id == domain.id))
@@ -45,6 +47,7 @@ def test_open_once_recover_and_preserve_history(db, managed_domain):
     incidents = db.scalars(select(DnssecIncidentHistory).where(DnssecIncidentHistory.domain_id == domain.id)).all()
     assert len(incidents) == 1
     assert incidents[0].status == "open"
+    assert db.scalar(select(Notification).where(Notification.tenant_id == tenant.id, Notification.category == "dnssec", Notification.severity == "warning")) is not None
 
     record_dnssec_observation(db, tenant_id=tenant.id, domain_id=domain.id,
                               observation={"severity": "unknown", "code": "RESOLVER_UNAVAILABLE"})
@@ -59,6 +62,7 @@ def test_open_once_recover_and_preserve_history(db, managed_domain):
     assert result["events"] == ["recovered"]
     assert incidents[0].status == "recovered"
     assert incidents[0].recovered_at is not None
+    assert db.scalar(select(Notification).where(Notification.tenant_id == tenant.id, Notification.category == "dnssec", Notification.severity == "success")) is not None
 
 
 def test_changed_failure_supersedes_old_incident_after_confirmation(db, managed_domain):
