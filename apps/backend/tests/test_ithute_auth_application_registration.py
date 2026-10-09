@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CENTRAL = ROOT.parent / "platform/ithute-auth/app/admin.py"
 GATEWAY = ROOT / "backend/app/api/v1/ithute_platform.py"
-DASHBOARD = ROOT.parent / "frontend/app/ithute-platform/page.tsx"
+DASHBOARD = ROOT / "frontend/app/ithute-platform/page.tsx"
 
 
 def test_upstream_registration_requires_admin_and_is_inactive_by_default():
