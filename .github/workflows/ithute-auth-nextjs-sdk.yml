@@ -26,6 +26,8 @@ jobs:
       - name: Install SDK dependencies
         working-directory: packages/ithute-auth-nextjs
         run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Validate Ithute Auth migration ancestry
+        run: python3 platform/ithute-auth/check_migration_heads.py
       - name: Type-check SDK
         working-directory: packages/ithute-auth-nextjs
         run: npm run typecheck
