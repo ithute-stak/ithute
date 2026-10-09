@@ -138,7 +138,7 @@ export function createIthuteAuth(options: Options) {
   async function authenticatedRequest(path: string, init: RequestInit = {}): Promise<Response> {
     // Only account endpoints may be called; never proxy arbitrary URLs.
     if (!path.startsWith("/v1/account/") || path.startsWith("//") ||
-        path.includes("?") || path.includes("#") || path.includes("\\\\") ||
+        path.includes("?") || path.includes("#") || path.includes("%") || path.includes("\\\\") ||
         path.split("/").includes(".."))
       throw new Error("ITHUTE_AUTH_INVALID_ACCOUNT_PATH");
     const store=await cookies();
