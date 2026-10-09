@@ -36,3 +36,11 @@ def test_online_session_endpoint_checks_client_activation():
     assert "/v1/account/session-status" in sdk
     assert 'cache: "no-store"' in sdk
     assert "if (!active.ok) return null" in sdk
+
+
+def test_current_session_revocation_route_is_authenticated():
+    source = (ROOT / "app/account.py").read_text()
+    assert '@router.post("/sessions/revoke-current", status_code=204)' in source
+    assert "def revoke_current_session(" in source
+    assert "context.session.revoked_at = utcnow()" in source
+    assert "context: AuthContext = Depends(authenticated_context)" in source
