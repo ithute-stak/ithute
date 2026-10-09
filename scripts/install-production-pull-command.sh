@@ -19,15 +19,36 @@ cat > "$tmpdir/pull" <<'SH'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-if [ "${1:-}" != "ithute" ] || [ "${2:-}" != "latest" ] || [ "$#" -ne 2 ]; then
-  echo "Usage: pull ithute latest" >&2
+product="${1:-}"
+release="${2:-}"
+
+if [ "$release" != "latest" ] || [ "$#" -ne 2 ]; then
+  echo "Usage: pull {ithute|loanhub} latest" >&2
   exit 2
 fi
 
-REPO="ithute-stak/ithute"
+case "$product" in
+  ithute)
+    REPO="ithute-stak/ithute"
+    HELPER_PATH="scripts/deploy-production-latest.sh"
+    HELPER_NAME="deploy-production-latest.sh"
+    PREFIX="Ithute"
+    ;;
+  loanhub)
+    REPO="ithute-stak/LoanHub"
+    HELPER_PATH="scripts/deploy-production-manual.sh"
+    HELPER_NAME="deploy-production-manual.sh"
+    PREFIX="LoanHub"
+    ;;
+  *)
+    echo "Usage: pull {ithute|loanhub} latest" >&2
+    exit 2
+    ;;
+esac
+
 API="https://api.github.com/repos/$REPO"
 RAW="https://raw.githubusercontent.com/$REPO"
-tmpdir="$(mktemp -d /tmp/ithute-pull.XXXXXX)"
+tmpdir="$(mktemp -d "/tmp/${product}-pull.XXXXXX")"
 cleanup() { rm -rf "$tmpdir"; }
 trap cleanup EXIT
 
@@ -44,17 +65,33 @@ print(sha)
 PY
 )"
 
-helper="$tmpdir/deploy-production-latest.sh"
-echo "[Ithute] Refreshing exact latest-release launcher at $MAIN_SHA"
-curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL   "$RAW/$MAIN_SHA/scripts/deploy-production-latest.sh"   -o "$helper"
-test -s "$helper" || { echo "Downloaded Ithute latest-release launcher is empty." >&2; exit 1; }
+helper="$tmpdir/$HELPER_NAME"
+echo "[$PREFIX] Refreshing exact production launcher at $MAIN_SHA"
+curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL \
+  "$RAW/$MAIN_SHA/$HELPER_PATH" \
+  -o "$helper"
+test -s "$helper" || { echo "Downloaded $PREFIX production launcher is empty." >&2; exit 1; }
 bash -n "$helper"
 chmod 700 "$helper"
 
-exec bash "$helper"
+case "$product" in
+  ithute)
+    exec bash "$helper"
+    ;;
+  loanhub)
+    if [ "$(id -u)" -ne 0 ]; then
+      echo "[LoanHub] Elevating production deployment launcher"
+      exec sudo bash "$helper" latest
+    fi
+    exec bash "$helper" latest
+    ;;
+esac
 SH
 
 chmod 755 "$tmpdir/pull"
 install -m 755 "$tmpdir/pull" "$INSTALL_PATH"
-echo "[Ithute] Installed evergreen production pull launcher at $INSTALL_PATH"
-echo "[Ithute] The launcher refreshes deploy-production-latest.sh from the exact current main SHA on every invocation."
+echo "[Production] Installed evergreen production pull launcher at $INSTALL_PATH"
+echo "[Production] Supported commands:"
+echo "  pull ithute latest"
+echo "  pull loanhub latest"
+echo "[Production] Each launcher is refreshed from that repository's exact current main SHA on every invocation."
