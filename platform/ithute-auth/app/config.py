@@ -144,6 +144,7 @@ class Settings(BaseSettings):
                 "http://localhost:3000/api/auth/callback",
             ),
         )
+        result.setdefault("capitalbridge", ("https://capitalbridge.co.ls/api/v1/oidc/complete",))
         return result
 
     @property
