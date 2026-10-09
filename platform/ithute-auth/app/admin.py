@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -10,7 +11,7 @@ from .config import Settings, get_settings
 from .db import get_db
 from .application_registry import register_application, replace_redirect_uris
 from .redirect_uri_policy import validate_redirect_uris
-from .models import Application, ApplicationRedirectURI, AuditEvent, AuthEventOutbox, AuthSession, User, utcnow
+from .models import Application, ApplicationRedirectURI, DeveloperAccessRequest, AuditEvent, AuthEventOutbox, AuthSession, User, utcnow
 from .schemas import (
     AdminApplicationResponse,
     AdminApplicationCreateRequest,
@@ -348,3 +349,42 @@ def update_application(
         is_active=application.is_active,
         created_at=application.created_at,
     )
+
+class DeveloperRequestDecision(BaseModel):
+    decision: str = Field(pattern=r"^(approved|rejected)$")
+
+
+@router.get("/developer/access-requests")
+def admin_developer_access_requests(
+    _: AuthContext = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[dict[str, str]]:
+    rows=db.scalars(select(DeveloperAccessRequest).order_by(
+        DeveloperAccessRequest.created_at.desc()
+    ).limit(100)).all()
+    return [{"id":str(r.id),"user_id":str(r.user_id),"product":r.product,
+             "status":r.status,"justification":r.justification,
+             "created_at":r.created_at.isoformat()} for r in rows]
+
+
+@router.post("/developer/access-requests/{request_id}/decision")
+def decide_developer_access_request(
+    request_id: uuid.UUID,
+    payload: DeveloperRequestDecision,
+    request: Request,
+    context: AuthContext = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    item=db.get(DeveloperAccessRequest,request_id)
+    if item is None:
+        raise HTTPException(status_code=404,detail="request not found")
+    if item.status!="pending":
+        raise HTTPException(status_code=409,detail="request already decided")
+    item.status=payload.decision
+    record_audit(db,event_type="developer_access_request_decided",user=context.user,
+                 request=request,details={"request_id":str(item.id),"decision":payload.decision,"product":item.product})
+    db.commit()
+    # Approval is a recorded decision only. No credentials, mailboxes or roles granted.
+    return {"id":str(item.id),"status":item.status}
+
+
