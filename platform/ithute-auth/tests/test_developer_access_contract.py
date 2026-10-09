@@ -40,3 +40,10 @@ def test_requests_require_verified_email():
     source=ACCOUNT.read_text()
     assert "if not context.user.email or not context.user.email_verified:" in source
     assert 'detail="verified email required"' in source
+
+
+def test_access_request_submission_is_daily_rate_limited():
+    source=ACCOUNT.read_text()
+    assert "DeveloperAccessRequest.created_at >= utcnow() - timedelta(hours=24)" in source
+    assert "if len(recent_requests) >= 5:" in source
+    assert 'status_code=429, detail="daily request limit reached"' in source
