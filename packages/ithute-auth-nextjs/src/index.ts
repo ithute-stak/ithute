@@ -1,12 +1,12 @@
 /** Server-only OAuth 2.0 Authorization Code + PKCE integration for Next.js. */
 import "server-only";
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
 type Options = { issuer: string; clientId: string; callbackUrl: string; secret: string; scopes?: string };
-type Session = { accessToken: string; idToken?: string; refreshToken?: string; expiresAt: number };
+type Session = { accessToken: string; expiresAt: number };
 const TEMP = "ithute_oauth_pending";
 const SESSION = "ithute_auth_session";
 const b64 = (b: Buffer) => b.toString("base64url");
@@ -60,7 +60,7 @@ export function createIthuteAuth(options: Options) {
     const returnedState = request.nextUrl.searchParams.get("state");
     if (!pending || Date.now()>pending.expiresAt || !code || !returnedState ||
         Buffer.byteLength(returnedState)!==Buffer.byteLength(pending.state) ||
-        !createHash("sha256").update(returnedState).digest().equals(createHash("sha256").update(pending.state).digest())) {
+        !timingSafeEqual(Buffer.from(returnedState), Buffer.from(pending.state))) {
       const response=NextResponse.json({error:"Invalid or expired authentication state"},{status:400});
       response.cookies.delete(TEMP); return response;
     }
@@ -79,11 +79,16 @@ export function createIthuteAuth(options: Options) {
       const verified=await jwtVerify(tokens.id_token,jwks,{issuer,audience:options.clientId,algorithms:["RS256"]});
       if (verified.payload.nonce!==pending.nonce) return NextResponse.json({error:"Invalid ID token nonce"},{status:401});
     }
-    const session:Session={accessToken:tokens.access_token,idToken:tokens.id_token,
-      refreshToken:tokens.refresh_token,expiresAt:Date.now()+Math.min(Math.max(tokens.expires_in??600,1),3600)*1000};
+    // Do not store unnecessary refresh or identity tokens in browser cookies.
+    // Session expiration is bounded by the verified access-token expiry.
+    const verifiedAccess = await jwtVerify(tokens.access_token,jwks,{issuer,audience:options.clientId,algorithms:["RS256"]});
+    const accessExpiresAt = (verifiedAccess.payload.exp ?? 0) * 1000;
+    const expiresAt = Math.min(Date.now() + Math.min(Math.max(tokens.expires_in ?? 600, 1), 3600) * 1000, accessExpiresAt);
+    if (expiresAt <= Date.now()) return NextResponse.json({error:"Expired access token"},{status:401});
+    const session:Session={accessToken:tokens.access_token,expiresAt};
     const destination=new URL(pending.returnTo,request.nextUrl.origin);
     const response=NextResponse.redirect(destination);
-    response.cookies.set(SESSION,seal(session,options.secret),{...shared,maxAge:Math.min(Math.max(tokens.expires_in??600,1),3600)});
+    response.cookies.set(SESSION,seal(session,options.secret),{...shared,maxAge:Math.max(1,Math.floor((expiresAt-Date.now())/1000))});
     response.cookies.delete(TEMP); return response;
   }
   async function getSession() {
@@ -96,9 +101,18 @@ export function createIthuteAuth(options: Options) {
     } catch { return null; }
   }
   async function logout(request: NextRequest) {
-    const response=NextResponse.redirect(new URL("/",request.nextUrl.origin));
+    // Logouts mutate authentication state: disallow GET and cross-origin POST.
+    if (request.method !== "POST") return NextResponse.json({error:"POST required"},{status:405});
+    const origin=request.headers.get("origin");
+    if (!origin || origin!==request.nextUrl.origin) return NextResponse.json({error:"Cross-origin logout rejected"},{status:403});
+    const response=NextResponse.redirect(new URL("/",request.nextUrl.origin),303);
     response.cookies.delete(SESSION);response.cookies.delete(TEMP);
     return response;
   }
-  return {login,callback:callbackHandler,getSession,logout};
+  async function requireSession() {
+    const session = await getSession();
+    if (!session) throw new Error("ITHUTE_AUTH_UNAUTHENTICATED");
+    return session;
+  }
+  return {login,callback:callbackHandler,getSession,requireSession,logout};
 }
