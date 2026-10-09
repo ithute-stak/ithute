@@ -25,3 +25,14 @@ def test_app_activation_requires_approved_redirects():
     assert 'if payload.is_active is True:' in source
     assert 'ApplicationRedirectURI.application_id == application.id' in source
     assert 'Register at least one approved callback URL before activation' in source
+
+
+def test_online_session_endpoint_checks_client_activation():
+    source = (ROOT / "app/account.py").read_text()
+    assert '@router.get("/session-status")' in source
+    assert "Depends(authenticated_context)" in source
+    assert "Application.is_active" in source
+    sdk = (ROOT.parent.parent / "packages/ithute-auth-nextjs/src/index.ts").read_text()
+    assert "/v1/account/session-status" in sdk
+    assert 'cache: "no-store"' in sdk
+    assert "if (!active.ok) return null" in sdk
