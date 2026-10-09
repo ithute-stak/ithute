@@ -1443,7 +1443,7 @@ export function HostedMailWorkspace() {
                   data-imail-message-body="true"
                   data-imail-sender={addressOnly(selected.from)}
                   data-imail-render-kind={selected.render_contract?.kind || "plain"}
-                  className="imail-universal-body overflow-x-auto px-4 py-5 text-slate-800 dark:text-slate-100 sm:px-6 sm:py-7"
+                  className="imail-universal-body min-h-[170px] overflow-x-auto px-4 py-5 text-slate-800 dark:text-slate-100 sm:px-6 sm:py-7"
                   style={{ fontSize }}
                 >
                   {selected.body_html ? (
@@ -1630,7 +1630,7 @@ export function HostedMailWorkspace() {
       <div className="flex h-[calc(100vh-4rem)] min-h-0">
         <aside className={`${mobileFolders ? "fixed inset-0 z-50 flex" : "hidden"} w-full bg-black/30 lg:static lg:flex lg:w-[244px] lg:shrink-0 lg:bg-transparent`}>
           <button aria-label="Close folders" className="absolute inset-0 lg:hidden" onClick={() => setMobileFolders(false)} />
-          <div className="relative flex h-full w-[84%] max-w-[286px] flex-col border-r border-slate-200 bg-[#f8fafd] p-2.5 dark:border-white/10 dark:bg-[#0e1514] lg:w-[220px] lg:max-w-none xl:w-[244px]">
+          <div className="relative flex h-full w-[84%] max-w-[286px] flex-col border-r border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-[#111a25] lg:w-[214px] lg:max-w-none xl:w-[224px]">
             <div className="mb-1 flex items-center justify-between px-2 lg:hidden"><span className="text-sm font-black">Folders</span><button type="button" onClick={() => setMobileFolders(false)} className="grid h-9 w-9 place-items-center rounded-full text-slate-500 hover:bg-slate-100"><X size={18} /></button></div>
             <button type="button" onClick={() => { startNew(); setMobileFolders(false); }} className="mb-3 flex h-12 w-full items-center gap-3 rounded-2xl bg-[#eaf1fb] px-4 text-sm font-black text-[#174ea6] shadow-sm transition hover:bg-[#dce8fb]" title="Compose"><PenLine size={18} /> Compose</button>
             <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto">
@@ -1642,7 +1642,7 @@ export function HostedMailWorkspace() {
                 return <button key={item.name} type="button" onClick={() => openFolder(item.name)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm ${active ? "bg-[#eaf1fb] font-black text-[#174ea6]" : "font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5"}`} title={item.name}>{folderIcon(item.name)}<span className="min-w-0 flex-1 truncate">{item.name}</span>{count ? <span className={`text-[10px] ${active ? "font-black text-[#174ea6]" : "font-bold text-slate-400"}`}>{count}</span> : null}</button>;
               })}
 
-              {businessContacts.length ? <div className="mt-4 border-t border-slate-200 pt-3 dark:border-white/10">
+              {businessContacts.length && contactsExpanded ? <div className="mt-4 border-t border-slate-200 pt-3 dark:border-white/10">
                 <button type="button" aria-expanded={contactsExpanded} onClick={() => setContactsExpanded((open) => !open)} className="mb-1 flex w-full items-center justify-between rounded-lg px-2 py-2 text-left hover:bg-slate-100 dark:hover:bg-white/5">
                   <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[.08em] text-slate-700 dark:text-slate-200"><UsersRound size={14}/> Business contacts <ChevronRight size={13} className={contactsExpanded ? "rotate-90" : ""}/></span>
                   <span className="text-[10px] font-semibold text-slate-500">{businessContacts.filter((item) => item.online).length} online</span>
@@ -1679,7 +1679,7 @@ export function HostedMailWorkspace() {
             <div className="flex h-full min-h-0">{selected ? reader : relationshipWorkspace || messageList}</div>
           ) : (
             <>
-              <div className={`hidden h-full min-h-0 lg:grid ${paneRight ? "grid-cols-[minmax(300px,40%)_minmax(0,1fr)]" : paneBottom ? "grid-rows-[minmax(260px,42%)_minmax(0,1fr)]" : "grid-cols-[minmax(300px,40%)_minmax(0,1fr)]"}`}>{messageList}{selected ? reader : relationshipWorkspace || reader}</div>
+              <div className={`hidden h-full min-h-0 lg:grid ${paneRight ? "grid-cols-[minmax(340px,43%)_minmax(0,1fr)]" : paneBottom ? "grid-rows-[minmax(260px,42%)_minmax(0,1fr)]" : "grid-cols-[minmax(300px,40%)_minmax(0,1fr)]"}`}>{messageList}{selected ? reader : relationshipWorkspace || reader}</div>
               <div className="flex h-full min-h-0 lg:hidden">{selected ? reader : relationshipWorkspace || messageList}</div>
             </>
           )}
