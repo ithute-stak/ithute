@@ -8,6 +8,7 @@ Developer entry point: `https://ithute.co.ls/developer` (available after the dev
 | --- | --- | --- |
 | Identity and OAuth 2.0 | [Authentication](./authentication.md) | Central Ithute Auth service; client registration restricted to elevated platform administrators |
 | Next.js applications | [Next.js integration](./nextjs.md) | Repository SDK; not yet published on npm |
+| Server-side requests | [Authenticated account API requests](./server-side-requests.md) | SDK server-only method; developer dashboard integration pending |
 | Developer registration | [Accounts and email](./accounts-and-mail.md) | Existing-email identity registration, with anti-bot configuration required |
 | API reference | [API reference](./api-reference.md) | Documented Auth endpoints; other endpoints require product authorization |
 | Security and deployment | [Security and operations](./security.md) | Mandatory production controls and checklist |
