@@ -1,0 +1,16 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { ArrowRight, ShieldCheck } from "lucide-react";
+export const metadata: Metadata = {title:"Ithute Auth for developers",description:"Integrate OAuth 2.0 PKCE authentication into Next.js applications using Ithute Auth."};
+export default function DeveloperAuthPage(){
+  return <main className="min-h-screen bg-[#07101e] text-slate-100"><div className="mx-auto max-w-4xl px-6 py-12">
+    <Link href="/developer" className="text-sm font-bold text-cyan-300">← Developer platform</Link>
+    <p className="mt-16 text-sm font-bold uppercase tracking-[.22em] text-cyan-300">Identity and access</p>
+    <h1 className="mt-3 text-4xl font-black sm:text-5xl">Ithute Auth for Next.js</h1>
+    <p className="mt-6 max-w-3xl text-lg leading-8 text-slate-300">Connect Next.js App Router applications to central Ithute identity using OAuth 2.0 authorization-code flow with PKCE, RS256 token verification, encrypted session cookies and online session status checks.</p>
+    <div className="mt-9 flex flex-wrap gap-3"><Link href="/developer/register" className="inline-flex items-center gap-2 rounded-xl bg-cyan-400 px-5 py-3 font-bold text-slate-950">Create an identity <ArrowRight size={16}/></Link><Link href="/ithute-platform" className="rounded-xl border border-white/20 px-5 py-3 font-bold">Application management</Link></div>
+    <section className="mt-16 rounded-2xl border border-white/10 bg-white/5 p-7"><h2 className="text-2xl font-bold">How to connect</h2><ol className="mt-6 list-decimal space-y-4 pl-5 leading-7 text-slate-300"><li>Register an Ithute Auth identity with your existing email or sign in with an existing account.</li><li>Request access to an OAuth application. Authorized Ithute platform administrators register a unique client ID, exact callback URLs and activate the app in the dashboard.</li><li>Install the repository SDK in your Next.js server application. It is not yet published to npm.</li><li>Configure <code>ITHUTE_AUTH_ISSUER</code>, <code>ITHUTE_AUTH_CLIENT_ID</code>, <code>ITHUTE_AUTH_CALLBACK_URL</code> and a unique private <code>ITHUTE_AUTH_SESSION_SECRET</code>.</li><li>Implement your Next.js server-side login/callback/logout routes and verify login against Ithute before production rollout.</li></ol></section>
+    <section className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-7"><h2 className="flex items-center gap-2 text-2xl font-bold"><ShieldCheck className="text-cyan-300"/> Security requirements</h2><p className="mt-4 leading-7 text-slate-300">Use HTTPS, exact registered redirects, server-only secrets, and POST-only logout. Never publish refresh tokens or session secrets through NEXT_PUBLIC_ variables. Central application permissions and tenant authorization still need to be enforced by each integration.</p><a href="https://github.com/ithute-stak/ithute/tree/main/packages/ithute-auth-nextjs" className="mt-6 inline-flex items-center gap-2 font-bold text-cyan-300">View SDK source and setup examples <ArrowRight size={16}/></a></section>
+    <p className="mt-10 text-sm text-slate-400">Mailbox requests and developer account registration are separate processes. Ithute email addresses require explicit provisioning.</p>
+  </div></main>;
+}
