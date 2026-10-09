@@ -6,8 +6,8 @@ Revises: 0011_notification_gateway_client
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0007_app_redirect_uris"
-down_revision = "0006_managed_service_clients"
+revision = "0012_app_redirect_uris"
+down_revision = "0011_notification_gateway_client"
 branch_labels = None
 depends_on = None
 
