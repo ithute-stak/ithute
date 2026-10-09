@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.core.security import verify_password
 from app.db.session import get_db
 from app.models import AuditLog, User, UserSession
+from app.services.ithute_platform_admin import auth_request
 from app.services.ithute_auth import (
     IthuteAuthDisabled,
     IthuteAuthUnavailable,
@@ -472,3 +473,57 @@ def unlink_account(
         "linked": False,
         "message": "!thute account unlinked. Existing Mailbox DNS login remains available.",
     }
+
+class DeveloperRequestPayload(BaseModel):
+    product: str = Field(pattern=r"^(auth|email|dns|push|hosting)$")
+    justification: str = Field(min_length=15, max_length=1000)
+
+
+def _developer_central_token(request: Request, user: User) -> str:
+    """Only accept an active, identity-linked central-auth cookie, never local sessions."""
+    token = request.cookies.get(settings.access_cookie_name)
+    if not token or not user.auth_user_id:
+        raise HTTPException(status_code=401, detail="Ithute Auth login required")
+    try:
+        claims = decode_ithute_access_token(token)
+        if UUID(str(claims["sub"])) != user.auth_user_id:
+            raise ValueError("identity mismatch")
+    except (IthuteAuthDisabled, IthuteAuthUnavailable, jwt.InvalidTokenError, ValueError, KeyError) as exc:
+        raise HTTPException(status_code=401, detail="Ithute Auth session invalid") from exc
+    return token
+
+
+@router.get("/developer/requests")
+def developer_requests(request: Request, current: User = Depends(get_current_user)):
+    token = _developer_central_token(request, current)
+    try:
+        response = auth_request("GET", "/v1/account/developer/access-requests", token=token)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Developer requests unavailable") from exc
+    if response.status_code in (401,403):
+        raise HTTPException(status_code=response.status_code, detail="Ithute Auth authorization required")
+    if response.status_code != 200:
+        raise HTTPException(status_code=502, detail="Developer requests unavailable")
+    return response.json()
+
+
+@router.post("/developer/requests", status_code=201)
+def create_developer_request(
+    payload: DeveloperRequestPayload,
+    request: Request,
+    current: User = Depends(get_current_user),
+):
+    if request.headers.get("origin") != str(request.base_url).rstrip("/"):
+        raise HTTPException(status_code=403, detail="Same-origin request required")
+    token = _developer_central_token(request, current)
+    try:
+        response = auth_request("POST", "/v1/account/developer/access-requests",
+                                token=token, json_body=payload.model_dump())
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Developer requests unavailable") from exc
+    if response.status_code in (401,403,409,422,429):
+        raise HTTPException(status_code=response.status_code, detail="Developer request rejected")
+    if response.status_code != 201:
+        raise HTTPException(status_code=502, detail="Developer requests unavailable")
+    return response.json()
+
