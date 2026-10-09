@@ -103,6 +103,16 @@ def authenticated_context(
     return AuthContext(user=user, session=session, claims=claims)
 
 
+@router.post("/sessions/revoke-current", status_code=204)
+def revoke_current_session(
+    context: AuthContext = Depends(authenticated_context),
+    db: Session = Depends(get_db),
+) -> None:
+    """Revoke the calling OAuth session across all relying parties."""
+    context.session.revoked_at = utcnow()
+    db.commit()
+
+
 @router.get("/session-status")
 def current_session_status(
     context: AuthContext = Depends(authenticated_context),

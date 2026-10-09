@@ -36,3 +36,13 @@ def test_sdk_checks_revocation_before_issuing_session_cookie():
     assert "/v1/account/session-status" in callback
     assert callback.index("session-status") < callback.index("response.cookies.set(SESSION")
     assert 'failed.cookies.delete(TEMP)' in callback
+
+
+def test_nextjs_logout_revokes_central_session_and_reports_failure():
+    source = SDK.read_text()
+    logout = source.split("async function logout", 1)[1].split("async function requireSession", 1)[0]
+    assert "/v1/account/sessions/revoke-current" in logout
+    assert 'method:"POST"' in logout
+    assert "result.status===401" in logout
+    assert 'status:503' in logout
+    assert "response.cookies.delete(SESSION)" in logout

@@ -139,7 +139,23 @@ export function createIthuteAuth(options: Options) {
     if (request.method !== "POST") return NextResponse.json({error:"POST required"},{status:405});
     const origin=request.headers.get("origin");
     if (!origin || origin!==request.nextUrl.origin) return NextResponse.json({error:"Cross-origin logout rejected"},{status:403});
-    const response=NextResponse.redirect(new URL("/",request.nextUrl.origin),303);
+    // Revoke the central session before confirming logout. Clearing the browser
+    // cookie alone would leave the bearer token valid in other applications.
+    const session=open<Session>(request.cookies.get(SESSION)?.value,options.secret);
+    let revoked = !session;
+    if (session) {
+      try {
+        const result=await fetch(`${issuer}/v1/account/sessions/revoke-current`,{
+          method:"POST",headers:{Authorization:`Bearer ${session.accessToken}`},
+          cache:"no-store",signal:AbortSignal.timeout(5000),
+        });
+        // An already-expired or revoked session is effectively logged out.
+        revoked=result.ok || result.status===401;
+      } catch { revoked=false; }
+    }
+    const response=revoked
+      ? NextResponse.redirect(new URL("/",request.nextUrl.origin),303)
+      : NextResponse.json({error:"Central logout could not be verified"},{status:503});
     response.cookies.delete(SESSION);response.cookies.delete(TEMP);
     return response;
   }
