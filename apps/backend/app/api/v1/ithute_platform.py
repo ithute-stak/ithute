@@ -389,3 +389,38 @@ def push_messages(
 ):
     token = _elevated_token(request, current)
     return _upstream(push_request("GET", f"/v1/admin/messages?limit={limit}", central_access_token=token), service="!thute Push")
+
+class DeveloperRequestDecisionPayload(BaseModel):
+    decision: str = Field(pattern=r"^(approved|rejected)$")
+
+
+@router.get("/developer/access-requests")
+def list_developer_access_requests(
+    request: Request,
+    current: User = Depends(require_platform_owner),
+):
+    token = _elevated_token(request, current)
+    return _upstream(
+        auth_request("GET", "/v1/admin/developer/access-requests", token=token),
+        service="!thute Auth",
+    )
+
+
+@router.post("/developer/access-requests/{request_id}/decision")
+def decide_developer_request(
+    request_id: UUID,
+    payload: DeveloperRequestDecisionPayload,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    token = _elevated_token(request, current)
+    result = _upstream(
+        auth_request("POST", f"/v1/admin/developer/access-requests/{request_id}/decision",
+                     token=token, json_body=payload.model_dump()),
+        service="!thute Auth",
+    )
+    db.add(AuditLog(actor_user_id=current.id, action="ithute.developer.access.decision",
+                    resource_type="developer_access_request", resource_id=str(request_id)))
+    db.commit()
+    return result
