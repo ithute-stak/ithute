@@ -16,3 +16,9 @@ def test_workspace_never_requests_pasted_bearer_tokens():
     assert "/api/v1/auth/ithute/developer/requests" in UI
     assert "Bearer " not in UI
     assert "sessionStorage" not in UI
+
+
+def test_revoked_central_sessions_are_rejected():
+    assert 'auth_request("GET", "/v1/account/session-status", token=token)' in API
+    assert 'status_response.json().get("active") is not True' in API
+    assert 'detail="Ithute Auth session expired or revoked"' in API
