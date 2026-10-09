@@ -54,6 +54,7 @@ class Application(Base):
 class ApplicationRedirectURI(Base):
     """Database-backed exact redirect allowlist for dashboard-managed clients."""
     __tablename__ = "application_redirect_uris"
+    __table_args__ = (UniqueConstraint("application_id", "redirect_uri", name="uq_app_redirect_uri"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     application_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("applications.id", ondelete="CASCADE"), index=True, nullable=False)
