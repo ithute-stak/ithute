@@ -64,20 +64,23 @@ export function createIthuteAuth(options: Options) {
       const response=NextResponse.json({error:"Invalid or expired authentication state"},{status:400});
       response.cookies.delete(TEMP); return response;
     }
-    const responseFromIssuer = await fetch(`${issuer}/oauth/token`, {method:"POST",
-      headers:{"Content-Type":"application/x-www-form-urlencoded"},
-      body:new URLSearchParams({grant_type:"authorization_code",client_id:options.clientId,redirect_uri:callback,
-        code,code_verifier:pending.verifier}), cache:"no-store"});
-    if (!responseFromIssuer.ok) {
-      const response=NextResponse.json({error:"Authentication exchange failed"},{status:401});
-      response.cookies.delete(TEMP); return response;
-    }
-    const tokens=await responseFromIssuer.json() as {access_token:string;id_token?:string;refresh_token?:string;expires_in?:number};
-    if (!tokens.access_token) return NextResponse.json({error:"No access token returned"},{status:502});
-    // Access token signature and expiry are verified below before creating a session.
-    if (tokens.id_token) {
-      const verified=await jwtVerify(tokens.id_token,jwks,{issuer,audience:options.clientId,algorithms:["RS256"]});
-      if (verified.payload.nonce!==pending.nonce) return NextResponse.json({error:"Invalid ID token nonce"},{status:401});
+    let tokens: {access_token:string;id_token?:string;refresh_token?:string;expires_in?:number};
+    try {
+      const responseFromIssuer = await fetch(`${issuer}/oauth/token`, {method:"POST",
+        headers:{"Content-Type":"application/x-www-form-urlencoded"},
+        body:new URLSearchParams({grant_type:"authorization_code",client_id:options.clientId,redirect_uri:callback,
+          code,code_verifier:pending.verifier}), cache:"no-store",signal:AbortSignal.timeout(10000)});
+      if (!responseFromIssuer.ok) throw new Error("token_exchange_rejected");
+      tokens=await responseFromIssuer.json() as typeof tokens;
+      if (!tokens.access_token || typeof tokens.access_token !== "string") throw new Error("missing_access_token");
+      if (tokens.id_token) {
+        const verified=await jwtVerify(tokens.id_token,jwks,{issuer,audience:options.clientId,algorithms:["RS256"]});
+        if (verified.payload.nonce!==pending.nonce) throw new Error("invalid_id_token_nonce");
+      }
+    } catch {
+      const failed=NextResponse.json({error:"Authentication exchange failed"},{status:401});
+      failed.cookies.delete(TEMP);
+      return failed;
     }
     // Do not store unnecessary refresh or identity tokens in browser cookies.
     // Session expiration is bounded by the verified access-token expiry.
