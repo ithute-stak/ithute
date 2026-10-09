@@ -34,3 +34,9 @@ def test_admin_decisions_are_audited_and_do_not_provision_services():
     assert 'item.status!="pending"' in source
     assert 'event_type="developer_access_request_decided"' in source
     assert 'item.status=payload.decision' in source
+
+
+def test_requests_require_verified_email():
+    source=ACCOUNT.read_text()
+    assert "if not context.user.email or not context.user.email_verified:" in source
+    assert 'detail="verified email required"' in source
