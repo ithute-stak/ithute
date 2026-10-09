@@ -36,7 +36,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ac
 
 Logout must be a same-origin POST (not a GET link), and needs the browser Origin header. The SDK does not store refresh tokens in cookies.\n\nRead sessions with `await auth.getSession()` from server components/routes. Treat authorization/roles as separate policy checks on the server. The wrapper stores encrypted, HttpOnly, Secure cookies; it does not expose tokens to client JavaScript.
 
-**Important limitations:** This initial version does not support refresh-token rotation, remote session revocation, dashboard client registration, custom login branding or package publishing. Sessions expire at access-token expiry and require login again. Logout clears the local app session, not other Ithute Auth sessions; cross-app revocation needs a separate upstream integration. Register the OAuth client and exact redirect URI in Ithute Auth before using this example; never use a wildcard callback. Authorization-server support for PKCE, ID token nonce and issuer/audience claims must be verified in integration tests. No automatic production enablement.
+**Important limitations:** This SDK does not yet support automatic refresh-token rotation, custom login branding or package publishing; central session revocation and administrator-managed application registration are supported. Sessions expire at access-token expiry and require login again. Logout attempts to revoke the current central session and clears the local cookie. Global sign-out across every application is not yet supported. Register the OAuth client and exact redirect URI in Ithute Auth before using this example; never use a wildcard callback. Authorization-server support for PKCE, ID token nonce and issuer/audience claims must be verified in integration tests. No automatic production enablement.
 
 ## Dashboard-managed Next.js onboarding
 
@@ -48,3 +48,10 @@ Logout must be a same-origin POST (not a GET link), and needs the browser Origin
 6. Use the App Router route handler above for login/callback and a same-origin POST handler for logout. Read sessions on the server using `getSession()` and enforce your application's own role/permission rules there.
 
 **Current scope:** The dashboard manages client registration and callback URLs; client ID, issuer, callback URL and secret must still be supplied to the Next.js deployment as server-only configuration. Credentials and private session secrets are not transmitted through the dashboard. The SDK now verifies central session status online on every getSession() call; revoked sessions, disabled applications, and central Auth outages yield no session (fail closed). Refresh rotation and cross-app single logout remain separate work. The SDK is not yet published; consume it from this repository/workspace until a supported release is available. Production migration and E2E login verification are required before rollout.
+
+
+## Server-only account API requests
+
+`await auth.authenticatedRequest("/v1/account/developer/access-requests")` validates the encrypted session, JWT and online central session status, then sends an account-scoped request with a server-managed bearer token. Non-account paths and ambiguous encoded or traversal paths are rejected. This method must be called only in server components or route handlers, never in client components. The caller must still enforce same-origin checks for state-changing browser requests and validate input payloads.
+
+For a detailed example see `docs/developer/server-side-requests.md`. This feature does **not** by itself connect the Ithute developer dashboard to an approved OAuth client or enable production registration. The public developer dashboard remains gated until that integration has passed an end-to-end browser login, request and logout test.
