@@ -308,6 +308,15 @@ def update_application(
     if payload.name is not None and payload.name.strip() != application.name:
         application.name = payload.name.strip()
         changes["name"] = application.name
+    if payload.is_active is True:
+        stored_redirect = db.scalar(
+            select(ApplicationRedirectURI.id).where(
+                ApplicationRedirectURI.application_id == application.id
+            ).limit(1)
+        )
+        legacy_redirects = get_settings().redirect_uris.get(application.client_id, ())
+        if stored_redirect is None and not legacy_redirects:
+            raise HTTPException(status_code=409, detail="Register at least one approved callback URL before activation")
     if payload.is_active is not None and payload.is_active != application.is_active:
         application.is_active = payload.is_active
         changes["is_active"] = payload.is_active
