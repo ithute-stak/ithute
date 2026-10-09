@@ -93,7 +93,22 @@ export function createIthuteAuth(options: Options) {
     }
     const accessExpiresAt = (verifiedAccess.payload.exp ?? 0) * 1000;
     const expiresAt = Math.min(Date.now() + Math.min(Math.max(tokens.expires_in ?? 600, 1), 3600) * 1000, accessExpiresAt);
-    if (expiresAt <= Date.now()) return NextResponse.json({error:"Expired access token"},{status:401});
+    if (expiresAt <= Date.now()) {
+      const failed=NextResponse.json({error:"Expired access token"},{status:401});
+      failed.cookies.delete(TEMP);return failed;
+    }
+    // Reject revoked sessions and disabled OAuth clients before issuing a local cookie.
+    try {
+      const statusResponse=await fetch(`${issuer}/v1/account/session-status`,{
+        headers:{Authorization:`Bearer ${tokens.access_token}`},
+        cache:"no-store",signal:AbortSignal.timeout(5000),
+      });
+      if (!statusResponse.ok || (await statusResponse.json() as {active?:boolean}).active!==true)
+        throw new Error("inactive_central_session");
+    } catch {
+      const failed=NextResponse.json({error:"Authentication session unavailable"},{status:401});
+      failed.cookies.delete(TEMP);return failed;
+    }
     const session:Session={accessToken:tokens.access_token,expiresAt};
     const destination=new URL(pending.returnTo,request.nextUrl.origin);
     const response=NextResponse.redirect(destination);
