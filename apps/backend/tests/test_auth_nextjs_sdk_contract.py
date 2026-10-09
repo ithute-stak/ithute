@@ -28,3 +28,11 @@ def test_sdk_clears_pending_state_on_exchange_or_nonce_failure():
     assert 'if (!tokens.access_token || typeof tokens.access_token !== "string")' in source
     assert 'if (verified.payload.nonce!==pending.nonce) throw new Error' in source
     assert 'failed.cookies.delete(TEMP)' in source
+
+
+def test_sdk_checks_revocation_before_issuing_session_cookie():
+    source = SDK.read_text()
+    callback = source.split("async function callbackHandler", 1)[1].split("async function getSession", 1)[0]
+    assert "/v1/account/session-status" in callback
+    assert callback.index("session-status") < callback.index("response.cookies.set(SESSION")
+    assert 'failed.cookies.delete(TEMP)' in callback
