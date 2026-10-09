@@ -103,6 +103,16 @@ export function createIthuteAuth(options: Options) {
     if (!session || Date.now()>=session.expiresAt) return null;
     try {
       const verified=await jwtVerify(session.accessToken,jwks,{issuer,audience:options.clientId,algorithms:["RS256"]});
+      // Signatures alone cannot detect revoked sessions or disabled clients.
+      // Check online on each protected server request; fail closed on outages.
+      const active = await fetch(`${issuer}/v1/account/session-status`, {
+        headers: { Authorization: `Bearer ${session.accessToken}` },
+        cache: "no-store",
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!active.ok) return null;
+      const status = await active.json() as { active?: boolean };
+      if (status.active !== true) return null;
       return {user:verified.payload,expiresAt:session.expiresAt};
     } catch { return null; }
   }
