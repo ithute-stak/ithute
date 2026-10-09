@@ -24,3 +24,13 @@ def test_requests_are_linked_to_users():
     source=MODEL.read_text()
     assert 'class DeveloperAccessRequest(Base):' in source
     assert 'ForeignKey("users.id", ondelete="CASCADE")' in source
+
+
+def test_admin_decisions_are_audited_and_do_not_provision_services():
+    source=(ROOT / "app/admin.py").read_text()
+    assert '@router.get("/developer/access-requests")' in source
+    assert '@router.post("/developer/access-requests/{request_id}/decision")' in source
+    assert "Depends(require_admin)" in source
+    assert 'item.status!="pending"' in source
+    assert 'event_type="developer_access_request_decided"' in source
+    assert 'item.status=payload.decision' in source
