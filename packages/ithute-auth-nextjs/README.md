@@ -25,11 +25,15 @@ export async function GET(request: NextRequest, context: { params: Promise<{ act
   const { action } = await context.params;
   if (action === "login") return auth.login(request);
   if (action === "callback") return auth.callback(request);
+  return new Response("Not found", { status: 404 });
+}
+export async function POST(request: NextRequest, context: { params: Promise<{ action: string }> }) {
+  const { action } = await context.params;
   if (action === "logout") return auth.logout(request);
   return new Response("Not found", { status: 404 });
 }
 ```
 
-Read sessions with `await auth.getSession()` from server components/routes. Treat authorization/roles as separate policy checks on the server. The wrapper stores encrypted, HttpOnly, Secure cookies; it does not expose tokens to client JavaScript.
+Logout must be a same-origin POST (not a GET link), and needs the browser Origin header. The SDK does not store refresh tokens in cookies.\n\nRead sessions with `await auth.getSession()` from server components/routes. Treat authorization/roles as separate policy checks on the server. The wrapper stores encrypted, HttpOnly, Secure cookies; it does not expose tokens to client JavaScript.
 
-**Important limitations:** This initial version does not support refresh-token rotation, remote session revocation, dashboard client registration, custom login branding or package publishing. Sessions expire at access-token expiry and require login again. Register the OAuth client and exact redirect URI in Ithute Auth before using this example; never use a wildcard callback. Authorization-server support for PKCE, ID token nonce and issuer/audience claims must be verified in integration tests. No automatic production enablement.
+**Important limitations:** This initial version does not support refresh-token rotation, remote session revocation, dashboard client registration, custom login branding or package publishing. Sessions expire at access-token expiry and require login again. Logout clears the local app session, not other Ithute Auth sessions; cross-app revocation needs a separate upstream integration. Register the OAuth client and exact redirect URI in Ithute Auth before using this example; never use a wildcard callback. Authorization-server support for PKCE, ID token nonce and issuer/audience claims must be verified in integration tests. No automatic production enablement.
