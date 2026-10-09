@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 /** Server-side identity registration proxy. No browser CORS or client-side secrets. */
 export async function POST(request: NextRequest) {
   const requestOrigin=request.headers.get("origin");
-  if (requestOrigin && requestOrigin!==request.nextUrl.origin)
+  if (!requestOrigin || requestOrigin!==request.nextUrl.origin)
     return NextResponse.json({message:"Cross-origin registration rejected."},{status:403});
   const contentType=request.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().startsWith("application/json"))
@@ -20,8 +20,24 @@ export async function POST(request: NextRequest) {
   const email=typeof data.email==="string"?data.email.trim():"";
   const display_name=typeof data.display_name==="string"?data.display_name.trim():"";
   const password=typeof data.password==="string"?data.password:"";
+  const verificationToken=typeof data.verificationToken==="string"?data.verificationToken:"";
   if (!email || email.length>320 || !email.includes("@") || !display_name || display_name.length>160 || password.length<10 || password.length>128)
     return NextResponse.json({message:"Provide a valid name, email address and password of at least 10 characters."},{status:422});
+  const captchaSecret=process.env.ITHUTE_DEVELOPER_TURNSTILE_SECRET;
+  if (!captchaSecret) return NextResponse.json({message:"Public registration is not enabled yet."},{status:503});
+  if (!verificationToken || verificationToken.length>4096)
+    return NextResponse.json({message:"Please complete the security challenge."},{status:422});
+  try {
+    const challenge=await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method:"POST",
+      headers:{"Content-Type":"application/x-www-form-urlencoded"},
+      body:new URLSearchParams({secret:captchaSecret,response:verificationToken}),
+      cache:"no-store",signal:AbortSignal.timeout(5000),
+    });
+    const outcome=await challenge.json() as {success?:boolean;hostname?:string};
+    if (!challenge.ok || outcome.success!==true || outcome.hostname!==request.nextUrl.hostname)
+      return NextResponse.json({message:"Security verification failed."},{status:403});
+  } catch { return NextResponse.json({message:"Security verification is unavailable."},{status:503}); }
   const origin=process.env.ITHUTE_AUTH_INTERNAL_URL;
   if (!origin) return NextResponse.json({message:"Developer registration is not configured yet."},{status:503});
   let target: URL;
