@@ -144,6 +144,8 @@ def request_developer_access(
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
     # Access requests never create API keys, mailboxes, roles or OAuth clients.
+    if not context.user.email or not context.user.email_verified:
+        raise HTTPException(status_code=403, detail="verified email required")
     recent = db.scalars(
         select(DeveloperAccessRequest).where(
             DeveloperAccessRequest.user_id == context.user.id,
