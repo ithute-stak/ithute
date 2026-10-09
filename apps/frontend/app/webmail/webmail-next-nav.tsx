@@ -51,7 +51,7 @@ export function WebmailNextNav() {
           </div>
         </div>
       ) : null}
-      <button type="button" onClick={() => setOpen((value) => !value)} className="inline-flex h-10 items-center gap-1.5 rounded-full border border-slate-300 bg-white px-2.5 text-xs font-bold text-slate-800 shadow-md transition hover:border-blue-300 hover:text-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 dark:border-white/20 dark:bg-[#141b20] dark:text-slate-100" aria-expanded={open} aria-label="Open iMail Hub"><span className="grid h-7 w-7 place-items-center rounded-full bg-[#0c6f55] text-[9px] font-black text-white">iM</span><span className="hidden xl:inline">iMail Hub</span><ChevronDown size={14} className={open ? "rotate-180 transition" : "transition"} /></button>
+      <button type="button" onClick={() => setOpen((value) => !value)} className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-300 bg-white px-2.5 text-xs font-bold text-slate-800 shadow-md transition hover:border-blue-300 hover:text-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 dark:border-white/20 dark:bg-[#141b20] dark:text-slate-100" aria-expanded={open} aria-label="Open iMail Hub"><span className="grid h-7 w-7 place-items-center rounded-full bg-[#0c6f55] text-[9px] font-black text-white">iM</span><span className="sr-only">iMail Hub</span><ChevronDown size={14} className={open ? "rotate-180 transition" : "transition"} /></button>
     </div>
   );
 }
