@@ -139,7 +139,7 @@ export function createIthuteAuth(options: Options) {
     // Only account endpoints may be called; never proxy arbitrary URLs.
     if (!path.startsWith("/v1/account/") || path.startsWith("//") ||
         path.includes("?") || path.includes("#") || path.includes("%") || path.includes("\\") ||
-        path.split("/").includes("..") || /[\\u0000-\\u001f\\u007f]/.test(path))
+        path.split("/").includes("..") || /[\u0000-\u001f\u007f]/.test(path))
       throw new Error("ITHUTE_AUTH_INVALID_ACCOUNT_PATH");
     const store=await cookies();
     const session=open<Session>(store.get(SESSION)?.value,options.secret);
