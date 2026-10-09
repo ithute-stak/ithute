@@ -40,6 +40,16 @@ class AdminUserUpdate(BaseModel):
     unlock: bool = False
 
 
+class AdminApplicationCreate(BaseModel):
+    client_id: str = Field(min_length=3, max_length=60, pattern=r"^[a-z][a-z0-9-]{2,59}$")
+    name: str = Field(min_length=1, max_length=160)
+    redirect_uris: list[str] = Field(min_length=1, max_length=10)
+
+
+class AdminApplicationRedirects(BaseModel):
+    redirect_uris: list[str] = Field(min_length=1, max_length=10)
+
+
 class AdminApplicationUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
     is_active: bool | None = None
@@ -298,6 +308,50 @@ def auth_applications(
 ):
     token = _elevated_token(request, current)
     return _upstream(auth_request("GET", "/v1/admin/applications", token=token), service="!thute Auth")
+
+
+@router.post("/auth/applications", status_code=201)
+def create_auth_application(
+    payload: AdminApplicationCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    token = _elevated_token(request, current)
+    result = _upstream(auth_request("POST", "/v1/admin/applications",
+                       token=token, json_body=payload.model_dump()), service="!thute Auth")
+    db.add(AuditLog(actor_user_id=current.id, action="ithute.auth.admin.application.create",
+                    resource_type="auth_application", resource_id=payload.client_id))
+    db.commit()
+    return result
+
+
+@router.get("/auth/applications/{client_id}/redirects")
+def get_auth_application_redirects(
+    client_id: str,
+    request: Request,
+    current: User = Depends(require_platform_owner),
+):
+    token = _elevated_token(request, current)
+    return _upstream(auth_request("GET", f"/v1/admin/applications/{client_id}/redirects",
+                     token=token), service="!thute Auth")
+
+
+@router.put("/auth/applications/{client_id}/redirects")
+def set_auth_application_redirects(
+    client_id: str,
+    payload: AdminApplicationRedirects,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: User = Depends(require_platform_owner),
+):
+    token = _elevated_token(request, current)
+    result = _upstream(auth_request("PUT", f"/v1/admin/applications/{client_id}/redirects",
+                       token=token, json_body=payload.model_dump()), service="!thute Auth")
+    db.add(AuditLog(actor_user_id=current.id, action="ithute.auth.admin.application.redirects.update",
+                    resource_type="auth_application", resource_id=client_id))
+    db.commit()
+    return result
 
 
 @router.patch("/auth/applications/{client_id}")

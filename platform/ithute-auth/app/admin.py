@@ -8,9 +8,14 @@ from .account import AuthContext, authenticated_context
 from .admin_delegation import PUSH_ADMIN_CLIENT_ID, PUSH_ADMIN_TOKEN_MINUTES, create_push_admin_token
 from .config import Settings, get_settings
 from .db import get_db
-from .models import Application, AuditEvent, AuthEventOutbox, AuthSession, User, utcnow
+from .application_registry import register_application, replace_redirect_uris
+from .redirect_uri_policy import validate_redirect_uris
+from .models import Application, ApplicationRedirectURI, AuditEvent, AuthEventOutbox, AuthSession, User, utcnow
 from .schemas import (
     AdminApplicationResponse,
+    AdminApplicationCreateRequest,
+    AdminApplicationRedirectsUpdateRequest,
+    AdminApplicationRedirectsResponse,
     AdminApplicationUpdateRequest,
     AdminUserResponse,
     AdminUserUpdateRequest,
@@ -227,6 +232,67 @@ def list_applications(
     ]
 
 
+@router.post("/applications", response_model=AdminApplicationResponse, status_code=201)
+def create_application(
+    payload: AdminApplicationCreateRequest,
+    request: Request,
+    context: AuthContext = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminApplicationResponse:
+    try:
+        application = register_application(
+            db, client_id=payload.client_id, name=payload.name,
+            redirect_uris=payload.redirect_uris,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    record_audit(db, event_type="admin_application_created", user=context.user,
+                 client_id=application.client_id, request=request,
+                 details={"active": False, "redirect_count": len(payload.redirect_uris)})
+    db.commit()
+    db.refresh(application)
+    return AdminApplicationResponse(client_id=application.client_id, name=application.name,
+                                    is_active=application.is_active, created_at=application.created_at)
+
+
+@router.get("/applications/{client_id}/redirects", response_model=AdminApplicationRedirectsResponse)
+def get_application_redirects(
+    client_id: str,
+    _: AuthContext = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminApplicationRedirectsResponse:
+    application = db.scalar(select(Application).where(Application.client_id == client_id))
+    if application is None:
+        raise HTTPException(status_code=404, detail="application not found")
+    urls = db.scalars(select(ApplicationRedirectURI.redirect_uri).where(
+        ApplicationRedirectURI.application_id == application.id
+    ).order_by(ApplicationRedirectURI.redirect_uri)).all()
+    return AdminApplicationRedirectsResponse(client_id=client_id, redirect_uris=list(urls))
+
+
+@router.put("/applications/{client_id}/redirects", response_model=AdminApplicationRedirectsResponse)
+def set_application_redirects(
+    client_id: str,
+    payload: AdminApplicationRedirectsUpdateRequest,
+    request: Request,
+    context: AuthContext = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminApplicationRedirectsResponse:
+    application = db.scalar(select(Application).where(Application.client_id == client_id))
+    if application is None:
+        raise HTTPException(status_code=404, detail="application not found")
+    try:
+        validated = validate_redirect_uris(payload.redirect_uris)
+        replace_redirect_uris(db, application=application, redirect_uris=list(validated))
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    record_audit(db, event_type="admin_application_redirects_updated",
+                 user=context.user, client_id=client_id, request=request,
+                 details={"redirect_count": len(validated)})
+    db.commit()
+    return AdminApplicationRedirectsResponse(client_id=client_id, redirect_uris=list(validated))
+
+
 @router.patch("/applications/{client_id}", response_model=AdminApplicationResponse)
 def update_application(
     client_id: str,
@@ -242,6 +308,15 @@ def update_application(
     if payload.name is not None and payload.name.strip() != application.name:
         application.name = payload.name.strip()
         changes["name"] = application.name
+    if payload.is_active is True:
+        stored_redirect = db.scalar(
+            select(ApplicationRedirectURI.id).where(
+                ApplicationRedirectURI.application_id == application.id
+            ).limit(1)
+        )
+        legacy_redirects = get_settings().redirect_uris.get(application.client_id, ())
+        if stored_redirect is None and not legacy_redirects:
+            raise HTTPException(status_code=409, detail="Register at least one approved callback URL before activation")
     if payload.is_active is not None and payload.is_active != application.is_active:
         application.is_active = payload.is_active
         changes["is_active"] = payload.is_active
