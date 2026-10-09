@@ -48,3 +48,9 @@ Logout must be a same-origin POST (not a GET link), and needs the browser Origin
 6. Use the App Router route handler above for login/callback and a same-origin POST handler for logout. Read sessions on the server using `getSession()` and enforce your application's own role/permission rules there.
 
 **Current scope:** The dashboard manages client registration and callback URLs; client ID, issuer, callback URL and secret must still be supplied to the Next.js deployment as server-only configuration. Credentials and private session secrets are not transmitted through the dashboard. The SDK now verifies central session status online on every getSession() call; revoked sessions, disabled applications, and central Auth outages yield no session (fail closed). Refresh rotation and cross-app single logout remain separate work. The SDK is not yet published; consume it from this repository/workspace until a supported release is available. Production migration and E2E login verification are required before rollout.
+
+## Durable refresh token storage (experimental)
+
+The `src/refresh-store.ts` module defines a **server-only** `RefreshTokenStore` contract and a `rotateStoredTokens` helper. Implement `create`, `find`, atomic compare-and-swap `rotate` and `revoke` in a durable SQL database or Redis. Refresh tokens must never reach browser cookies, logs or local storage. A session identifier alone may be sent to the browser after a production-grade, CSRF-protected server-side session adapter is implemented.
+
+The helper does **not** yet provide automatic refresh in `createIthuteAuth`, verify a newly rotated access JWT, or coordinate central revocation on a refresh race. Do not enable it as a production login path until those features and integration tests are added. The existing short-lived signed-session SDK flow remains unchanged.
