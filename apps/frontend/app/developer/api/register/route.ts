@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 
 /** Server-side identity registration proxy. No browser CORS or client-side secrets. */
 export async function POST(request: NextRequest) {
+  const requestOrigin=request.headers.get("origin");
+  if (requestOrigin && requestOrigin!==request.nextUrl.origin)
+    return NextResponse.json({message:"Cross-origin registration rejected."},{status:403});
+  const contentType=request.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().startsWith("application/json"))
+    return NextResponse.json({message:"JSON registration required."},{status:415});
+  const declaredSize=Number(request.headers.get("content-length") || 0);
+  if (declaredSize>8192)
+    return NextResponse.json({message:"Registration request is too large."},{status:413});
   let payload: unknown;
   try { payload=await request.json(); } catch {
     return NextResponse.json({message:"Invalid request."},{status:400});
