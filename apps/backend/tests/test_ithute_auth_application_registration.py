@@ -27,3 +27,9 @@ def test_dashboard_registers_disabled_applications_through_server():
     assert "Create disabled application" in source
     assert 'apiMutation("/platform/ithute/auth/applications"' in source
     assert "redirect_uris" in source
+
+
+def test_dashboard_splits_callback_lines_correctly():
+    source = DASHBOARD.read_text()
+    assert r'newCallback.split(/\r?\n/)' in source
+    assert r'callbackDraft.split(/\r?\n/)' in source
