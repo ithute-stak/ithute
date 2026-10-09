@@ -1,0 +1,26 @@
+"""Developer access requests are identity-scoped and approval gated."""
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+ACCOUNT = ROOT / "app/account.py"
+MODEL = ROOT / "app/models.py"
+MIGRATION = ROOT / "alembic/versions/0013_developer_access_requests.py"
+
+def test_request_endpoint_requires_identity_and_does_not_grant_automatically():
+    source=ACCOUNT.read_text()
+    assert '@router.post("/developer/access-requests", status_code=201)' in source
+    assert "context: AuthContext = Depends(authenticated_context)" in source
+    assert 'status="pending"' in source
+    assert "DeveloperAccessRequest.user_id == context.user.id" in source
+    assert 'status_code=409' in source
+
+def test_migration_has_single_correct_parent():
+    source=MIGRATION.read_text()
+    assert 'revision = "0013_developer_access_requests"' in source
+    assert 'down_revision = "0012_app_redirect_uris"' in source
+    assert "developer_access_requests" in source
+
+def test_requests_are_linked_to_users():
+    source=MODEL.read_text()
+    assert 'class DeveloperAccessRequest(Base):' in source
+    assert 'ForeignKey("users.id", ondelete="CASCADE")' in source
