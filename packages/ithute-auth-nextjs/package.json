@@ -12,5 +12,14 @@
   "dependencies": {
     "jose": "^6.0.0",
     "server-only": "^0.0.1"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.0.0",
+    "react": "^19.0.0"
   }
 }
