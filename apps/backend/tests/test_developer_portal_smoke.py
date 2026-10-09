@@ -2,7 +2,7 @@
 import importlib.util
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts/check-developer-portal.py"
+SCRIPT = Path(__file__).resolve().parents[3] / "scripts/check-developer-portal.py"
 spec = importlib.util.spec_from_file_location("developer_portal_smoke", SCRIPT)
 assert spec and spec.loader
 module = importlib.util.module_from_spec(spec)
