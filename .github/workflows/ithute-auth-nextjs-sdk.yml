@@ -1,0 +1,31 @@
+name: Ithute Auth Next.js SDK CI
+on:
+  pull_request:
+    paths:
+      - "packages/ithute-auth-nextjs/**"
+      - ".github/workflows/ithute-auth-nextjs-sdk.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/ithute-auth-nextjs/**"
+      - ".github/workflows/ithute-auth-nextjs-sdk.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Install SDK dependencies
+        working-directory: packages/ithute-auth-nextjs
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Type-check SDK
+        working-directory: packages/ithute-auth-nextjs
+        run: npm run typecheck
