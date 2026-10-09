@@ -103,3 +103,57 @@ html[data-imail-theme="ithute"] .imail-hosted-workspace input::placeholder {
 html[data-imail-theme="dark"] .imail-hosted-workspace .imail-message-reader time {
   color: #c6d2df !important;
 }
+
+/* Professional hosted inbox: decisive hierarchy and legible controls. */
+.imail-route-webmail .imail-hosted-workspace {
+  --imail-clear-text: #142338;
+  --imail-clear-muted: #52647b;
+  --imail-clear-border: #d6dee8;
+}
+html[data-imail-theme="dark"] .imail-route-webmail .imail-hosted-workspace {
+  --imail-clear-text: #f0f5fb;
+  --imail-clear-muted: #b5c4d7;
+  --imail-clear-border: #39485c;
+}
+.imail-route-webmail .imail-hosted-workspace > header { min-height: 64px; }
+.imail-route-webmail .imail-hosted-workspace > div.flex > aside > div nav { scrollbar-width: thin; }
+.imail-route-webmail .imail-hosted-workspace > div.flex > aside > div nav > button {
+  font-size: 14px !important;
+  font-weight: 650 !important;
+}
+.imail-route-webmail .imail-hosted-workspace section:has(> div > form input[placeholder="Search mail"]) {
+  border-right: 1px solid var(--imail-clear-border);
+}
+.imail-route-webmail .imail-hosted-workspace section:has(input[placeholder="Search mail"]) > div:first-child {
+  background: var(--imail-clear-surface);
+}
+.imail-route-webmail .imail-hosted-workspace section:has(input[placeholder="Search mail"]) div.group.cursor-pointer {
+  min-height: 64px;
+  border-bottom-color: var(--imail-clear-border) !important;
+}
+.imail-route-webmail .imail-hosted-workspace section:has(input[placeholder="Search mail"]) div.group.cursor-pointer:hover {
+  background: #edf4ff !important;
+}
+html[data-imail-theme="dark"] .imail-route-webmail .imail-hosted-workspace section:has(input[placeholder="Search mail"]) div.group.cursor-pointer:hover {
+  background: #26384e !important;
+}
+.imail-route-webmail .imail-hosted-workspace .imail-message-reader > div {
+  scrollbar-width: thin;
+}
+.imail-route-webmail .imail-hosted-workspace .imail-message-reader article {
+  max-width: 900px !important;
+}
+.imail-route-webmail .imail-hosted-workspace .imail-message-reader h1 {
+  letter-spacing: -.018em;
+  font-weight: 750 !important;
+}
+.imail-route-webmail .imail-hosted-workspace .imail-message-reader [data-imail-message-body="true"] {
+  border-top: 1px solid var(--imail-clear-border);
+  margin-top: 20px;
+}
+.imail-route-webmail .imail-hosted-workspace .imail-message-reader .imail-universal-body {
+  min-height: 170px;
+}
+.imail-route-webmail .imail-hosted-workspace .imail-message-reader :is(button, summary) {
+  cursor: pointer;
+}
