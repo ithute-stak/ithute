@@ -231,7 +231,7 @@ jobs:
       - name: Set up Go security toolchain
         uses: actions/setup-go@v6
         with:
-          go-version: "1.26.x"
+          go-version: "1.26.9"
           cache-dependency-path: engines/go-worker/go.mod
       - name: Install Go security tooling
         run: |
