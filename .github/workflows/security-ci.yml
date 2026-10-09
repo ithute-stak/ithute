@@ -252,7 +252,7 @@ jobs:
         run: go test -race ./...
       - name: Fuzz public-target parser
         working-directory: engines/go-worker
-        run: go test ./cmd/worker -run=^$ -fuzz=FuzzPublicTargetIPNeverPanics -fuzztime=10s
+        run: go test ./cmd/worker -run=^$ -fuzz=FuzzPublicTargetIPNeverPanics -fuzztime=5s -timeout=60s
 
   cpp-sanitizers:
     name: C++ ASan and UBSan

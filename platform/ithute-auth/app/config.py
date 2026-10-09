@@ -49,7 +49,7 @@ class Settings(BaseSettings):
         "loanhub:LoanHub,rsl-pos:RSL POS,mailbox-dns:Mailbox DNS,"
         "ithute-account:Ithute Account,ithute-tutor:Ithute Tutor,ithute-pay:Ithute Pay,"
         "nbros:NBros,tjekatjeka:Tjekatjeka Holdings,business-digital-address:Business Digital Address,"
-        "ithute-realtime:!thute Realtime"
+        "ithute-realtime:!thute Realtime,capitalbridge:CapitalBridge ONE"
     )
     redirect_uris_json: str = (
         '{"nbros":["https://nbro.ithute.co.ls/api/auth/oidc/callback"],'
@@ -106,6 +106,7 @@ class Settings(BaseSettings):
         result.setdefault("nbros", "NBros")
         result.setdefault("tjekatjeka", "Tjekatjeka Holdings")
         result.setdefault("business-digital-address", "Business Digital Address")
+        result.setdefault("capitalbridge", "CapitalBridge ONE")
         return result
 
     @property
