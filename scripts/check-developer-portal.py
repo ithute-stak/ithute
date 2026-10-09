@@ -11,11 +11,20 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+class NoExternalRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        old = urllib.parse.urlsplit(request.full_url)
+        new = urllib.parse.urlsplit(newurl)
+        if new.scheme != "https" or new.netloc != old.netloc:
+            raise urllib.error.HTTPError(request.full_url, code, "Unexpected external redirect", headers, fp)
+        return super().redirect_request(request, fp, code, msg, headers, newurl)
+
+
 def check(base: str, path: str, allowed: set[int], *, method: str = "GET") -> tuple[bool, str]:
     url = base + path
     request = urllib.request.Request(url, method=method, headers={"User-Agent": "Ithute-Developer-Smoke/1.0"})
     try:
-        with urllib.request.urlopen(request, timeout=12) as response:
+        with urllib.request.build_opener(NoExternalRedirects).open(request, timeout=12) as response:
             status = response.status
             body = response.read(65536)
             content_type = response.headers.get("Content-Type", "")
