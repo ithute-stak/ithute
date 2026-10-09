@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from .config import Settings, get_settings
 from .db import get_db
-from .models import Application, AuthSession, AuthorizationCode, PasskeyCredential, User, utcnow
+from .models import Application, ApplicationRedirectURI, AuthSession, AuthorizationCode, PasskeyCredential, User, utcnow
 from .schemas import TokenResponse
 from .security import (
     create_access_token,
@@ -53,7 +53,14 @@ def _require_client_redirect(db: Session, settings: Settings, client_id: str, re
     )
     if client is None:
         raise HTTPException(status_code=400, detail="invalid_client")
-    if redirect_uri not in settings.redirect_uris.get(client_id, ()):
+    # Database allowlists are authoritative for dashboard-managed clients.
+    # Legacy bootstrapped applications retain their configured callbacks only
+    # until they are migrated, with no wildcard or prefix matching.
+    managed = db.scalars(select(ApplicationRedirectURI.redirect_uri).where(
+        ApplicationRedirectURI.application_id == client.id
+    )).all()
+    approved = managed if managed else settings.redirect_uris.get(client_id, ())
+    if redirect_uri not in approved:
         raise HTTPException(status_code=400, detail="invalid_redirect_uri")
     return client
 
