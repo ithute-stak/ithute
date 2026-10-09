@@ -490,6 +490,15 @@ def _developer_central_token(request: Request, user: User) -> str:
             raise ValueError("identity mismatch")
     except (IthuteAuthDisabled, IthuteAuthUnavailable, jwt.InvalidTokenError, ValueError, KeyError) as exc:
         raise HTTPException(status_code=401, detail="Ithute Auth session invalid") from exc
+    # A signed token may have been revoked centrally after it was issued.
+    try:
+        status_response = auth_request("GET", "/v1/account/session-status", token=token)
+        if status_response.status_code != 200 or status_response.json().get("active") is not True:
+            raise HTTPException(status_code=401, detail="Ithute Auth session expired or revoked")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Ithute Auth verification unavailable") from exc
     return token
 
 
