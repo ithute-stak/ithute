@@ -134,6 +134,34 @@ export function createIthuteAuth(options: Options) {
       return {user:verified.payload,expiresAt:session.expiresAt};
     } catch { return null; }
   }
+  /** Make a central Auth API request entirely on the server using a validated session. */
+  async function authenticatedRequest(path: string, init: RequestInit = {}): Promise<Response> {
+    // Only account endpoints may be called; never proxy arbitrary URLs.
+    if (!path.startsWith("/v1/account/") || path.startsWith("//") ||
+        path.includes("?") || path.includes("#") || path.includes("\\\\") ||
+        path.split("/").includes(".."))
+      throw new Error("ITHUTE_AUTH_INVALID_ACCOUNT_PATH");
+    const store=await cookies();
+    const session=open<Session>(store.get(SESSION)?.value,options.secret);
+    if (!session || Date.now()>=session.expiresAt)
+      throw new Error("ITHUTE_AUTH_UNAUTHENTICATED");
+    try {
+      await jwtVerify(session.accessToken,jwks,{issuer,audience:options.clientId,algorithms:["RS256"]});
+      const status=await fetch(`${issuer}/v1/account/session-status`,{
+        headers:{Authorization:`Bearer ${session.accessToken}`},
+        cache:"no-store",signal:AbortSignal.timeout(5000),
+      });
+      if (!status.ok || (await status.json() as {active?:boolean}).active!==true)
+        throw new Error("ITHUTE_AUTH_UNAUTHENTICATED");
+    } catch { throw new Error("ITHUTE_AUTH_UNAUTHENTICATED"); }
+    const headers=new Headers(init.headers);
+    headers.delete("authorization");
+    headers.set("Authorization",`Bearer ${session.accessToken}`);
+    return fetch(`${issuer}${path}`,{
+      ...init,headers,cache:"no-store",redirect:"error",
+      signal:init.signal ?? AbortSignal.timeout(10000),
+    });
+  }
   async function logout(request: NextRequest) {
     // Logouts mutate authentication state: disallow GET and cross-origin POST.
     if (request.method !== "POST") return NextResponse.json({error:"POST required"},{status:405});
@@ -164,5 +192,5 @@ export function createIthuteAuth(options: Options) {
     if (!session) throw new Error("ITHUTE_AUTH_UNAUTHENTICATED");
     return session;
   }
-  return {login,callback:callbackHandler,getSession,requireSession,logout};
+  return {login,callback:callbackHandler,getSession,requireSession,authenticatedRequest,logout};
 }
