@@ -24,7 +24,7 @@ export default function DeveloperPage() {
       <header className="flex flex-wrap items-center justify-between gap-5 border-b border-white/10 pb-6">
         <Link href="/" className="text-xl font-black tracking-tight">!thute <span className="font-medium text-cyan-300">/ developer</span></Link>
         <nav aria-label="Developer navigation" className="flex flex-wrap gap-5 text-sm text-slate-300">
-          <a href="#products" className="hover:text-white">Products</a>
+          <a href="#products" className="hover:text-white">Products</a><Link href="/developer/docs" className="hover:text-white">Documentation</Link>
           <a href="#start" className="hover:text-white">Get started</a>
           <Link href="/login" className="hover:text-white">Sign in</Link>
         </nav>
