@@ -45,3 +45,28 @@ def test_registered_nextjs_app_can_only_use_dashboard_callback():
         with pytest.raises(HTTPException):
             _require_client_redirect(db, config, "capitalbridge-nextjs", registered)
     engine.dispose()
+
+
+def test_online_session_status_denies_disabled_application():
+    from app.account import current_session_status
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        app = register_application(
+            db, client_id="test-session-client", name="Session client",
+            redirect_uris=["https://example.org/api/auth/ithute/callback"],
+        )
+        db.commit()
+        context = SimpleNamespace(session=SimpleNamespace(client_id=app.client_id))
+        with pytest.raises(HTTPException) as denied:
+            current_session_status(context=context, db=db)
+        assert denied.value.status_code == 401
+        app.is_active = True
+        db.commit()
+        assert current_session_status(context=context, db=db) == {"active": True}
+        app.is_active = False
+        db.commit()
+        with pytest.raises(HTTPException) as denied_again:
+            current_session_status(context=context, db=db)
+        assert denied_again.value.status_code == 401
+    engine.dispose()
