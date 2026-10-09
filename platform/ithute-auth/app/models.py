@@ -299,3 +299,14 @@ def _queue_identity_status_events(session: Session, flush_context, instances) ->
                         ),
                     )
                 )
+
+
+class DeveloperAccessRequest(Base):
+    """Approval-gated access request; does not grant credentials."""
+    __tablename__ = "developer_access_requests"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    product: Mapped[str] = mapped_column(String(40), nullable=False)
+    justification: Mapped[str] = mapped_column(String(1000), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
