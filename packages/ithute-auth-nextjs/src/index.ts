@@ -74,14 +74,20 @@ export function createIthuteAuth(options: Options) {
     }
     const tokens=await responseFromIssuer.json() as {access_token:string;id_token?:string;refresh_token?:string;expires_in?:number};
     if (!tokens.access_token) return NextResponse.json({error:"No access token returned"},{status:502});
-    await jwtVerify(tokens.access_token,jwks,{issuer,audience:options.clientId,algorithms:["RS256"]});
+    // Access token signature and expiry are verified below before creating a session.
     if (tokens.id_token) {
       const verified=await jwtVerify(tokens.id_token,jwks,{issuer,audience:options.clientId,algorithms:["RS256"]});
       if (verified.payload.nonce!==pending.nonce) return NextResponse.json({error:"Invalid ID token nonce"},{status:401});
     }
     // Do not store unnecessary refresh or identity tokens in browser cookies.
     // Session expiration is bounded by the verified access-token expiry.
-    const verifiedAccess = await jwtVerify(tokens.access_token,jwks,{issuer,audience:options.clientId,algorithms:["RS256"]});
+    let verifiedAccess;
+    try {
+      verifiedAccess = await jwtVerify(tokens.access_token,jwks,{issuer,audience:options.clientId,algorithms:["RS256"]});
+    } catch {
+      const failed=NextResponse.json({error:"Invalid access token"},{status:401});
+      failed.cookies.delete(TEMP);return failed;
+    }
     const accessExpiresAt = (verifiedAccess.payload.exp ?? 0) * 1000;
     const expiresAt = Math.min(Date.now() + Math.min(Math.max(tokens.expires_in ?? 600, 1), 3600) * 1000, accessExpiresAt);
     if (expiresAt <= Date.now()) return NextResponse.json({error:"Expired access token"},{status:401});
