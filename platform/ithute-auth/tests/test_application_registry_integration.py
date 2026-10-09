@@ -1,6 +1,8 @@
 """Integration regression: database-managed callback URL is authoritative."""
-import uuid
+import os
 from types import SimpleNamespace
+
+os.environ.setdefault("AUTH_DATABASE_URL", "sqlite+pysqlite:///:memory:")
 
 import pytest
 from fastapi import HTTPException
