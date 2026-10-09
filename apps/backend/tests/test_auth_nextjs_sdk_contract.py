@@ -20,3 +20,11 @@ def test_sdk_has_explicit_server_only_guard_and_no_refresh_token_cookie():
     assert "const session:Session={accessToken:tokens.access_token,expiresAt}" in source
     assert 'if (request.method !== "POST")' in source
     assert "timingSafeEqual" in source
+
+
+def test_sdk_clears_pending_state_on_exchange_or_nonce_failure():
+    source = SDK.read_text()
+    assert 'signal:AbortSignal.timeout(10000)' in source
+    assert 'if (!tokens.access_token || typeof tokens.access_token !== "string")' in source
+    assert 'if (verified.payload.nonce!==pending.nonce) throw new Error' in source
+    assert 'failed.cookies.delete(TEMP)' in source
