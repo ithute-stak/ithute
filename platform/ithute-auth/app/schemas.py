@@ -225,6 +225,21 @@ class AdminApplicationResponse(BaseModel):
     created_at: datetime
 
 
+class AdminApplicationCreateRequest(BaseModel):
+    client_id: str = Field(min_length=3, max_length=60, pattern=r"^[a-z][a-z0-9-]{2,59}$")
+    name: str = Field(min_length=1, max_length=160)
+    redirect_uris: list[str] = Field(min_length=1, max_length=10)
+
+
+class AdminApplicationRedirectsUpdateRequest(BaseModel):
+    redirect_uris: list[str] = Field(min_length=1, max_length=10)
+
+
+class AdminApplicationRedirectsResponse(BaseModel):
+    client_id: str
+    redirect_uris: list[str]
+
+
 class AdminApplicationUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
     is_active: bool | None = None
