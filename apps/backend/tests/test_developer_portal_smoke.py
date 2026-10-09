@@ -12,7 +12,7 @@ def test_network_failures_fail_closed(monkeypatch):
     from urllib.error import URLError
     def fail(*args, **kwargs):
         raise URLError("offline")
-    monkeypatch.setattr(module.urllib.request, "urlopen", fail)
+    monkeypatch.setattr(module.urllib.request, "build_opener", lambda *args: type("Opener", (), {"open": staticmethod(fail)})())
     ok, status = module.check("https://ithute.co.ls", "/developer", {200})
     assert not ok
     assert "connection failed" in status
@@ -24,6 +24,6 @@ def test_http_200_must_have_html_document(monkeypatch):
         def read(self, n): return b'{"ok":true}'
         def __enter__(self): return self
         def __exit__(self, *args): return False
-    monkeypatch.setattr(module.urllib.request, "urlopen", lambda *a, **kw: Response())
+    monkeypatch.setattr(module.urllib.request, "build_opener", lambda *args: type("Opener", (), {"open": staticmethod(lambda *a, **kw: Response())})())
     ok, _ = module.check("https://ithute.co.ls", "/developer", {200})
     assert not ok
