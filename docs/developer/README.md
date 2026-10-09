@@ -11,6 +11,7 @@ Developer entry point: `https://ithute.co.ls/developer` (available after the dev
 | Server-side requests | [Authenticated account API requests](./server-side-requests.md) | SDK server-only method; developer dashboard integration pending |
 | Developer registration | [Accounts and email](./accounts-and-mail.md) | Existing-email identity registration, with anti-bot configuration required |
 | API reference | [API reference](./api-reference.md) | Documented Auth endpoints; other endpoints require product authorization |
+| Deployment verification | [Production smoke and rollback runbook](./deployment-verification.md) | Read-only checks and manual OAuth acceptance still required |
 | Security and deployment | [Security and operations](./security.md) | Mandatory production controls and checklist |
 
 ## What is available today
