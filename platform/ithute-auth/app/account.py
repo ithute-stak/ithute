@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from .config import Settings, get_settings
 from .db import get_db
 from .delivery import DeliveryUnavailable, send_email, send_sms
-from .models import AuditEvent, AuthSession, Device, MfaRecoveryCode, SecurityToken, User, utcnow
+from .models import Application, AuditEvent, AuthSession, Device, MfaRecoveryCode, SecurityToken, User, utcnow
 from .schemas import (
     AuditEventResponse,
     MfaConfirmRequest,
@@ -101,6 +101,24 @@ def authenticated_context(
     session.last_seen_at = utcnow()
     db.commit()
     return AuthContext(user=user, session=session, claims=claims)
+
+
+@router.get("/session-status")
+def current_session_status(
+    context: AuthContext = Depends(authenticated_context),
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    """Online session check for server-side relying parties.
+
+    A revoked session, disabled user, or disabled OAuth application fails closed.
+    Never expose session identifiers or token material.
+    """
+    enabled = db.scalar(select(Application.is_active).where(
+        Application.client_id == context.session.client_id
+    ))
+    if enabled is not True:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="application unavailable")
+    return {"active": True}
 
 
 def _find_user(db: Session, identifier: str) -> User | None:
