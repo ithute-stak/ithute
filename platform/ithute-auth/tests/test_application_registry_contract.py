@@ -18,3 +18,10 @@ def test_registration_is_inactive_and_has_unique_callbacks():
     assert "is_active=False" in REGISTRY
     assert "validate_redirect_uris(redirect_uris)" in REGISTRY
     assert 'UniqueConstraint("application_id", "redirect_uri"' in MODELS
+
+
+def test_app_activation_requires_approved_redirects():
+    source = (ROOT / "app/admin.py").read_text()
+    assert 'if payload.is_active is True:' in source
+    assert 'ApplicationRedirectURI.application_id == application.id' in source
+    assert 'Register at least one approved callback URL before activation' in source
