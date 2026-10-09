@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 from .config import Settings, get_settings
 from .db import get_db
 from .delivery import DeliveryUnavailable, send_email, send_sms
-from .models import Application, AuditEvent, AuthSession, Device, MfaRecoveryCode, SecurityToken, User, utcnow
+from .models import Application, DeveloperAccessRequest, AuditEvent, AuthSession, Device, MfaRecoveryCode, SecurityToken, User, utcnow
 from .schemas import (
     AuditEventResponse,
     MfaConfirmRequest,
@@ -111,6 +112,55 @@ def revoke_current_session(
     """Revoke the calling OAuth session across all relying parties."""
     context.session.revoked_at = utcnow()
     db.commit()
+
+
+class DeveloperAccessRequestCreate(BaseModel):
+    product: str = Field(pattern=r"^(auth|email|dns|push|hosting)$")
+    justification: str = Field(min_length=15, max_length=1000)
+
+
+@router.get("/developer/access-requests")
+def developer_access_requests(
+    context: AuthContext = Depends(authenticated_context),
+    db: Session = Depends(get_db),
+) -> list[dict[str, str]]:
+    rows = db.scalars(
+        select(DeveloperAccessRequest)
+        .where(DeveloperAccessRequest.user_id == context.user.id)
+        .order_by(DeveloperAccessRequest.created_at.desc())
+        .limit(50)
+    ).all()
+    return [
+        {"id": str(row.id), "product": row.product, "status": row.status,
+         "created_at": row.created_at.isoformat()}
+        for row in rows
+    ]
+
+
+@router.post("/developer/access-requests", status_code=201)
+def request_developer_access(
+    payload: DeveloperAccessRequestCreate,
+    context: AuthContext = Depends(authenticated_context),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    # Access requests never create API keys, mailboxes, roles or OAuth clients.
+    recent = db.scalars(
+        select(DeveloperAccessRequest).where(
+            DeveloperAccessRequest.user_id == context.user.id,
+            DeveloperAccessRequest.product == payload.product,
+            DeveloperAccessRequest.status == "pending",
+        ).limit(1)
+    ).first()
+    if recent:
+        raise HTTPException(status_code=409, detail="request already pending")
+    item = DeveloperAccessRequest(
+        user_id=context.user.id, product=payload.product,
+        justification=payload.justification.strip(), status="pending",
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return {"id": str(item.id), "product": item.product, "status": item.status}
 
 
 @router.get("/session-status")
