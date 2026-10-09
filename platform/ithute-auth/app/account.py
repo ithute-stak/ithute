@@ -146,6 +146,15 @@ def request_developer_access(
     # Access requests never create API keys, mailboxes, roles or OAuth clients.
     if not context.user.email or not context.user.email_verified:
         raise HTTPException(status_code=403, detail="verified email required")
+    # Bound new requests per identity to prevent approval-queue spam.
+    recent_requests = db.scalars(
+        select(DeveloperAccessRequest.id).where(
+            DeveloperAccessRequest.user_id == context.user.id,
+            DeveloperAccessRequest.created_at >= utcnow() - timedelta(hours=24),
+        ).limit(5)
+    ).all()
+    if len(recent_requests) >= 5:
+        raise HTTPException(status_code=429, detail="daily request limit reached")
     recent = db.scalars(
         select(DeveloperAccessRequest).where(
             DeveloperAccessRequest.user_id == context.user.id,
