@@ -513,7 +513,7 @@ def create_developer_request(
     request: Request,
     current: User = Depends(get_current_user),
 ):
-    if request.headers.get("origin") != str(request.base_url).rstrip("/"):
+    if request.headers.get("origin") != settings.frontend_url.rstrip("/"):
         raise HTTPException(status_code=403, detail="Same-origin request required")
     token = _developer_central_token(request, current)
     try:
