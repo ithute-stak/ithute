@@ -51,3 +51,22 @@ jobs:
           assert not any(name.startswith('src/') or name.startswith('tests/') for name in files), files
           print('Packed files verified:', sorted(files))
           PY
+      - name: Test tarball in isolated consumer
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ithute-sdk-consumer
+          cd /tmp/ithute-sdk-consumer
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund /tmp/ithute-auth-*.tgz
+          node --input-type=module -e '
+            import { createRequire } from "node:module";
+            import { existsSync } from "node:fs";
+            const require=createRequire(import.meta.url);
+            const manifest=require("./node_modules/ithute-auth/package.json");
+            if(manifest.name!=="ithute-auth") throw Error("wrong package");
+            for(const file of ["dist/index.js","dist/index.d.ts"]){
+              if(!existsSync("./node_modules/ithute-auth/"+file)) throw Error("missing "+file);
+            }
+            if(!import.meta.resolve("ithute-auth").endsWith("/dist/index.js")) throw Error("invalid export map");
+            console.log("Packaged SDK resolves in isolated consumer");
+          '
