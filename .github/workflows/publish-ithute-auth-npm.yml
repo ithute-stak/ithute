@@ -1,0 +1,63 @@
+name: Publish Ithute Auth to npm (manual approval)
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: "Type APPROVE_ITHUTE_AUTH_PUBLIC_RELEASE to confirm public source distribution is authorized"
+        required: true
+        type: string
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: ithute-auth-npm-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main' && inputs.approval == 'APPROVE_ITHUTE_AUTH_PUBLIC_RELEASE'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: npm-production
+    defaults:
+      run:
+        working-directory: packages/ithute-auth-nextjs
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Validate repository and release inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = "ithute-stak/ithute"
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test "${{ inputs.approval }}" = "APPROVE_ITHUTE_AUTH_PUBLIC_RELEASE"
+          python3 scripts/release_preflight.py --strict
+      - name: Install SDK dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Verify SDK and build distribution
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
+          npm pack --ignore-scripts --dry-run
+      - name: Block duplicate published version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          if npm view "ithute-auth@${version}" version --json --registry=https://registry.npmjs.org/ >/tmp/ithute-npm-existing.txt 2>/tmp/ithute-npm-check-err.txt; then
+            echo "::error::ithute-auth@${version} already exists in npm; change version before publishing."
+            exit 1
+          fi
+          # A 404 is expected for a brand new version; other failures must not be mistaken for availability.
+          if ! grep -q -e 'E404' -e '404 Not Found' /tmp/ithute-npm-check-err.txt; then
+            echo "::error::Unable to verify npm registry version availability; stopping."
+            exit 1
+          fi
+      - name: Publish with npm trusted publishing provenance
+        run: npm publish --access public --provenance
