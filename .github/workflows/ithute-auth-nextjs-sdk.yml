@@ -119,3 +119,61 @@ jobs:
           void verifySdkShape;
           TS
           ./node_modules/.bin/tsc --project tsconfig.json
+      - name: Build real Next.js App Router consuming packed SDK
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: |
+          set -euo pipefail
+          cd /tmp/ithute-sdk-consumer
+          mkdir -p app/api/auth/ithute/'[action]'
+          cat > package.json <<'JSON'
+          {
+            "name":"ithute-auth-consumer-fixture",
+            "version":"0.0.0",
+            "private":true,
+            "type":"module",
+            "scripts":{"build":"next build"},
+            "dependencies":{
+              "ithute-auth":"file:../ithute-auth-0.1.0.tgz",
+              "next":"^15.0.0",
+              "react":"^19.0.0",
+              "react-dom":"^19.0.0"
+            },
+            "devDependencies":{
+              "typescript":"^5.9.3",
+              "@types/node":"^22.15.0",
+              "@types/react":"^19.0.0"
+            }
+          }
+          JSON
+          cat > app/layout.tsx <<'TS'
+          import type { ReactNode } from "react";
+          export default function RootLayout({children}:{children:ReactNode}){
+            return <html lang="en"><body>{children}</body></html>;
+          }
+          TS
+          cat > app/page.tsx <<'TS'
+          export default function Home(){return <main>Ithute SDK Next.js packaging smoke test</main>}
+          TS
+          cat > app/api/auth/ithute/'[action]'/route.ts <<'TS'
+          import { NextRequest } from "next/server";
+          import { createIthuteAuth } from "ithute-auth";
+          const auth = createIthuteAuth({
+            issuer: "https://auth.example.test",
+            clientId: "test-nextjs-consumer",
+            callbackUrl: "https://app.example.test/api/auth/ithute/callback",
+            secret: "a-long-random-server-only-secret-of-at-least-32-bytes",
+          });
+          export async function GET(request:NextRequest,context:{params:Promise<{action:string}>}){
+            const {action}=await context.params;
+            if(action==="login") return auth.login(request);
+            if(action==="callback") return auth.callback(request);
+            return new Response("Not found",{status:404});
+          }
+          export async function POST(request:NextRequest,context:{params:Promise<{action:string}>}){
+            const {action}=await context.params;
+            if(action==="logout") return auth.logout(request);
+            return new Response("Not found",{status:404});
+          }
+          TS
+          npm run build
