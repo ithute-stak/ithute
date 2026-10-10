@@ -73,3 +73,34 @@ jobs:
           fi
       - name: Publish with npm trusted publishing provenance
         run: npm publish --access public --provenance
+      - name: Verify public npm artifact after publishing
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.expected_version }}
+        run: |
+          set -euo pipefail
+          # npm may take a short time to index a newly published version.
+          found=0
+          for attempt in 1 2 3 4 5 6; do
+            actual="$(npm view "ithute-auth@${RELEASE_VERSION}" version --registry=https://registry.npmjs.org/ 2>/dev/null || true)"
+            if [ "${actual}" = "${RELEASE_VERSION}" ]; then found=1; break; fi
+            sleep 10
+          done
+          if [ "${found}" -ne 1 ]; then
+            echo "::error::Published artifact could not be verified in public npm registry."
+            exit 1
+          fi
+          mkdir -p /tmp/ithute-auth-public-consumer
+          cd /tmp/ithute-auth-public-consumer
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ "ithute-auth@${RELEASE_VERSION}"
+          node --input-type=module -e '
+            import { existsSync, readFileSync } from "node:fs";
+            const pkg=JSON.parse(readFileSync("./node_modules/ithute-auth/package.json","utf8"));
+            if(pkg.name!=="ithute-auth" || pkg.version!==process.env.RELEASE_VERSION) throw Error("Package identity/version mismatch");
+            for(const path of ["dist/index.js","dist/index.d.ts"]){
+              if(!existsSync("./node_modules/ithute-auth/"+path)) throw Error("Missing "+path);
+            }
+            if(!import.meta.resolve("ithute-auth").endsWith("/dist/index.js")) throw Error("Invalid SDK exports");
+            console.log("Verified public npm installation of ithute-auth@"+pkg.version);
+          '
