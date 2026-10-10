@@ -54,3 +54,7 @@ The `.github/workflows/publish-ithute-auth-npm.yml` workflow must be run explici
 The workflow rejects unlicensed distributions using `release_preflight.py --strict`, performs tests and a compiled package build, checks for duplicate versions, and uses npm OIDC provenance. If any prerequisite is missing or the registry check is unavailable, publication must fail closed.
 
 The workflow file being merged does **not** authorize a release. A human owner must approve the license, package name, release version, package files and npm publishing account. Before any real publication, verify the workflow's npm OIDC support and environment protection settings in the GitHub UI.
+
+## Exact-version approval
+
+The manual publication workflow requires an `expected_version` input that must exactly match the npm `package.json` version before publishing. Approvers should independently review both the release commit and package contents. A wrong or stale version stops the workflow; this input alone is not a substitute for configured environment reviewers or verified npm ownership.
