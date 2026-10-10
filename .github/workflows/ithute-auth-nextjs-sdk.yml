@@ -31,3 +31,77 @@ jobs:
       - name: Type-check SDK
         working-directory: packages/ithute-auth-nextjs
         run: npm run typecheck
+      - name: Validate SDK contract tests
+        working-directory: packages/ithute-auth-nextjs
+        run: npm test
+      - name: Compile SDK distribution
+        working-directory: packages/ithute-auth-nextjs
+        run: npm run build
+      - name: Validate npm package contents
+        working-directory: packages/ithute-auth-nextjs
+        run: |
+          npm pack --ignore-scripts --pack-destination /tmp --json > /tmp/ithute-sdk-pack.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result=json.loads(Path('/tmp/ithute-sdk-pack.json').read_text())
+          files={entry['path'] for entry in result[0]['files']}
+          assert 'dist/index.js' in files, files
+          assert 'dist/index.d.ts' in files, files
+          assert not any(name.startswith('src/') or name.startswith('tests/') for name in files), files
+          print('Packed files verified:', sorted(files))
+          PY
+      - name: Test tarball in isolated consumer
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ithute-sdk-consumer
+          cd /tmp/ithute-sdk-consumer
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund /tmp/ithute-auth-*.tgz
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { existsSync } from "node:fs";
+            const manifest=JSON.parse(readFileSync("./node_modules/ithute-auth/package.json","utf8"));
+            if(manifest.name!=="ithute-auth") throw Error("wrong package");
+            for(const file of ["dist/index.js","dist/index.d.ts"]){
+              if(!existsSync("./node_modules/ithute-auth/"+file)) throw Error("missing "+file);
+            }
+            if(!import.meta.resolve("ithute-auth").endsWith("/dist/index.js")) throw Error("invalid export map");
+            console.log("Packaged SDK resolves in isolated consumer");
+          '
+      - name: Verify Next.js App Router consumer types from packed SDK
+        run: |
+          set -euo pipefail
+          cd /tmp/ithute-sdk-consumer
+          npm install --ignore-scripts --no-audit --no-fund next@15 typescript@5.9.3 @types/node@22 @types/react@19 react@19 react-dom@19
+          cat > tsconfig.json <<'JSON'
+          {
+            "compilerOptions": {
+              "module": "ESNext",
+              "moduleResolution": "Bundler",
+              "target": "ES2022",
+              "lib": ["ES2022", "DOM"],
+              "strict": true,
+              "noEmit": true,
+              "skipLibCheck": true,
+              "types": ["node"]
+            },
+            "include": ["app.ts"]
+          }
+          JSON
+          cat > app.ts <<'TS'
+          import { createIthuteAuth } from "ithute-auth";
+          const auth = createIthuteAuth({
+            issuer: "https://auth.example.test",
+            clientId: "test-nextjs-consumer",
+            callbackUrl: "https://app.example.test/api/auth/ithute/callback",
+            secret: "a-long-random-server-only-secret-of-at-least-32-bytes",
+          });
+          async function verifySdkShape() {
+            const session = await auth.getSession();
+            if (session) console.log(session.expiresAt);
+            await auth.authenticatedRequest("/v1/account/developer/access-requests");
+          }
+          void verifySdkShape;
+          TS
+          ./node_modules/.bin/tsc --project tsconfig.json
