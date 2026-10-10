@@ -11,10 +11,10 @@ export const metadata: Metadata = {
 const integrations = [
   { name: "Ithute Auth", icon: Fingerprint, status: "Available", detail: "Central identity, OAuth 2.0 authorization code + PKCE, signed tokens, MFA and session verification.", action: "Set up authentication", href: "/developer/auth" },
   { name: "Next.js Auth SDK", icon: Code2, status: "SDK preview", detail: "Server-only App Router integration: PKCE, callbacks, encrypted sessions and central logout.", action: "Read SDK docs", href: "/developer/docs/nextjs" },
-  { name: "Professional Email", icon: Mail, status: "Managed service", detail: "Mailbox services for organizations, SMTP/IMAP infrastructure and webmail. Access and provisioning are subject to approval.", action: "Learn about mail", href: "/webmail" },
-  { name: "DNS & Domains", icon: Globe2, status: "Managed service", detail: "Authoritative DNS, domain operations and DNSSEC tools for accounts with appropriate permissions.", action: "View control plane", href: "/login" },
+  { name: "Professional Email", icon: Mail, status: "Managed service", detail: "Mailbox services for organizations, SMTP/IMAP infrastructure and webmail. Access and provisioning are subject to approval.", action: "Read mail documentation", href: "/developer/docs/accounts-and-mail" },
+  { name: "DNS & Domains", icon: Globe2, status: "Managed service", detail: "Authoritative DNS, domain operations and DNSSEC tools for accounts with appropriate permissions.", action: "Read access requirements", href: "/developer/docs/api-reference" },
   { name: "Platform Operations", icon: ServerCog, status: "Restricted", detail: "Hosting, infrastructure health and service administration for authorized tenants.", action: "Sign in", href: "/login" },
-  { name: "Push & Integrations", icon: Webhook, status: "Restricted", detail: "Application push endpoints and integrations managed through the elevated Ithute platform dashboard.", action: "View management", href: "/ithute-platform" },
+  { name: "Push & Integrations", icon: Webhook, status: "Restricted", detail: "Application push endpoints and integrations managed through the elevated Ithute platform dashboard.", action: "Read API access policy", href: "/developer/docs/api-reference" },
 ];
 
 export default function DeveloperPage() {
@@ -37,7 +37,7 @@ export default function DeveloperPage() {
         </div>
         <div className="rounded-3xl border border-cyan-400/20 bg-[#0b1b2e] p-7 shadow-2xl shadow-cyan-900/10"><div className="mb-6 flex items-center gap-2 text-sm font-semibold text-cyan-300"><ShieldCheck size={18}/> Secure by design</div><pre className="overflow-auto text-sm leading-8 text-slate-200"><code>{`// Next.js App Router
 import { createIthuteAuth }
-  from "@ithute/auth-nextjs";
+  from "ithute-auth";
 
 const auth = createIthuteAuth({
   issuer: process.env.ITHUTE_AUTH_ISSUER!,
