@@ -30,12 +30,14 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
       - name: Validate repository and release inputs
+        env:
+          RELEASE_APPROVAL: ${{ inputs.approval }}
         shell: bash
         run: |
           set -euo pipefail
           test "${GITHUB_REPOSITORY}" = "ithute-stak/ithute"
           test "${GITHUB_REF}" = "refs/heads/main"
-          test "${{ inputs.approval }}" = "APPROVE_ITHUTE_AUTH_PUBLIC_RELEASE"
+          test "${RELEASE_APPROVAL}" = "APPROVE_ITHUTE_AUTH_PUBLIC_RELEASE"
           python3 scripts/release_preflight.py --strict
       - name: Install SDK dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
