@@ -186,6 +186,15 @@ jobs:
             fi
             sleep 1
           done
+          curl -fsS http://127.0.0.1:18081/v1/capabilities > /tmp/java-capabilities.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('/tmp/java-capabilities.json').read_text())
+          assert data['engine']=='java'
+          assert 'dmarc-aggregate-xml' in data['capabilities']
+          assert 'enterprise-xml-inspect' in data['capabilities']
+          PY
           curl -fsS -X POST -H 'Content-Type: application/xml' --data-binary @engines/java-worker/testdata/dmarc-sample.xml             http://127.0.0.1:18081/v1/dmarc/parse > /tmp/dmarc-java.json
           python3 - <<'PY'
           import json
@@ -258,6 +267,14 @@ jobs:
             fi
             sleep 1
           done
+          curl -fsS http://127.0.0.1:18080/v1/capabilities > /tmp/go-capabilities.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('/tmp/go-capabilities.json').read_text())
+          assert data['engine']=='go'
+          assert data['capabilities']
+          PY
           curl -fsS -X POST -H 'Content-Type: application/json' \
             --data '{"targets":[{"id":"self","host":"127.0.0.1","port":8080,"timeout_ms":500}],"concurrency":4}' \
             http://127.0.0.1:18080/v1/network/probe > /tmp/go-network-probe.json
