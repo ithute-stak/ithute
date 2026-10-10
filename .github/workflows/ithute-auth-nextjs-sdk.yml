@@ -31,3 +31,23 @@ jobs:
       - name: Type-check SDK
         working-directory: packages/ithute-auth-nextjs
         run: npm run typecheck
+      - name: Validate SDK contract tests
+        working-directory: packages/ithute-auth-nextjs
+        run: npm test
+      - name: Compile SDK distribution
+        working-directory: packages/ithute-auth-nextjs
+        run: npm run build
+      - name: Validate npm package contents
+        working-directory: packages/ithute-auth-nextjs
+        run: |
+          npm pack --ignore-scripts --pack-destination /tmp --json > /tmp/ithute-sdk-pack.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result=json.loads(Path('/tmp/ithute-sdk-pack.json').read_text())
+          files={entry['path'] for entry in result[0]['files']}
+          assert 'dist/index.js' in files, files
+          assert 'dist/index.d.ts' in files, files
+          assert not any(name.startswith('src/') or name.startswith('tests/') for name in files), files
+          print('Packed files verified:', sorted(files))
+          PY
