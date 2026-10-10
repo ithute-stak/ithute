@@ -1,14 +1,24 @@
-# @ithute/auth-nextjs (initial integration)
+# ithute-auth — Next.js App Router SDK (pre-publication)
 
 Server-only Next.js App Router OAuth 2.0 authorization-code + PKCE wrapper for the existing Ithute Auth service.
 
+## Planned npm install (not yet available)
+
+```sh
+npm install ithute-auth
+# or
+pnpm add ithute-auth
+```
+
+Install commands must not be advertised as available until an authorized maintainer has published a verified version.
+
 ## Integration
 
-Install the package from the repository/workspace (publishing to npm is **not** included), along with `jose`. Set server-only variables `ITHUTE_AUTH_ISSUER`, `ITHUTE_AUTH_CLIENT_ID`, `ITHUTE_AUTH_CALLBACK_URL`, and `ITHUTE_AUTH_SESSION_SECRET` (at least 32 bytes; keep secret private).
+The public npm package is **not published or verified yet**. The commands below are planned for after an authorized registry release. Set server-only variables `ITHUTE_AUTH_ISSUER`, `ITHUTE_AUTH_CLIENT_ID`, `ITHUTE_AUTH_CALLBACK_URL`, and `ITHUTE_AUTH_SESSION_SECRET` (at least 32 bytes; keep secret private).
 
 ```ts
 // lib/ithute-auth.ts - server only
-import { createIthuteAuth } from "@ithute/auth-nextjs";
+import { createIthuteAuth } from "ithute-auth";
 export const auth = createIthuteAuth({
   issuer: process.env.ITHUTE_AUTH_ISSUER!,
   clientId: process.env.ITHUTE_AUTH_CLIENT_ID!,
@@ -47,7 +57,7 @@ Logout must be a same-origin POST (not a GET link), and needs the browser Origin
 5. Copy **Next.js setup**, replace placeholders, generate your own random session secret, and install the SDK in the Next.js server application. Do not prefix private variables with `NEXT_PUBLIC_`.
 6. Use the App Router route handler above for login/callback and a same-origin POST handler for logout. Read sessions on the server using `getSession()` and enforce your application's own role/permission rules there.
 
-**Current scope:** The dashboard manages client registration and callback URLs; client ID, issuer, callback URL and secret must still be supplied to the Next.js deployment as server-only configuration. Credentials and private session secrets are not transmitted through the dashboard. The SDK now verifies central session status online on every getSession() call; revoked sessions, disabled applications, and central Auth outages yield no session (fail closed). Refresh rotation and cross-app single logout remain separate work. The SDK is not yet published; consume it from this repository/workspace until a supported release is available. Production migration and E2E login verification are required before rollout.
+**Current scope:** The dashboard manages client registration and callback URLs; client ID, issuer, callback URL and secret must still be supplied to the Next.js deployment as server-only configuration. Credentials and private session secrets are not transmitted through the dashboard. The SDK now verifies central session status online on every getSession() call; revoked sessions, disabled applications, and central Auth outages yield no session (fail closed). Refresh rotation and cross-app single logout remain separate work. The SDK is not yet published; these examples are for local validation and the eventual authorized npm release. Production migration and E2E login verification are required before rollout.
 
 
 ## Server-only account API requests
