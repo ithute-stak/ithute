@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 
 const integrations = [
   { name: "Ithute Auth", icon: Fingerprint, status: "Available", detail: "Central identity, OAuth 2.0 authorization code + PKCE, signed tokens, MFA and session verification.", action: "Set up authentication", href: "/developer/auth" },
-  { name: "Next.js Auth SDK", icon: Code2, status: "Repository package", detail: "Server-only App Router integration: PKCE, callbacks, encrypted sessions and central logout.", action: "View SDK", href: "https://github.com/ithute-stak/ithute/tree/main/packages/ithute-auth-nextjs" },
+  { name: "Next.js Auth SDK", icon: Code2, status: "SDK preview", detail: "Server-only App Router integration: PKCE, callbacks, encrypted sessions and central logout.", action: "Read SDK docs", href: "/developer/docs/nextjs" },
   { name: "Professional Email", icon: Mail, status: "Managed service", detail: "Mailbox services for organizations, SMTP/IMAP infrastructure and webmail. Access and provisioning are subject to approval.", action: "Learn about mail", href: "/webmail" },
   { name: "DNS & Domains", icon: Globe2, status: "Managed service", detail: "Authoritative DNS, domain operations and DNSSEC tools for accounts with appropriate permissions.", action: "View control plane", href: "/login" },
   { name: "Platform Operations", icon: ServerCog, status: "Restricted", detail: "Hosting, infrastructure health and service administration for authorized tenants.", action: "Sign in", href: "/login" },
@@ -20,7 +20,7 @@ const integrations = [
 export default function DeveloperPage() {
   return <main className="min-h-screen bg-[#07101e] text-slate-100">
     <div className="pointer-events-none absolute inset-x-0 top-0 h-[560px] bg-[radial-gradient(ellipse_at_70%_5%,rgba(14,165,233,.17),transparent_60%)]" />
-    <div className="relative mx-auto max-w-7xl px-5 pb-24 pt-8 sm:px-8">
+    <div className="relative mx-3 max-w-none px-5 pb-24 pt-8 sm:px-8">
       <header className="flex flex-wrap items-center justify-between gap-5 border-b border-white/10 pb-6">
         <Link href="/" className="text-xl font-black tracking-tight">!thute <span className="font-medium text-cyan-300">/ developer</span></Link>
         <nav aria-label="Developer navigation" className="flex flex-wrap gap-5 text-sm text-slate-300">
@@ -44,7 +44,7 @@ const auth = createIthuteAuth({
   clientId: process.env.ITHUTE_AUTH_CLIENT_ID!,
   callbackUrl: process.env.ITHUTE_AUTH_CALLBACK_URL!,
   secret: process.env.ITHUTE_AUTH_SESSION_SECRET!,
-});`}</code></pre><p className="mt-5 text-xs text-slate-400">Server-only configuration. The SDK is currently consumed from the Ithute repository; it is not yet a published npm package.</p></div>
+});`}</code></pre><p className="mt-5 text-xs text-slate-400">Server-only configuration. SDK package publishing is pending. Integration instructions are available in Ithute developer documentation.</p></div>
       </section>
       <section id="products" className="scroll-mt-12"><div className="mb-8 flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-bold text-cyan-300">Capabilities</p><h2 className="mt-2 text-3xl font-black">Explore developer products</h2></div><p className="max-w-md text-sm text-slate-400">Public documentation and restricted services are clearly distinguished.</p></div>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{integrations.map((item)=><article key={item.name} className="flex flex-col rounded-2xl border border-white/10 bg-white/[.04] p-6 transition hover:border-cyan-300/40 hover:bg-white/[.07]"><div className="mb-5 flex items-center justify-between"><span className="rounded-xl bg-cyan-400/10 p-3 text-cyan-300"><item.icon size={23}/></span><span className="text-xs font-semibold text-slate-400">{item.status}</span></div><h3 className="text-xl font-bold">{item.name}</h3><p className="mt-3 flex-1 text-sm leading-6 text-slate-300">{item.detail}</p><Link href={item.href} className="mt-6 inline-flex items-center gap-2 text-sm font-bold text-cyan-300 hover:text-cyan-100">{item.action}<ArrowRight size={15}/></Link></article>)}</div>
