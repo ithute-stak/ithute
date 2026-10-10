@@ -2,6 +2,10 @@ name: Publish Ithute Auth to npm (manual approval)
 on:
   workflow_dispatch:
     inputs:
+      expected_version:
+        description: "Exact package version approved for public release (e.g. 0.1.0)"
+        required: true
+        type: string
       approval:
         description: "Type APPROVE_ITHUTE_AUTH_PUBLIC_RELEASE to confirm public source distribution is authorized"
         required: true
@@ -32,6 +36,7 @@ jobs:
       - name: Validate repository and release inputs
         env:
           RELEASE_APPROVAL: ${{ inputs.approval }}
+          RELEASE_VERSION: ${{ inputs.expected_version }}
         shell: bash
         run: |
           set -euo pipefail
@@ -39,6 +44,11 @@ jobs:
           test "${GITHUB_REF}" = "refs/heads/main"
           test "${RELEASE_APPROVAL}" = "APPROVE_ITHUTE_AUTH_PUBLIC_RELEASE"
           python3 scripts/release_preflight.py --strict
+          package_version="$(node -p "require('./package.json').version")"
+          test "${RELEASE_VERSION}" = "${package_version}" || {
+            echo "::error::Approved version does not match package manifest; release blocked."
+            exit 1
+          }
       - name: Install SDK dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
       - name: Verify SDK and build distribution
