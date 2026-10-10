@@ -27,7 +27,7 @@ export default function DeveloperRegister() {
       });
       const data=await response.json() as {message?:string};
       if(!response.ok){setStatus(data.message ?? "Registration could not be completed.");return;}
-      setSuccess(true);setStatus("Your Ithute Auth account has been created. Sign in to continue; developer application access requires approval.");
+      setSuccess(true);setStatus("Your Ithute Auth account has been created. Sign in to your developer workspace to request integration access. Verify your email first; service access requires approval.");
       setPassword("");setConfirm("");
     }catch{setStatus("Registration service is unavailable. Please try again later.");}
     finally{setBusy(false);}
@@ -45,7 +45,8 @@ export default function DeveloperRegister() {
       {siteKey?<div className="cf-turnstile" data-sitekey={siteKey} data-callback="ithuteRegistrationVerified" data-expired-callback="ithuteRegistrationExpired" />:<p className="text-sm text-amber-300">Public registration is not enabled yet.</p>}
       <button disabled={busy || !siteKey || !verificationToken} className="mt-2 rounded-xl bg-cyan-400 p-3 font-bold text-slate-950 disabled:opacity-60">{busy?"Creating account…":"Create account"}</button>
     </form>}
+    {success&&<Link href="/developer/dashboard" className="mt-6 inline-flex w-full items-center justify-center rounded-xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 hover:bg-cyan-300">Continue to developer workspace →</Link>}
     {status&&<p role="status" className="mt-5 rounded-lg border border-white/15 bg-white/5 p-3 text-sm">{status}</p>}
-    <div className="mt-7 border-t border-white/10 pt-5 text-sm text-slate-300"><Link href="/login" className="font-semibold text-cyan-300">Already registered? Sign in</Link><p className="mt-4">Want an @ithute.co.ls mailbox? <a className="text-cyan-300 underline" href="mailto:support@ithute.co.ls?subject=Ithute%20developer%20mailbox%20request">Request mailbox provisioning</a>.</p></div>
+    <div className="mt-7 border-t border-white/10 pt-5 text-sm text-slate-300"><Link href="/developer/dashboard" className="font-semibold text-cyan-300">Already registered? Open your developer workspace</Link><p className="mt-4">Want an @ithute.co.ls mailbox? <a className="text-cyan-300 underline" href="mailto:support@ithute.co.ls?subject=Ithute%20developer%20mailbox%20request">Request mailbox provisioning</a>.</p></div>
   </div></main>;
 }
