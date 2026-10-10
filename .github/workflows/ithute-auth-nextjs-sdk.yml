@@ -28,6 +28,20 @@ jobs:
         run: npm install --ignore-scripts --no-audit --no-fund
       - name: Validate Ithute Auth migration ancestry
         run: python3 platform/ithute-auth/check_migration_heads.py
+      - name: Verify npm distribution manifest
+        run: python3 packages/ithute-auth-nextjs/scripts/release_preflight.py
+      - name: Verify public release is blocked pending licensing
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          from pathlib import Path
+          p=Path("packages/ithute-auth-nextjs/scripts/release_preflight.py")
+          spec=importlib.util.spec_from_file_location("release_preflight",p)
+          module=importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          assert not module.check(), "Package layout must be valid"
+          assert any("license" in err.lower() for err in module.check(strict=True)), "Strict release must stay blocked without approval"
+          PY
       - name: Type-check SDK
         working-directory: packages/ithute-auth-nextjs
         run: npm run typecheck
