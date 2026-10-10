@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { DeveloperCodeBlock } from "../developer-code-block";
 
 const guides: Record<string,{title:string;intro:string;sections:{title:string;text:string;code?:string}[]}> = {
  "authentication": {title:"Authentication & OAuth",intro:"Use Ithute Auth for standards-based OAuth 2.0 authorization-code + PKCE.",sections:[
@@ -44,6 +45,6 @@ export default async function GuidePage({params}:{params:Promise<{slug:string}>}
  if(!guide)notFound();
  return <main className="min-h-screen bg-[#07101e] text-slate-100"><div className="mx-3 grid gap-8 px-4 py-10 lg:grid-cols-[250px_minmax(0,1fr)] lg:px-8">
   <aside className="lg:sticky lg:top-8 lg:self-start"><Link href="/developer" className="font-bold text-cyan-300">!thute / developer</Link><h2 className="mt-8 text-sm font-bold uppercase tracking-wider text-slate-400">Documentation</h2><nav aria-label="Developer guides" className="mt-4 space-y-1">{Object.entries(guides).map(([key,item])=><Link key={key} href={`/developer/docs/${key}`} aria-current={key===slug?"page":undefined} className={`block rounded-lg px-3 py-2 text-sm ${key===slug?"bg-cyan-400/15 font-bold text-cyan-300":"text-slate-300 hover:bg-white/10"}`}>{item.title}</Link>)}</nav></aside>
-  <article className="max-w-5xl"><Link href="/developer/docs" className="text-sm text-cyan-300">← All developer documentation</Link><p className="mt-10 text-xs font-bold uppercase tracking-[.18em] text-cyan-300">Ithute developer documentation</p><h1 className="mt-3 text-4xl font-black sm:text-5xl">{guide.title}</h1><p className="mt-5 text-lg leading-8 text-slate-300">{guide.intro}</p>{guide.sections.map((section,i)=><section key={i} className="mt-10 border-t border-white/10 pt-8"><h2 className="text-2xl font-bold">{section.title}</h2><p className="mt-3 leading-7 text-slate-300">{section.text}</p>{section.code&&<pre className="mt-5 overflow-x-auto rounded-2xl border border-cyan-400/20 bg-[#0d1d30] p-5 text-sm leading-7 text-cyan-100"><code>{section.code}</code></pre>}</section>)}<p className="mt-12 text-sm text-slate-400">Documentation is maintained by Ithute. Product availability depends on authorized service access.</p></article>
+  <article className="max-w-5xl"><Link href="/developer/docs" className="text-sm text-cyan-300">← All developer documentation</Link><p className="mt-10 text-xs font-bold uppercase tracking-[.18em] text-cyan-300">Ithute developer documentation</p><h1 className="mt-3 text-4xl font-black sm:text-5xl">{guide.title}</h1><p className="mt-5 text-lg leading-8 text-slate-300">{guide.intro}</p>{guide.sections.map((section,i)=><section key={i} className="mt-10 border-t border-white/10 pt-8"><h2 className="text-2xl font-bold">{section.title}</h2><p className="mt-3 leading-7 text-slate-300">{section.text}</p>{section.code&&<DeveloperCodeBlock code={section.code}/>}</section>)}<p className="mt-12 text-sm text-slate-400">Documentation is maintained by Ithute. Product availability depends on authorized service access.</p></article>
  </div></main>;
 }
