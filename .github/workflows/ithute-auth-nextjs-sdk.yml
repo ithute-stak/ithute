@@ -59,10 +59,9 @@ jobs:
           npm init -y >/dev/null
           npm install --ignore-scripts --no-audit --no-fund /tmp/ithute-auth-*.tgz
           node --input-type=module -e '
-            import { createRequire } from "node:module";
+            import { readFileSync } from "node:fs";
             import { existsSync } from "node:fs";
-            const require=createRequire(import.meta.url);
-            const manifest=require("./node_modules/ithute-auth/package.json");
+            const manifest=JSON.parse(readFileSync("./node_modules/ithute-auth/package.json","utf8"));
             if(manifest.name!=="ithute-auth") throw Error("wrong package");
             for(const file of ["dist/index.js","dist/index.d.ts"]){
               if(!existsSync("./node_modules/ithute-auth/"+file)) throw Error("missing "+file);
