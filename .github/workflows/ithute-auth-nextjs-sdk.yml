@@ -69,3 +69,39 @@ jobs:
             if(!import.meta.resolve("ithute-auth").endsWith("/dist/index.js")) throw Error("invalid export map");
             console.log("Packaged SDK resolves in isolated consumer");
           '
+      - name: Verify Next.js App Router consumer types from packed SDK
+        run: |
+          set -euo pipefail
+          cd /tmp/ithute-sdk-consumer
+          npm install --ignore-scripts --no-audit --no-fund next@15 typescript@5.9.3 @types/node@22 @types/react@19 react@19 react-dom@19
+          cat > tsconfig.json <<'JSON'
+          {
+            "compilerOptions": {
+              "module": "ESNext",
+              "moduleResolution": "Bundler",
+              "target": "ES2022",
+              "lib": ["ES2022", "DOM"],
+              "strict": true,
+              "noEmit": true,
+              "skipLibCheck": true,
+              "types": ["node"]
+            },
+            "include": ["app.ts"]
+          }
+          JSON
+          cat > app.ts <<'TS'
+          import { createIthuteAuth } from "ithute-auth";
+          const auth = createIthuteAuth({
+            issuer: "https://auth.example.test",
+            clientId: "test-nextjs-consumer",
+            callbackUrl: "https://app.example.test/api/auth/ithute/callback",
+            secret: "a-long-random-server-only-secret-of-at-least-32-bytes",
+          });
+          async function verifySdkShape() {
+            const session = await auth.getSession();
+            if (session) console.log(session.expiresAt);
+            await auth.authenticatedRequest("/v1/account/developer/access-requests");
+          }
+          void verifySdkShape;
+          TS
+          ./node_modules/.bin/tsc --project tsconfig.json
