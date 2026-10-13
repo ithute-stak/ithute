@@ -11,7 +11,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
-from app.services.finance_branding import draw_brand_header, draw_contact_footer
+from app.services.finance_branding import draw_brand_header, draw_contact_footer, draw_authorized_signature
 from app.models import FinanceDocument
 from app.services.finance_invoices import money
 
@@ -204,4 +204,5 @@ def render_corporate_quote_pdf(document: FinanceDocument) -> bytes:
     c.setFont("Helvetica", 7.8); c.drawString(left+315, y-16, meta.get("prepared_email") or "thekoetlisi@ithute.co.ls")
     c.setFont("Helvetica-Bold", 7.8); c.drawString(left+275, y-30, "Tel:"); c.setFont("Helvetica", 7.8); c.drawString(left+315, y-30, meta.get("prepared_phone") or "+266 5900 1394")
     c.setFont("Helvetica-Bold", 7.8); c.drawString(left+275, y-44, "Web:"); c.setFont("Helvetica", 7.8); c.drawString(left+315, y-44, "https://ithute.co.ls")
+    draw_authorized_signature(c, left + 10, max(92, y - 97))
     _footer(c, 2, width); c.showPage(); c.save(); return buffer.getvalue()

@@ -34,7 +34,7 @@ from app.services.finance_invoices import (
     next_invoice_number,
 )
 from app.services.finance_mail import send_finance_message
-from app.services.finance_branding import draw_brand_header, draw_contact_footer
+from app.services.finance_branding import draw_brand_header, draw_contact_footer, verified_signature
 
 NAVY = HexColor("#062D63")
 GREEN = HexColor("#087743")
@@ -181,17 +181,8 @@ def _header(c: canvas.Canvas, width: float, height: float, *, quotation: bool = 
 
 
 def _signature(c: canvas.Canvas, x: float, y: float) -> None:
-    try:
-        if not _SIGNATURE_PATH.is_file():
-            raise OSError("Signature artwork unavailable")
-        c.drawImage(ImageReader(str(_SIGNATURE_PATH)), x + 10, y + 5, width=128, height=55, preserveAspectRatio=True, mask="auto")
-    except (OSError, ValueError):
-        # Do not fabricate a handwritten signature.
-        c.saveState()
-        c.setFont("Helvetica-Oblique", 8)
-        c.setFillColor(MUTED)
-        c.drawString(x + 10, y + 13, "Signature unavailable")
-        c.restoreState()
+    # Missing or damaged approved artwork blocks document issuance.
+    c.drawImage(verified_signature(), x + 10, y + 5, width=128, height=55, preserveAspectRatio=True, mask="auto")
     c.setStrokeColor(NAVY)
     c.line(x, y, x + 205, y)
     c.setFillColor(TEXT)
