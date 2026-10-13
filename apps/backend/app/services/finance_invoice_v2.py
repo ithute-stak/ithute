@@ -283,16 +283,7 @@ def render_invoice_pdf(invoice: FinanceInvoice, *, include_stamp: bool = False) 
         c.setFont("Helvetica", 4.5); c.drawCentredString(cx, cy - 19, invoice.invoice_number)
         c.restoreState()
 
-    footer_line_y = 38
-    c.setStrokeColor(LINE); c.setLineWidth(.7); c.line(left, footer_line_y, right, footer_line_y)
-    _draw_footer_icon(c, left, 17, "web"); _draw_footer_icon(c, 154, 17, "mail"); _draw_footer_icon(c, 312, 17, "pin")
-    c.setFillColor(NAVY); c.setFont("Helvetica", 7.2)
-    c.drawString(left + 16, 21, COMPANY_WEBSITE); c.drawString(171, 21, FINANCE_SENDER); c.drawString(329, 21, COMPANY_LOCATION)
-    c.setFillColor(HexColor("#8093AA")); c.setFont("Helvetica", 6.8); c.drawRightString(right, 21, "LEARN ANYWHERE. SUCCEED EVERYWHERE.")
-    c.setFillColor(NAVY); c.rect(0, 0, width * .31, 5, fill=1, stroke=0)
-    c.setFillColor(GREEN); c.rect(width * .31, 0, width * .43, 5, fill=1, stroke=0)
-    c.setFillColor(GOLD); c.rect(width * .74, 0, width * .26, 5, fill=1, stroke=0)
-
+    # The shared footer owns all text and colored trim to avoid collisions.
     draw_contact_footer(c)
     c.save()
     return buffer.getvalue()
