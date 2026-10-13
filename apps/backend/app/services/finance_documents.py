@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
+import os
 from pathlib import Path
 
 from reportlab.lib import colors
@@ -45,6 +46,7 @@ PALE_GREEN = HexColor("#EFF8E6")
 _ASSET_DIR = Path(__file__).resolve().parents[1] / "assets"
 _HEADER_PATH = _ASSET_DIR / "finance_invoice_header.jpg"
 _SIGNATURE_PATH = _ASSET_DIR / "koetlisi_theko_mofoka_signature.png"
+_QUOTATION_HEADER_PATH = _ASSET_DIR / "ithute_imail_quotation_header.jpg"
 
 
 def _next_number(db: Session, *, prefix: str, model, column) -> str:
@@ -147,12 +149,19 @@ def credit_note_out(row: FinanceCreditNote) -> dict:
     }
 
 
-def _header(c: canvas.Canvas, width: float, height: float) -> float:
-    header_h = width * 270 / 1103
+def _header(c: canvas.Canvas, width: float, height: float, *, quotation: bool = False) -> float:
+    # The approved Ithute Solutions + iMail artwork is a wider header than the
+    # legacy invoice banner. Preserve its aspect ratio and body placement.
+    header_h = width * (600 / 2048) if quotation else width * 270 / 1103
+    source = _QUOTATION_HEADER_PATH if quotation else _HEADER_PATH
+    if quotation:
+        configured = os.environ.get("ITHUTE_QUOTATION_HEADER_PATH", "").strip()
+        if configured:
+            source = Path(configured)
     try:
-        if not _HEADER_PATH.is_file():
+        if not source.is_file():
             raise OSError("Header artwork unavailable")
-        c.drawImage(ImageReader(str(_HEADER_PATH)), 0, height - header_h, width=width, height=header_h, preserveAspectRatio=False)
+        c.drawImage(ImageReader(str(source)), 0, height - header_h, width=width, height=header_h, preserveAspectRatio=False)
     except (OSError, ValueError):
         # An optional damaged raster must not prevent a customer from receiving
         # a quotation, pro-forma, receipt or credit-note PDF.
@@ -243,7 +252,7 @@ def render_document_pdf(document: FinanceDocument) -> bytes:
     left, right = 30, width - 30
     c.setFillColor(colors.white)
     c.rect(0, 0, width, height, fill=1, stroke=0)
-    header_h = _header(c, width, height)
+    header_h = _header(c, width, height, quotation=document.document_type == "quotation")
 
     title = "QUOTATION" if document.document_type == "quotation" else "PRO-FORMA INVOICE"
     title_y = height - header_h - 36
