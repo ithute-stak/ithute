@@ -166,6 +166,22 @@ def verify_domain(
             error = exc.__class__.__name__
         except Exception as exc:
             error = f"resolver_error:{exc.__class__.__name__}"
+        # A domain originally on external DNS can alternatively prove control
+        # after an intentional registrar cutover to BOTH Ithute nameservers.
+        # Never treat Zeecom/external delegation or DNS-zone preparation as proof.
+        if not success and dns_mode_value == "platform":
+            expected_ns = _normalize_nameservers([settings.nameserver_1, settings.nameserver_2])
+            if ascii_name and len(set(expected_ns)) >= 2:
+                try:
+                    delegated_ns = _normalize_nameservers(nameserver_resolver(ascii_name))
+                    observed.extend(f"NS:{value}" for value in delegated_ns)
+                    if set(expected_ns).issubset(set(delegated_ns)):
+                        success = True
+                        error = None
+                except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers, dns.exception.Timeout):
+                    pass
+                except Exception:
+                    pass
     elif method == "nameserver":
         # New registrar/reseller domains have no existing external DNS record set
         # to preserve. Ownership is proved only by controlling the parent-zone
