@@ -253,7 +253,7 @@ def render_document_pdf(document: FinanceDocument) -> bytes:
     left, right = 30, width - 30
     c.setFillColor(colors.white)
     c.rect(0, 0, width, height, fill=1, stroke=0)
-    header_h = _header(c, width, height, quotation=document.document_type == "quotation")
+    header_h = draw_brand_header(c, width, height)
 
     title = "QUOTATION" if document.document_type == "quotation" else "PRO-FORMA INVOICE"
     title_y = height - header_h - 36
