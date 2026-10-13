@@ -1,3 +1,4 @@
+from app.services.finance_branding import draw_brand_header, draw_contact_footer, draw_mpesa_note
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -168,7 +169,7 @@ def render_invoice_pdf(invoice: FinanceInvoice, *, include_stamp: bool = False) 
     c.setFillColor(colors.white)
     c.rect(0, 0, width, height, fill=1, stroke=0)
 
-    header_h = _draw_header(c, width, height)
+    header_h = draw_brand_header(c, width, height)
 
     title_y = height - header_h - 38
     c.setFillColor(NAVY)
@@ -286,6 +287,8 @@ def render_invoice_pdf(invoice: FinanceInvoice, *, include_stamp: bool = False) 
     c.setFillColor(GREEN); c.rect(width * .31, 0, width * .43, 5, fill=1, stroke=0)
     c.setFillColor(GOLD); c.rect(width * .74, 0, width * .26, 5, fill=1, stroke=0)
 
+    draw_mpesa_note(c, left + 10, 64)
+    draw_contact_footer(c)
     c.save()
     return buffer.getvalue()
 
