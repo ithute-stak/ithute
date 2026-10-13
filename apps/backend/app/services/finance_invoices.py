@@ -1,4 +1,4 @@
-from app.services.finance_branding import draw_brand_header, draw_contact_footer, draw_mpesa_note
+from app.services.finance_branding import draw_brand_header, draw_contact_footer, draw_mpesa_note, MPESA_NUMBER, MPESA_NAME
 import base64
 from datetime import datetime, timezone
 from html import escape
