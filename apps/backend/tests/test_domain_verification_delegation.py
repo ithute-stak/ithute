@@ -74,28 +74,64 @@ def test_nameserver_method_requires_both_nameservers(monkeypatch):
     assert attempts[0].success is False
 
 
-def test_txt_migration_does_not_accept_nameserver_delegation_as_bypass(monkeypatch):
+def test_txt_migration_can_verify_after_both_ithute_nameservers_are_delegated(monkeypatch):
     domain = pending_platform_domain(method="txt")
     db, attempts = fake_db()
     monkeypatch.setattr("app.services.domains.settings.nameserver_1", "ns1.ithute.co.ls")
     monkeypatch.setattr("app.services.domains.settings.nameserver_2", "ns2.ithute.co.ls")
 
-    def nameserver_must_not_run(_):
-        raise AssertionError("Nameserver resolver must not bypass required TXT verification")
-
-    success, observed, _ = verify_domain(
-        domain,
-        None,
-        uuid.uuid4(),
-        db,
+    success, observed, error = verify_domain(
+        domain, None, uuid.uuid4(), db,
         resolver=lambda _: [],
-        nameserver_resolver=nameserver_must_not_run,
+        nameserver_resolver=lambda _: ["ns1.ithute.co.ls.", "NS2.ITHUTE.CO.LS."],
     )
+    assert success is True
+    assert error is None
+    assert "NS:ns1.ithute.co.ls" in observed
+    assert domain.status == DomainStatus.verified
+    assert attempts[0].success is True
 
+
+def test_txt_migration_rejects_external_zeecom_delegation_without_txt(monkeypatch):
+    domain = pending_platform_domain(method="txt")
+    db, attempts = fake_db()
+    monkeypatch.setattr("app.services.domains.settings.nameserver_1", "ns1.ithute.co.ls")
+    monkeypatch.setattr("app.services.domains.settings.nameserver_2", "ns2.ithute.co.ls")
+    success, observed, _ = verify_domain(
+        domain, None, uuid.uuid4(), db,
+        resolver=lambda _: [],
+        nameserver_resolver=lambda _: ["ns1.zeecom.co.ls", "ns2.zeecom.co.ls"],
+    )
     assert success is False
-    assert observed == []
     assert domain.status == DomainStatus.pending_verification
     assert attempts[0].success is False
+
+
+def test_txt_migration_rejects_partial_ithute_delegation(monkeypatch):
+    domain = pending_platform_domain(method="txt")
+    db, _ = fake_db()
+    monkeypatch.setattr("app.services.domains.settings.nameserver_1", "ns1.ithute.co.ls")
+    monkeypatch.setattr("app.services.domains.settings.nameserver_2", "ns2.ithute.co.ls")
+    success, _, _ = verify_domain(
+        domain, None, uuid.uuid4(), db,
+        resolver=lambda _: [],
+        nameserver_resolver=lambda _: ["ns1.ithute.co.ls", "ns2.zeecom.co.ls"],
+    )
+    assert success is False
+
+
+def test_external_dns_txt_method_does_not_accept_ithute_delegation(monkeypatch):
+    domain = pending_platform_domain(method="txt")
+    domain.dns_mode = "external"
+    db, _ = fake_db()
+    monkeypatch.setattr("app.services.domains.settings.nameserver_1", "ns1.ithute.co.ls")
+    monkeypatch.setattr("app.services.domains.settings.nameserver_2", "ns2.ithute.co.ls")
+    success, _, _ = verify_domain(
+        domain, None, uuid.uuid4(), db,
+        resolver=lambda _: [],
+        nameserver_resolver=lambda _: ["ns1.ithute.co.ls", "ns2.ithute.co.ls"],
+    )
+    assert success is False
 
 
 def test_external_dns_cannot_use_nameserver_method(monkeypatch):
