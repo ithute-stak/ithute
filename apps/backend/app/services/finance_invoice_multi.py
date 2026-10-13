@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.services.finance_branding import draw_brand_header, draw_contact_footer, draw_mpesa_note
 
 from datetime import datetime, timezone
 from io import BytesIO
@@ -57,7 +58,7 @@ def render_invoice_pdf(invoice: FinanceInvoice, *, include_stamp: bool = False) 
     left, right = 30, width - 30
     c.setTitle(f"Invoice {invoice.invoice_number}")
     c.setFillColor(colors.white); c.rect(0, 0, width, height, fill=1, stroke=0)
-    header_h = _header(c, width, height)
+    header_h = draw_brand_header(c, width, height)
     title_y = height - header_h - 36
     c.setFillColor(NAVY); c.setFont("Helvetica-Bold", 30); c.drawString(left, title_y, "INVOICE")
     c.setStrokeColor(GREEN); c.setLineWidth(2); c.line(left, title_y - 10, left + 145, title_y - 10)
@@ -113,4 +114,6 @@ def render_invoice_pdf(invoice: FinanceInvoice, *, include_stamp: bool = False) 
     _signature(c, left, 86)
     c.setFillColor(NAVY); c.setFont("Helvetica-Bold", 7.2); c.drawString(left, 28, "ithute.co.ls"); c.drawString(left+155, 28, FINANCE_SENDER); c.drawRightString(right, 28, "Maseru, Lesotho")
     c.setStrokeColor(GREEN); c.setLineWidth(2); c.line(0, 15, width*.55, 15); c.setStrokeColor(GOLD); c.line(width*.55, 15, width, 15)
+    draw_mpesa_note(c, left + 8, 63)
+    draw_contact_footer(c)
     c.showPage(); c.save(); return buffer.getvalue()

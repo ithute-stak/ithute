@@ -1,3 +1,4 @@
+from app.services.finance_branding import draw_brand_header, draw_contact_footer, draw_mpesa_note, MPESA_NUMBER, MPESA_NAME
 import base64
 from datetime import datetime, timezone
 from html import escape
@@ -21,7 +22,7 @@ BANK_ACCOUNT_NUMBER = "1035927000011"
 AUTHORISED_NAME = "Koetlisi Theko Mofoka"
 AUTHORISED_TITLE = "CEO, Ithute Digital Solutions"
 COMPANY_NAME = "Ithute Digital Solutions"
-COMPANY_LOCATION = "Maseru, Lesotho"
+COMPANY_LOCATION = "Mokorotlong Maseru 100, Victorial Hotel Room 111"
 COMPANY_WEBSITE = "ithute.co.ls"
 
 # Clean transparent crop of the signature supplied by Koetlisi Theko Mofoka.
@@ -59,6 +60,7 @@ def build_default_email_body(
         f"Bank: {BANK_NAME}\n"
         f"Account Name: {BANK_ACCOUNT_NAME}\n"
         f"Account Number: {BANK_ACCOUNT_NUMBER}\n"
+        f"M-Pesa: {MPESA_NUMBER} (Name: {MPESA_NAME})\n"
         f"Payment Reference: {invoice_number}\n\n"
         "Please use the invoice number as the payment reference. If you have any questions, "
         f"please reply to {FINANCE_SENDER}.\n\n"
@@ -174,7 +176,7 @@ def render_invoice_pdf(invoice: FinanceInvoice) -> bytes:
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
     c.setTitle(f"Invoice {invoice.invoice_number}")
-    y = _draw_header(c, width, height)
+    y = draw_brand_header(c, width, height)
 
     # Invoice title and metadata.
     c.setFillColor(NAVY); c.setFont("Helvetica-Bold", 31); c.drawString(42, y - 38, "INVOICE")
@@ -291,6 +293,8 @@ def render_invoice_pdf(invoice: FinanceInvoice) -> bytes:
     c.setFillColor(GREEN); c.rect(width * .33, 0, width * .40, 5, fill=1, stroke=0)
     c.setFillColor(GOLD); c.rect(width * .73, 0, width * .27, 5, fill=1, stroke=0)
 
+    draw_mpesa_note(c, 42, 74)
+    draw_contact_footer(c)
     c.save()
     return buffer.getvalue()
 
