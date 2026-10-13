@@ -1,4 +1,4 @@
-from app.services.finance_branding import draw_brand_header, draw_contact_footer, draw_mpesa_note
+from app.services.finance_branding import draw_brand_header, draw_contact_footer, draw_mpesa_note, verified_signature
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -116,7 +116,7 @@ def _draw_footer_icon(c: canvas.Canvas, x: float, y: float, kind: str) -> None:
 def _draw_signature(c: canvas.Canvas, x: float, line_y: float) -> None:
     # The approved handwritten signature is required. Never silently replace it with typed text.
     c.drawImage(
-        _asset(_SIGNATURE_PATH),
+        verified_signature(),
         x + 12,
         line_y + 5,
         width=128,
