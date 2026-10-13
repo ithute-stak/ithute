@@ -11,6 +11,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
+from app.services.finance_branding import draw_brand_header, draw_contact_footer
 from app.models import FinanceDocument
 from app.services.finance_invoices import money
 
@@ -52,7 +53,7 @@ def _header(c: canvas.Canvas, width: float, height: float) -> float:
 def _footer(c: canvas.Canvas, page: int, width: float) -> None:
     c.setStrokeColor(MID); c.setLineWidth(.5); c.line(30, 28, width - 30, 28)
     c.setFillColor(MUTED); c.setFont("Helvetica", 7.4)
-    c.drawString(30, 16, "Ithute Solutions / iMail - Learn Anywhere. Succeed Everywhere.")
+    draw_contact_footer(c, left=30, right=width - 30, y=12)
     c.drawRightString(width - 30, 16, f"Page {page}")
 
 
@@ -84,7 +85,7 @@ def render_corporate_quote_pdf(document: FinanceDocument) -> bytes:
 
     # page 1
     c.setFillColor(colors.white); c.rect(0, 0, width, height, fill=1, stroke=0)
-    header_h = _header(c, width, height)
+    header_h = draw_brand_header(c, width, height)
     y = height - header_h - 26
     c.setFillColor(GREEN); c.setFont("Helvetica-Bold", 22); c.drawCentredString(width / 2, y, "CORPORATE EMAIL HOSTING QUOTATION")
     c.setFillColor(MUTED); c.setFont("Helvetica", 9.2)
