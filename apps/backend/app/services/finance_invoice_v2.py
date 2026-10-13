@@ -240,31 +240,37 @@ def render_invoice_pdf(invoice: FinanceInvoice, *, include_stamp: bool = False) 
     c.setFillColor(DARK_GREEN); c.setFont("Helvetica-Bold", 10.5); c.drawString(totals_x + 17, totals_y + 11, "TOTAL DUE")
     c.setFont("Helvetica-Bold", 16); c.drawRightString(totals_x + totals_w - 17, totals_y + 9, money(invoice.total_minor, invoice.currency))
 
-    card_y, card_h, gap = totals_y - 126, 108, 14
-    card_w = (table_w - gap) / 2
-    note_x = left + card_w + gap
-    c.setFillColor(colors.white); c.setStrokeColor(LINE)
-    c.roundRect(left, card_y, card_w, card_h, 7, fill=1, stroke=1)
-    c.roundRect(note_x, card_y, card_w, card_h, 7, fill=1, stroke=1)
-    _draw_payment_icon(c, left + 28, card_y + card_h - 27)
-    c.setFillColor(NAVY); c.setFont("Helvetica-Bold", 9.2); c.drawString(left + 52, card_y + card_h - 25, "PAYMENT DETAILS")
-    payment = [("Bank", BANK_NAME), ("Account Name", BANK_ACCOUNT_NAME), ("Account Number", BANK_ACCOUNT_NUMBER), ("Billing Email", FINANCE_SENDER)]
-    py = card_y + card_h - 48
-    for label, value in payment:
-        c.setFillColor(MUTED); c.setFont("Helvetica", 7.8); c.drawString(left + 15, py, label)
-        c.setFillColor(TEXT); c.setFont("Helvetica-Bold", 8.3); c.drawString(left + 108, py, value)
-        py -= 17
-    _draw_note_icon(c, note_x + 28, card_y + card_h - 27)
-    c.setFillColor(NAVY); c.setFont("Helvetica-Bold", 9.2); c.drawString(note_x + 52, card_y + card_h - 25, "NOTE")
-    c.setFillColor(MUTED); c.setFont("Helvetica", 8.1)
-    note_lines = ["Thank you for choosing iMail by Ithute Solutions.", "Please use the invoice number or client name as the", "payment reference when making payment."]
-    ny = card_y + card_h - 52
-    for line in note_lines:
-        c.drawString(note_x + 15, ny, line)
-        ny -= 15
+    # Approved preview layout: one full-width M-Pesa-first payment panel.
+    card_y, card_h = totals_y - 136, 114
+    c.setFillColor(NAVY)
+    c.setFont("Helvetica-Bold", 9.5)
+    c.drawString(left, card_y + card_h + 12, "PAYMENT OPTIONS")
+    c.setFillColor(PALE_BLUE)
+    c.setStrokeColor(LINE)
+    c.roundRect(left, card_y, table_w, card_h, 8, fill=1, stroke=1)
+    c.setFillColor(DARK_GREEN)
+    c.setFont("Helvetica-Bold", 8.5)
+    c.drawString(left + 16, card_y + 87, "M-PESA")
+    c.setFont("Helvetica-Bold", 15)
+    c.drawString(left + 16, card_y + 62, "59001394")
+    c.setFillColor(MUTED)
+    c.setFont("Helvetica", 8)
+    c.drawString(left + 170, card_y + 87, "Registered name")
+    c.setFillColor(TEXT)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(left + 170, card_y + 65, "Koetlisi Theko")
+    c.setFillColor(MUTED)
+    c.setFont("Helvetica", 8)
+    c.drawString(left + 16, card_y + 23, f"Bank payment also available: {BANK_NAME}  |  {BANK_ACCOUNT_NAME}  |  {BANK_ACCOUNT_NUMBER}")
+    c.setFillColor(NAVY)
+    c.setFont("Helvetica-Bold", 8.5)
+    c.drawString(left, card_y - 20, "NOTES")
+    c.setFillColor(MUTED)
+    c.setFont("Helvetica", 8)
+    c.drawString(left, card_y - 35, "Thank you for choosing iMail. Please use the invoice number as your payment reference.")
 
     # The real handwritten signature is part of the template. There is no typed fallback.
-    signature_line_y = card_y - 67
+    signature_line_y = card_y - 91
     _draw_signature(c, left + 8, signature_line_y)
 
     if include_stamp:
@@ -287,7 +293,6 @@ def render_invoice_pdf(invoice: FinanceInvoice, *, include_stamp: bool = False) 
     c.setFillColor(GREEN); c.rect(width * .31, 0, width * .43, 5, fill=1, stroke=0)
     c.setFillColor(GOLD); c.rect(width * .74, 0, width * .26, 5, fill=1, stroke=0)
 
-    draw_mpesa_note(c, left + 10, 64)
     draw_contact_footer(c)
     c.save()
     return buffer.getvalue()
