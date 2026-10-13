@@ -34,3 +34,14 @@ def test_shared_header_uses_approved_asset_when_present(tmp_path):
         finance_branding.draw_brand_header(document, *A4)
     reader.assert_called_once_with(str(image))
     draw.assert_called_once()
+
+
+def test_original_approved_header_is_packaged_with_exact_bytes():
+    from hashlib import sha256
+    from reportlab.lib.utils import ImageReader
+
+    assert finance_branding.ASSET.is_file()
+    assert sha256(finance_branding.ASSET.read_bytes()).hexdigest() == (
+        "36396920cb7ece9688751e51e4636512cd35764bf294e7be06bfc06e307d7531"
+    )
+    assert ImageReader(str(finance_branding.ASSET)).getSize() == (2048, 600)
