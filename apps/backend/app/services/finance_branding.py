@@ -19,7 +19,8 @@ def draw_brand_header(c, width, height):
     damaged, but never represent a fallback as the actual approved artwork.
     """
     banner_height = width * 600 / 2048
-    source = Path(os.environ["ITHUTE_FINANCE_HEADER_PATH"]) if os.environ.get("ITHUTE_FINANCE_HEADER_PATH") else ASSET
+    configured_header = os.environ.get("ITHUTE_FINANCE_HEADER_PATH") or os.environ.get("ITHUTE_QUOTATION_HEADER_PATH")
+    source = Path(configured_header) if configured_header else ASSET
     try:
         if not source.is_file():
             raise OSError("Approved header is missing")
