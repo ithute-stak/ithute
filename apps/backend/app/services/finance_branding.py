@@ -23,18 +23,17 @@ def draw_brand_header(c, width, height):
     source = Path(configured_header) if configured_header else ASSET
     try:
         if not source.is_file():
-            raise OSError("Approved header is missing")
-        c.drawImage(ImageReader(str(source)), 0, height-banner_height, width=width, height=banner_height)
-    except (OSError, ValueError):
-        c.saveState()
-        c.setFillColor(HexColor("#082E63"))
-        c.rect(0, height-banner_height, width, banner_height, fill=1, stroke=0)
-        c.setFillColor(HexColor("#FFFFFF"))
-        c.setFont("Helvetica-Bold", 25)
-        c.drawString(40, height-65, "ITHUTE SOLUTIONS")
-        c.setFont("Helvetica", 12)
-        c.drawString(40, height-88, "iMail")
-        c.restoreState()
+            raise FileNotFoundError(f"Approved Ithute/iMail image missing: {source}")
+        reader = ImageReader(str(source))
+        reader.getSize()
+        c.drawImage(reader, 0, height-banner_height, width=width, height=banner_height)
+    except (OSError, ValueError) as exc:
+        raise ValueError(
+            "The approved Ithute/iMail header image is not installed or is unreadable. "
+            "PDF generation has been blocked to prevent an unbranded document. "
+            "Install apps/backend/app/assets/ithute_imail_quotation_header.jpg "
+            "or configure ITHUTE_FINANCE_HEADER_PATH."
+        ) from exc
     return banner_height
 
 
