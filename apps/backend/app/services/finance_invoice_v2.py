@@ -264,13 +264,13 @@ def render_invoice_pdf(invoice: FinanceInvoice, *, include_stamp: bool = False) 
     c.drawString(left + 16, card_y + 23, f"Bank payment also available: {BANK_NAME}  |  {BANK_ACCOUNT_NAME}  |  {BANK_ACCOUNT_NUMBER}")
     c.setFillColor(NAVY)
     c.setFont("Helvetica-Bold", 8.5)
-    c.drawString(left, card_y - 20, "NOTES")
+    c.drawString(left + 230, card_y - 20, "NOTES")
     c.setFillColor(MUTED)
     c.setFont("Helvetica", 8)
-    c.drawString(left, card_y - 35, "Thank you for choosing iMail. Please use the invoice number as your payment reference.")
+    c.drawString(left + 230, card_y - 35, "Thank you for choosing iMail.")
 
     # The real handwritten signature is part of the template. There is no typed fallback.
-    signature_line_y = card_y - 91
+    signature_line_y = card_y - 67
     _draw_signature(c, left + 8, signature_line_y)
 
     if include_stamp:
