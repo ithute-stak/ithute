@@ -22,7 +22,7 @@ BANK_ACCOUNT_NUMBER = "1035927000011"
 AUTHORISED_NAME = "Koetlisi Theko Mofoka"
 AUTHORISED_TITLE = "CEO, Ithute Digital Solutions"
 COMPANY_NAME = "Ithute Digital Solutions"
-COMPANY_LOCATION = "Mokorotlong Maseru 100, Victoria Hotel Room 111"
+COMPANY_LOCATION = "Mokorotlong Maseru 100, Victorial Hotel Room 111"
 COMPANY_WEBSITE = "ithute.co.ls"
 
 # Clean transparent crop of the signature supplied by Koetlisi Theko Mofoka.
