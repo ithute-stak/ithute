@@ -37,17 +37,26 @@ def draw_brand_header(c, width, height):
     return banner_height
 
 
-def draw_contact_footer(c, left=35, right=560, y=25):
-    """Two tidy contact lines; mask legacy footers without overlapping text."""
+def draw_contact_footer(c, left=35, right=None, y=25):
+    """Consistent two-line footer, with the approved green/gold trim.
+
+    Clear the entire footer band once so older per-document footer content
+    cannot overlap the phone number, email or physical address.
+    """
     c.saveState()
     width, _ = c._pagesize
     c.setFillColor(HexColor("#FFFFFF"))
-    c.rect(0, 9, width, 40, stroke=0, fill=1)
+    c.rect(0, 7, width, 46, stroke=0, fill=1)
     c.setFillColor(HexColor("#092F58"))
-    c.setFont("Helvetica-Bold", 7.2)
+    c.setFont("Helvetica-Bold", 7.5)
     c.drawString(left, y + 12, f"Tel: {CONTACT_PHONE}  |  {CONTACT_EMAIL}")
-    c.setFont("Helvetica", 7)
+    c.setFont("Helvetica", 7.5)
     c.drawString(left, y, CONTACT_ADDRESS)
+    c.setStrokeColor(HexColor("#087747"))
+    c.setLineWidth(2.5)
+    c.line(0, 5, width * 0.62, 5)
+    c.setStrokeColor(HexColor("#C7A039"))
+    c.line(width * 0.62, 5, width, 5)
     c.restoreState()
 
 

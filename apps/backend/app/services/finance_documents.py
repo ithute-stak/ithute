@@ -309,12 +309,6 @@ def render_document_pdf(document: FinanceDocument) -> bytes:
         c.drawString(left, note_y + 20, "This pro-forma invoice is a request for payment and is not a tax invoice or receipt.")
     _signature(c, left, max(88, note_y - 30))
 
-    c.setFillColor(NAVY); c.setFont("Helvetica-Bold", 7.2)
-    c.drawString(left, 28, "ithute.co.ls")
-    c.drawString(left + 155, 28, FINANCE_SENDER)
-    c.drawRightString(right, 28, "Maseru, Lesotho")
-    c.setStrokeColor(GREEN); c.setLineWidth(2); c.line(0, 15, width * .55, 15)
-    c.setStrokeColor(GOLD); c.line(width * .55, 15, width, 15)
     draw_contact_footer(c)
     c.showPage(); c.save()
     return buffer.getvalue()
@@ -347,7 +341,6 @@ def render_receipt_pdf(payment: FinancePayment) -> bytes:
     c.setFont("Helvetica-Bold", 21); c.drawRightString(right - 22, card_y - 49, money(payment.amount_minor, invoice.currency))
     _signature(c, left, card_y - 170)
     c.setFillColor(MUTED); c.setFont("Helvetica", 8); c.drawString(left, 55, f"Bank: {BANK_NAME}   Account Name: {BANK_ACCOUNT_NAME}   Account Number: {BANK_ACCOUNT_NUMBER}")
-    c.setFillColor(NAVY); c.setFont("Helvetica-Bold", 7.5); c.drawString(left, 32, "ithute.co.ls"); c.drawRightString(right, 32, FINANCE_SENDER)
     draw_contact_footer(c)
     c.showPage(); c.save(); return buffer.getvalue()
 
