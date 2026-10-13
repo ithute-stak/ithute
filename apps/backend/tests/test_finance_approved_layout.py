@@ -1,5 +1,5 @@
 from io import BytesIO
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen.canvas import Canvas
@@ -23,7 +23,7 @@ def test_branded_header_draws_approved_art_when_provisioned(tmp_path):
     asset = tmp_path / "banner.jpg"
     asset.write_bytes(b"test placeholder")
     c = Canvas(BytesIO(), pagesize=A4)
-    with patch("app.services.finance_branding.ASSET", asset), patch("app.services.finance_branding.ImageReader", return_value="approved") as reader, patch.object(c, "drawImage") as draw:
+    with patch("app.services.finance_branding.ASSET", asset), patch("app.services.finance_branding.ImageReader", return_value=MagicMock()) as reader, patch.object(c, "drawImage") as draw:
         draw_brand_header(c, *A4)
     reader.assert_called_once_with(str(asset))
     draw.assert_called_once()
