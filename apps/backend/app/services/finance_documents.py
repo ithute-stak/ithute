@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.services.finance_branding import draw_brand_header, draw_contact_footer, draw_mpesa_note
 
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
@@ -243,7 +244,7 @@ def render_document_pdf(document: FinanceDocument) -> bytes:
     left, right = 30, width - 30
     c.setFillColor(colors.white)
     c.rect(0, 0, width, height, fill=1, stroke=0)
-    header_h = _header(c, width, height)
+    header_h = draw_brand_header(c, width, height)
 
     title = "QUOTATION" if document.document_type == "quotation" else "PRO-FORMA INVOICE"
     title_y = height - header_h - 36
@@ -314,6 +315,7 @@ def render_document_pdf(document: FinanceDocument) -> bytes:
     c.drawRightString(right, 28, "Maseru, Lesotho")
     c.setStrokeColor(GREEN); c.setLineWidth(2); c.line(0, 15, width * .55, 15)
     c.setStrokeColor(GOLD); c.line(width * .55, 15, width, 15)
+    draw_contact_footer(c)
     c.showPage(); c.save()
     return buffer.getvalue()
 
@@ -323,7 +325,7 @@ def render_receipt_pdf(payment: FinancePayment) -> bytes:
     buffer = BytesIO(); c = canvas.Canvas(buffer, pagesize=A4); width, height = A4
     left, right = 40, width - 40
     c.setFillColor(colors.white); c.rect(0, 0, width, height, fill=1, stroke=0)
-    header_h = _header(c, width, height)
+    header_h = draw_brand_header(c, width, height)
     y = height - header_h - 45
     c.setFillColor(NAVY); c.setFont("Helvetica-Bold", 30); c.drawString(left, y, "PAYMENT RECEIPT")
     c.setFillColor(MUTED); c.setFont("Helvetica", 9); c.drawString(left, y - 24, "Official acknowledgement of payment received by Ithute Digital Solutions")
@@ -346,6 +348,7 @@ def render_receipt_pdf(payment: FinancePayment) -> bytes:
     _signature(c, left, card_y - 170)
     c.setFillColor(MUTED); c.setFont("Helvetica", 8); c.drawString(left, 55, f"Bank: {BANK_NAME}   Account Name: {BANK_ACCOUNT_NAME}   Account Number: {BANK_ACCOUNT_NUMBER}")
     c.setFillColor(NAVY); c.setFont("Helvetica-Bold", 7.5); c.drawString(left, 32, "ithute.co.ls"); c.drawRightString(right, 32, FINANCE_SENDER)
+    draw_contact_footer(c)
     c.showPage(); c.save(); return buffer.getvalue()
 
 
@@ -354,7 +357,7 @@ def render_credit_note_pdf(credit: FinanceCreditNote) -> bytes:
     buffer = BytesIO(); c = canvas.Canvas(buffer, pagesize=A4); width, height = A4
     left, right = 40, width - 40
     c.setFillColor(colors.white); c.rect(0, 0, width, height, fill=1, stroke=0)
-    header_h = _header(c, width, height)
+    header_h = draw_brand_header(c, width, height)
     y = height - header_h - 45
     c.setFillColor(NAVY); c.setFont("Helvetica-Bold", 30); c.drawString(left, y, "CREDIT NOTE")
     c.setFillColor(MUTED); c.setFont("Helvetica", 9); c.drawString(left, y - 24, "Issued against an existing Ithute invoice")
@@ -374,6 +377,7 @@ def render_credit_note_pdf(credit: FinanceCreditNote) -> bytes:
     c.setFillColor(GREEN); c.setFont("Helvetica-Bold", 11); c.drawString(left + 22, box_y - 44, "CREDIT AMOUNT")
     c.setFont("Helvetica-Bold", 21); c.drawRightString(right - 22, box_y - 49, money(credit.amount_minor, invoice.currency))
     _signature(c, left, box_y - 170)
+    draw_contact_footer(c)
     c.showPage(); c.save(); return buffer.getvalue()
 
 
