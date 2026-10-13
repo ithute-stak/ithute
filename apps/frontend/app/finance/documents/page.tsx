@@ -61,12 +61,43 @@ export default function FinanceDocumentsPage() {
       items: lines.map((line) => ({ description: line.description.trim(), details: line.details.trim(), quantity: Math.max(1, Number(line.quantity) || 1), rate_minor: Math.round(Math.max(0, Number(line.rate) || 0) * 100), tax_minor: Math.round(Math.max(0, Number(line.tax) || 0) * 100) })),
     };
   }
-  async function create() {
+  async function create(downloadPdf = false) {
     if (!canWrite) return setMessage("Your Finance role is read-only.");
-    if (!clientName.trim() || !recipientEmail.trim() || lines.some((x) => !x.description.trim())) { setMessage("Client, receiving email and every line description are required."); return; }
+    if (!clientName.trim() || !recipientEmail.trim() || lines.some((x) => !x.description.trim())) {
+      setMessage("Client, receiving email and every line description are required.");
+      return;
+    }
+    if (lines.some((line) => !Number.isInteger(Number(line.quantity)) || Number(line.quantity) < 1 ||
+      !Number.isFinite(Number(line.rate)) || Number(line.rate) < 0 ||
+      !Number.isFinite(Number(line.tax)) || Number(line.tax) < 0)) {
+      setMessage("Each item must have a whole-number quantity and valid, non-negative prices and tax amounts.");
+      return;
+    }
     setBusy(true); setMessage("");
-    try { const r = await api("/finance/documents", { method: "POST", body: JSON.stringify(payload()) }); const data = await r.json().catch(() => ({})); if (!r.ok) throw new Error(String(data.detail || "Unable to create document")); setMessage(`${data.document_number} created.`); await load(); }
-    catch (e) { setMessage(e instanceof Error ? e.message : "Unable to create document"); } finally { setBusy(false); }
+    try {
+      const response = await api("/finance/documents", { method: "POST", body: JSON.stringify(payload()) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(String(data.detail || "Unable to create document"));
+      // Save first. A PDF failure must never cause a second quotation to be generated.
+      setMessage(`${data.document_number} created.`);
+      await load();
+      if (downloadPdf) {
+        try {
+          const pdfResponse = await fetch(`${API}/finance/documents/${data.id}/pdf`, { credentials: "include" });
+          if (!pdfResponse.ok) throw new Error("PDF download could not be completed");
+          const blob = await pdfResponse.blob();
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url; link.download = `${data.document_number}.pdf`; link.click();
+          window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+          setMessage(`${data.document_number} created and PDF downloaded.`);
+        } catch {
+          setMessage(`${data.document_number} was saved, but the PDF download failed. Use Download in the register to retry; do not generate another quotation.`);
+        }
+      }
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Unable to create document");
+    } finally { setBusy(false); }
   }
   async function action(row: DocumentRow, path: string, body?: unknown) {
     if (!canWrite) return setMessage("Your Finance role is read-only.");
@@ -96,7 +127,7 @@ export default function FinanceDocumentsPage() {
           <div className="grid gap-3 md:grid-cols-2"><label className="text-xs font-bold">Address<input className="input mt-1" value={address} onChange={(e) => setAddress(e.target.value)} /></label><label className="text-xs font-bold">{type === "quotation" ? "Valid until" : "Optional validity date"}<input className="input mt-1" type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} /></label></div>
           <div className="rounded-2xl border p-4"><div className="mb-3 flex items-center justify-between"><div><p className="font-black">Line items</p><p className="text-[10px] text-[var(--admin-muted)]">Up to eight services/items per document.</p></div><button className="btn-secondary" disabled={lines.length >= 8} onClick={addLine}><Plus size={14} />Add item</button></div><div className="space-y-3">{lines.map((line, i) => <div key={i} className="grid gap-2 rounded-xl bg-[#fafcfb] p-3 lg:grid-cols-[2fr_2fr_.6fr_.8fr_.8fr_auto]"><input className="input" placeholder="Description" value={line.description} onChange={(e) => updateLine(i, "description", e.target.value)} /><input className="input" placeholder="Details" value={line.details} onChange={(e) => updateLine(i, "details", e.target.value)} /><input className="input" type="number" min="1" value={line.quantity} onChange={(e) => updateLine(i, "quantity", e.target.value)} /><input className="input" type="number" min="0" step="0.01" value={line.rate} onChange={(e) => updateLine(i, "rate", e.target.value)} /><input className="input" type="number" min="0" step="0.01" value={line.tax} onChange={(e) => updateLine(i, "tax", e.target.value)} /><button className="btn-secondary" disabled={lines.length === 1} onClick={() => removeLine(i)}><Trash2 size={14} /></button></div>)}</div></div>
           <label className="text-xs font-bold">Notes<textarea className="input mt-1 min-h-24" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Commercial terms or notes for the client" /></label>
-          <button className="btn-primary" disabled={busy} onClick={() => void create()}><FilePlus2 size={15} />Create {type === "quotation" ? "quotation" : "pro-forma"}</button>
+          <button className="btn-primary" disabled={busy} onClick={() => void create()}><FilePlus2 size={15} />Create {type === "quotation" ? "quotation" : "pro-forma"}</button><button className="btn-secondary" disabled={busy} onClick={() => void create(true)}><Download size={15} />Generate &amp; download PDF</button>
         </div>
       </section> : <section className="surface-card p-4 text-xs text-[var(--admin-muted)]">Your Finance role is read-only. You can review and download commercial documents.</section>}
       {message ? <div className="surface-card p-3 text-xs font-bold">{message}</div> : null}
