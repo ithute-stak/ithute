@@ -22,7 +22,7 @@ def test_broken_header_image_uses_branded_fallback():
 def test_missing_header_image_uses_branded_fallback():
     pdf = BytesIO()
     c = canvas.Canvas(pdf, pagesize=A4)
-    with patch.object(finance_documents._HEADER_PATH, "is_file", return_value=False):
+    with patch.object(type(finance_documents._HEADER_PATH), "is_file", return_value=False):
         finance_documents._header(c, *A4)
     c.save()
     assert pdf.getvalue().startswith(b"%PDF")
