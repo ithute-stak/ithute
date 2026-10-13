@@ -6,7 +6,7 @@ from reportlab.lib.utils import ImageReader
 
 CONTACT_PHONE = "59001394"
 CONTACT_EMAIL = "thekoetlisi@ithute.co.ls"
-CONTACT_ADDRESS = "Mokorotlong Maseru 100, Victoria Hotel Room 111"
+CONTACT_ADDRESS = "Mokorotlong Maseru 100, Victorial Hotel Room 111"
 MPESA_NUMBER = "59001394"
 MPESA_NAME = "Koetlisi Theko"
 ASSET = Path(__file__).resolve().parents[1] / "assets" / "ithute_imail_quotation_header.jpg"
