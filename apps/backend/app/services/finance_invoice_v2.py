@@ -119,8 +119,8 @@ def _draw_signature(c: canvas.Canvas, x: float, line_y: float) -> None:
         verified_signature(),
         x + 12,
         line_y + 5,
-        width=128,
-        height=55,
+        width=94,
+        height=29,
         preserveAspectRatio=True,
         mask="auto",
     )
@@ -270,7 +270,8 @@ def render_invoice_pdf(invoice: FinanceInvoice, *, include_stamp: bool = False) 
     c.drawString(left + 230, card_y - 35, "Thank you for choosing iMail.")
 
     # The real handwritten signature is part of the template. There is no typed fallback.
-    signature_line_y = card_y - 67
+    # Keep the signed name/title above the shared footer clearance (y=53).
+    signature_line_y = card_y - 35
     _draw_signature(c, left + 8, signature_line_y)
 
     if include_stamp:
