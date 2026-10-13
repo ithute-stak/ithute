@@ -292,7 +292,7 @@ export default function DomainsPage() {
         ? `${domain.ascii_name} ownership verified. Reconcile its DNS zone to activate the verified DNS/mail lifecycle.`
         : domain.verification_method === "nameserver"
           ? "Ithute nameserver delegation is not complete yet. If this domain is still hosted on Cloudflare, Zeecom or another external DNS provider, use TXT before cutover; otherwise set both ns1.ithute.co.ls and ns2.ithute.co.ls at the registrar, wait for propagation, then retry."
-          : "TXT record not found or does not match the active challenge yet. Keep the current external DNS active and allow time for TXT propagation.",
+          : "Ownership not verified yet. Option 1: publish the TXT challenge at your current DNS provider (including Zeecom). Option 2: after safely copying DNS records and changing registrar delegation to both Ithute nameservers, click Verify again; no TXT is needed for that option.",
     );
     await loadDomains();
   }
@@ -417,7 +417,7 @@ export default function DomainsPage() {
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#123a38] text-white"><ShieldCheck size={18}/></div>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-black text-[#21342a]">TXT ownership verification</p>
-              <p className="mt-1 text-[11px] text-[#718078]">Existing/external DNS was detected. Publish this one-time TXT record at the DNS provider currently serving the domain. Keep the existing nameservers in place while you stage or import all records needed for a safe cutover.</p>
+              <p className="mt-1 text-[11px] text-[#718078]">Existing/external DNS was detected. TXT is optional if you instead complete a safe nameserver cutover to Ithute. To verify without changing nameservers, publish this one-time TXT record at the DNS provider currently serving the domain. Keep the existing nameservers in place while you stage or import all records needed for a safe cutover.</p>
               <div className="mt-3 grid gap-3 lg:grid-cols-2">
                 {[["TXT host / name", challenge.record_name], ["TXT value", challenge.verification_value]].map(([label, value]) => <div key={label}>
                   <span className="label">{label}</span>
@@ -453,7 +453,7 @@ export default function DomainsPage() {
                       : domain.ownership_verified_at ? <span className="font-bold text-emerald-700">Ownership verified</span>
                       : domain.verification_method === "nameserver"
                         ? <div><div className="font-bold text-amber-700">Nameserver delegation required</div><div className="mt-1 text-[9px] text-[#89958e]">On external DNS? Use TXT before cutover</div></div>
-                        : <div><div className="font-bold text-amber-700">TXT required</div><div className="mt-1 text-[9px] text-[#89958e]">token …{domain.verification_token_hint}</div></div>}
+                        : <div><div className="font-bold text-amber-700">TXT or Ithute NS</div><div className="mt-1 text-[9px] text-[#89958e]">token …{domain.verification_token_hint} · NS cutover is an alternative</div></div>}
                   </td>
                   <td>
                     <div className="flex flex-wrap gap-2">
