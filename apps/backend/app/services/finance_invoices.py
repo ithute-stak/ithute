@@ -1,4 +1,4 @@
-from app.services.finance_branding import draw_brand_header, draw_contact_footer, draw_mpesa_note, MPESA_NUMBER, MPESA_NAME
+from app.services.finance_branding import draw_brand_header, draw_contact_footer, draw_mpesa_note, MPESA_NUMBER, MPESA_NAME, verified_signature
 import base64
 from datetime import datetime, timezone
 from html import escape
@@ -269,7 +269,7 @@ def render_invoice_pdf(invoice: FinanceInvoice) -> bytes:
     for line in note_lines:
         c.drawString(note_x + 15, yy, line); yy -= 14
 
-    # Signature area: intentionally open and light, matching the approved design.
+    # Signature area: approved artwork is mandatory.\n    verified_signature()
     sig_y = card_y - 88
     try:
         signature = ImageReader(BytesIO(base64.b64decode(_SIGNATURE_PNG_B64)))
