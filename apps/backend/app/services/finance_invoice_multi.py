@@ -1,5 +1,5 @@
 from __future__ import annotations
-from app.services.finance_branding import draw_brand_header, draw_contact_footer, draw_mpesa_note
+from app.services.finance_branding import draw_brand_header, draw_contact_footer, draw_mpesa_note, verified_signature
 
 from datetime import datetime, timezone
 from io import BytesIO
@@ -43,7 +43,7 @@ def _header(c: canvas.Canvas, width: float, height: float) -> float:
 
 
 def _signature(c: canvas.Canvas, x: float, y: float) -> None:
-    c.drawImage(ImageReader(str(_SIGNATURE_PATH)), x + 10, y + 5, width=128, height=55, preserveAspectRatio=True, mask="auto")
+    c.drawImage(verified_signature(), x + 10, y + 5, width=128, height=55, preserveAspectRatio=True, mask="auto")
     c.setStrokeColor(NAVY); c.line(x, y, x + 205, y)
     c.setFillColor(TEXT); c.setFont("Helvetica-Bold", 9.2); c.drawString(x, y - 15, AUTHORISED_NAME)
     c.setFillColor(MUTED); c.setFont("Helvetica", 8); c.drawString(x, y - 29, AUTHORISED_TITLE)
