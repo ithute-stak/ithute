@@ -149,14 +149,39 @@ def credit_note_out(row: FinanceCreditNote) -> dict:
 
 def _header(c: canvas.Canvas, width: float, height: float) -> float:
     header_h = width * 270 / 1103
-    if _HEADER_PATH.is_file():
+    try:
+        if not _HEADER_PATH.is_file():
+            raise OSError("Header artwork unavailable")
         c.drawImage(ImageReader(str(_HEADER_PATH)), 0, height - header_h, width=width, height=header_h, preserveAspectRatio=False)
+    except (OSError, ValueError):
+        # An optional damaged raster must not prevent a customer from receiving
+        # a quotation, pro-forma, receipt or credit-note PDF.
+        c.saveState()
+        c.setFillColor(NAVY)
+        c.rect(0, height - header_h, width, header_h, stroke=0, fill=1)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 24)
+        c.drawString(40, height - 64, "ITHUTE")
+        c.setFont("Helvetica", 12)
+        c.drawString(40, height - 86, "Digital Solutions")
+        c.setFillColor(GOLD)
+        c.rect(40, height - header_h + 24, width - 80, 3, stroke=0, fill=1)
+        c.restoreState()
     return header_h
 
 
 def _signature(c: canvas.Canvas, x: float, y: float) -> None:
-    if _SIGNATURE_PATH.is_file():
+    try:
+        if not _SIGNATURE_PATH.is_file():
+            raise OSError("Signature artwork unavailable")
         c.drawImage(ImageReader(str(_SIGNATURE_PATH)), x + 10, y + 5, width=128, height=55, preserveAspectRatio=True, mask="auto")
+    except (OSError, ValueError):
+        # Do not fabricate a handwritten signature.
+        c.saveState()
+        c.setFont("Helvetica-Oblique", 8)
+        c.setFillColor(MUTED)
+        c.drawString(x + 10, y + 13, "Signature unavailable")
+        c.restoreState()
     c.setStrokeColor(NAVY)
     c.line(x, y, x + 205, y)
     c.setFillColor(TEXT)

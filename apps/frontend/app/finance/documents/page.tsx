@@ -112,8 +112,30 @@ export default function FinanceDocumentsPage() {
     catch (e) { setMessage(e instanceof Error ? e.message : "Unable to delete"); } finally { setBusy(false); }
   }
   async function pdf(row: DocumentRow) {
-    const r = await fetch(`${API}/finance/documents/${row.id}/pdf`, { credentials: "include" }); if (!r.ok) return;
-    const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `${row.document_number}.pdf`; a.click(); URL.revokeObjectURL(url);
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch(`${API}/finance/documents/${row.id}/pdf`, { credentials: "include" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(String(body.detail || "PDF generation failed. Please try again."));
+      }
+      const blob = await response.blob();
+      if (!blob.size || !blob.type.includes("pdf")) throw new Error("The server did not return a valid PDF.");
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${row.document_number}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+      setMessage(`Downloading ${row.document_number}.pdf`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to download PDF.");
+    } finally {
+      setBusy(false);
+    }
   }
   const money = (minor: number) => `M ${(minor / 100).toFixed(2)}`;
 
