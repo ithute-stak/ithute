@@ -40,8 +40,7 @@ def draw_brand_header(c, width, height):
 def draw_contact_footer(c, left=35, right=560, y=25):
     """Accessible single-line contact footer, preserving document page geometry."""
     c.saveState()
-    c.setFillColor(HexColor("#092F58"))
-    c.setFont("Helvetica-Bold", 7)
+    # Replace legacy footer labels without covering the bottom brand stripe.\n    c.setFillColor(HexColor("#FFFFFF"))\n    c.rect(0, 9, 595, 37, stroke=0, fill=1)\n    c.setFillColor(HexColor("#092F58"))\n    c.setFont("Helvetica-Bold", 7)
     c.drawString(left, y + 12, f"Tel: {CONTACT_PHONE}  |  {CONTACT_EMAIL}")
     c.setFont("Helvetica", 7)
     c.drawString(left, y, CONTACT_ADDRESS)
