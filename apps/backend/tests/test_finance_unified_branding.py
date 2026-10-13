@@ -10,7 +10,7 @@ from app.services import finance_branding
 def test_official_document_contact_details():
     assert finance_branding.CONTACT_PHONE == "59001394"
     assert finance_branding.CONTACT_EMAIL == "thekoetlisi@ithute.co.ls"
-    assert finance_branding.CONTACT_ADDRESS == "Mokorotlong Maseru 100, Victoria Hotel Room 111"
+    assert finance_branding.CONTACT_ADDRESS == "Mokorotlong Maseru 100, Victorial Hotel Room 111"
     assert finance_branding.MPESA_NUMBER == "59001394"
     assert finance_branding.MPESA_NAME == "Koetlisi Theko"
 
