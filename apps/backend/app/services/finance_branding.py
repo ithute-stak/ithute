@@ -55,3 +55,35 @@ def draw_mpesa_note(c, x, y):
     c.setFont("Helvetica-Bold", 8)
     c.drawString(x, y, f"M-Pesa: {MPESA_NUMBER}  |  {MPESA_NAME}")
     c.restoreState()
+
+# Signature is an issuance requirement: never emit an unsigned finance PDF.
+SIGNATURE_ASSET = Path(__file__).resolve().parents[1] / "assets" / "koetlisi_theko_mofoka_signature.png"
+SIGNATORY_NAME = "Koetlisi Theko Mofoka"
+SIGNATORY_TITLE = "CEO, Ithute Digital Solutions"
+
+
+def verified_signature():
+    """Return approved artwork, or stop rendering instead of silently omitting it."""
+    source = Path(os.environ.get("ITHUTE_FINANCE_SIGNATURE_PATH") or SIGNATURE_ASSET)
+    try:
+        if not source.is_file():
+            raise ValueError("Approved signature image is missing")
+        img = ImageReader(str(source))
+        img.getSize()  # fail eagerly on corrupt image
+        return img
+    except Exception as exc:
+        raise ValueError("Approved finance signature is unavailable; signed PDF cannot be issued") from exc
+
+
+def draw_authorized_signature(c, x, line_y):
+    """Signed block for finance documents that have no signature region."""
+    c.drawImage(verified_signature(), x + 10, line_y + 5, width=110, height=44, preserveAspectRatio=True, mask="auto")
+    c.saveState()
+    c.setStrokeColor(HexColor("#082E63"))
+    c.line(x, line_y, x + 195, line_y)
+    c.setFillColor(HexColor("#082E63"))
+    c.setFont("Helvetica-Bold", 8.4)
+    c.drawString(x, line_y - 13, SIGNATORY_NAME)
+    c.setFont("Helvetica", 7.5)
+    c.drawString(x, line_y - 25, SIGNATORY_TITLE)
+    c.restoreState()
