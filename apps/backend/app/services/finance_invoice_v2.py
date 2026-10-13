@@ -1,4 +1,4 @@
-from app.services.finance_branding import draw_brand_header, draw_contact_footer, draw_mpesa_note, verified_signature
+from app.services.finance_branding import draw_brand_header, draw_contact_footer, verified_signature, MPESA_NUMBER, MPESA_NAME
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -252,13 +252,13 @@ def render_invoice_pdf(invoice: FinanceInvoice, *, include_stamp: bool = False) 
     c.setFont("Helvetica-Bold", 8.5)
     c.drawString(left + 16, card_y + 87, "M-PESA")
     c.setFont("Helvetica-Bold", 15)
-    c.drawString(left + 16, card_y + 62, "59001394")
+    c.drawString(left + 16, card_y + 62, MPESA_NUMBER)
     c.setFillColor(MUTED)
     c.setFont("Helvetica", 8)
     c.drawString(left + 170, card_y + 87, "Registered name")
     c.setFillColor(TEXT)
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(left + 170, card_y + 65, "Koetlisi Theko")
+    c.drawString(left + 170, card_y + 65, MPESA_NAME)
     c.setFillColor(MUTED)
     c.setFont("Helvetica", 8)
     c.drawString(left + 16, card_y + 23, f"Bank payment also available: {BANK_NAME}  |  {BANK_ACCOUNT_NAME}  |  {BANK_ACCOUNT_NUMBER}")
