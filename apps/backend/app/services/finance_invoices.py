@@ -60,6 +60,7 @@ def build_default_email_body(
         f"Bank: {BANK_NAME}\n"
         f"Account Name: {BANK_ACCOUNT_NAME}\n"
         f"Account Number: {BANK_ACCOUNT_NUMBER}\n"
+        f"M-Pesa: {MPESA_NUMBER} (Name: {MPESA_NAME})\n"
         f"Payment Reference: {invoice_number}\n\n"
         "Please use the invoice number as the payment reference. If you have any questions, "
         f"please reply to {FINANCE_SENDER}.\n\n"
