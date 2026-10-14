@@ -41,8 +41,9 @@ def main():
         page.goto(BASE + "/dashboard")
         page.get_by_text("Reviewing your domains").wait_for(timeout=15000)
         # Audit and health should start while slow per-tenant domains remain in flight.
-        page.wait_for_function("() => document.body.textContent.includes('Recent activity') || document.body.textContent.includes('No recent')", timeout=15000)
-        page.get_by_text("Reviewing your domains").wait_for(timeout=15000)
+        page.get_by_text("Loading activity...", exact=True).wait_for(state="hidden", timeout=15000)
+        # Audit must finish even while domain aggregation is still loading.
+        page.get_by_text("Reviewing your domains").wait_for(state="visible", timeout=15000)
         page.wait_for_function("() => !document.body.textContent.includes('Reviewing your domains')", timeout=20000)
         assert calls["domains"] == 10, calls
         assert calls["audit"] >= 1, calls
