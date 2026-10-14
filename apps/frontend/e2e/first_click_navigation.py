@@ -26,7 +26,7 @@ def mock_api(route):
 
 
 def verify_direct_navigation(page, target, expected_path):
-    page.get_by_role("link", name=target, exact=True).click()
+    page.locator("aside:visible").get_by_role("link", name=target, exact=True).click()
     page.wait_for_url(f"{BASE_URL}{expected_path}", timeout=15000)
     assert urlparse(page.url).path == expected_path
 
@@ -40,13 +40,13 @@ def main():
             page.route("**/api/v1/**", mock_api)
             page.route("**/health/ready", lambda route: route.fulfill(status=200, body="ok"))
             page.goto(f"{BASE_URL}/dashboard")
-            page.get_by_text("Ithute Control Centre", exact=True).first.wait_for(timeout=15000)
+            page.locator(".control-shell-topbar").wait_for(state="visible", timeout=15000)
 
             mobile = viewport["width"] < 1024
             if mobile:
                 page.get_by_role("button", name="Toggle navigation").click()
             # Expanders are distinct from direct links: one click expands a category.
-            page.get_by_role("button", name="Mail platform").click()
+            page.locator("aside:visible").get_by_role("button", name="Mail platform").click()
             verify_direct_navigation(page, "Mailboxes", "/mailboxes")
             if mobile:
                 page.get_by_role("button", name="Toggle navigation").click()
