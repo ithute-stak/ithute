@@ -71,12 +71,22 @@ export default function Dashboard() {
         const activeContexts = contexts.filter((context) => context.status === "active");
         setTenantCount(activeContexts.length);
 
+        // Bound concurrency avoids serial tenant-domain waterfalls while
+        // protecting the API from a burst of twenty simultaneous requests.
         const domains: Domain[] = [];
-        for (const context of activeContexts.slice(0, 20)) {
-          const domainResponse = await api(`/tenants/${context.tenant_id}/domains`);
-          if (domainResponse.ok) {
-            const data = await domainResponse.json();
-            domains.push(...(data.items || []));
+        const contextsToLoad = activeContexts.slice(0, 20);
+        for (let offset = 0; offset < contextsToLoad.length; offset += 5) {
+          const batch = contextsToLoad.slice(offset, offset + 5);
+          const results = await Promise.allSettled(
+            batch.map(async (context): Promise<Domain[]> => {
+              const response = await api(`/tenants/${context.tenant_id}/domains`);
+              if (!response.ok) return [];
+              const data: { items?: Domain[] } = await response.json();
+              return Array.isArray(data.items) ? data.items : [];
+            }),
+          );
+          for (const result of results) {
+            if (result.status === "fulfilled") domains.push(...result.value);
           }
         }
 
