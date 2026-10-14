@@ -26,12 +26,15 @@ export function WebmailNextNav() {
     return () => document.removeEventListener("keydown", escape);
   }, [open]);
   useEffect(() => {
-    const close = (event: MouseEvent) => {
-      if (root.current && !root.current.contains(event.target as Node)) setOpen(false);
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (event.target instanceof Node && !root.current?.contains(event.target)) {
+        setOpen(false);
+      }
     };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, []);
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [open]);
 
   if (pathname === "/webmail/login") return null;
 
