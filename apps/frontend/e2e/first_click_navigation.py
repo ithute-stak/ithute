@@ -51,6 +51,21 @@ def main():
             if mobile:
                 page.get_by_role("button", name="Toggle navigation").click()
             verify_direct_navigation(page, "Command centre", "/dashboard")
+            # Each direct route should navigate after exactly one click, not a retry.
+            for group, label, destination in (
+                ("Domains & DNS", "Domain portfolio", "/domains"),
+                ("Domains & DNS", "DNS zones", "/dns"),
+                ("Application hosting", "Hosted projects", "/hosting"),
+                ("Business", "Billing & subscription", "/billing"),
+            ):
+                page.goto(f"{BASE_URL}/dashboard")
+                page.locator(".control-shell-topbar").wait_for(state="visible", timeout=15000)
+                if mobile:
+                    page.get_by_role("button", name="Toggle navigation").click()
+                sidebar = page.locator("aside:visible")
+                sidebar.get_by_role("button", name=group).click()
+                assert sidebar.get_by_role("link", name=label, exact=True).is_visible()
+                verify_direct_navigation(page, label, destination)
             context.close()
         browser.close()
 
