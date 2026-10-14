@@ -73,6 +73,7 @@ export default function Dashboard() {
           contexts = membershipResponse.ok ? await membershipResponse.json() : [];
         }
 
+        if (signal.aborted) return;
         const activeContexts = contexts.filter((context) => context.status === "active");
         if (signal.aborted) return;
         setTenantCount(activeContexts.length);
@@ -91,13 +92,14 @@ export default function Dashboard() {
               const contextsToLoad = activeContexts.slice(0, 20);
               const domains: Domain[] = [];
               for (let offset = 0; offset < contextsToLoad.length; offset += 5) {
+                if (signal.aborted) return;
                 const batch = contextsToLoad.slice(offset, offset + 5);
                 const results = await Promise.allSettled(
                   batch.map(async (context): Promise<Domain[]> => {
                     const response = await api(`/tenants/${context.tenant_id}/domains`, signal);
-                    if (!response.ok) return [];
+                    if (!response.ok || signal.aborted) return [];
                     const body: { items?: Domain[] } = await response.json();
-                    return Array.isArray(body.items) ? body.items : [];
+                    return signal.aborted ? [] : Array.isArray(body.items) ? body.items : [];
                   }),
                 );
                 for (const result of results) {
