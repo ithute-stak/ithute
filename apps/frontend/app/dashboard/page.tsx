@@ -27,8 +27,8 @@ type Domain = {
 
 type Health = "good" | "bad" | "warn";
 
-async function api(path: string) {
-  return apiFetch(path, { cache: "no-store" });
+async function api(path: string, signal?: AbortSignal) {
+  return apiFetch(path, { cache: "no-store", signal });
 }
 
 export default function Dashboard() {
@@ -44,20 +44,24 @@ export default function Dashboard() {
   const [auditLoading, setAuditLoading] = useState(true);
 
   useEffect(() => {
+    const controller = new AbortController();
+    const { signal } = controller;
     void (async () => {
       try {
-        const meResponse = await api("/auth/me");
+        const meResponse = await api("/auth/me", signal);
+        if (signal.aborted) return;
         if (!meResponse.ok) {
           router.replace("/login");
           return;
         }
 
         const me: User = await meResponse.json();
+        if (signal.aborted) return;
         setUser(me);
 
         let contexts: Membership[] = [];
         if (me.is_platform_owner) {
-          const tenantResponse = await api("/tenants");
+          const tenantResponse = await api("/tenants", signal);
           const data = tenantResponse.ok ? await tenantResponse.json() : [];
           contexts = data.map((item: { id: string; name: string; status: string }) => ({
             tenant_id: item.id,
@@ -65,11 +69,12 @@ export default function Dashboard() {
             status: item.status,
           }));
         } else {
-          const membershipResponse = await api("/me/memberships");
+          const membershipResponse = await api("/me/memberships", signal);
           contexts = membershipResponse.ok ? await membershipResponse.json() : [];
         }
 
         const activeContexts = contexts.filter((context) => context.status === "active");
+        if (signal.aborted) return;
         setTenantCount(activeContexts.length);
 
         const auditPath = me.is_platform_owner
@@ -89,7 +94,7 @@ export default function Dashboard() {
                 const batch = contextsToLoad.slice(offset, offset + 5);
                 const results = await Promise.allSettled(
                   batch.map(async (context): Promise<Domain[]> => {
-                    const response = await api(`/tenants/${context.tenant_id}/domains`);
+                    const response = await api(`/tenants/${context.tenant_id}/domains`, signal);
                     if (!response.ok) return [];
                     const body: { items?: Domain[] } = await response.json();
                     return Array.isArray(body.items) ? body.items : [];
@@ -99,6 +104,7 @@ export default function Dashboard() {
                   if (result.status === "fulfilled") domains.push(...result.value);
                 }
               }
+              if (signal.aborted) return;
               setDomainCount(domains.length);
               setVerifiedCount(domains.filter((domain) => Boolean(domain.ownership_verified_at)).length);
               setDnsReady(domains.filter((domain) =>
@@ -107,37 +113,44 @@ export default function Dashboard() {
                 Boolean(domain.ownership_verified_at),
               ).length);
             } finally {
-              setDomainsLoading(false);
+              if (!signal.aborted) setDomainsLoading(false);
             }
           })(),
           (async () => {
             try {
               if (!auditPath) return;
-              const response = await api(auditPath);
-              if (response.ok) setAudit(await response.json());
+              const response = await api(auditPath, signal);
+              if (response.ok) {
+                const auditData = await response.json();
+                if (!signal.aborted) setAudit(auditData);
+              }
             } finally {
-              setAuditLoading(false);
+              if (!signal.aborted) setAuditLoading(false);
             }
           })(),
           (async () => {
             try {
               const response = await fetch(`${PLATFORM_API_URL.replace(/\/api\/v1$/, "")}/health/ready`, {
                 cache: "no-store",
+                signal,
               });
-              setHealth(response.ok ? "good" : "bad");
+              if (!signal.aborted) setHealth(response.ok ? "good" : "bad");
             } catch {
-              setHealth("bad");
+              if (!signal.aborted) setHealth("bad");
             }
           })(),
         ]);
       } catch (error) {
         // A broken optional service should not trap the dashboard in a spinner.
-        console.error("Ithute dashboard initialization failed", error);
+        if (!signal.aborted) console.error("Ithute dashboard initialization failed", error);
       } finally {
-        setDomainsLoading(false);
-        setAuditLoading(false);
+        if (!signal.aborted) {
+          setDomainsLoading(false);
+          setAuditLoading(false);
+        }
       }
     })();
+    return () => controller.abort();
   }, [router]);
 
   const verificationProgress = useMemo(
