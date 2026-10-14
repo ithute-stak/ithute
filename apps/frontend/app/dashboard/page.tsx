@@ -71,7 +71,7 @@ export default function Dashboard() {
         const activeContexts = contexts.filter((context) => context.status === "active");
         setTenantCount(activeContexts.length);
 
-        // Bound concurrency avoids serial tenant-domain waterfalls while
+        // Display the workspace immediately after identity and memberships load.\n        // Optional widgets continue loading independently.\n        setLoading(false);\n\n        // Bound concurrency avoids serial tenant-domain waterfalls while
         // protecting the API from a burst of twenty simultaneous requests.
         const domains: Domain[] = [];
         const contextsToLoad = activeContexts.slice(0, 20);
@@ -130,6 +130,9 @@ export default function Dashboard() {
             }
           })(),
         ]);
+      } catch (error) {
+        // A broken optional service should not trap the dashboard in a spinner.
+        console.error("Ithute dashboard initialization failed", error);
       } finally {
         setLoading(false);
       }
