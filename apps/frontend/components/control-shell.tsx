@@ -167,17 +167,29 @@ function NavItem({ group, path, compact, onGo }: { group: NavGroup; path: string
   if (compact) {
     return (
       <div ref={compactMenu.rootRef} className="relative">
-        <button
-          ref={compactMenu.triggerRef}
-          type="button"
-          title={group.label}
-          aria-haspopup="menu"
-          aria-expanded={compactMenu.open}
-          onClick={compactMenu.toggle}
-          className={`flex min-h-10 w-full items-center justify-center rounded-xl px-2 transition ${isActive || compactMenu.open ? "bg-white/[.10] text-white" : "text-[#b8cbc4] hover:bg-white/[.07] hover:text-white"}`}
-        >
-          <Icon size={16} />
-        </button>
+        <div className={`flex min-h-10 items-center rounded-xl transition ${isActive || compactMenu.open ? "bg-white/[.10] text-white" : "text-[#b8cbc4] hover:bg-white/[.07] hover:text-white"}`}>
+          <Link
+            href={group.children![0].href}
+            onClick={onGo}
+            title={`Open ${group.label}`}
+            aria-label={group.label}
+            className="flex min-h-10 min-w-0 flex-1 items-center justify-center rounded-l-xl hover:bg-white/[.08]"
+          >
+            <Icon size={16} />
+          </Link>
+          <button
+            ref={compactMenu.triggerRef}
+            type="button"
+            title={`Expand ${group.label}`}
+            aria-label={`Expand ${group.label}`}
+            aria-haspopup="menu"
+            aria-expanded={compactMenu.open}
+            onClick={compactMenu.toggle}
+            className="flex min-h-10 w-6 shrink-0 items-center justify-center rounded-r-xl hover:bg-white/[.10]"
+          >
+            <ChevronDown size={12} className={`transition ${compactMenu.open ? "rotate-180" : ""}`} />
+          </button>
+        </div>
         {compactMenu.open ? (
           <div role="menu" className="ithute-dropdown-panel absolute left-[54px] top-0 z-[70] w-64 border-white/[.08] bg-[#123a38] p-2 text-white">
             <div className="px-3 pb-2 pt-1 text-[9px] font-black uppercase tracking-[.14em] text-[#8fa9a1]">{group.label}</div>
