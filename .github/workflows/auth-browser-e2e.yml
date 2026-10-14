@@ -72,6 +72,9 @@ jobs:
       - name: Run central auth browser regression
         run: python e2e/auth_flow.py
 
+      - name: Verify single-click desktop and mobile navigation
+        run: python e2e/first_click_navigation.py
+
       - name: Preserve frontend diagnostics
         if: always()
         run: cat /tmp/ithute-auth-e2e-next.log || true
