@@ -26,12 +26,15 @@ export function WebmailNextNav() {
     return () => document.removeEventListener("keydown", escape);
   }, [open]);
   useEffect(() => {
-    const close = (event: MouseEvent) => {
-      if (root.current && !root.current.contains(event.target as Node)) setOpen(false);
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (event.target instanceof Node && !root.current?.contains(event.target)) {
+        setOpen(false);
+      }
     };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, []);
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [open]);
 
   if (pathname === "/webmail/login") return null;
 
@@ -44,9 +47,9 @@ export function WebmailNextNav() {
             <button type="button" onClick={() => setOpen(false)} className="grid h-8 w-8 place-items-center rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10" aria-label="Close iMail Hub"><X size={15} /></button>
           </div>
           <div className="p-2">
-            <Link href="/webmail" className={`flex items-center gap-3 rounded-2xl px-3 py-2.5 transition ${pathname === "/webmail" ? "bg-blue-50 text-blue-800 dark:bg-blue-500/10 dark:text-blue-200" : "hover:bg-slate-50 dark:hover:bg-white/5"}`}><span className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"><Mail size={17} /></span><span><span className="block text-sm font-bold">Hosted iMail</span><span className="block text-[11px] text-slate-500">Your Ithute business mailbox</span></span></Link>
+            <Link href="/webmail" onClick={() => setOpen(false)} className={`flex items-center gap-3 rounded-2xl px-3 py-2.5 transition ${pathname === "/webmail" ? "bg-blue-50 text-blue-800 dark:bg-blue-500/10 dark:text-blue-200" : "hover:bg-slate-50 dark:hover:bg-white/5"}`}><span className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"><Mail size={17} /></span><span><span className="block text-sm font-bold">Hosted iMail</span><span className="block text-[11px] text-slate-500">Your Ithute business mailbox</span></span></Link>
             {ITEMS.map(({ href, label, detail, icon: Icon }) => (
-              <Link key={href} href={href} className={`mt-1 flex items-center gap-3 rounded-2xl px-3 py-2.5 transition ${pathname.startsWith(href) ? "bg-blue-50 text-blue-800 dark:bg-blue-500/10 dark:text-blue-200" : "hover:bg-slate-50 dark:hover:bg-white/5"}`}><span className="grid h-9 w-9 place-items-center rounded-xl bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300"><Icon size={17} /></span><span className="min-w-0"><span className="block truncate text-sm font-bold">{label}</span><span className="block truncate text-[11px] text-slate-500">{detail}</span></span></Link>
+              <Link key={href} href={href} onClick={() => setOpen(false)} className={`mt-1 flex items-center gap-3 rounded-2xl px-3 py-2.5 transition ${pathname.startsWith(href) ? "bg-blue-50 text-blue-800 dark:bg-blue-500/10 dark:text-blue-200" : "hover:bg-slate-50 dark:hover:bg-white/5"}`}><span className="grid h-9 w-9 place-items-center rounded-xl bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300"><Icon size={17} /></span><span className="min-w-0"><span className="block truncate text-sm font-bold">{label}</span><span className="block truncate text-[11px] text-slate-500">{detail}</span></span></Link>
             ))}
           </div>
         </div>
