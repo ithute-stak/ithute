@@ -58,6 +58,8 @@ async def main():
         await page.route("**/health/ready", health)
         await page.goto(BASE + "/dashboard")
         await page.get_by_text("Reviewing your domains").wait_for(timeout=15000)
+        # Confirm optional requests start before the domains finish.
+        await page.wait_for_function("() => document.body.textContent.includes('Loading activity...')", timeout=15000)
         # Independent audit should finish before deliberately delayed domains.
         await page.get_by_text("Loading activity...", exact=True).wait_for(
             state="hidden", timeout=15000
@@ -70,6 +72,20 @@ async def main():
         )
         assert requests == {"domains": 10, "audit": 1, "health": 1}, requests
         assert 1 < peak_in_flight <= 5, peak_in_flight
+
+        # Leaving the dashboard while requests are in flight must not schedule
+        # the next batch of tenant queries or redirect the new route.
+        requests["domains"] = 0
+        await page.goto(BASE + "/dashboard")
+        await page.wait_for_function("() => document.body.textContent.includes('Reviewing your domains')", timeout=15000)
+        await page.wait_for_timeout(150)
+        await page.goto(BASE + "/help")
+        assert urlparse(page.url).path == "/help", page.url
+        count_after_navigation = requests["domains"]
+        await page.wait_for_timeout(1250)
+        assert requests["domains"] == count_after_navigation, (
+            "Additional dashboard domain requests started after navigation", requests
+        )
         await browser.close()
 
 
