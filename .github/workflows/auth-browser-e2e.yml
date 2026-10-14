@@ -75,6 +75,9 @@ jobs:
       - name: Verify single-click desktop and mobile navigation
         run: python e2e/first_click_navigation.py
 
+      - name: Verify dashboard independent loading and bounded concurrency
+        run: python e2e/dashboard_performance.py
+
       - name: Preserve frontend diagnostics
         if: always()
         run: cat /tmp/ithute-auth-e2e-next.log || true
