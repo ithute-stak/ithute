@@ -27,8 +27,8 @@ type Domain = {
 
 type Health = "good" | "bad" | "warn";
 
-async function api(path: string) {
-  return apiFetch(path, { cache: "no-store" });
+async function api(path: string, signal?: AbortSignal) {
+  return apiFetch(path, { cache: "no-store", signal });
 }
 
 export default function Dashboard() {
@@ -40,23 +40,28 @@ export default function Dashboard() {
   const [dnsReady, setDnsReady] = useState(0);
   const [health, setHealth] = useState<Health>("warn");
   const [audit, setAudit] = useState<ControlCentreAudit[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [domainsLoading, setDomainsLoading] = useState(true);
+  const [auditLoading, setAuditLoading] = useState(true);
 
   useEffect(() => {
+    const controller = new AbortController();
+    const { signal } = controller;
     void (async () => {
       try {
-        const meResponse = await api("/auth/me");
+        const meResponse = await api("/auth/me", signal);
+        if (signal.aborted) return;
         if (!meResponse.ok) {
           router.replace("/login");
           return;
         }
 
         const me: User = await meResponse.json();
+        if (signal.aborted) return;
         setUser(me);
 
         let contexts: Membership[] = [];
         if (me.is_platform_owner) {
-          const tenantResponse = await api("/tenants");
+          const tenantResponse = await api("/tenants", signal);
           const data = tenantResponse.ok ? await tenantResponse.json() : [];
           contexts = data.map((item: { id: string; name: string; status: string }) => ({
             tenant_id: item.id,
@@ -64,53 +69,90 @@ export default function Dashboard() {
             status: item.status,
           }));
         } else {
-          const membershipResponse = await api("/me/memberships");
+          const membershipResponse = await api("/me/memberships", signal);
           contexts = membershipResponse.ok ? await membershipResponse.json() : [];
         }
 
+        if (signal.aborted) return;
         const activeContexts = contexts.filter((context) => context.status === "active");
+        if (signal.aborted) return;
         setTenantCount(activeContexts.length);
 
-        const domains: Domain[] = [];
-        for (const context of activeContexts.slice(0, 20)) {
-          const domainResponse = await api(`/tenants/${context.tenant_id}/domains`);
-          if (domainResponse.ok) {
-            const data = await domainResponse.json();
-            domains.push(...(data.items || []));
-          }
-        }
-
-        setDomainCount(domains.length);
-        setVerifiedCount(domains.filter((domain) => Boolean(domain.ownership_verified_at)).length);
-        setDnsReady(
-          domains.filter(
-            (domain) =>
-              domain.status === "verified" &&
-              domain.dns_mode === "platform" &&
-              Boolean(domain.ownership_verified_at),
-          ).length,
-        );
-
-        const auditResponse = me.is_platform_owner
-          ? await api("/audit/platform?limit=8")
+        const auditPath = me.is_platform_owner
+          ? "/audit/platform?limit=8"
           : activeContexts[0]
-            ? await api(`/tenants/${activeContexts[0].tenant_id}/audit?limit=8`)
+            ? `/tenants/${activeContexts[0].tenant_id}/audit?limit=8`
             : null;
 
-        if (auditResponse?.ok) setAudit(await auditResponse.json());
-
-        try {
-          const healthResponse = await fetch(`${PLATFORM_API_URL.replace(/\/api\/v1$/, "")}/health/ready`, {
-            cache: "no-store",
-          });
-          setHealth(healthResponse.ok ? "good" : "bad");
-        } catch {
-          setHealth("bad");
-        }
+        // Start independent tasks together. Domain aggregation is bounded to
+        // five active requests and never blocks audit or readiness indicators.
+        await Promise.allSettled([
+          (async () => {
+            try {
+              const contextsToLoad = activeContexts.slice(0, 20);
+              const domains: Domain[] = [];
+              for (let offset = 0; offset < contextsToLoad.length; offset += 5) {
+                if (signal.aborted) return;
+                const batch = contextsToLoad.slice(offset, offset + 5);
+                const results = await Promise.allSettled(
+                  batch.map(async (context): Promise<Domain[]> => {
+                    const response = await api(`/tenants/${context.tenant_id}/domains`, signal);
+                    if (!response.ok || signal.aborted) return [];
+                    const body: { items?: Domain[] } = await response.json();
+                    return signal.aborted ? [] : Array.isArray(body.items) ? body.items : [];
+                  }),
+                );
+                for (const result of results) {
+                  if (result.status === "fulfilled") domains.push(...result.value);
+                }
+              }
+              if (signal.aborted) return;
+              setDomainCount(domains.length);
+              setVerifiedCount(domains.filter((domain) => Boolean(domain.ownership_verified_at)).length);
+              setDnsReady(domains.filter((domain) =>
+                domain.status === "verified" &&
+                domain.dns_mode === "platform" &&
+                Boolean(domain.ownership_verified_at),
+              ).length);
+            } finally {
+              if (!signal.aborted) setDomainsLoading(false);
+            }
+          })(),
+          (async () => {
+            try {
+              if (!auditPath) return;
+              const response = await api(auditPath, signal);
+              if (response.ok) {
+                const auditData = await response.json();
+                if (!signal.aborted) setAudit(auditData);
+              }
+            } finally {
+              if (!signal.aborted) setAuditLoading(false);
+            }
+          })(),
+          (async () => {
+            try {
+              const response = await fetch(`${PLATFORM_API_URL.replace(/\/api\/v1$/, "")}/health/ready`, {
+                cache: "no-store",
+                signal,
+              });
+              if (!signal.aborted) setHealth(response.ok ? "good" : "bad");
+            } catch {
+              if (!signal.aborted) setHealth("bad");
+            }
+          })(),
+        ]);
+      } catch (error) {
+        // A broken optional service should not trap the dashboard in a spinner.
+        if (!signal.aborted) console.error("Ithute dashboard initialization failed", error);
       } finally {
-        setLoading(false);
+        if (!signal.aborted) {
+          setDomainsLoading(false);
+          setAuditLoading(false);
+        }
       }
     })();
+    return () => controller.abort();
   }, [router]);
 
   const verificationProgress = useMemo(
@@ -120,7 +162,9 @@ export default function Dashboard() {
 
   const firstName = user?.full_name?.trim().split(/\s+/)[0] || (user?.is_platform_owner ? "Platform Owner" : "there");
 
-  const nextAction = domainCount === 0
+  const nextAction = domainsLoading
+    ? { title: "Reviewing your domains", copy: "Checking domain readiness across your organisations.", href: "/domains", label: "Open domains" }
+    : domainCount === 0
     ? { title: "Add your first domain", copy: "Add a domain, verify ownership and connect it to Ithute services.", href: "/domains", label: "Add domain" }
     : verifiedCount < domainCount
       ? { title: "Finish domain verification", copy: `${domainCount - verifiedCount} domain${domainCount - verifiedCount === 1 ? "" : "s"} still need ownership verification.`, href: "/domains", label: "Review domains" }
@@ -133,7 +177,7 @@ export default function Dashboard() {
       <ControlCentreOverview
         health={health}
         firstName={firstName}
-        loading={loading}
+        loading={domainsLoading}
         tenantCount={tenantCount}
         domainCount={domainCount}
         verifiedCount={verifiedCount}
@@ -141,7 +185,7 @@ export default function Dashboard() {
         verificationProgress={verificationProgress}
         nextAction={nextAction}
       />
-      <ControlCentreExtras audit={audit} loading={loading} />
+      <ControlCentreExtras audit={audit} loading={auditLoading} />
     </div>
   );
 }

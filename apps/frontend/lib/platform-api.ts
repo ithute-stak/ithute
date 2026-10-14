@@ -58,8 +58,17 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
     path === "/auth/login" ||
     path === "/auth/ithute/login";
 
-  if (response.status === 401 && !refreshPath && (await refreshSession())) {
-    response = await request();
+  // A route transition can abort the caller while the shared session
+  // refresh is still in progress. Never retry a request for an unmounted view.
+  if (init.signal?.aborted) {
+    throw new DOMException("Request aborted", "AbortError");
+  }
+  if (response.status === 401 && !refreshPath) {
+    const refreshed = await refreshSession();
+    if (init.signal?.aborted) {
+      throw new DOMException("Request aborted", "AbortError");
+    }
+    if (refreshed) response = await request();
   }
 
   return response;
