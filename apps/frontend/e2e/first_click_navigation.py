@@ -4,6 +4,7 @@ Run against the local Next.js server started by auth-browser-e2e.yml.
 API responses are mocked so navigation is not conflated with backend latency.
 """
 import json
+import time
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
@@ -26,9 +27,46 @@ def mock_api(route):
 
 
 def verify_direct_navigation(page, target, expected_path):
-    page.locator("aside:visible").get_by_role("link", name=target, exact=True).click()
-    page.wait_for_url(f"{BASE_URL}{expected_path}", timeout=15000)
-    assert urlparse(page.url).path == expected_path
+    """Record the first actual click before waiting for a route transition."""
+    link = page.locator("aside:visible").get_by_role("link", name=target, exact=True)
+    assert link.get_attribute("href") == expected_path, (
+        f"{target}: href differs from expected {expected_path}"
+    )
+    # The document-level capture handler runs before React's delegated click
+    # handlers. It establishes whether the browser delivered the first click.
+    click_events = []
+    page.expose_function("recordIthuteNavigationClick" + str(id(click_events)), lambda event: click_events.append(event))
+    callback = "recordIthuteNavigationClick" + str(id(click_events))
+    page.evaluate("""(callback) => {
+      document.addEventListener("click", event => {
+        const link = event.target.closest?.('a[href]');
+        if (link) window[callback]({
+          href: link.getAttribute("href"),
+          trusted: event.isTrusted,
+          time: performance.now()
+        });
+      }, {capture: true, once: true});
+    }""", callback)
+    started = time.monotonic()
+    link.click()
+    try:
+        page.wait_for_url(f"{BASE_URL}{expected_path}", timeout=15000)
+    except Exception as error:
+        raise AssertionError(
+            f"First-click navigation failed: {target} -> {expected_path}; "
+            f"observed_url={page.url}; clicks={click_events}; "
+            f"elapsed_ms={int((time.monotonic() - started) * 1000)}"
+        ) from error
+    assert click_events and click_events[0]["href"] == expected_path, (
+        f"{target}: route changed without expected initial click evidence: {click_events}"
+    )
+    print(json.dumps({
+        "event": "first_click_navigation",
+        "label": target,
+        "destination": expected_path,
+        "elapsed_ms": int((time.monotonic() - started) * 1000),
+        "clicks": click_events,
+    }))
 
 
 def main():
