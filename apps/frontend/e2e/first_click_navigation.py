@@ -5,11 +5,13 @@ API responses are mocked so navigation is not conflated with backend latency.
 """
 import json
 import time
+from itertools import count
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 
 BASE_URL = "http://127.0.0.1:3000"
+CLICK_TRACE_SEQUENCE = count()
 
 
 def mock_api(route):
@@ -35,8 +37,8 @@ def verify_direct_navigation(page, target, expected_path):
     # The document-level capture handler runs before React's delegated click
     # handlers. It establishes whether the browser delivered the first click.
     click_events = []
-    page.expose_function("recordIthuteNavigationClick" + str(id(click_events)), lambda event: click_events.append(event))
-    callback = "recordIthuteNavigationClick" + str(id(click_events))
+    callback = "recordIthuteNavigationClick" + str(next(CLICK_TRACE_SEQUENCE))
+    page.expose_function(callback, lambda event: click_events.append(event))
     page.evaluate("""(callback) => {
       document.addEventListener("click", event => {
         const link = event.target.closest?.('a[href]');
