@@ -40,7 +40,8 @@ export default function Dashboard() {
   const [dnsReady, setDnsReady] = useState(0);
   const [health, setHealth] = useState<Health>("warn");
   const [audit, setAudit] = useState<ControlCentreAudit[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [domainsLoading, setDomainsLoading] = useState(true);
+  const [auditLoading, setAuditLoading] = useState(true);
 
   useEffect(() => {
     void (async () => {
@@ -101,6 +102,8 @@ export default function Dashboard() {
           ).length,
         );
 
+        setDomainsLoading(false);
+
         const auditPath = me.is_platform_owner
           ? "/audit/platform?limit=8"
           : activeContexts[0]
@@ -111,12 +114,14 @@ export default function Dashboard() {
         // the health indicator or hold the entire dashboard waterfall.
         await Promise.all([
           (async () => {
-            if (!auditPath) return;
+            if (!auditPath) { setAuditLoading(false); return; }
             try {
               const response = await api(auditPath);
               if (response.ok) setAudit(await response.json());
             } catch {
               // Audit is supplementary; keep the dashboard usable.
+            } finally {
+              setAuditLoading(false);
             }
           })(),
           (async () => {
@@ -134,7 +139,8 @@ export default function Dashboard() {
         // A broken optional service should not trap the dashboard in a spinner.
         console.error("Ithute dashboard initialization failed", error);
       } finally {
-        setLoading(false);
+        setDomainsLoading(false);
+        setAuditLoading(false);
       }
     })();
   }, [router]);
@@ -146,7 +152,9 @@ export default function Dashboard() {
 
   const firstName = user?.full_name?.trim().split(/\s+/)[0] || (user?.is_platform_owner ? "Platform Owner" : "there");
 
-  const nextAction = domainCount === 0
+  const nextAction = domainsLoading
+    ? { title: "Reviewing your domains", copy: "Checking domain readiness across your organisations.", href: "/domains", label: "Open domains" }
+    : domainCount === 0
     ? { title: "Add your first domain", copy: "Add a domain, verify ownership and connect it to Ithute services.", href: "/domains", label: "Add domain" }
     : verifiedCount < domainCount
       ? { title: "Finish domain verification", copy: `${domainCount - verifiedCount} domain${domainCount - verifiedCount === 1 ? "" : "s"} still need ownership verification.`, href: "/domains", label: "Review domains" }
@@ -159,7 +167,7 @@ export default function Dashboard() {
       <ControlCentreOverview
         health={health}
         firstName={firstName}
-        loading={loading}
+        loading={domainsLoading}
         tenantCount={tenantCount}
         domainCount={domainCount}
         verifiedCount={verifiedCount}
@@ -167,7 +175,7 @@ export default function Dashboard() {
         verificationProgress={verificationProgress}
         nextAction={nextAction}
       />
-      <ControlCentreExtras audit={audit} loading={loading} />
+      <ControlCentreExtras audit={audit} loading={auditLoading} />
     </div>
   );
 }
