@@ -112,6 +112,17 @@ def main():
                 page.locator(".control-shell-topbar").wait_for(state="visible", timeout=15000)
                 page.locator("aside:visible").get_by_role("link", name="Domains & DNS", exact=True).click()
                 page.wait_for_url(f"{BASE_URL}/domains", timeout=15000)
+            if not mobile:
+                # Compact desktop sidebar also exposes the primary destination
+                # directly; opening the submenu is a separate chevron action.
+                page.goto(f"{BASE_URL}/dashboard")
+                page.locator(".control-shell-topbar").wait_for(state="visible", timeout=15000)
+                page.get_by_role("button", name="Toggle navigation").click()
+                sidebar = page.locator("aside:visible")
+                sidebar.get_by_role("link", name="Domains & DNS", exact=True).click()
+                page.wait_for_url(f"{BASE_URL}/domains", timeout=15000)
+                sidebar.get_by_role("button", name="Expand Domains & DNS").click()
+                assert sidebar.get_by_role("menuitem", name="DNS zones").is_visible()
             context.close()
         browser.close()
 
