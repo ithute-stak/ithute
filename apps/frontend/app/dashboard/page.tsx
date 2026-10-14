@@ -101,22 +101,35 @@ export default function Dashboard() {
           ).length,
         );
 
-        const auditResponse = me.is_platform_owner
-          ? await api("/audit/platform?limit=8")
+        const auditPath = me.is_platform_owner
+          ? "/audit/platform?limit=8"
           : activeContexts[0]
-            ? await api(`/tenants/${activeContexts[0].tenant_id}/audit?limit=8`)
+            ? `/tenants/${activeContexts[0].tenant_id}/audit?limit=8`
             : null;
 
-        if (auditResponse?.ok) setAudit(await auditResponse.json());
-
-        try {
-          const healthResponse = await fetch(`${PLATFORM_API_URL.replace(/\/api\/v1$/, "")}/health/ready`, {
-            cache: "no-store",
-          });
-          setHealth(healthResponse.ok ? "good" : "bad");
-        } catch {
-          setHealth("bad");
-        }
+        // Health and audit are independent: a slow audit must not delay
+        // the health indicator or hold the entire dashboard waterfall.
+        await Promise.all([
+          (async () => {
+            if (!auditPath) return;
+            try {
+              const response = await api(auditPath);
+              if (response.ok) setAudit(await response.json());
+            } catch {
+              // Audit is supplementary; keep the dashboard usable.
+            }
+          })(),
+          (async () => {
+            try {
+              const response = await fetch(`${PLATFORM_API_URL.replace(/\/api\/v1$/, "")}/health/ready`, {
+                cache: "no-store",
+              });
+              setHealth(response.ok ? "good" : "bad");
+            } catch {
+              setHealth("bad");
+            }
+          })(),
+        ]);
       } finally {
         setLoading(false);
       }
