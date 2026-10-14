@@ -208,18 +208,28 @@ function NavItem({ group, path, compact, onGo }: { group: NavGroup; path: string
 
   return (
     <div>
-      <button
-        type="button"
-        aria-expanded={sectionOpen}
-        className={`flex min-h-10 w-full items-center gap-3 rounded-xl px-3 text-left text-[13px] font-semibold transition ${
-          isActive ? "bg-white/[.08] text-white" : "text-[#b8cbc4] hover:bg-white/[.07] hover:text-white"
-        }`}
-        onClick={() => setSectionOpen((value) => !value)}
-      >
-        <Icon size={16} />
-        <span className="flex-1">{group.label}</span>
-        <ChevronDown size={13} className={`transition ${sectionOpen ? "rotate-180" : ""}`} />
-      </button>
+      <div className={`flex min-h-10 items-center rounded-xl text-[13px] font-semibold transition ${
+        isActive ? "bg-white/[.08] text-white" : "text-[#b8cbc4] hover:bg-white/[.07] hover:text-white"
+      }`}>
+        <Link
+          href={group.children![0].href}
+          onClick={onGo}
+          className="flex min-h-10 min-w-0 flex-1 items-center gap-3 rounded-l-xl px-3 hover:bg-white/[.07] hover:text-white"
+          title={`Open ${group.label}`}
+        >
+          <Icon size={16} className="shrink-0" />
+          <span className="truncate">{group.label}</span>
+        </Link>
+        <button
+          type="button"
+          aria-label={`Expand ${group.label}`}
+          aria-expanded={sectionOpen}
+          onClick={() => setSectionOpen((value) => !value)}
+          className="flex min-h-10 w-10 shrink-0 items-center justify-center rounded-r-xl hover:bg-white/[.10]"
+        >
+          <ChevronDown size={13} className={`transition ${sectionOpen ? "rotate-180" : ""}`} />
+        </button>
+      </div>
       {sectionOpen ? (
         <div className="mt-1 space-y-1 pl-3">
           {group.children?.map((child) => {
