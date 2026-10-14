@@ -72,55 +72,49 @@ export default function Dashboard() {
         const activeContexts = contexts.filter((context) => context.status === "active");
         setTenantCount(activeContexts.length);
 
-        // Optional domain widgets load separately from the account summary.
-        // Bound concurrency avoids serial tenant-domain waterfalls while
-        // protecting the API from a burst of twenty simultaneous requests.
-        const domains: Domain[] = [];
-        const contextsToLoad = activeContexts.slice(0, 20);
-        for (let offset = 0; offset < contextsToLoad.length; offset += 5) {
-          const batch = contextsToLoad.slice(offset, offset + 5);
-          const results = await Promise.allSettled(
-            batch.map(async (context): Promise<Domain[]> => {
-              const response = await api(`/tenants/${context.tenant_id}/domains`);
-              if (!response.ok) return [];
-              const data: { items?: Domain[] } = await response.json();
-              return Array.isArray(data.items) ? data.items : [];
-            }),
-          );
-          for (const result of results) {
-            if (result.status === "fulfilled") domains.push(...result.value);
-          }
-        }
-
-        setDomainCount(domains.length);
-        setVerifiedCount(domains.filter((domain) => Boolean(domain.ownership_verified_at)).length);
-        setDnsReady(
-          domains.filter(
-            (domain) =>
-              domain.status === "verified" &&
-              domain.dns_mode === "platform" &&
-              Boolean(domain.ownership_verified_at),
-          ).length,
-        );
-
-        setDomainsLoading(false);
-
         const auditPath = me.is_platform_owner
           ? "/audit/platform?limit=8"
           : activeContexts[0]
             ? `/tenants/${activeContexts[0].tenant_id}/audit?limit=8`
             : null;
 
-        // Health and audit are independent: a slow audit must not delay
-        // the health indicator or hold the entire dashboard waterfall.
-        await Promise.all([
+        // Start independent tasks together. Domain aggregation is bounded to
+        // five active requests and never blocks audit or readiness indicators.
+        await Promise.allSettled([
           (async () => {
-            if (!auditPath) { setAuditLoading(false); return; }
             try {
+              const contextsToLoad = activeContexts.slice(0, 20);
+              const domains: Domain[] = [];
+              for (let offset = 0; offset < contextsToLoad.length; offset += 5) {
+                const batch = contextsToLoad.slice(offset, offset + 5);
+                const results = await Promise.allSettled(
+                  batch.map(async (context): Promise<Domain[]> => {
+                    const response = await api(`/tenants/${context.tenant_id}/domains`);
+                    if (!response.ok) return [];
+                    const body: { items?: Domain[] } = await response.json();
+                    return Array.isArray(body.items) ? body.items : [];
+                  }),
+                );
+                for (const result of results) {
+                  if (result.status === "fulfilled") domains.push(...result.value);
+                }
+              }
+              setDomainCount(domains.length);
+              setVerifiedCount(domains.filter((domain) => Boolean(domain.ownership_verified_at)).length);
+              setDnsReady(domains.filter((domain) =>
+                domain.status === "verified" &&
+                domain.dns_mode === "platform" &&
+                Boolean(domain.ownership_verified_at),
+              ).length);
+            } finally {
+              setDomainsLoading(false);
+            }
+          })(),
+          (async () => {
+            try {
+              if (!auditPath) return;
               const response = await api(auditPath);
               if (response.ok) setAudit(await response.json());
-            } catch {
-              // Audit is supplementary; keep the dashboard usable.
             } finally {
               setAuditLoading(false);
             }
