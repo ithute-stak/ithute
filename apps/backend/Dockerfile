@@ -19,7 +19,7 @@ RUN g++ -std=c++20 -O3 -fPIC -shared -Wall -Wextra -Wpedantic -Werror \
     -Iinclude src/cluster_graph.cpp src/placement_scheduler.cpp src/c_api.cpp -o /libithute_cpp_cluster.so
 
 
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
