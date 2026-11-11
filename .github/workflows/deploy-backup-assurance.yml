@@ -1,10 +1,12 @@
 name: Deploy Ithute Backup Assurance
 
 on:
-  workflow_run:
-    workflows: ["Ithute Standalone CI"]
-    types: [completed]
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_sha:
+        description: Exact 40-character release SHA already deployed to production
+        required: true
+        type: string
 
 concurrency:
   group: ithute-vps-backup-assurance
@@ -16,12 +18,11 @@ permissions:
 
 jobs:
   deploy:
-    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production
     env:
-      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+      DEPLOY_SHA: ${{ inputs.deploy_sha }}
       VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_USER: ${{ secrets.VPS_USER }}
       VPS_APP_DIR: /home/administrator/ithute-platform
@@ -30,6 +31,28 @@ jobs:
       EXPECTED_IPV4: 204.12.205.224
 
     steps:
+      - name: Validate requested production release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "deploy_sha must be an exact 40-character lowercase commit SHA." >&2
+            exit 1
+          }
+          run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/release-images.yml/runs?branch=main&per_page=100")"
+          row="$(printf '%s' "$run_json" | jq -r --arg sha "$DEPLOY_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] | if . == null then "" else [.status, (.conclusion // ""), (.html_url // "")] | @tsv end')"
+          test -n "$row" || {
+            echo "No Ithute Release Images run exists for $DEPLOY_SHA." >&2
+            exit 1
+          }
+          IFS=$'\t' read -r status conclusion url <<< "$row"
+          echo "Release Images: status=$status conclusion=${conclusion:-pending} $url"
+          test "$status" = "completed" && test "$conclusion" = "success" || {
+            echo "Release Images is not green for $DEPLOY_SHA." >&2
+            exit 1
+          }
+
       - name: Checkout validated commit
         uses: actions/checkout@v5
         with:
@@ -48,40 +71,7 @@ jobs:
           bash -n infrastructure/backup/restore-drill-loop.sh
           ! grep -Eq '^[[:space:]]+ports:' compose.backup.yml
 
-      - name: Wait for exact production deployment
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          ready=0
-          for attempt in $(seq 1 150); do
-            runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-production.yml/runs?branch=main&per_page=30")"
-            row="$(printf '%s' "$runs" | jq -r --arg sha "$DEPLOY_SHA" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] | if . == null then "" else [.status, (.conclusion // ""), (.html_url // "")] | @tsv end')"
-            if [ -z "$row" ]; then
-              echo "Production run has not been created yet (${attempt}/150)."
-              sleep 8
-              continue
-            fi
-            IFS=$'\t' read -r status conclusion url <<< "$row"
-            echo "Production: status=${status} conclusion=${conclusion:-pending} ${url}"
-            if [ "$status" = "completed" ]; then
-              if [ "$conclusion" = "success" ]; then
-                ready=1
-              else
-                echo "Production did not deploy successfully; backup runtime will remain unchanged."
-              fi
-              break
-            fi
-            if [ "$attempt" -ge 150 ]; then
-              echo "Timed out waiting for production; backup runtime will remain unchanged."
-              break
-            fi
-            sleep 8
-          done
-          printf 'PRODUCTION_READY=%s\n' "$ready" >> "$GITHUB_ENV"
-
       - name: Configure SSH
-        if: env.PRODUCTION_READY == '1'
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.ssh"
@@ -105,8 +95,19 @@ jobs:
           ssh-keyscan -T 10 -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
+      - name: Verify exact SHA is live in production
+        run: |
+          set -euo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh "$remote" "APP_DIR='$VPS_APP_DIR' DEPLOY_SHA='$DEPLOY_SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          test -f "$APP_DIR/.ithute-bootstrapped"
+          test -f "$APP_DIR/.env.production"
+          test -f "$APP_DIR/.image.env"
+          grep -Fxq "ITHUTE_IMAGE_TAG=$DEPLOY_SHA" "$APP_DIR/.image.env"
+          REMOTE
+
       - name: Install backup runtime configuration
-        if: env.PRODUCTION_READY == '1'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
@@ -128,7 +129,6 @@ jobs:
           REMOTE
 
       - name: Start backup services and run controlled restore drill
-        if: env.PRODUCTION_READY == '1'
         run: |
           set -euo pipefail
           remote="${VPS_USER}@${VPS_HOST}"
@@ -142,7 +142,7 @@ jobs:
           compose pull ithute-backup ithute-restore-drill-db ithute-restore-drill
 
           # Backup assurance is not allowed to recreate the core application.
-          # Production already proved ithute-app-api healthy for this exact SHA.
+          # Production must already be healthy on the exact requested SHA.
           app_id="$(compose ps -q ithute-app-api)"
           test -n "$app_id"
           compose exec -T ithute-app-api curl -fsS http://127.0.0.1:8000/health/ready | grep -q '"status":"ready"'
