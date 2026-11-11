@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_tenant_permission
@@ -8,6 +9,7 @@ from app.api.v1.domains import _audit
 from app.api.v1.dns import _managed_domain
 from app.db.session import get_db
 from app.models import User
+from app.models.dnssec_incident_history import DnssecIncidentHistory, DnssecMonitorState
 from app.services.dns_phase5 import delegation_diagnostics, dns_templates
 from app.services.dnssec_readiness import activation_readiness
 from app.services.dnssec_resolver_validation import validating_resolver_check
@@ -21,6 +23,35 @@ router = APIRouter(prefix="/tenants/{tenant_id}/domains/{domain_id}/dns", tags=[
 
 def _pdns_error(exc: PowerDNSError):
     raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get("/dnssec/monitor-history")
+def dnssec_monitor_history(tenant_id: UUID, domain_id: UUID, db: Session = Depends(get_db), current: User = Depends(get_current_user)):
+    """Tenant-authorized stored monitor state and latest incidents (no network reads)."""
+    require_tenant_permission(tenant_id, "dns.read", db, current)
+    domain = _managed_domain(db, tenant_id, domain_id)
+    state = db.scalar(select(DnssecMonitorState).where(
+        DnssecMonitorState.tenant_id == tenant_id,
+        DnssecMonitorState.domain_id == domain.id,
+    ))
+    incidents = db.scalars(select(DnssecIncidentHistory).where(
+        DnssecIncidentHistory.tenant_id == tenant_id,
+        DnssecIncidentHistory.domain_id == domain.id,
+    ).order_by(DnssecIncidentHistory.opened_at.desc(), DnssecIncidentHistory.id.desc()).limit(50)).all()
+    return {
+        "monitor": None if state is None else {
+            "status": state.status, "code": state.code,
+            "failures": state.failures,
+            "last_checked_at": state.last_checked_at,
+        },
+        "incidents": [{
+            "id": row.id, "code": row.code, "severity": row.severity,
+            "summary": row.summary, "status": row.status,
+            "opened_at": row.opened_at, "acknowledged_at": row.acknowledged_at,
+            "recovered_at": row.recovered_at,
+        } for row in incidents],
+        "read_only": True,
+    }
 
 
 @router.get("/dnssec")
