@@ -25,6 +25,7 @@ from app.services.hardware_model_evaluation import promotion_policy
 from app.services.hardware_training_dataset import build_training_example, dataset_summary
 from app.services.hardware_shadow_validation import shadow_policy
 from app.services.hardware_model_registry import registry_summary, validate_transition
+from app.services.hardware_retraining_controller import retraining_policy
 
 router = APIRouter(prefix="/hardware-intelligence", tags=["hardware-intelligence"])
 
@@ -1035,6 +1036,7 @@ def hardware_model_training_status(
         "dataset": _supervised_training_dataset_summary(db),
         "promotion_policy": promotion_policy(),
         "shadow_validation_policy": shadow_policy(),
+        "retraining_policy": retraining_policy(),
     }
 
 

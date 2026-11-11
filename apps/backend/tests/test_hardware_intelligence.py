@@ -457,3 +457,26 @@ def test_hardware_model_registry_persistence_contract_exists():
     assert 'resolve_hardware_shadow_outcome' in api
     assert "Resolved shadow outcome is immutable" in api
     assert 'validate_transition(model.lifecycle_state, payload.target_state)' in api
+
+
+
+def test_hardware_automated_retraining_contract_exists():
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]
+    service = (backend / "app" / "services" / "hardware_retraining_controller.py").read_text(encoding="utf-8")
+    api = (backend / "app" / "api" / "v1" / "hardware_intelligence.py").read_text(encoding="utf-8")
+    page = (repo / "apps" / "frontend" / "app" / "system-owner" / "hardware-intelligence" / "page.tsx").read_text(encoding="utf-8")
+
+    assert "def retraining_readiness" in service
+    assert "def compare_candidate_to_champion" in service
+    assert "def retraining_decision" in service
+    assert "MIN_NEW_VERIFIED_LABELS = 24" in service
+    assert "MIN_QUALITY_SCORE_DELTA = 0.50" in service
+    assert '"direct_activation_allowed": False' in service
+    assert '"candidate_success_action": "shadow"' in service
+    assert '"candidate_failure_action": "retired_or_rolled_back"' in service
+    assert '"retraining_policy": retraining_policy()' in api
+    assert "Automated retraining controller" in page
+    assert "direct activation remains disabled" in page
