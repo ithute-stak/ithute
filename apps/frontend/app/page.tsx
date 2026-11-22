@@ -300,6 +300,12 @@ export default function Home() {
                 </div>
               ))}
             </dl>
+            <div className="mt-5 rounded-xl border border-[#d8e4dc] bg-[#f6f8f6] px-4 py-4">
+              <p className="flex items-center gap-2 text-xs font-black text-[#285b55]"><Landmark size={16} /> Banking confirmation on file</p>
+              <p className="mt-2 text-[11px] leading-5 text-[#56736a]">
+                A Lesotho PostBank customer-account confirmation letter dated 20 November 2026 names Ithute Holdings. Banking evidence is available privately for appropriate supplier or client due diligence; payment instructions are provided only through authorised channels.
+              </p>
+            </div>
             <p className="mt-5 text-[11px] leading-5 text-[#819087]">
               Corporate details sourced from the certificate of incorporation, business registration extract and Revenue Services Lesotho tax records issued in November 2026.
             </p>
