@@ -17,9 +17,9 @@ import {
 } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "!thute · Digital systems built for real operations",
+  title: "!thute | Ithute Holdings (Pty) Ltd · Lesotho technology company",
   description:
-    "!thute is a Lesotho technology hub building multi-tenant platforms for finance, collections, commerce, construction, education, email, DNS and cloud operations.",
+    "!thute is the digital solutions brand of Ithute Holdings (Pty) Ltd, a company incorporated in Lesotho (A2026/40048), building business software, hosting and digital infrastructure.",
   applicationName: "!thute",
   alternates: { canonical: "https://ithute.co.ls/" },
   keywords: [
@@ -155,6 +155,7 @@ export default function Home() {
               <a href="#schools" className="hidden text-xs font-bold text-white/65 transition hover:text-white md:inline">
                 Schools
               </a>
+              <a href="#company" className="hidden text-xs font-bold text-white/65 transition hover:text-white xl:inline">Company</a>
               <Link href="/pricing" className="hidden text-xs font-black text-[#f1de8b] transition hover:text-white md:inline">
                 Hosting packages
               </Link>
@@ -174,14 +175,14 @@ export default function Home() {
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[.06] px-3 py-2 text-[10px] font-black uppercase tracking-[.14em] text-white/65">
                 <span className="live-dot is-live" />
-                Technology built in Lesotho · Built for real operations
+                Lesotho-registered company · Built for real operations
               </div>
 
               <h1 className="mt-6 max-w-4xl text-4xl font-black leading-[1.02] tracking-[-.055em] sm:text-6xl lg:text-7xl">
                 One home for the systems that move organisations forward.
               </h1>
               <p className="mt-6 max-w-2xl text-sm leading-7 text-white/65 sm:text-base">
-                !thute is becoming a technology hub for business, finance, commerce, construction, education and cloud infrastructure. We build connected, multi-tenant solutions that turn real operational problems into dependable digital systems.
+                !thute is the technology brand of Ithute Holdings (Pty) Ltd, officially incorporated in Lesotho on 12 November 2026. We build connected digital systems for business, finance, commerce, construction, education and cloud infrastructure.
               </p>
 
               <div className="mt-8 flex flex-wrap gap-3">
@@ -200,7 +201,7 @@ export default function Home() {
               </div>
 
               <div className="mt-10 flex flex-wrap gap-x-7 gap-y-3 text-[11px] font-bold text-white/50">
-                {["Multi-tenant platforms", "Production infrastructure", "Industry-focused systems"].map((item) => (
+                {["Lesotho incorporated · A2026/40048", "Production infrastructure", "Industry-focused systems"].map((item) => (
                   <span key={item} className="inline-flex items-center gap-2">
                     <CheckCircle2 size={14} className="text-[#f1de8b]" /> {item}
                   </span>
@@ -261,6 +262,54 @@ export default function Home() {
           <p className="text-[10px] font-black uppercase tracking-[.14em] text-[#718078]">One technology hub</p>
           <p className="text-[10px] font-black uppercase tracking-[.14em] text-[#718078]">Multiple industry platforms</p>
           <p className="text-[10px] font-black uppercase tracking-[.14em] text-[#718078]">Built to grow together</p>
+        </div>
+      </section>
+
+      <section id="company" aria-labelledby="company-heading" className="border-b border-[#dfe6e2] bg-[#edf3ef]">
+        <div className="mx-auto grid max-w-[1280px] gap-8 px-5 py-14 sm:px-8 lg:grid-cols-[.95fr_1.05fr] lg:items-center lg:py-20">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[.17em] text-[#367064]">Officially registered in the Kingdom of Lesotho</p>
+            <h2 id="company-heading" className="mt-3 text-3xl font-black tracking-[-.045em] sm:text-4xl">A local technology company. A clear legal identity.</h2>
+            <p className="mt-4 max-w-2xl text-sm leading-7 text-[#56736a]">
+              !thute operates under Ithute Holdings (Pty) Ltd, a private company incorporated under Lesotho's Companies Act, 2011. Our registered activities include software publishing, computer programming, IT consultancy, hosting-related services and management consultancy.
+            </p>
+            <p className="mt-4 text-xs leading-6 text-[#718078]">
+              Our incorporation and taxpayer registration are documented by the relevant Lesotho authorities. Registration confirms the legal entity; individual products and services remain subject to their applicable terms and approvals.
+            </p>
+          </div>
+          <div className="rounded-[26px] border border-[#d8e4dc] bg-white p-6 shadow-sm sm:p-8">
+            <div className="flex items-center gap-3">
+              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[#123a38] text-[#f1de8b]"><ShieldCheck size={23} /></div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[.15em] text-[#718078]">Corporate particulars</p>
+                <p className="mt-1 text-lg font-black">Ithute Holdings (Pty) Ltd</p>
+              </div>
+            </div>
+            <dl className="mt-6 grid gap-4 sm:grid-cols-2">
+              {[
+                ["Company number", "A2026/40048"],
+                ["Incorporated", "12 November 2026"],
+                ["Taxpayer ID (TIN)", "200209046-8"],
+                ["Registered office", "Maseru Central, Pela Mokorotlong, Lesotho"],
+                ["Business category", "Micro, Small and Medium Enterprise"],
+                ["Tax clearance", "Valid to 19 November 2027"],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl bg-[#f6f8f6] p-4">
+                  <dt className="text-[10px] font-bold uppercase tracking-[.1em] text-[#718078]">{label}</dt>
+                  <dd className="mt-1.5 text-sm font-extrabold leading-5 text-[#20342a]">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className="mt-5 rounded-xl border border-[#d8e4dc] bg-[#f6f8f6] px-4 py-4">
+              <p className="flex items-center gap-2 text-xs font-black text-[#285b55]"><Landmark size={16} /> Banking confirmation on file</p>
+              <p className="mt-2 text-[11px] leading-5 text-[#56736a]">
+                A Lesotho PostBank customer-account confirmation letter dated 20 November 2026 names Ithute Holdings. Banking evidence is available privately for appropriate supplier or client due diligence; payment instructions are provided only through authorised channels.
+              </p>
+            </div>
+            <p className="mt-5 text-[11px] leading-5 text-[#819087]">
+              Corporate details sourced from the certificate of incorporation, business registration extract and Revenue Services Lesotho tax records issued in November 2026.
+            </p>
+          </div>
         </div>
       </section>
 
@@ -423,7 +472,7 @@ export default function Home() {
               </div>
             </Link>
             <p className="mt-4 max-w-xl text-[11px] leading-5 text-[#819087]">
-              Building practical digital platforms for organisations in Lesotho and beyond.
+              Ithute Holdings (Pty) Ltd · Registered in Lesotho · Company No. A2026/40048 · TIN 200209046-8. Building practical digital platforms for organisations in Lesotho and beyond.
             </p>
           </div>
           <div className="flex flex-wrap gap-x-5 gap-y-3 text-[10px] font-bold text-[#718078] md:justify-end">
