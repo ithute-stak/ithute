@@ -28,12 +28,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: python,javascript-typescript
           queries: security-extended
       - name: Analyze
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:multi"
 
@@ -173,7 +173,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - name: Initialize compiled-language CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: go,java-kotlin,c-cpp
           queries: security-extended
@@ -192,7 +192,7 @@ jobs:
           cmake -S engines/cpp-cluster -B /tmp/ithute-cpp-cluster-codeql -DCMAKE_BUILD_TYPE=RelWithDebInfo
           cmake --build /tmp/ithute-cpp-cluster-codeql --parallel 2
       - name: Analyze compiled engines
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:compiled-engines"
 
